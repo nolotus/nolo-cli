@@ -34,6 +34,13 @@ checklist before it lands.
 6. Maintainer workflow examples for PR review, issue triage, release checks,
    docs maintenance, and security review.
 
+## Mirrored Modules
+
+| Module | Status | Notes |
+| --- | --- | --- |
+| `src/localRun.ts` | Mirrored | Public no-login local run parser and usage text for `nolo run` / `nolo chat`. |
+| `src/localRun.test.ts` | Mirrored | Tests local Codex shorthand behavior, explicit agent behavior, and empty-input usage. |
+
 ## Maintainer Evidence
 
 For each source mirror PR, include:

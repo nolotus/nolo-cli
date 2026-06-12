@@ -3,6 +3,10 @@
   "private": true,
   "description": "Public OSS home and source-mirroring staging area for nolo-cli",
   "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "bun test src"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nolotus/nolo-cli.git"

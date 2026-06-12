@@ -62,6 +62,22 @@ See [MAINTAINER_WORKFLOWS.md](./MAINTAINER_WORKFLOWS.md) for concrete command
 patterns and [OPEN_SOURCE_BOUNDARY.md](./OPEN_SOURCE_BOUNDARY.md) for what is
 being opened versus intentionally kept private.
 
+## Public Source
+
+The first reusable source module is now mirrored in this repository:
+
+- [`src/localRun.ts`](./src/localRun.ts) documents and tests the no-login local
+  run contract for `nolo run` and `nolo chat`.
+- [`src/localRun.test.ts`](./src/localRun.test.ts) verifies that shorthand runs
+  use local Codex without requiring Nolo auth, while explicit agent runs remain
+  distinct.
+
+Run the public tests with:
+
+```bash
+bun test src
+```
+
 ## Project Status
 
 This repository is the public OSS entry point for the CLI project. The package

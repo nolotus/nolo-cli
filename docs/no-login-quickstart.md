@@ -10,10 +10,10 @@ automation.
 - Node.js and npm.
 - A shell in the repository you want to inspect.
 - One local provider path:
-  - a local Codex CLI session,
-  - a local Qoder CLI session,
-  - or a BYOK provider configured in your shell, such as `OPENAI_API_KEY` or an
-    OpenAI-compatible endpoint.
+  - a built-in HTTP provider such as `openai` or `openrouter`,
+  - a custom OpenAI-compatible endpoint,
+  - a doctor-detected credential such as `OPENAI_API_KEY`,
+  - or a local CLI agent session such as Codex CLI or Qoder CLI.
 
 No Nolo account token is required for the local-only path.
 

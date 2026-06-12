@@ -11,8 +11,8 @@ public without exposing private product infrastructure or user data.
 - Local-first agent runtime boundaries, including current-repository execution,
   workspace summaries, runtime doctor checks, and smoke checks.
 - No-login local agent workflows such as `nolo run "review this repository"`.
-- BYOK provider configuration for OpenAI, Anthropic, OpenRouter, Codex CLI,
-  Qoder, and other compatible local providers.
+- Provider setup for built-in HTTP providers, custom OpenAI-compatible
+  endpoints, doctor-detected local credentials, and local CLI agent sessions.
 - Desktop local mode that lets users run with their own keys before signing in.
 - Maintainer workflow examples for PR review, issue triage, release checks,
   documentation updates, and security review.

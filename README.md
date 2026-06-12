@@ -13,15 +13,15 @@ open-source maintainer workflows: Codex-assisted review, issue triage, release
 smoke checks, docs updates, runtime diagnostics, and automation-friendly JSON
 commands.
 
-The project is moving toward a no-login, bring-your-own-key local mode:
+The project is moving toward a no-login, bring-your-own-provider local mode:
 
 - `nolo run "review this repository"` runs a local Codex-style agent in the
   current repository without requiring a Nolo account.
 - Authenticated Nolo workflows remain available for synced agents, dialogs,
   docs, tables, and machine-bound automation.
 - The desktop direction is local-first by default: users should be able to run
-  with their own OpenAI, Anthropic, OpenRouter, Codex CLI, Qoder, or other
-  provider credentials without depending on hosted Nolo infrastructure.
+  with built-in HTTP providers, custom OpenAI-compatible endpoints, or local CLI
+  agent sessions without depending on hosted Nolo infrastructure.
 
 The npm package is published as `nolo-cli`:
 
@@ -63,7 +63,7 @@ tested, and improved in public:
   provider issues, and docs gaps into actionable labels.
 - **Release management:** run doctor checks, smoke checks, changelog review,
   and package verification before publishing.
-- **Security review:** keep shell, machine connector, BYOK provider, and token
+- **Security review:** keep shell, machine connector, provider, and token
   boundaries explicit so contributors can reason about local access.
 
 See [MAINTAINER_WORKFLOWS.md](./MAINTAINER_WORKFLOWS.md) for concrete command
@@ -76,9 +76,9 @@ The first reusable source modules are now mirrored in this repository:
 
 - [`src/localRun.ts`](./src/localRun.ts) documents and tests the no-login local
   run contract for `nolo run` and `nolo chat`.
-- [`src/providerConfig.ts`](./src/providerConfig.ts) documents the BYOK
-  provider credential boundary: public config stores environment variable
-  references, not raw API keys.
+- [`src/providerConfig.ts`](./src/providerConfig.ts) documents the provider
+  credential boundary: public config stores environment variable references,
+  not raw API keys.
 - [`src/runtimeBoundary.ts`](./src/runtimeBoundary.ts) documents the local
   runtime boundary for no-login CLI and desktop flows: local provider
   credentials, workspace-scoped shell policy, local persistence, and no remote
@@ -127,7 +127,7 @@ The public maintenance scope for this project is:
 
 - Agent-first terminal and TUI workflows for OSS maintainers.
 - No-login local agent runs in the current repository.
-- BYOK provider configuration for CLI and desktop local mode.
+- Provider configuration for CLI and desktop local mode.
 - Local-first agent runtime boundaries and scoped shell permissions.
 - Runtime doctor, release smoke-check, and package verification workflows.
 - Optional authenticated commands for synced Nolo agents, dialogs, docs, tables,

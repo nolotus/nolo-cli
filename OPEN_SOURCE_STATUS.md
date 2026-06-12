@@ -43,7 +43,9 @@ A file or module is suitable for this repository when it:
   public source root.
 - Keep [No-Login Local Mode Quickstart](./docs/no-login-quickstart.md) current
   with the published package and fresh-install smoke path.
-- Keep BYOK provider configuration docs current for CLI and desktop local mode.
+- Keep provider setup docs current for CLI and desktop local mode, including
+  built-in HTTP providers, custom OpenAI-compatible endpoints, doctor-detected
+  local credentials, and local CLI agent sessions.
 - Add more public maintainer workflow examples for PR review, issue triage,
   release checks, docs maintenance, and security review.
 
@@ -53,7 +55,7 @@ This repository is being organized so reviewers and contributors can inspect
 ongoing maintenance work:
 
 - Public issues track source mirroring, install docs, maintainer workflows,
-  BYOK provider setup, and release checks.
+  provider setup, and release checks.
 - Future pull requests should be small enough to review in public and should
   include focused tests or docs.
 - Releases should document npm version, smoke checks, and known runtime

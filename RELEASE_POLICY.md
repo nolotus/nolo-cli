@@ -24,7 +24,7 @@ Use `0.2.0` when the project has a clear user-facing milestone rather than only
 internal cleanup. Good triggers include:
 
 - No-login local mode is documented and works from a fresh public checkout.
-- BYOK provider setup covers the main supported providers.
+- Provider setup covers the main supported provider categories.
 - Public issues and PRs can validate install, doctor, local run, and release
   smoke workflows without private Nolo access.
 - Any command behavior change is intentional and documented.
@@ -42,7 +42,7 @@ Before `1.0.0`, the public repository should have:
 
 - A stable install path.
 - A stable no-login local run path.
-- Clear BYOK/provider docs.
+- Clear provider setup docs.
 - A documented support/security boundary.
 - Passing public CI.
 - At least one repeatable maintainer workflow for PR review, issue triage, and

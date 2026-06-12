@@ -29,7 +29,7 @@ checklist before it lands.
 1. CLI command router, help output, and no-login `nolo run` path.
 2. Local-first agent runtime boundary types and current-workspace execution.
 3. Runtime doctor and release smoke-check commands.
-4. BYOK provider configuration docs and adapters.
+4. Provider configuration docs and adapters.
 5. Desktop local-mode setup and no-login behavior.
 6. Maintainer workflow examples for PR review, issue triage, release checks,
    docs maintenance, and security review.
@@ -43,10 +43,10 @@ checklist before it lands.
 | `client/` | Canonical | Public CLI client, local runtime adapter, provider resolver, profile config, and focused tests. |
 | `agent-runtime/` | Canonical | Local-first agent loop, runtime policy, local workspace tools, and Nolo workspace tool boundary. |
 | `tui/` | Canonical | Public TUI session and workspace readline support. |
-| `ai/agent/cliExecutor.ts` | Canonical | Local CLI provider execution path for Codex, Qoder, and related local agents. |
+| `ai/agent/cliExecutor.ts` | Canonical | Local CLI provider execution path for Codex, Claude, Copilot, Gemini, Antigravity, Qoder, and related local agents. |
 | `runtimeDoctorCommands.ts` | Canonical | Runtime diagnostics exposed to users and maintainers. |
-| `docs/provider-setup.md` | Public docs | BYOK setup guide for OpenAI, OpenRouter, Codex CLI, Qoder, and local provider boundaries. |
-| `docs/desktop-local-mode.md` | Public docs | Desktop local-mode boundary and first-run direction for no-login BYOK workflows. |
+| `docs/provider-setup.md` | Public docs | Provider setup guide for built-in HTTP providers, custom OpenAI-compatible endpoints, doctor-detected credentials, local CLI agents, and local provider boundaries. |
+| `docs/desktop-local-mode.md` | Public docs | Desktop local-mode boundary and first-run direction for no-login provider workflows. |
 | `.github/workflows/test.yml` | Public CI | Runs install, tests, package metadata checks, and pack dry-run. |
 | `.github/workflows/npm-publish.yml` | Public release | Manual npm publish workflow guarded by expected version, tests, pack dry-run, and duplicate-version check. |
 

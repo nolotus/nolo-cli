@@ -31,8 +31,8 @@ chooses a synced workflow.
 - Local release checklist generation.
 - Local docs maintenance.
 - Local security review.
-- Local provider setup for OpenAI, OpenRouter, Codex CLI, Qoder, or another
-  supported provider.
+- Local provider setup for built-in HTTP providers, custom OpenAI-compatible
+  endpoints, doctor-detected credentials, or local CLI agent sessions.
 
 The local provider may still require its own API key or local CLI session.
 

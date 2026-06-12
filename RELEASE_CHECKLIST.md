@@ -20,8 +20,9 @@ nolo run "summarize the release risk for this repository"
 - Run focused tests for changed modules when source is mirrored publicly.
 - Check no-login local mode still works without a Nolo account token.
 - Check authenticated commands still fail clearly when no token is configured.
-- Review provider compatibility notes for OpenAI, Anthropic, OpenRouter, Codex
-  CLI, Qoder, and other local-compatible providers touched by the release.
+- Review compatibility notes for built-in HTTP providers, custom
+  OpenAI-compatible endpoints, doctor-detected credentials, and local CLI
+  agents touched by the release.
 
 ## Security Boundary Review
 
@@ -30,7 +31,7 @@ nolo run "summarize the release risk for this repository"
   included in the public release.
 - Confirm any shell, machine connector, provider key, or auth boundary change is
   documented in README, SECURITY, or maintainer workflow docs.
-- Confirm BYOK docs describe where keys live and when remote workflows may use
+- Confirm provider docs describe where keys live and when remote workflows may use
   them.
 
 ## After Publishing

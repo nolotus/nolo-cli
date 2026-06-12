@@ -23,8 +23,9 @@ This roadmap tracks the public OSS work for `nolo-cli`.
 
 ## Phase 3: No-Login Local Mode
 
-- Document BYOK provider configuration for OpenAI, Anthropic, OpenRouter,
-  Codex CLI, Qoder, and other local-compatible providers.
+- Document provider setup for built-in HTTP providers, custom
+  OpenAI-compatible endpoints, doctor-detected local credentials, and local CLI
+  agent sessions.
 - Keep provider credentials local by default and avoid requiring a Nolo account
   for repository-local review, triage, and release checks.
 - Add desktop local-mode docs so users can run the desktop app with their own

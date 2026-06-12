@@ -21,8 +21,8 @@ dialog content, or production machine details in issues.
 - Improve install and troubleshooting docs for Bun, npm, and CLI PATH issues.
 - Add an example prompt for PR review, issue triage, release smoke checks, or
   documentation maintenance.
-- File a provider compatibility report for OpenAI, Anthropic, OpenRouter,
-  Codex CLI, Qoder, or another local-compatible provider.
+- File a provider compatibility report for a built-in HTTP provider, custom
+  OpenAI-compatible endpoint, doctor-detected credential, or local CLI agent.
 - Propose a focused test case for no-login local runs or runtime doctor output.
 
 ## Maintainer Review Expectations

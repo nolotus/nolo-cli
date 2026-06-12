@@ -38,10 +38,10 @@ nolo run "triage recent install failures and propose labels, repro steps, and ne
 Useful triage categories:
 
 - `install`: npm, Bun, PATH, or platform setup issue.
-- `provider`: OpenAI, Anthropic, OpenRouter, Codex CLI, Qoder, or other provider
-  compatibility.
+- `provider`: built-in HTTP provider, custom OpenAI-compatible endpoint,
+  doctor-detected credential, or local CLI agent compatibility.
 - `local-runtime`: current workspace, shell permission, or runtime doctor issue.
-- `desktop-local-mode`: no-login desktop and BYOK provider setup issue.
+- `desktop-local-mode`: no-login desktop and provider setup issue.
 - `docs`: missing examples, unclear setup, or troubleshooting gap.
 
 ## Release Management

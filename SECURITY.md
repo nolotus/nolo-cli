@@ -11,7 +11,7 @@ The public OSS scope includes:
 
 - CLI command parsing and local runtime boundaries.
 - No-login local agent runs.
-- BYOK provider configuration and local credential handling.
+- Provider configuration and local credential handling.
 - Desktop local-mode behavior that can run before sign-in.
 - Machine connector permission boundaries when documented or mirrored publicly.
 
@@ -23,11 +23,11 @@ The public OSS scope includes:
   workflows.
 - Shell access must be explicit, scoped to the chosen workspace, and documented
   in command output or workflow docs.
-- Public BYOK config examples should reference environment variable names,
+- Public provider config examples should reference environment variable names,
   never raw API keys.
 - Production operations, billing systems, signing credentials, private agent
   records, and user-data paths are intentionally outside the public source
   boundary.
 
-See [docs/provider-setup.md](./docs/provider-setup.md) for BYOK setup examples
-that keep provider credentials local.
+See [docs/provider-setup.md](./docs/provider-setup.md) for provider setup
+examples that keep provider credentials local.

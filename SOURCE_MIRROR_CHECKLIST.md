@@ -44,6 +44,7 @@ checklist before it lands.
 | `src/providerConfig.test.ts` | Mirrored | Tests OpenAI env-var config, raw key rejection, and local/remote credential boundary text. |
 | `src/runtimeBoundary.ts` | Mirrored | Public local runtime boundary for CLI and desktop no-login workflows. |
 | `src/runtimeBoundary.test.ts` | Mirrored | Tests no-login workspace scope, shell policy, local persistence, and desktop local-mode summary. |
+| `docs/provider-setup.md` | Mirrored | Public BYOK setup guide for OpenAI, OpenRouter, Codex CLI, Qoder, and local provider boundaries. |
 
 ## Maintainer Evidence
 

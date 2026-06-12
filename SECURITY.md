@@ -28,3 +28,6 @@ The public OSS scope includes:
 - Production operations, billing systems, signing credentials, private agent
   records, and user-data paths are intentionally outside the public source
   boundary.
+
+See [docs/provider-setup.md](./docs/provider-setup.md) for BYOK setup examples
+that keep provider credentials local.

@@ -133,6 +133,7 @@ The public maintenance scope for this project is:
 - Open-source boundary: [OPEN_SOURCE_BOUNDARY.md](./OPEN_SOURCE_BOUNDARY.md)
 - Open-source status: [OPEN_SOURCE_STATUS.md](./OPEN_SOURCE_STATUS.md)
 - Roadmap: [ROADMAP.md](./ROADMAP.md)
+- BYOK provider setup: [docs/provider-setup.md](./docs/provider-setup.md)
 - Release checklist: [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
 - Source mirror checklist: [SOURCE_MIRROR_CHECKLIST.md](./SOURCE_MIRROR_CHECKLIST.md)
 

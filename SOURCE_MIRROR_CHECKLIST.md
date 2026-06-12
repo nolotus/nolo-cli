@@ -45,6 +45,7 @@ checklist before it lands.
 | `src/runtimeBoundary.ts` | Mirrored | Public local runtime boundary for CLI and desktop no-login workflows. |
 | `src/runtimeBoundary.test.ts` | Mirrored | Tests no-login workspace scope, shell policy, local persistence, and desktop local-mode summary. |
 | `docs/provider-setup.md` | Mirrored | Public BYOK setup guide for OpenAI, OpenRouter, Codex CLI, Qoder, and local provider boundaries. |
+| `docs/desktop-local-mode.md` | Mirrored | Public desktop local-mode boundary and first-run direction for no-login BYOK workflows. |
 
 ## Maintainer Evidence
 

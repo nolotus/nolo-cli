@@ -134,6 +134,7 @@ The public maintenance scope for this project is:
 - Open-source status: [OPEN_SOURCE_STATUS.md](./OPEN_SOURCE_STATUS.md)
 - Roadmap: [ROADMAP.md](./ROADMAP.md)
 - BYOK provider setup: [docs/provider-setup.md](./docs/provider-setup.md)
+- Desktop local mode: [docs/desktop-local-mode.md](./docs/desktop-local-mode.md)
 - Release checklist: [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
 - Source mirror checklist: [SOURCE_MIRROR_CHECKLIST.md](./SOURCE_MIRROR_CHECKLIST.md)
 

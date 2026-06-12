@@ -41,6 +41,8 @@ A file or module is suitable for this repository when it:
 - Keep npm publish authority in this public repository.
 - Keep no-login `nolo run "task"` local Codex workflows runnable from the
   public source root.
+- Keep [No-Login Local Mode Quickstart](./docs/no-login-quickstart.md) current
+  with the published package and fresh-install smoke path.
 - Keep BYOK provider configuration docs current for CLI and desktop local mode.
 - Add more public maintainer workflow examples for PR review, issue triage,
   release checks, docs maintenance, and security review.

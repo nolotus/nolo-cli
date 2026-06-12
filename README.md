@@ -33,6 +33,11 @@ nolo --version
 nolo run "review this repository"
 ```
 
+For the no-login path, start with
+[No-Login Local Mode Quickstart](./docs/no-login-quickstart.md). It shows how to
+verify the install, run `nolo doctor`, try a repository-local task, and
+understand what still requires Nolo sign-in.
+
 ## Why This Matters
 
 Open-source maintainers are increasingly using coding agents for issue triage,
@@ -90,7 +95,7 @@ Current public source status:
 
 | Area | Public evidence |
 | --- | --- |
-| No-login local run | `src/localRun.ts`, `src/localRun.test.ts`, passing GitHub Actions |
+| No-login local run | `docs/no-login-quickstart.md`, `src/localRun.ts`, `src/localRun.test.ts`, passing GitHub Actions |
 | BYOK provider boundary | `src/providerConfig.ts`, `src/providerConfig.test.ts`, PR #8 |
 | Local runtime boundary | `src/runtimeBoundary.ts`, `src/runtimeBoundary.test.ts`, PR #8 |
 | Release management | `RELEASE_POLICY.md`, `RELEASE_CHECKLIST.md`, issue #9 |
@@ -130,6 +135,7 @@ The public maintenance scope for this project is:
 
 - npm package: https://www.npmjs.com/package/nolo-cli
 - Nolo: https://nolo.chat
+- No-login quickstart: [docs/no-login-quickstart.md](./docs/no-login-quickstart.md)
 - Maintainer workflows: [MAINTAINER_WORKFLOWS.md](./MAINTAINER_WORKFLOWS.md)
 - Open-source boundary: [OPEN_SOURCE_BOUNDARY.md](./OPEN_SOURCE_BOUNDARY.md)
 - Open-source status: [OPEN_SOURCE_STATUS.md](./OPEN_SOURCE_STATUS.md)

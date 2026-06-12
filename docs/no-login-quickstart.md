@@ -59,7 +59,8 @@ required for repository-local review, triage, docs, release, or security tasks.
 
 If your local provider is not configured yet, `nolo doctor` and the command
 output should point you toward the missing provider or CLI setup. See
-[BYOK provider setup](./provider-setup.md) for provider examples.
+[BYOK provider setup](./provider-setup.md) for OpenAI-compatible, OpenRouter,
+Anthropic, Codex CLI, and Qoder CLI examples.
 
 ## What Works Without Nolo Sign-In
 

@@ -7,7 +7,7 @@ source modules that matter to OSS maintainers.
 ## Current State
 
 - Public npm package: `nolo-cli`
-- Current published version: `0.1.43`
+- Current prepared version: `0.1.44`
 - License: MIT
 - Public repository: `nolotus/nolo-cli`
 - Active maintainer: Bin Zhang / `nolotus`

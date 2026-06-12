@@ -100,7 +100,7 @@ Current public source status:
 
 This repository is the public OSS entry point for the CLI project. The package
 is actively maintained and has frequent releases on npm. As of June 2026,
-`nolo-cli` is published at version `0.1.41`; npm reports about 3.5k downloads
+`nolo-cli` is prepared at version `0.1.44`; npm reports about 3.5k downloads
 for the last-month window ending 2026-06-02.
 
 The current implementation is developed in a broader private monorepo because

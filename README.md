@@ -4,6 +4,7 @@ Local-first agent automation for open-source maintainers.
 
 [![npm version](https://img.shields.io/npm/v/nolo-cli.svg)](https://www.npmjs.com/package/nolo-cli)
 [![npm downloads](https://img.shields.io/npm/dm/nolo-cli.svg)](https://www.npmjs.com/package/nolo-cli)
+[![test](https://github.com/nolotus/nolo-cli/actions/workflows/test.yml/badge.svg)](https://github.com/nolotus/nolo-cli/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
 `nolo-cli` is a Bun-powered command-line and TUI client for running local and
@@ -84,6 +85,16 @@ Run the public tests with:
 ```bash
 bun test src
 ```
+
+Current public source status:
+
+| Area | Public evidence |
+| --- | --- |
+| No-login local run | `src/localRun.ts`, `src/localRun.test.ts`, passing GitHub Actions |
+| BYOK provider boundary | `src/providerConfig.ts`, `src/providerConfig.test.ts`, PR #8 |
+| Local runtime boundary | `src/runtimeBoundary.ts`, `src/runtimeBoundary.test.ts`, PR #8 |
+| Release management | `RELEASE_CHECKLIST.md`, issue #9 |
+| Source mirror safety | `OPEN_SOURCE_BOUNDARY.md`, `SOURCE_MIRROR_CHECKLIST.md`, issues #1 and #5 |
 
 ## Project Status
 

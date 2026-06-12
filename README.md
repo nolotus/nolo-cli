@@ -37,6 +37,7 @@ For the no-login path, start with
 [No-Login Local Mode Quickstart](./docs/no-login-quickstart.md). It shows how to
 verify the install, run `nolo doctor`, try a repository-local task, and
 understand what still requires Nolo sign-in.
+For provider examples, see [BYOK Provider Setup](./docs/provider-setup.md).
 
 ## Why This Matters
 
@@ -96,7 +97,7 @@ Current public source status:
 | Area | Public evidence |
 | --- | --- |
 | No-login local run | `docs/no-login-quickstart.md`, `src/localRun.ts`, `src/localRun.test.ts`, passing GitHub Actions |
-| BYOK provider boundary | `src/providerConfig.ts`, `src/providerConfig.test.ts`, PR #8 |
+| BYOK provider boundary | `docs/provider-setup.md`, `src/providerConfig.ts`, `src/providerConfig.test.ts`, PR #8 |
 | Local runtime boundary | `src/runtimeBoundary.ts`, `src/runtimeBoundary.test.ts`, PR #8 |
 | Release management | `RELEASE_POLICY.md`, `RELEASE_CHECKLIST.md`, issue #9 |
 | Source mirror safety | `OPEN_SOURCE_BOUNDARY.md`, `SOURCE_MIRROR_CHECKLIST.md`, issues #1 and #5 |

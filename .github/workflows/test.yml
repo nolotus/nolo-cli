@@ -14,4 +14,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - run: bun test src
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - name: Check package metadata
+        run: |
+          node - <<'NODE'
+          const pkg = require("./package.json");
+          if (pkg.name !== "nolo-cli") throw new Error(`Unexpected package name: ${pkg.name}`);
+          if (pkg.repository?.url !== "git+https://github.com/nolotus/nolo-cli.git") {
+            throw new Error("package.json repository must point to nolotus/nolo-cli");
+          }
+          if (pkg.bugs?.url !== "https://github.com/nolotus/nolo-cli/issues") {
+            throw new Error("package.json bugs URL must point to public issues");
+          }
+          if (pkg.homepage !== "https://github.com/nolotus/nolo-cli#readme") {
+            throw new Error("package.json homepage must point to the public README");
+          }
+          NODE
+      - run: npm pack --dry-run

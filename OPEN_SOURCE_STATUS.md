@@ -7,22 +7,19 @@ source modules that matter to OSS maintainers.
 ## Current State
 
 - Public npm package: `nolo-cli`
-- Current published version: `0.1.41`
+- Current published version: `0.1.43`
 - License: MIT
 - Public repository: `nolotus/nolo-cli`
 - Active maintainer: Bin Zhang / `nolotus`
 - Primary user signal: npm reports about 3.5k downloads/month for the window
   ending 2026-06-02
 
-## Why Source Mirroring Is Staged
+## Source Authority
 
-The CLI started inside the broader Nolo monorepo. Some implementation files
-touch private product infrastructure, production operations, internal agent
-records, billing paths, signing configuration, and user-data paths. Those
-pieces should not be mirrored blindly.
-
-The staged process is meant to keep the useful OSS surface public while keeping
-private operational details private.
+This repository now carries the publish-safe package source used for public
+review, CI, npm packing, and future npm publishing. The broader Nolo monorepo
+can still stage package updates, but public releases should be reviewed and
+published from this repository after the public CI and npm workflow pass.
 
 ## Public Source Criteria
 
@@ -39,13 +36,12 @@ A file or module is suitable for this repository when it:
 
 ## Near-Term Migration Targets
 
-- CLI command registry and help output.
-- TUI session shell.
-- Runtime doctor and smoke-check commands.
-- Local-first agent runtime boundary types.
-- No-login `nolo run "task"` local Codex workflow.
-- BYOK provider configuration docs for CLI and desktop local mode.
-- Example Codex maintainer workflows.
+- Move npm publish authority fully to this public repository.
+- Keep no-login `nolo run "task"` local Codex workflows runnable from the
+  public source root.
+- Keep BYOK provider configuration docs current for CLI and desktop local mode.
+- Add more public maintainer workflow examples for PR review, issue triage,
+  release checks, docs maintenance, and security review.
 
 ## Public Maintenance Signals
 

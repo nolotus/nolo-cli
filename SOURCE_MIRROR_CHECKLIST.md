@@ -38,14 +38,17 @@ checklist before it lands.
 
 | Module | Status | Notes |
 | --- | --- | --- |
-| `src/localRun.ts` | Mirrored | Public no-login local run parser and usage text for `nolo run` / `nolo chat`. |
-| `src/localRun.test.ts` | Mirrored | Tests local Codex shorthand behavior, explicit agent behavior, and empty-input usage. |
-| `src/providerConfig.ts` | Mirrored | Public BYOK provider config shape that stores env var references instead of raw keys. |
-| `src/providerConfig.test.ts` | Mirrored | Tests OpenAI env-var config, raw key rejection, and local/remote credential boundary text. |
-| `src/runtimeBoundary.ts` | Mirrored | Public local runtime boundary for CLI and desktop no-login workflows. |
-| `src/runtimeBoundary.test.ts` | Mirrored | Tests no-login workspace scope, shell policy, local persistence, and desktop local-mode summary. |
-| `docs/provider-setup.md` | Mirrored | Public BYOK setup guide for OpenAI, OpenRouter, Codex CLI, Qoder, and local provider boundaries. |
-| `docs/desktop-local-mode.md` | Mirrored | Public desktop local-mode boundary and first-run direction for no-login BYOK workflows. |
+| `index.ts` | Canonical | Public CLI entrypoint for installed and source-root runs. |
+| `commandRegistry.ts` | Canonical | Public command routing surface. |
+| `client/` | Canonical | Public CLI client, local runtime adapter, provider resolver, profile config, and focused tests. |
+| `agent-runtime/` | Canonical | Local-first agent loop, runtime policy, local workspace tools, and Nolo workspace tool boundary. |
+| `tui/` | Canonical | Public TUI session and workspace readline support. |
+| `ai/agent/cliExecutor.ts` | Canonical | Local CLI provider execution path for Codex, Qoder, and related local agents. |
+| `runtimeDoctorCommands.ts` | Canonical | Runtime diagnostics exposed to users and maintainers. |
+| `docs/provider-setup.md` | Public docs | BYOK setup guide for OpenAI, OpenRouter, Codex CLI, Qoder, and local provider boundaries. |
+| `docs/desktop-local-mode.md` | Public docs | Desktop local-mode boundary and first-run direction for no-login BYOK workflows. |
+| `.github/workflows/test.yml` | Public CI | Runs install, tests, package metadata checks, and pack dry-run. |
+| `.github/workflows/npm-publish.yml` | Public release | Manual npm publish workflow guarded by expected version, tests, pack dry-run, and duplicate-version check. |
 
 ## Maintainer Evidence
 

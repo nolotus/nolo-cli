@@ -68,6 +68,8 @@ nolo run "review local credential handling and shell access boundaries in this c
 Security-sensitive review areas:
 
 - Provider keys should remain local unless explicitly configured otherwise.
+- Public provider config should store environment variable references, not raw
+  API keys.
 - `nolo run` style workflows should not require Nolo account tokens.
 - Shell access should be scoped to the selected workspace.
 - Machine connector workflows should document which server, token, and machine

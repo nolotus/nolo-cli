@@ -64,10 +64,17 @@ being opened versus intentionally kept private.
 
 ## Public Source
 
-The first reusable source module is now mirrored in this repository:
+The first reusable source modules are now mirrored in this repository:
 
 - [`src/localRun.ts`](./src/localRun.ts) documents and tests the no-login local
   run contract for `nolo run` and `nolo chat`.
+- [`src/providerConfig.ts`](./src/providerConfig.ts) documents the BYOK
+  provider credential boundary: public config stores environment variable
+  references, not raw API keys.
+- [`src/runtimeBoundary.ts`](./src/runtimeBoundary.ts) documents the local
+  runtime boundary for no-login CLI and desktop flows: local provider
+  credentials, workspace-scoped shell policy, local persistence, and no remote
+  sync by default.
 - [`src/localRun.test.ts`](./src/localRun.test.ts) verifies that shorthand runs
   use local Codex without requiring Nolo auth, while explicit agent runs remain
   distinct.

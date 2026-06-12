@@ -100,12 +100,13 @@ Current public source status:
 
 This repository is the public OSS entry point for the CLI project. The package
 is actively maintained and has frequent releases on npm. As of June 2026,
-`nolo-cli` is prepared at version `0.1.44`; npm reports about 3.5k downloads
-for the last-month window ending 2026-06-02.
+`nolo-cli` is published at version `0.1.44`; npm reports about 3.5k downloads
+for the last-month window ending 2026-06-02. Version `0.1.44` was published
+from the public `nolotus/nolo-cli` GitHub Actions npm workflow.
 
 The current implementation is developed in a broader private monorepo because
 it shares product infrastructure with Nolo. Public source mirroring is being
-prepared in a staged way so that reusable CLI, local runtime, provider adapter,
+managed in a staged way so that reusable CLI, local runtime, provider adapter,
 desktop local-mode, docs, tests, and maintainer workflow code can be opened
 without exposing private product records, credentials, production operations,
 billing systems, or user-data paths.

@@ -7,7 +7,7 @@ source modules that matter to OSS maintainers.
 ## Current State
 
 - Public npm package: `nolo-cli`
-- Current prepared version: `0.1.44`
+- Current published version: `0.1.44`
 - License: MIT
 - Public repository: `nolotus/nolo-cli`
 - Active maintainer: Bin Zhang / `nolotus`
@@ -17,8 +17,9 @@ source modules that matter to OSS maintainers.
 ## Source Authority
 
 This repository now carries the publish-safe package source used for public
-review, CI, npm packing, and future npm publishing. The broader Nolo monorepo
-can still stage package updates, but public releases should be reviewed and
+review, CI, npm packing, and npm publishing. Version `0.1.44` was published
+from the public GitHub Actions npm workflow. The broader Nolo monorepo can
+still stage package updates, but public releases should be reviewed and
 published from this repository after the public CI and npm workflow pass.
 
 ## Public Source Criteria
@@ -36,7 +37,7 @@ A file or module is suitable for this repository when it:
 
 ## Near-Term Migration Targets
 
-- Move npm publish authority fully to this public repository.
+- Keep npm publish authority in this public repository.
 - Keep no-login `nolo run "task"` local Codex workflows runnable from the
   public source root.
 - Keep BYOK provider configuration docs current for CLI and desktop local mode.

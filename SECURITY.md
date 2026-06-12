@@ -23,6 +23,8 @@ The public OSS scope includes:
   workflows.
 - Shell access must be explicit, scoped to the chosen workspace, and documented
   in command output or workflow docs.
+- Public BYOK config examples should reference environment variable names,
+  never raw API keys.
 - Production operations, billing systems, signing credentials, private agent
   records, and user-data paths are intentionally outside the public source
   boundary.

@@ -40,6 +40,10 @@ checklist before it lands.
 | --- | --- | --- |
 | `src/localRun.ts` | Mirrored | Public no-login local run parser and usage text for `nolo run` / `nolo chat`. |
 | `src/localRun.test.ts` | Mirrored | Tests local Codex shorthand behavior, explicit agent behavior, and empty-input usage. |
+| `src/providerConfig.ts` | Mirrored | Public BYOK provider config shape that stores env var references instead of raw keys. |
+| `src/providerConfig.test.ts` | Mirrored | Tests OpenAI env-var config, raw key rejection, and local/remote credential boundary text. |
+| `src/runtimeBoundary.ts` | Mirrored | Public local runtime boundary for CLI and desktop no-login workflows. |
+| `src/runtimeBoundary.test.ts` | Mirrored | Tests no-login workspace scope, shell policy, local persistence, and desktop local-mode summary. |
 
 ## Maintainer Evidence
 

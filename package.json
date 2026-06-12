@@ -1,0 +1,14 @@
+{
+  "name": "nolo-cli-public",
+  "private": true,
+  "description": "Public OSS home and source-mirroring staging area for nolo-cli",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nolotus/nolo-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nolotus/nolo-cli/issues"
+  },
+  "homepage": "https://github.com/nolotus/nolo-cli#readme"
+}

@@ -1,0 +1,767 @@
+// 文件: database/keys.ts
+
+/* ===========================================================================
+ *  keys.ts —— 统一的 Key 辅助函数集合
+ *  1) 通用存储键（row / idx / dir / meta / view / 
+ *  2) 现有业务键（user / tx / token / dialog / page / cybot …）
+ *  3) 收藏（favorite）相关键（区分 id / key）
+ * =========================================================================*/
+
+import { ulid } from "./utils/ulid";
+import { curry } from "rambda";
+import { DataType } from "../create/types"; // 枚举：DIALOG / PAGE / CYBOT …
+
+/* --------------------------------------------------------------------------
+ * 基础工具
+ * ------------------------------------------------------------------------*/
+
+export const SEPARATOR = "-";
+
+export const createKey = (...parts: (string | number)[]) =>
+  parts.join(SEPARATOR);
+
+export const splitKey = (key: string) => key.split(SEPARATOR);
+
+/**
+ * 判断一个 dbKey 是否是「表定义（TableMeta）」的 key
+ * 形如：meta-{tenantId}-{tableId}
+ */
+export const isTableMetaKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 3 && parts[0] === "meta";
+};
+
+/**
+ * 判断一个 dbKey 是否是 Page 的 key
+ * 形如：PAGE-{userId}-{pageId}
+ */
+export const isPageKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 3 && parts[0] === DataType.DOC;
+};
+
+/**
+ * 判断一个 dbKey 是否是 Dialog 的 key
+ * 形如：DIALOG-{userId}-{dialogId}
+ */
+export const isDialogKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 3 && parts[0] === DataType.DIALOG;
+};
+
+export const isTaskKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 3 && parts[0] === DataType.TASK;
+};
+
+/**
+ * 判断一个 dbKey 是否是 File/Image 的 key
+ * 形如：file-{userId}-{fileId} 或 image-{userId}-{imageId}
+ */
+export const isFileKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return (
+    parts.length >= 3 &&
+    (parts[0] === DataType.FILE || parts[0] === DataType.IMAGE)
+  );
+};
+
+/**
+ * 判断一个 dbKey 是否是 Agent/Cybot 的 key
+ * 形如：agent-{userId}-{agentId} 或 cybot-{userId}-{agentId}
+ */
+export const isAgentKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return (
+    parts.length >= 3 &&
+    (parts[0] === DataType.AGENT || parts[0] === DataType.CYBOT)
+  );
+};
+
+/**
+ * 判断一个 dbKey 是否是 App 的 key
+ * 形如：app-{userId}-{appId}
+ */
+export const isAppKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 2 && parts[0] === DataType.APP;
+};
+
+/**
+ * 判断一个 dbKey 是否是 Email 的 key
+ * 形如：email-{ownerId}-{emailId}
+ */
+export const isEmailKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 3 && parts[0] === DataType.EMAIL;
+};
+
+
+/* --------------------------------------------------------------------------
+ * 1. 通用存储键 —— 行 / 索引 / 目录 / 元数据 / 视图 / 触发器
+ * ------------------------------------------------------------------------*/
+
+/**
+ * 行主键（表行）
+ *
+ * 形如：
+ *   row-{tenantId}-{tableId}-{rowId}
+ *
+ * 设计原则：
+ * - 统一以 "row" 前缀标识实体类型，便于全库扫描时按前缀过滤
+ * - 以 tenantId 在前、tableId 在后，便于：
+ *   - 按租户导出/删除：row-{tenantId}-
+ *   - 按 (tenantId, tableId) 扫描整张表：row-{tenantId}-{tableId}-
+ */
+export const rowKey = {
+  /** 生成新行主键 + rowId */
+  create: (tenantId: string, tableId: string) => {
+    const rowId = ulid();
+    return { dbKey: createKey("row", tenantId, tableId, rowId), rowId };
+  },
+
+  /** 单行键 */
+  single: (tenantId: string, tableId: string, rowId: string) =>
+    createKey("row", tenantId, tableId, rowId),
+
+  /** 整张表的范围（gte / lte）—— 供批量操作使用 */
+  range: (tenantId: string, tableId: string) => {
+    const start = createKey("row", tenantId, tableId, "");
+    return {
+      gte: start,
+      lte: start + "\uffff",
+    };
+  },
+
+  /** 旧接口（start / end）—— 与早期代码兼容 */
+  rangeOfTable: (tenantId: string, tableId: string) => {
+    const start = createKey("row", tenantId, tableId, "");
+    return {
+      start,
+      end: start + "\uffff",
+    };
+  },
+
+  /** 某个租户的所有行范围 */
+  rangeOfTenant: (tenantId: string) => {
+    const start = createKey("row", tenantId, "");
+    return {
+      start,
+      end: start + "\uffff",
+    };
+  },
+};
+
+/**
+ * 二级索引键（表行索引用）
+ *
+ * 形如：
+ *   idx-{tenantId}-{tableId}-{indexName}-{indexKey}-{rowId}
+ *
+ * 说明：
+ * - 与 rowKey 一致，tenantId 在前、tableId 在后
+ * - 某表所有索引：
+ *     prefix: idx-{tenantId}-{tableId}-
+ * - 某索引名前缀：
+ *     idx-{tenantId}-{tableId}-{indexName}-{indexKeyPrefix}
+ */
+export const idxKey = {
+  /** 写入单条索引 */
+  put: (
+    tenantId: string,
+    tableId: string,
+    indexName: string,
+    indexKey: string,
+    rowId: string
+  ) => createKey("idx", tenantId, tableId, indexName, indexKey, rowId),
+
+  /** 某一索引名前缀的范围（start / end）—— 供前缀扫描 */
+  range: (
+    tenantId: string,
+    tableId: string,
+    indexName: string,
+    indexKeyPrefix = ""
+  ) => {
+    const start = createKey(
+      "idx",
+      tenantId,
+      tableId,
+      indexName,
+      indexKeyPrefix
+    );
+    return { start, end: start + "\uffff" };
+  },
+
+  /** 整张表所有索引的范围（gte / lte）—— 供整表删除 */
+  prefix: (tenantId: string, tableId: string) => {
+    const start = createKey("idx", tenantId, tableId, "");
+    return {
+      gte: start,
+      lte: start + "\uffff",
+    };
+  },
+
+  /** 某个租户的所有索引范围 */
+  rangeOfTenant: (tenantId: string) => {
+    const start = createKey("idx", tenantId, "");
+    return {
+      start,
+      end: start + "\uffff",
+    };
+  },
+};
+
+/**
+ * 元数据键（表定义 TableMeta）
+ *
+ * 形如：
+ *   meta-{tenantId}-{tableId}
+ */
+export const metaKey = Object.assign(
+  (tenantId: string, tableId: string) => createKey("meta", tenantId, tableId),
+  {
+    /** 某个租户的所有表定义范围 */
+    rangeOfTenant: (tenantId: string) => {
+      const start = createKey("meta", tenantId, "");
+      return {
+        start,
+        end: start + "\uffff",
+      };
+    },
+  }
+);
+
+/**
+ * 视图键（TableView）
+ *
+ * 形如：
+ *   view-{tenantId}-{tableId}-{viewId}
+ *
+ * 用途：
+ * - 为某张表定义多个视图（grid / kanban / calendar 等）
+ * - 视图本身作为独立实体存储，便于按表/租户管理
+ */
+export const viewKey = {
+  /** 创建一个新视图 key + viewId（由调用方生成或传入） */
+  create: (tenantId: string, tableId: string, viewId?: string) => {
+    const id = viewId || ulid();
+    const dbKey = createKey("view", tenantId, tableId, id);
+    return { dbKey, id };
+  },
+
+  /** 某一视图的单键 */
+  single: (tenantId: string, tableId: string, viewId: string) =>
+    createKey("view", tenantId, tableId, viewId),
+
+  /** 某张表下面的所有视图范围 */
+  rangeOfTable: (tenantId: string, tableId: string) => {
+    const start = createKey("view", tenantId, tableId, "");
+    return {
+      start,
+      end: start + "\uffff",
+    };
+  },
+
+  /** 某个租户的所有视图范围 */
+  rangeOfTenant: (tenantId: string) => {
+    const start = createKey("view", tenantId, "");
+    return {
+      start,
+      end: start + "\uffff",
+    };
+  },
+};
+
+
+
+/* --------------------------------------------------------------------------
+ * 2. 业务侧原有键（保持完全兼容）
+ * ------------------------------------------------------------------------*/
+
+export const DB_PREFIX = {
+  USER: "user:",
+} as const;
+
+/* ---- User ---- */
+// TODO(keys): 目前 user 相关 key 没有统一的前缀（如 "user-settings-"），
+//             将来如果需要按实体类型/租户范围扫描，可以考虑加前缀做一次轻量重构。
+export const createUserKey = {
+  settings: (userId: string) => createKey(userId, "settings"),
+  profile: (userId: string) => createKey(userId, "profile"),
+};
+
+/**
+ * 用户级“寄存器 / 指针”key。
+ *
+ * 用于存放跨服务器 sticky 的小型决策状态（如默认 space 指针），
+ * 避免把这类高价值字段长期埋在整份 settings blob 里做粗粒度 LWW。
+ */
+export const createUserPreferenceKey = {
+  single: (userId: string, preferenceName: string) =>
+    createKey("user", "pref", userId, preferenceName),
+  authorityHome: (userId: string) =>
+    createKey("user", "pref", userId, "authority_home"),
+  defaultSpace: (userId: string) =>
+    createKey("user", "pref", userId, "space_default"),
+  defaultAgent: (userId: string) =>
+    createKey("user", "pref", userId, "agent_default"),
+  rangeOfUser: (userId: string) => ({
+    start: createKey("user", "pref", userId, ""),
+    end: createKey("user", "pref", userId, "\uffff"),
+  }),
+};
+
+/* ---- Memory ---- */
+export const createMemoryKey = (
+  ownerType: "user" | "space" | "system",
+  ownerId: string,
+  memoryId: string
+) => createKey("mem", ownerType, ownerId, memoryId);
+
+export const createMemoryOwnerIndexKey = (
+  ownerType: "user" | "space" | "system",
+  ownerId: string,
+  createdAt: string,
+  memoryId: string
+) => createKey("memidx", "owner", ownerType, ownerId, createdAt, memoryId);
+
+export const createMemorySubjectKindIndexKey = (
+  subjectType: "user" | "agent" | "space" | "project" | "system",
+  subjectId: string,
+  kind: "episodic" | "semantic" | "procedural",
+  createdAt: string,
+  memoryId: string
+) =>
+  createKey(
+    "memidx",
+    "subject",
+    subjectType,
+    subjectId,
+    kind,
+    createdAt,
+    memoryId
+  );
+
+export const isMemoryKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 4 && parts[0] === "mem";
+};
+
+export const memoryOwnerRange = (
+  ownerType: "user" | "space" | "system",
+  ownerId: string
+) => ({
+  start: createKey("memidx", "owner", ownerType, ownerId, ""),
+  end: createKey("memidx", "owner", ownerType, ownerId, "\uffff"),
+});
+
+export const memorySubjectKindRange = (
+  subjectType: "user" | "agent" | "space" | "project" | "system",
+  subjectId: string,
+  kind: "episodic" | "semantic" | "procedural"
+) => ({
+  start: createKey("memidx", "subject", subjectType, subjectId, kind, ""),
+  end: createKey("memidx", "subject", subjectType, subjectId, kind, "\uffff"),
+});
+
+/* ---- Transaction ---- */
+// TODO(keys): tx 相关 key 目前前缀为 "tx"，结构为 tx-{userId}-{txId}，
+//             与表 row/idx/meta 的租户在前原则基本一致，可以后续统一文档说明。
+export const createTransactionKey = {
+  record: curry((userId: string, txId: string) =>
+    createKey("tx", userId, txId)
+  ),
+  index: (txId: string) => createKey("tx", "index", txId),
+  range: (userId: string) => ({
+    start: createKey("tx", userId, ""),
+    end: createKey("tx", userId, "\uffff"),
+  }),
+};
+
+/* ---- Token ---- */
+// TODO(keys): token 统计相关 key 已经带有 "token" 前缀，整体结构还算统一，
+//             将来如果需要按 tenant 维度聚合，再考虑是否引入 tenantId 作为前缀第二位。
+export const createTokenKey = {
+  record: curry((userId: string, timestamp: number) =>
+    createKey("token", userId, timestamp.toString())
+  ),
+  range: (userId: string, timestamp: number) => ({
+    start: createKey("token", userId, timestamp.toString()),
+    end: createKey("token", userId, (timestamp + 86_400_000).toString()),
+  }),
+  /** 某个用户的所有 Token 记录范围 */
+  rangeOfUser: (userId: string) => ({
+    start: createKey("token", userId, ""),
+    end: createKey("token", userId, "\uffff"),
+  }),
+};
+
+/* ---- Token Stats ---- */
+export const createTokenStatsKey = Object.assign(
+  (userId: string, dateKey: string) =>
+    createKey("token", "stats", "day", "user", userId, dateKey),
+  {
+    /** 某个用户的所有统计记录范围 */
+    rangeOfUser: (userId: string) => ({
+      start: createKey("token", "stats", "day", "user", userId, ""),
+      end: createKey("token", "stats", "day", "user", userId, "\uffff"),
+    }),
+  }
+);
+
+/* ---- Dialog ---- */
+// TODO(keys): Dialog 相关 key 使用 DataType.DIALOG 前缀，结构为
+//             DIALOG-{userId}-{dialogId} / DIALOG-{dialogId}-msg-{messageId}，
+//             已经与其它实体类型的前缀策略对齐，可以保持。
+export const createDialogKey = Object.assign(
+  (userId: string) => createKey(DataType.DIALOG, userId, ulid()),
+  {
+    rangeOfUser: (userId: string) => ({
+      start: createKey(DataType.DIALOG, userId, ""),
+      end: createKey(DataType.DIALOG, userId, "\uffff"),
+    }),
+  }
+);
+
+export const createTaskKey = Object.assign(
+  (userId: string) => createKey(DataType.TASK, userId, ulid()),
+  {
+    rangeOfUser: (userId: string) => ({
+      start: createKey(DataType.TASK, userId, ""),
+      end: createKey(DataType.TASK, userId, "\uffff"),
+    }),
+  }
+);
+
+/* ---- Notification ---- */
+export const createNotificationKey = {
+  single: (userId: string, notificationId: string) =>
+    createKey(DataType.NOTIFICATION, userId, notificationId),
+  rangeOfUser: (userId: string) => ({
+    start: createKey(DataType.NOTIFICATION, userId, ""),
+    end: createKey(DataType.NOTIFICATION, userId, "\uffff"),
+  }),
+};
+
+export const emailKey = {
+  create: (ownerId: string) => {
+    const emailId = ulid();
+    return { dbKey: createKey(DataType.EMAIL, ownerId, emailId), emailId };
+  },
+  single: (ownerId: string, emailId: string) =>
+    createKey(DataType.EMAIL, ownerId, emailId),
+  rangeOfOwner: (ownerId: string) => ({
+    start: createKey(DataType.EMAIL, ownerId, ""),
+    end: createKey(DataType.EMAIL, ownerId, "\uffff"),
+  }),
+};
+
+export const createDialogMessageKeyAndId = (
+  dialogId: string,
+  ulidFn: () => string = ulid
+): { key: string; messageId: string } => {
+  const messageId = ulidFn();
+  const key = createKey(DataType.DIALOG, dialogId, "msg", messageId);
+  return { key, messageId };
+};
+
+/**
+ * 某个对话下所有消息的 key 范围
+ * 形如：DIALOG-{dialogId}-msg-{messageId}
+ */
+export const dialogMessageRange = (dialogId: string) => ({
+  start: createKey(DataType.DIALOG, dialogId, "msg", ""),
+  end: createKey(DataType.DIALOG, dialogId, "msg", "\uffff"),
+});
+
+/* ---- Page ---- */
+// TODO(keys): Page key 目前为 PAGE-{userId}-{pageId}，与 Dialog 一致，
+//             后续如果有“空间 Space 维度”的独立前缀，可以评估是否要引入 spaceId。
+export const createPageKey = {
+  create: (userId: string) => {
+    const id = ulid();
+    return { dbKey: createKey(DataType.DOC, userId, id), id };
+  },
+  rangeOfUser: (userId: string) => ({
+    start: createKey(DataType.DOC, userId, ""),
+    end: createKey(DataType.DOC, userId, "\uffff"),
+  }),
+};
+
+/* ---- Cybot / Agent ---- */
+// TODO(keys): Agent/Cybot 已采用 DataType.CYBOT 前缀 + userId/cybotId，
+//             后续如果引入多租户组织层，可以考虑把 orgId 作为第二位前缀。
+export const createCybotKey = {
+  private: curry((userId: string, cybotId: string) =>
+    createKey(DataType.CYBOT, userId, cybotId)
+  ),
+  public: (cybotId: string) => createKey(DataType.CYBOT, "pub", cybotId),
+  rangeOfUser: (userId: string) => ({
+    start: createKey(DataType.CYBOT, userId, ""),
+    end: createKey(DataType.CYBOT, userId, "\uffff"),
+  }),
+};
+
+/**
+ * 推荐使用：新的 Agent Key 系列
+ * 使用 DataType.AGENT ("agent") 前缀
+ */
+export const createAgentKey = {
+  private: curry((userId: string, agentId: string) =>
+    createKey(DataType.AGENT, userId, agentId)
+  ),
+  public: (agentId: string) => createKey(DataType.AGENT, "pub", agentId),
+  rangeOfUser: (userId: string) => ({
+    start: createKey(DataType.AGENT, userId, ""),
+    end: createKey(DataType.AGENT, userId, "\uffff"),
+  }),
+};
+
+/**
+ * 公开 Agent 列表范围（现有）
+ * CYBOT-pub-{id}
+ */
+export const pubAgentKeys = {
+  single: (cybotId: string) => createKey(DataType.CYBOT, "pub", cybotId),
+  list: () => ({
+    start: createKey(DataType.CYBOT, "pub", ""),
+    end: createKey(DataType.CYBOT, "pub", "\uffff"),
+  }),
+  /** 同时获取 cybot-pub 和 agent-pub 两个前缀的范围 */
+  allPublicRanges: () => [
+    {
+      start: createKey(DataType.CYBOT, "pub", ""),
+      end: createKey(DataType.CYBOT, "pub", "\uffff"),
+    },
+    {
+      start: createKey(DataType.AGENT, "pub", ""),
+      end: createKey(DataType.AGENT, "pub", "\uffff"),
+    },
+  ],
+};
+
+/* ---- Share (re-exported from share/keys) ---- */
+export { shareKey } from "../share/keys";
+
+/* --------------------------------------------------------------------------
+ * 3. 收藏（Favorite）相关键 —— 显式区分 id / key
+ * ------------------------------------------------------------------------*/
+
+const FAV_PREFIX = "fav";
+
+// 类型区分：AgentId 是“逻辑 ID”（比如 cybotId），AgentKey 是“存储键 / dbKey”
+export type AgentId = string;
+export type AgentKey = string;
+// TODO(keys): 将来如果 Page/File 也有单独逻辑 ID，可以在这里增加 PageId/FileId 类型。
+
+/**
+ * 收藏关系：
+ *
+ * 当前实际使用的是「按 agentKey 存」的版本（byKey）：
+ *   - Agent：fav-agent-key-{userId}-{agentKey}
+ *   - Page ：fav-page-key-{userId}-{pageKey}
+ *
+ * 预留了一套「按逻辑 ID 存」的前缀（byId），将来如果有更抽象的逻辑 ID，可以切换到该版本。
+ */
+export const createFavoriteKey = {
+  /* ---------- Agent 收藏（按 agentKey 存，当前使用） ---------- */
+
+  /**
+   * 某个用户收藏了某个 Agent 实例（用完整的 agentKey/dbKey）
+   * key: fav-agent-key-{userId}-{agentKey}
+   */
+  agentByKey: (userId: string, agentKey: AgentKey) =>
+    createKey(FAV_PREFIX, "agent", "key", userId, agentKey),
+
+  /**
+   * 查询某用户收藏的所有 Agent（基于 agentKey 版本）
+   * 范围: [fav-agent-key-{userId}-, fav-agent-key-{userId}-\uffff]
+   */
+  agentKeyRangeOfUser: (userId: string) => ({
+    start: createKey(FAV_PREFIX, "agent", "key", userId, ""),
+    end: createKey(FAV_PREFIX, "agent", "key", userId, "\uffff"),
+  }),
+
+  userRangeOfAgentKey: (agentKey: AgentKey) => ({
+    start: createKey(FAV_PREFIX, "agent", "key", "by-agent", agentKey, ""),
+    end: createKey(FAV_PREFIX, "agent", "key", "by-agent", agentKey, "\uffff"),
+  }),
+  agentByKeyReverse: (agentKey: AgentKey, userId: string) =>
+    createKey(FAV_PREFIX, "agent", "key", "by-agent", agentKey, userId),
+
+  /* ---------- Agent 收藏（按 agentId 存，预留，将来可用） ---------- */
+
+  /**
+   * 某个用户收藏了某个逻辑 AgentId（当前未使用，预留）
+   * key: fav-agent-id-{userId}-{agentId}
+   */
+  agentById: (userId: string, agentId: AgentId) =>
+    createKey(FAV_PREFIX, "agent", "id", userId, agentId),
+
+  /** 查询某用户收藏的所有 AgentId（预留） */
+  agentIdRangeOfUser: (userId: string) => ({
+    start: createKey(FAV_PREFIX, "agent", "id", userId, ""),
+    end: createKey(FAV_PREFIX, "agent", "id", userId, "\uffff"),
+  }),
+
+  userRangeOfAgentId: (agentId: AgentId) => ({
+    start: createKey(FAV_PREFIX, "agent", "id", "by-agent", agentId, ""),
+    end: createKey(FAV_PREFIX, "agent", "id", "by-agent", agentId, "\uffff"),
+  }),
+  agentByIdReverse: (agentId: AgentId, userId: string) =>
+    createKey(FAV_PREFIX, "agent", "id", "by-agent", agentId, userId),
+
+  /* ---------- Page 收藏（同样区分 key / id，当前可以只用 byKey） ---------- */
+
+  // Page byKey: fav-page-key-{userId}-{pageKey}
+  pageByKey: (userId: string, pageKey: string) =>
+    createKey(FAV_PREFIX, "page", "key", userId, pageKey),
+
+  pageKeyRangeOfUser: (userId: string) => ({
+    start: createKey(FAV_PREFIX, "page", "key", userId, ""),
+    end: createKey(FAV_PREFIX, "page", "key", userId, "\uffff"),
+  }),
+
+  userRangeOfPageKey: (pageKey: string) => ({
+    start: createKey(FAV_PREFIX, "page", "key", "by-page", pageKey, ""),
+    end: createKey(FAV_PREFIX, "page", "key", "by-page", pageKey, "\uffff"),
+  }),
+  pageByKeyReverse: (pageKey: string, userId: string) =>
+    createKey(FAV_PREFIX, "page", "key", "by-page", pageKey, userId),
+
+  // Page byId（预留）
+  pageById: (userId: string, pageId: string) =>
+    createKey(FAV_PREFIX, "page", "id", userId, pageId),
+
+  pageIdRangeOfUser: (userId: string) => ({
+    start: createKey(FAV_PREFIX, "page", "id", userId, ""),
+    end: createKey(FAV_PREFIX, "page", "id", userId, "\uffff"),
+  }),
+
+  userRangeOfPageId: (pageId: string) => ({
+    start: createKey(FAV_PREFIX, "page", "id", "by-page", pageId, ""),
+    end: createKey(FAV_PREFIX, "page", "id", "by-page", pageId, "\uffff"),
+  }),
+
+  pageByIdReverse: (pageId: string, userId: string) =>
+    createKey(FAV_PREFIX, "page", "id", "by-page", pageId, userId),
+
+  /** 从 dbKey 中解析出目标标识符 (agentKey/agentId/pageKey/pageId) */
+  getIdentifierFromKey: (key: string) => {
+    const parts = key.split(SEPARATOR);
+    // 结构: fav-{type}-{mode}-{userId}-{targetIdentifier...}
+    return parts.slice(4).join(SEPARATOR);
+  },
+};
+
+/**
+ * 收藏统计：
+ * - Agent byKey：fav-agent-count-key-{agentKey}（当前实际使用）
+ * - Agent byId ：fav-agent-count-id-{agentId}（预留）
+ * - Page 同理
+ */
+export const createFavoriteStatsKey = {
+  // 被多少人收藏的 Agent（按 agentKey 统计，当前实际使用）
+  agentByKey: (agentKey: AgentKey) =>
+    createKey(FAV_PREFIX, "agent-count", "key", agentKey),
+
+  // 预留：按逻辑 AgentId 统计
+  agentById: (agentId: AgentId) =>
+    createKey(FAV_PREFIX, "agent-count", "id", agentId),
+
+  // Page：按 pageKey 统计（预留）
+  pageByKey: (pageKey: string) =>
+    createKey(FAV_PREFIX, "page-count", "key", pageKey),
+
+  pageById: (pageId: string) =>
+    createKey(FAV_PREFIX, "page-count", "id", pageId),
+};
+
+
+export const jobKey = {
+  create: (tenantId: string, jobId?: string) => {
+    const id = jobId || ulid();
+    const dbKey = createKey("job", tenantId, id);
+    return { dbKey, id };
+  },
+  single: (tenantId: string, jobId: string) =>
+    createKey("job", tenantId, jobId),
+  rangeOfTenant: (tenantId: string) => {
+    const start = createKey("job", tenantId, "");
+    return { start, end: start + "\uffff" };
+  },
+};
+
+/* --------------------------------------------------------------------------
+ * 4. 文件（Blob / File / Stats）相关 key
+ * ------------------------------------------------------------------------*/
+
+/**
+ * Blob 主记录：
+ *   blob-{sha256}
+ *
+ * 说明：
+ * - 以 sha256 唯一标识物理内容
+ * - 用于查重和 refCount 管理
+ */
+export const blobKey = (sha256: string): string => createKey("blob", sha256);
+
+/**
+ * File 主记录：
+ *   file-{tenantId}-{fileId}
+ *
+ * 说明：
+ * - tenantId 在前，便于按租户范围扫描 / 清理
+ * - fileId 通常为 ulid
+ */
+export const fileKey = {
+  single: (tenantId: string, fileId: string): string =>
+    createKey("file", tenantId, fileId),
+
+  rangeOfTenant: (tenantId: string): { start: string; end: string } => {
+    const start = createKey("file", tenantId, "");
+    return {
+      start,
+      end: start + "\uffff",
+    };
+  },
+};
+
+/**
+ * File 反查索引：
+ *   file-id-{fileId} -> { tenantId, fileId }
+ *
+ * 说明：
+ * - 便于通过 fileId（URL 里只有这个）快速找到 tenant 维度的主记录
+ * - 避免通过全库扫描来反查 tenantId
+ */
+export const fileIdIndexKey = (fileId: string): string =>
+  createKey("file", "id", fileId);
+
+/** 从 fileKey 中解析出 fileId */
+export const getFileIdFromKey = (key: string) => {
+  const parts = key.split(SEPARATOR);
+  return parts[2]; // file-{userId}-{fileId}
+};
+
+
+/**
+ * 文件统计：
+ *
+ * - 按租户 + 日：
+ *   file-stat-tenant-{tenantId}-{dateKey}
+ *
+ * - 按模型 + 日（AI 生成）：
+ *   file-stat-model-{modelName}-{dateKey}
+ *
+ * 说明：
+ * - 仅存聚合数字，不重复存 metadata
+ * - dateKey 建议使用 "YYYYMMDD"
+ */
+export const fileStatKey = {
+  tenantPerDay: (tenantId: string, dateKey: string): string =>
+    createKey("file", "stat", "tenant", tenantId, dateKey),
+
+  modelPerDay: (modelName: string, dateKey: string): string =>
+    createKey("file", "stat", "model", modelName, dateKey),
+};

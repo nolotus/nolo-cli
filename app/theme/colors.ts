@@ -1,0 +1,280 @@
+// app/theme/colors.ts
+// 7 个主题，每个都有完整 surface 覆盖，切换主题"气质全变"。
+
+// ─── 公共语义色 ─────────────────────────────────────────────────────────────
+const semantic = {
+  light: { success: "#16A34A", warning: "#D97706", info: "#2563EB", error: "#DC2626" },
+  dark:  { success: "#4ADE80", warning: "#FCD34D", info: "#60A5FA", error: "#F87171" },
+};
+
+// ─── surface 工厂：避免每个主题重复写影子/ghost/messageBackground ──────────
+const mkLight = (bg: string, bg2: string, bg3: string, textPrimary: string, textSec: string, textTer: string, border: string, borderL: string) => ({
+  background: bg, backgroundSecondary: bg2, backgroundTertiary: bg3,
+  backgroundGhost: bg + "F0",
+  backgroundHover: bg3, backgroundSelected: border,
+  backgroundElevated: bg2,
+  text: textPrimary, textSecondary: textSec, textTertiary: textTer,
+  textQuaternary: textTer + "99", textLight: border, placeholder: textTer,
+  border, borderLight: borderL, borderHover: textTer,
+  messageBackground: bg2, codeBackground: bg3,
+  shadowLight:  `rgba(0,0,0,0.04)`, shadowMedium: `rgba(0,0,0,0.08)`, shadowHeavy: `rgba(0,0,0,0.14)`,
+});
+
+const mkDark = (bg: string, bg2: string, bg3: string, textPrimary: string, textSec: string, textTer: string, border: string, borderL: string, shadowBase = "0,0,0") => ({
+  background: bg, backgroundSecondary: bg2, backgroundTertiary: bg3,
+  backgroundGhost: bg2 + "F0",
+  backgroundHover: bg3, backgroundSelected: border,
+  backgroundElevated: bg3,
+  text: textPrimary, textSecondary: textSec, textTertiary: textTer,
+  textQuaternary: textTer + "88", textLight: border, placeholder: textTer,
+  border, borderLight: borderL, borderHover: textTer,
+  messageBackground: bg2, codeBackground: bg2,
+  shadowLight:  `rgba(${shadowBase},0.18)`, shadowMedium: `rgba(${shadowBase},0.30)`, shadowHeavy: `rgba(${shadowBase},0.44)`,
+});
+
+// ─── 1. Neutral — zinc，无主张 ──────────────────────────────────────────────
+export const neutral = {
+  light: { primary: "#71717A", primaryLight: "#A1A1AA", primaryDark: "#52525B",
+    primaryGradient: "linear-gradient(135deg, #71717A, #A1A1AA)",
+    primaryGhost: "rgba(113,113,122,0.08)", primaryHover: "rgba(113,113,122,0.10)",
+    borderAccent: "#D4D4D8", ...semantic.light },
+  dark: { primary: "#A1A1AA", primaryLight: "#D4D4D8", primaryDark: "#71717A",
+    primaryGradient: "linear-gradient(135deg, #A1A1AA, #D4D4D8)",
+    primaryGhost: "rgba(161,161,170,0.10)", primaryHover: "rgba(161,161,170,0.12)",
+    borderAccent: "#52525B", ...semantic.dark },
+};
+
+// ─── 2. Ocean — GitHub 风格深蓝，干净可信 ─────────────────────────────────
+export const ocean = {
+  light: {
+    primary: "#0969DA", primaryLight: "#218BFF", primaryDark: "#0550AE",
+    primaryGradient: "linear-gradient(135deg, #0969DA, #218BFF)",
+    primaryGhost: "rgba(9,105,218,0.08)", primaryHover: "rgba(9,105,218,0.10)",
+    borderAccent: "#54AEFF", ...semantic.light,
+    ...mkLight("#FFFFFF", "#F6F8FA", "#EBF0F4", "#1C2128", "#57606A", "#6E7781", "#D0D7DE", "#F6F8FA"),
+  },
+  dark: {
+    primary: "#58A6FF", primaryLight: "#79C0FF", primaryDark: "#388BFD",
+    primaryGradient: "linear-gradient(135deg, #58A6FF, #79C0FF)",
+    primaryGhost: "rgba(88,166,255,0.10)", primaryHover: "rgba(88,166,255,0.12)",
+    borderAccent: "#1F6FEB", ...semantic.dark,
+    ...mkDark("#0D1117", "#161B22", "#21262D", "#E6EDF3", "#8B949E", "#6E7681", "#30363D", "#161B22", "13,17,23"),
+    textHeading: "#E6EDF3",
+  },
+};
+
+// ─── 3. Iris — Linear 签名色，精致紫蓝 ────────────────────────────────────
+export const iris = {
+  light: {
+    primary: "#5E6AD2", primaryLight: "#8B9CF4", primaryDark: "#4A55C0",
+    primaryGradient: "linear-gradient(135deg, #5E6AD2, #8B9CF4)",
+    primaryGhost: "rgba(94,106,210,0.08)", primaryHover: "rgba(94,106,210,0.10)",
+    borderAccent: "#8B9CF4", ...semantic.light,
+    ...mkLight("#FFFFFF", "#F7F6FF", "#EEEDFA", "#1A1730", "#4E4B6B", "#7874A0", "#D8D6F0", "#F7F6FF"),
+  },
+  dark: {
+    primary: "#8B9CF4", primaryLight: "#ADB5F7", primaryDark: "#5E6AD2",
+    primaryGradient: "linear-gradient(135deg, #8B9CF4, #ADB5F7)",
+    primaryGhost: "rgba(139,156,244,0.10)", primaryHover: "rgba(139,156,244,0.12)",
+    borderAccent: "#4A55C0", ...semantic.dark,
+    ...mkDark("#0F0E17", "#16141F", "#1E1B2E", "#E8E5F7", "#A8A4C8", "#7B7698", "#272435", "#16141F", "15,14,23"),
+    textHeading: "#E8E5F7",
+  },
+};
+
+// ─── 4. Forest — 深绿，清新自然 ───────────────────────────────────────────
+export const forest = {
+  light: {
+    primary: "#059669", primaryLight: "#10B981", primaryDark: "#047857",
+    primaryGradient: "linear-gradient(135deg, #059669, #10B981)",
+    primaryGhost: "rgba(5,150,105,0.08)", primaryHover: "rgba(5,150,105,0.10)",
+    borderAccent: "#6EE7B7", ...semantic.light,
+    ...mkLight("#F6FAF6", "#EDF5EC", "#DDF0DB", "#1A2E18", "#3D6B3A", "#5C8A58", "#C3E0C0", "#EDF5EC"),
+  },
+  dark: {
+    primary: "#34D399", primaryLight: "#6EE7B7", primaryDark: "#10B981",
+    primaryGradient: "linear-gradient(135deg, #34D399, #6EE7B7)",
+    primaryGhost: "rgba(52,211,153,0.10)", primaryHover: "rgba(52,211,153,0.12)",
+    borderAccent: "#059669", ...semantic.dark,
+    ...mkDark("#0C1209", "#121A0E", "#1A2416", "#E4F0E2", "#87A882", "#5E7A5A", "#1A2416", "#121A0E", "12,18,9"),
+    success: "#4ADE80", textHeading: "#C8EEC4",
+  },
+};
+
+// ─── 5. Wave — 完整 Kanagawa 体验 ─────────────────────────────────────────
+export const wave = {
+  light: {
+    // Kanagawa Lotus — lotusBlue3 accent（日式水墨蓝，与 Wave dark 气质呼应）
+    primary: "#4D699B",
+    primaryLight: "#6680B3",
+    primaryDark: "#3C5585",
+    primaryGradient: "linear-gradient(135deg, #4D699B, #6680B3)",
+    primaryGhost: "rgba(77, 105, 155, 0.08)",
+    primaryHover: "rgba(77, 105, 155, 0.10)",
+    borderAccent: "#8CA6CF",
+    success: "#6F894E",
+    warning: "#836F4A",
+    info: "#4D699B",
+    error: "#C84053",
+    // Surface overrides — Kanagawa Lotus palette
+    background:          "#F5F4EF",
+    backgroundSecondary: "#FFFFFF",
+    backgroundTertiary:  "#ECEAE3",
+    backgroundGhost:     "rgba(245, 244, 239, 0.94)",
+    backgroundHover:     "#E8E6DE",
+    backgroundSelected:  "#DEDAD0",
+    text:                "#1A1A22",
+    textSecondary:       "#3D3B4F",
+    textTertiary:        "#716E61",
+    textQuaternary:      "#9E9B8E",
+    textLight:           "#C3BBAA",
+    placeholder:         "#9E9B8E",
+    border:              "#D8D5C8",
+    borderHover:         "#C4C0B2",
+    borderLight:         "#ECEAE3",
+    messageBackground:   "#FFFFFF",
+    codeBackground:      "#ECEAE3",
+    shadowLight:         "rgba(26, 26, 34, 0.05)",
+    shadowMedium:        "rgba(26, 26, 34, 0.09)",
+    shadowHeavy:         "rgba(26, 26, 34, 0.14)",
+  },
+  dark: {
+    // Kanagawa Wave — crystalBlue accent（#7E9CD8 是函数名颜色，最标志性的 Kanagawa 蓝）
+    primary: "#7E9CD8",
+    primaryLight: "#9DB4E8",
+    primaryDark: "#6688BC",
+    primaryGradient: "linear-gradient(135deg, #7E9CD8, #9DB4E8)",
+    primaryGhost: "rgba(126, 156, 216, 0.10)",
+    primaryHover: "rgba(126, 156, 216, 0.16)",
+    borderAccent: "#2D4F67",
+    success: "#98BB6C",   // bamboo green
+    warning: "#E6C384",   // autumn gold
+    info: "#7FB4CA",      // waveBlue
+    error: "#E82424",
+    // Surface overrides — Kanagawa Wave palette
+    background:          "#1F1F28",   // surumiBlack — 墨色
+    backgroundSecondary: "#16161D",   // deeper ink
+    backgroundTertiary:  "#2A2A37",   // waveBlue-dark
+    backgroundGhost:     "rgba(22, 22, 29, 0.94)",
+    backgroundHover:     "#363646",
+    backgroundSelected:  "#54546D",
+    text:                "#DCD7BA",   // fujiWhite — 宣纸暖白，365天的护眼体验
+    textSecondary:       "#C8C093",   // oldWhite — 次级暖白
+    textTertiary:        "#938AA9",   // springViolet2 — 注释紫，Kanagawa 气质核心
+    textQuaternary:      "#727169",   // fujiGray
+    textLight:           "#54546D",
+    placeholder:         "#727169",
+    border:              "#2A2A37",
+    borderHover:         "#54546D",
+    borderLight:         "#1F1F28",
+    messageBackground:   "#16161D",
+    codeBackground:      "#0D0C0C",   // 比背景更深的墨黑
+    shadowLight:         "rgba(13, 12, 12, 0.18)",
+    shadowMedium:        "rgba(13, 12, 12, 0.28)",
+    shadowHeavy:         "rgba(13, 12, 12, 0.38)",
+    textHeading:         "#DCD7BA",   // fujiWhite — 暖色标题
+  },
+};
+
+// ─── 6. Rose — Rosé Pine，温柔暖粉 + 完整 surface ─────────────────────────
+export const rose = {
+  light: {
+    // Rosé Pine Dawn
+    primary: "#D14D72",
+    primaryLight: "#E87C9D",
+    primaryDark: "#B03060",
+    primaryGradient: "linear-gradient(135deg, #D14D72, #E87C9D)",
+    primaryGhost: "rgba(209, 77, 114, 0.08)",
+    primaryHover: "rgba(209, 77, 114, 0.10)",
+    borderAccent: "#F2BFCC",
+    success: "#56949F",
+    warning: "#EA9D34",
+    info: "#286983",
+    error: "#B4637A",
+    background:          "#FAF4ED",
+    backgroundSecondary: "#FFFAF3",
+    backgroundTertiary:  "#F2E9E1",
+    backgroundGhost:     "rgba(250, 244, 237, 0.94)",
+    backgroundHover:     "#EDE3DA",
+    backgroundSelected:  "#DFD3C7",
+    text:                "#575279",
+    textSecondary:       "#6E6A86",
+    textTertiary:        "#797593",
+    textQuaternary:      "#9893A5",
+    textLight:           "#CECACD",
+    placeholder:         "#9893A5",
+    border:              "#DFDAD9",
+    borderHover:         "#C5BFB3",
+    borderLight:         "#F2E9E1",
+    messageBackground:   "#FFFAF3",
+    codeBackground:      "#F2E9E1",
+    shadowLight:         "rgba(87, 82, 121, 0.05)",
+    shadowMedium:        "rgba(87, 82, 121, 0.09)",
+    shadowHeavy:         "rgba(87, 82, 121, 0.14)",
+  },
+  dark: {
+    // Rosé Pine main
+    primary: "#EB6F92",
+    primaryLight: "#F0A8BF",
+    primaryDark: "#C4637A",
+    primaryGradient: "linear-gradient(135deg, #EB6F92, #F0A8BF)",
+    primaryGhost: "rgba(235, 111, 146, 0.10)",
+    primaryHover: "rgba(235, 111, 146, 0.14)",
+    borderAccent: "#6E3050",
+    success: "#9CCFD8",
+    warning: "#F6C177",
+    info: "#C4A7E7",
+    error: "#EB6F92",
+    background:          "#191724",
+    backgroundSecondary: "#1F1D2E",
+    backgroundTertiary:  "#26233A",
+    backgroundGhost:     "rgba(25, 23, 36, 0.94)",
+    backgroundHover:     "#312E45",
+    backgroundSelected:  "#403D52",
+    text:                "#E0DEF4",
+    textSecondary:       "#C4C1D9",
+    textTertiary:        "#908CAA",
+    textQuaternary:      "#6E6A86",
+    textLight:           "#403D52",
+    placeholder:         "#6E6A86",
+    border:              "#26233A",
+    borderHover:         "#6E6A86",
+    borderLight:         "#1F1D2E",
+    messageBackground:   "#1F1D2E",
+    codeBackground:      "#12101E",
+    shadowLight:         "rgba(12, 10, 20, 0.20)",
+    shadowMedium:        "rgba(12, 10, 20, 0.30)",
+    shadowHeavy:         "rgba(12, 10, 20, 0.44)",
+    textHeading:         "#E0DEF4",
+  },
+};
+
+// ─── 7. Ember — 琥珀暖焰，暗夜篝火气质 ──────────────────────────────────
+export const ember = {
+  light: {
+    primary: "#D97706", primaryLight: "#F59E0B", primaryDark: "#B45309",
+    primaryGradient: "linear-gradient(135deg, #D97706, #F59E0B)",
+    primaryGhost: "rgba(217,119,6,0.08)", primaryHover: "rgba(217,119,6,0.10)",
+    borderAccent: "#FCD34D", ...semantic.light,
+    ...mkLight("#FFFBF4", "#FFF7E6", "#FDEECB", "#2C1A04", "#6B4718", "#8A6230", "#E8D5A3", "#FFF7E6"),
+  },
+  dark: {
+    primary: "#F59E0B", primaryLight: "#FCD34D", primaryDark: "#D97706",
+    primaryGradient: "linear-gradient(135deg, #F59E0B, #FCD34D)",
+    primaryGhost: "rgba(245,158,11,0.10)", primaryHover: "rgba(245,158,11,0.12)",
+    borderAccent: "#92400E", ...semantic.dark,
+    ...mkDark("#1A1207", "#221809", "#2E220C", "#F0E2C0", "#C4A056", "#8A7040", "#3A2A10", "#221809", "26,18,7"),
+    textHeading: "#FCD34D",
+  },
+};
+
+// ─── 向后兼容 alias（DB 中可能存了旧 key） ─────────────────────────────────
+export const blue     = ocean;
+export const purple   = iris;
+export const green    = forest;
+export const graphite = neutral;
+export const mocha    = rose;    // 近似，rosé pine 取代 catppuccin
+export const pink     = rose;
+export const red      = ember;
+export const orange   = ember;
+export const yellow   = ember;

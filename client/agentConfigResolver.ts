@@ -1,0 +1,1 @@
+export { resolveAgentRuntimeConfigFromRecord } from "../agentRuntimeLocal";

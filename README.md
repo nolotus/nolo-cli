@@ -1,15 +1,26 @@
 # nolo-cli
 
-Agent-first terminal workspace for Nolo.
+Local-first agent automation for open-source maintainers.
 
 [![npm version](https://img.shields.io/npm/v/nolo-cli.svg)](https://www.npmjs.com/package/nolo-cli)
 [![npm downloads](https://img.shields.io/npm/dm/nolo-cli.svg)](https://www.npmjs.com/package/nolo-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-`nolo-cli` is a Bun-powered command-line and TUI client for working with local
-and remote AI agents. It focuses on practical maintainer workflows: agent chat,
-dialog/doc/table operations, machine connector commands, runtime diagnostics,
-and automation-friendly JSON commands.
+`nolo-cli` is a Bun-powered command-line and TUI client for running local and
+remote AI agents around real repository maintenance. It focuses on practical
+open-source maintainer workflows: Codex-assisted review, issue triage, release
+smoke checks, docs updates, runtime diagnostics, and automation-friendly JSON
+commands.
+
+The project is moving toward a no-login, bring-your-own-key local mode:
+
+- `nolo run "review this repository"` runs a local Codex-style agent in the
+  current repository without requiring a Nolo account.
+- Authenticated Nolo workflows remain available for synced agents, dialogs,
+  docs, tables, and machine-bound automation.
+- The desktop direction is local-first by default: users should be able to run
+  with their own OpenAI, Anthropic, OpenRouter, Codex CLI, Qoder, or other
+  provider credentials without depending on hosted Nolo infrastructure.
 
 The npm package is published as `nolo-cli`:
 
@@ -18,6 +29,7 @@ npm install -g nolo-cli
 nolo
 nolo doctor
 nolo --version
+nolo run "review this repository"
 ```
 
 ## Why This Matters
@@ -25,12 +37,30 @@ nolo --version
 Open-source maintainers are increasingly using coding agents for issue triage,
 pull-request review, release checks, documentation, and repository maintenance.
 Those workflows need more than a single chat box: they need repeatable command
-entry points, local runtime checks, machine binding, structured task/dialog
-history, and automation-friendly output.
+entry points, local runtime checks, scoped shell permissions, structured
+task/dialog history, release smoke checks, and automation-friendly output.
 
 `nolo-cli` is aimed at that layer. It is designed to make agent-maintainer
 workflows inspectable and scriptable, while keeping local runtime boundaries
 clear.
+
+## Maintainer Workflows
+
+The project is built around ongoing maintainer duties that can be reviewed,
+tested, and improved in public:
+
+- **Pull request review:** run local Codex or another CLI agent against a diff,
+  ask for risk-focused review, and keep the review prompt reproducible.
+- **Issue triage:** classify bug reports, installation failures, runtime
+  provider issues, and docs gaps into actionable labels.
+- **Release management:** run doctor checks, smoke checks, changelog review,
+  and package verification before publishing.
+- **Security review:** keep shell, machine connector, BYOK provider, and token
+  boundaries explicit so contributors can reason about local access.
+
+See [MAINTAINER_WORKFLOWS.md](./MAINTAINER_WORKFLOWS.md) for concrete command
+patterns and [OPEN_SOURCE_BOUNDARY.md](./OPEN_SOURCE_BOUNDARY.md) for what is
+being opened versus intentionally kept private.
 
 ## Project Status
 
@@ -41,9 +71,10 @@ for the last-month window ending 2026-06-02.
 
 The current implementation is developed in a broader private monorepo because
 it shares product infrastructure with Nolo. Public source mirroring is being
-prepared in a staged way so that reusable CLI and agent-runtime code can be
-opened without exposing private product records, credentials, production
-operations, or user-data paths.
+prepared in a staged way so that reusable CLI, local runtime, provider adapter,
+desktop local-mode, docs, tests, and maintainer workflow code can be opened
+without exposing private product records, credentials, production operations,
+billing systems, or user-data paths.
 
 See [OPEN_SOURCE_STATUS.md](./OPEN_SOURCE_STATUS.md) and
 [ROADMAP.md](./ROADMAP.md) for the public-source migration plan.
@@ -52,18 +83,24 @@ See [OPEN_SOURCE_STATUS.md](./OPEN_SOURCE_STATUS.md) and
 
 The public maintenance scope for this project is:
 
-- Agent-first terminal and TUI workflows.
-- CLI commands for agents, dialogs, docs, tables, and machines.
-- Local-first agent runtime boundaries.
-- Runtime doctor and smoke-check workflows.
-- Release checks and automation helpers for OSS maintainers.
+- Agent-first terminal and TUI workflows for OSS maintainers.
+- No-login local agent runs in the current repository.
+- BYOK provider configuration for CLI and desktop local mode.
+- Local-first agent runtime boundaries and scoped shell permissions.
+- Runtime doctor, release smoke-check, and package verification workflows.
+- Optional authenticated commands for synced Nolo agents, dialogs, docs, tables,
+  and machine connectors.
 
 ## Links
 
 - npm package: https://www.npmjs.com/package/nolo-cli
 - Nolo: https://nolo.chat
+- Maintainer workflows: [MAINTAINER_WORKFLOWS.md](./MAINTAINER_WORKFLOWS.md)
+- Open-source boundary: [OPEN_SOURCE_BOUNDARY.md](./OPEN_SOURCE_BOUNDARY.md)
 - Open-source status: [OPEN_SOURCE_STATUS.md](./OPEN_SOURCE_STATUS.md)
 - Roadmap: [ROADMAP.md](./ROADMAP.md)
+- Release checklist: [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
+- Source mirror checklist: [SOURCE_MIRROR_CHECKLIST.md](./SOURCE_MIRROR_CHECKLIST.md)
 
 ## License
 

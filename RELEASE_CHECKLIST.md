@@ -6,6 +6,9 @@ It is intended for maintainers preparing npm releases and source mirror updates.
 ## Before Publishing
 
 - Confirm the package version and changelog entry.
+- Confirm the version bump matches [RELEASE_POLICY.md](./RELEASE_POLICY.md):
+  patch for focused fixes, `0.2.0` for a public milestone, and `1.0.0` only
+  after the public CLI contract is stable.
 - Run CLI smoke checks:
 
 ```bash
@@ -33,6 +36,7 @@ nolo run "summarize the release risk for this repository"
 ## After Publishing
 
 - Verify npm shows the expected package version.
+- Confirm README and open-source status docs describe the published version.
 - Open or update a release issue with:
   - npm version
   - smoke commands run

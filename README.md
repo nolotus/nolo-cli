@@ -93,17 +93,16 @@ Current public source status:
 | No-login local run | `src/localRun.ts`, `src/localRun.test.ts`, passing GitHub Actions |
 | BYOK provider boundary | `src/providerConfig.ts`, `src/providerConfig.test.ts`, PR #8 |
 | Local runtime boundary | `src/runtimeBoundary.ts`, `src/runtimeBoundary.test.ts`, PR #8 |
-| Release management | `RELEASE_CHECKLIST.md`, issue #9 |
+| Release management | `RELEASE_POLICY.md`, `RELEASE_CHECKLIST.md`, issue #9 |
 | Source mirror safety | `OPEN_SOURCE_BOUNDARY.md`, `SOURCE_MIRROR_CHECKLIST.md`, issues #1 and #5 |
 
 ## Project Status
 
 This repository is the public OSS entry point for the CLI project. The package
 is actively maintained and has frequent releases on npm. As of June 2026,
-`nolo-cli` source is prepared for version `0.1.45`; npm reports about 3.5k
-downloads for the last-month window ending 2026-06-02. Version `0.1.44` was
-published from the public `nolotus/nolo-cli` GitHub Actions npm workflow, and
-`0.1.45` should be published from the same public workflow after review.
+`nolo-cli` is published at version `0.1.45`; npm reports about 3.5k downloads
+for the last-month window ending 2026-06-02. Version `0.1.45` was published
+from the public `nolotus/nolo-cli` GitHub Actions npm workflow.
 
 The current implementation is developed in a broader private monorepo because
 it shares product infrastructure with Nolo. Public source mirroring is being
@@ -134,6 +133,7 @@ The public maintenance scope for this project is:
 - Maintainer workflows: [MAINTAINER_WORKFLOWS.md](./MAINTAINER_WORKFLOWS.md)
 - Open-source boundary: [OPEN_SOURCE_BOUNDARY.md](./OPEN_SOURCE_BOUNDARY.md)
 - Open-source status: [OPEN_SOURCE_STATUS.md](./OPEN_SOURCE_STATUS.md)
+- Release policy: [RELEASE_POLICY.md](./RELEASE_POLICY.md)
 - Roadmap: [ROADMAP.md](./ROADMAP.md)
 - BYOK provider setup: [docs/provider-setup.md](./docs/provider-setup.md)
 - Desktop local mode: [docs/desktop-local-mode.md](./docs/desktop-local-mode.md)

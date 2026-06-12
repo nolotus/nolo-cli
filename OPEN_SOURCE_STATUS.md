@@ -7,8 +7,7 @@ source modules that matter to OSS maintainers.
 ## Current State
 
 - Public npm package: `nolo-cli`
-- Current source release: `0.1.45`
-- Current published version before this release: `0.1.44`
+- Current published version: `0.1.45`
 - License: MIT
 - Public repository: `nolotus/nolo-cli`
 - Active maintainer: Bin Zhang / `nolotus`
@@ -18,11 +17,11 @@ source modules that matter to OSS maintainers.
 ## Source Authority
 
 This repository now carries the publish-safe package source used for public
-review, CI, npm packing, and npm publishing. Version `0.1.44` was published
-from the public GitHub Actions npm workflow, and `0.1.45` should use the same
-workflow after review. The broader Nolo monorepo can still stage package
-updates, but public releases should be reviewed and published from this
-repository after the public CI and npm workflow pass.
+review, CI, npm packing, and npm publishing. Version `0.1.45` was published
+from the public GitHub Actions npm workflow. The broader Nolo monorepo can still
+stage package updates, but public releases should be reviewed and published
+from this repository after the public CI and npm workflow pass. Versioning
+criteria are documented in [RELEASE_POLICY.md](./RELEASE_POLICY.md).
 
 ## Public Source Criteria
 
@@ -57,6 +56,8 @@ ongoing maintenance work:
   include focused tests or docs.
 - Releases should document npm version, smoke checks, and known runtime
   compatibility notes.
+- Version milestones should follow [RELEASE_POLICY.md](./RELEASE_POLICY.md), so
+  `0.2.0` and `1.0.0` mean public contract progress rather than cosmetic bumps.
 - Source mirroring progress is tracked in
   [SOURCE_MIRROR_CHECKLIST.md](./SOURCE_MIRROR_CHECKLIST.md).
 - Security reports should go through the private disclosure path in

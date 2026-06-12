@@ -150,6 +150,9 @@ function buildTaskEvidencePrompt(args: {
 }) {
   const rowDbKey = findTaskRowSubjectRef(args.runtimeContext);
   if (!rowDbKey) return "";
+  const taskBoardTableKey = typeof args.runtimeContext?.taskBoardTableKey === "string"
+    ? args.runtimeContext.taskBoardTableKey.trim()
+    : "";
   return [
     "--- Nolo task evidence context ---",
     "This CLI runtime does not receive server-side function tools directly.",
@@ -157,7 +160,9 @@ function buildTaskEvidencePrompt(args: {
     "Run commands from the repository root. The runner already provides server URL and auth in the environment.",
     "Release boundary: after review passes, AI/reviewer/Codex may advance alpha for verification. Do not merge, push, or release main/release unless the human owner explicitly authorizes it in the current task context.",
     "Handoff context: inspect activityRefs/latestActivityRef, dialog checkpoints, artifacts, commits, and test evidence. Use dialog read/search for exact evidence; do not infer completion from handoff text alone.",
-    `Read task row: bun packages/cli/index.ts table query --table meta-0e95801d90-NOLOTASKBOARD --row ${JSON.stringify(rowDbKey)} --include-activity --output json`,
+    taskBoardTableKey
+      ? `Read task row: bun packages/cli/index.ts table query --table ${JSON.stringify(taskBoardTableKey)} --row ${JSON.stringify(rowDbKey)} --include-activity --output json`
+      : `Task row subjectRef: ${JSON.stringify(rowDbKey)}. If a task board table key is provided in context, read it with: bun packages/cli/index.ts table query --table <tableKey> --row ${JSON.stringify(rowDbKey)} --include-activity --output json`,
     "Then read linked activity dialog ids with: bun packages/cli/index.ts dialog read <dialogId>",
     "Report progress, blockers, worktree, branch, commit/diff, tests, and unverified items in the dialog.",
   ].join("\n");

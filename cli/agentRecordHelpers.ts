@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { DataType } from "../create/types";
 import { createAgentKey } from "../database/keys";
 import { resolveCliAgentKeyInput } from "./agentAliases";
+import { resolveAgentInput } from "./agentNameResolver";
 import type { CliKvDb } from "./client/hybridRecordStore";
 import { buildLocalAgentLookupKeys, shouldReadAgentKeyRemotely } from "./client/localAgentRecords";
 import {
@@ -24,6 +25,8 @@ const PROVIDER_COPY_FIELDS = [
   "inputPrice",
   "outputPrice",
 ] as const;
+
+const silentOutput = { write() {} };
 
 function readRepeatedOption(args: string[], flag: string) {
   const values: string[] = [];
@@ -283,10 +286,25 @@ export async function resolveAgentRecordFromHybridStore(args: {
   fetchImpl: typeof fetch;
   fallbackFetchImpl?: typeof fetch;
 }) {
-  const agentKey = resolveCliAgentKeyInput(args.agentInput);
   const authToken = args.cliArgs
     ? resolveAuthToken(args.cliArgs, args.env)
     : resolveAuthToken(args.env);
+  const resolvedAgent = await resolveAgentInput({
+    agentInput: args.agentInput,
+    authToken,
+    db: args.db,
+    env: args.env,
+    fallbackFetchImpl: args.fallbackFetchImpl,
+    fetchImpl: args.fetchImpl,
+    output: silentOutput,
+  }).catch((error) => {
+    if (error instanceof Error && error.message.startsWith("ambiguous agent name:")) {
+      throw error;
+    }
+    return null;
+  });
+  if (!resolvedAgent) return null;
+  const agentKey = resolvedAgent.agentKey;
   const defaultServerUrl = args.cliArgs
     ? resolveServerUrl(args.cliArgs, args.env)
     : resolveServerUrl(args.env);
@@ -505,7 +523,10 @@ export async function buildUpdatedAgentRecord(args: {
     fetchImpl: args.fetchImpl,
     fallbackFetchImpl: args.fallbackFetchImpl,
   });
-  const agentKey = cached?.agentKey ?? resolveCliAgentKeyInput(args.parsed.agentInput);
+  if (!cached) {
+    throw new Error(`agent not found: ${args.parsed.agentInput}`);
+  }
+  const agentKey = cached.agentKey;
   const explicitServerUrl = args.cliArgs
     ? readOption(args.cliArgs, "--server-url") || readOption(args.cliArgs, "--server")
     : undefined;

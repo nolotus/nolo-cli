@@ -1,6 +1,6 @@
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
 import { resolveConnectorWebSocketTarget } from "./connectorWebSocketTarget";
-import { resolveCliAgentKeyInput } from "./agentAliases";
+import { resolveAgentInput } from "./agentNameResolver";
 import {
   type AgentCommandDeps,
   type LocalCliExecutor,
@@ -173,10 +173,10 @@ export async function runAgentBindCurrentCommand(
 ) {
   const env = deps.env ?? process.env;
   const output = deps.output ?? process.stdout;
-  const agentKey = args[0]?.trim();
-  if (!agentKey || agentKey === "--help" || agentKey === "-h") {
-    output.write("Usage: nolo agent bind-current <agentKey>\n");
-    return agentKey ? 0 : 1;
+  const agentInput = args[0]?.trim();
+  if (!agentInput || agentInput === "--help" || agentInput === "-h") {
+    output.write("Usage: nolo agent bind-current <agent>\n");
+    return agentInput ? 0 : 1;
   }
 
   const authToken = resolveAuthToken(env);
@@ -197,6 +197,15 @@ export async function runAgentBindCurrentCommand(
   const machine = await (deps.machineInfo ?? detectLaunchableMachineInfo)();
 
   try {
+    const { agentKey } = await resolveAgentInput({
+      agentInput,
+      authToken,
+      db: deps.db,
+      env,
+      fallbackFetchImpl,
+      fetchImpl,
+      output,
+    });
     await heartbeatCurrentMachine({ authToken, fetchImpl, machine, serverUrl });
     const existing = await readAgentRecord({ agentKey, authToken, fallbackFetchImpl, fetchImpl, serverUrl });
     const updated = {
@@ -228,7 +237,7 @@ export async function runAgentBindCurrentCommand(
     return 1;
   }
 
-  output.write(`Bound agent ${agentKey} to this machine: ${machine.name} (${machine.machineId})\n`);
+  output.write(`Bound agent ${agentInput} to this machine: ${machine.name} (${machine.machineId})\n`);
   return 0;
 }
 
@@ -243,8 +252,6 @@ export async function runAgentSmokeCurrentCommand(
     output.write("Usage: nolo agent smoke-current <agent> --msg \"hello\"\n");
     return agentInput ? 0 : 1;
   }
-  const agentKey = resolveCliAgentKeyInput(agentInput);
-
   const authToken = resolveAuthToken(env);
   if (!authToken) {
     output.write("[nolo] agent smoke-current requires an auth token. Run `nolo login` or set AUTH_TOKEN.\n");
@@ -264,6 +271,15 @@ export async function runAgentSmokeCurrentCommand(
   const sentMessages: string[] = [];
 
   try {
+    const { agentKey } = await resolveAgentInput({
+      agentInput,
+      authToken,
+      db: deps.db,
+      env,
+      fallbackFetchImpl,
+      fetchImpl,
+      output,
+    });
     await heartbeatCurrentMachine({ authToken, fetchImpl, machine, serverUrl });
     const existing = await readAgentRecord({ agentKey, authToken, fallbackFetchImpl, fetchImpl, serverUrl });
     assertSmokeCompatible(existing, machine);
@@ -358,8 +374,6 @@ export async function runAgentRuntimeDoctorCommand(
     output.write("Usage: nolo agent runtime-doctor <agentKey>\n");
     return agentInput ? 0 : 1;
   }
-  const agentKey = resolveCliAgentKeyInput(agentInput);
-
   const authToken = resolveAuthToken(env);
   if (!authToken) {
     output.write("[nolo] agent runtime-doctor requires an auth token. Run `nolo login` or set AUTH_TOKEN.\n");
@@ -372,6 +386,15 @@ export async function runAgentRuntimeDoctorCommand(
   const machine = await (deps.machineInfo ?? detectLaunchableMachineInfo)();
 
   try {
+    const { agentKey } = await resolveAgentInput({
+      agentInput,
+      authToken,
+      db: deps.db,
+      env,
+      fallbackFetchImpl,
+      fetchImpl,
+      output,
+    });
     const agent = await readAgentRecord({ agentKey, authToken, fallbackFetchImpl, fetchImpl, serverUrl });
     const requiredCapability = requiredCapabilityForAgent(agent);
     const runtimeClass = classifyAgentRuntime(agent);

@@ -1,0 +1,70 @@
+name: npm publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: "Version in package.json to publish"
+        required: true
+        type: string
+      dry_run:
+        description: "Run checks without publishing"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - name: Check release version and npm metadata
+        run: |
+          node - <<'NODE'
+          const pkg = require("./package.json");
+          const expected = process.env.EXPECTED_VERSION;
+          if (pkg.name !== "nolo-cli") throw new Error(`Unexpected package name: ${pkg.name}`);
+          if (pkg.version !== expected) {
+            throw new Error(`package.json version ${pkg.version} does not match expected ${expected}`);
+          }
+          if (pkg.repository?.url !== "git+https://github.com/nolotus/nolo-cli.git") {
+            throw new Error("package.json repository must point to nolotus/nolo-cli");
+          }
+          if (pkg.bugs?.url !== "https://github.com/nolotus/nolo-cli/issues") {
+            throw new Error("package.json bugs URL must point to public issues");
+          }
+          if (pkg.homepage !== "https://github.com/nolotus/nolo-cli#readme") {
+            throw new Error("package.json homepage must point to the public README");
+          }
+          NODE
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+      - name: Refuse already-published versions
+        if: ${{ inputs.dry_run == 'false' }}
+        run: |
+          if npm view "nolo-cli@${EXPECTED_VERSION}" version >/dev/null 2>&1; then
+            echo "nolo-cli@${EXPECTED_VERSION} is already published. Bump package.json before publishing."
+            exit 1
+          fi
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+      - run: npm pack --dry-run
+      - name: Publish to npm
+        if: ${{ inputs.dry_run == 'false' }}
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

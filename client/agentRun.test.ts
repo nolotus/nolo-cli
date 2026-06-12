@@ -1,0 +1,1344 @@
+import { describe, expect, test } from "bun:test";
+import { Writable } from "node:stream";
+
+import {
+  classifyTaskContextReviewStatus,
+  findServerPlatformTools,
+  runAgentTurn,
+} from "./agentRun";
+import { BUILTIN_NOLO_AGENT_KEY } from "./localRuntimeAdapter";
+import { MIMO_MONTH_AGENT_KEY, NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
+
+class CaptureOutput extends Writable {
+  chunks: string[] = [];
+
+  _write(chunk: unknown, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    this.chunks.push(String(chunk));
+    callback();
+  }
+
+  text() {
+    return this.chunks.join("");
+  }
+}
+
+describe("cli agent run client", () => {
+  test("classifies only clear reviewer outcomes", () => {
+    expect(classifyTaskContextReviewStatus("Review decision: passed")).toBe("passed");
+    expect(classifyTaskContextReviewStatus("Review decision: needs_changes")).toBe("needs_changes");
+    expect(classifyTaskContextReviewStatus("Review decision: blocked")).toBe("blocked");
+    expect(classifyTaskContextReviewStatus("LGTM, no issues found")).toBe("passed");
+    expect(classifyTaskContextReviewStatus("Changes requested for missing test coverage")).toBe(
+      "needs_changes"
+    );
+    expect(classifyTaskContextReviewStatus("I looked at the diff and have notes")).toBeUndefined();
+  });
+
+  test("identifies server platform tools that local runtime cannot provide", () => {
+    expect(findServerPlatformTools(["readFile", "queryTableRows", "updateTableRow"])).toEqual([
+      "queryTableRows",
+      "updateTableRow",
+    ]);
+    expect(findServerPlatformTools(["readFile", "execShell"])).toEqual([]);
+  });
+
+  test("calls the Nolo HTTP API directly when AUTH_TOKEN is present", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ url: string; body: any; auth: string | null }> = [];
+
+    const result = await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      continueDialogId: "dialog-existing",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      fetchImpl: async (url, init) => {
+        requests.push({
+          url: String(url),
+          body: JSON.parse(String(init?.body)),
+          auth: new Headers(init?.headers).get("Authorization"),
+        });
+        return Response.json({
+          content: "hi",
+          dialogId: "dialog-1",
+          usage: { input_tokens: 2, output_tokens: 3 },
+        });
+      },
+    });
+
+    expect(requests).toEqual([
+      {
+        url: "https://nolo.chat/api/agent/run",
+        auth: "Bearer token-123",
+        body: {
+          agentKey: "agent-pub-test",
+          userInput: "hello",
+          continueDialogId: "dialog-existing",
+          runtimeContext: {
+            surface: "cli",
+            host: "terminal",
+            runtime: "bun",
+            entrypoint: "nolo-cli",
+            capabilities: ["text-io", "streaming", "slash-commands"],
+          },
+          stream: true,
+        },
+      },
+    ]);
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-1" });
+    expect(output.text()).toContain("nolo -> working");
+    expect(output.text()).toContain("nolo > hi");
+    expect(output.text()).not.toContain("tokens=");
+  });
+
+  test("prints agent run error details from failed HTTP responses", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "win-codex",
+      agentKey: "agent-win-codex",
+      serverUrl: "https://nolo.chat",
+      message: "restart connector",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      fetchImpl: async () =>
+        Response.json({
+          error: "Connector execution failed",
+          reason: "connector_execution_failed",
+          code: "connector_disconnected_mid_run",
+          message: "Connector disconnected for machine: machine-win",
+          dialogId: "dialog-failed-1",
+        }, { status: 502 }),
+    });
+
+    expect(result).toEqual({ exitCode: 1, dialogId: "dialog-failed-1" });
+    expect(output.text()).toContain("[nolo] Agent request failed: HTTP 502");
+    expect(output.text()).toContain("Connector execution failed");
+    expect(output.text()).toContain("Connector disconnected for machine: machine-win");
+    expect(output.text()).toContain("code=connector_disconnected_mid_run");
+    expect(output.text()).toContain("reason=connector_execution_failed");
+    expect(output.text()).toContain("[nolo] failed dialog: dialog-failed-1");
+    expect(output.text()).toContain(
+      'nolo agent run agent-win-codex --continue dialog-failed-1 --msg "retry"'
+    );
+  });
+
+  test("converts task row context to subjectRefs without legacy prompt or runtime taskRun payload", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+
+    await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-implementer",
+      serverUrl: "https://nolo.chat",
+      message: "Fix the filter UI",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "server",
+      taskRowContext: {
+        rowDbKey: "row-b2e06f801f-01TASK",
+        artifactIds: ["artifact-1"],
+      },
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "ok", dialogId: "dialog-1" });
+      },
+    });
+
+    expect(requests[0]?.body.userInput).toBe("Fix the filter UI");
+    expect(requests[0]?.body.runtimeContext.taskRun).toBeUndefined();
+    expect(requests[0]?.body.runtimeContext.subjectRefs).toContainEqual({
+      kind: "table-row",
+      id: "row-b2e06f801f-01TASK",
+      role: "task",
+    });
+  });
+
+  test("does not write task-context completion after an HTTP agent run returns a dialog", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "frontend-implementer",
+      agentKey: "agent-frontend",
+      serverUrl: "https://nolo.chat",
+      message: "Fix the filter UI",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "server",
+      taskRowContext: {
+        rowDbKey: "row-b2e06f801f-01TASK",
+      },
+      fetchImpl: async () => {
+        return Response.json({ content: "patched", dialogId: "dialog-1" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-1" });
+  });
+
+  test("sends image inputs as multimodal userInput over HTTP", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+
+    await runAgentTurn({
+      agentName: "vision",
+      agentKey: "agent-pub-vision",
+      serverUrl: "https://nolo.chat",
+      message: "describe this",
+      imageUrls: ["https://example.com/a.png"],
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "server",
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "ok" });
+      },
+    });
+
+    expect(requests[0]?.body.userInput).toEqual([
+      { type: "text", text: "describe this" },
+      { type: "image_url", image_url: { url: "https://example.com/a.png" } },
+    ]);
+  });
+
+  test("sends CLI dialog metadata over HTTP", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+
+    const result = await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      spaceId: "space-1",
+      category: "manual-checks",
+      inheritedFromDialogKey: "dialog-user-1-dialog-2",
+      parentDialogId: "dialog-2",
+      subjectDialogKey: "01SUBJECTDIALOG",
+      background: true,
+      noStream: true,
+      timeoutMs: 600000,
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "server",
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ dialogId: "dialog-1", status: "queued" });
+      },
+    });
+
+    expect(requests[0]?.body).toMatchObject({
+      agentKey: "agent-pub-test",
+      userInput: "hello",
+      spaceId: "space-1",
+      category: "manual-checks",
+      inheritedFromDialogKey: "dialog-user-1-dialog-2",
+      parentDialogId: "dialog-2",
+      background: true,
+      timeoutMs: 600000,
+      stream: false,
+    });
+    expect(requests[0]?.body.runtimeContext.subjectRefs).toEqual([
+      { kind: "dialog", id: "01SUBJECTDIALOG", role: "subject" },
+    ]);
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-1" });
+  });
+
+  test("sends explicit subject refs over HTTP for review evidence", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+
+    await runAgentTurn({
+      agentName: "reviewer",
+      agentKey: "agent-reviewer",
+      serverUrl: "https://nolo.chat",
+      message: "Review this implementation",
+      subjectRefs: [
+        { kind: "table-row", id: "row-user-board-task", role: "subject" },
+        { kind: "dialog", id: "dialog-impl", role: "review-target" },
+        { kind: "external", id: "commit:abc123", role: "commit" },
+      ],
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "server",
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "queued", dialogId: "dialog-review" });
+      },
+    });
+
+    expect(requests[0]?.body.runtimeContext.subjectRefs).toEqual([
+      { kind: "table-row", id: "row-user-board-task", role: "subject" },
+      { kind: "dialog", id: "dialog-impl", role: "review-target" },
+      { kind: "external", id: "commit:abc123", role: "commit" },
+    ]);
+  });
+
+  test("does not write background handoff state", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "frontend-implementer",
+      agentKey: "agent-frontend",
+      serverUrl: "https://nolo.chat",
+      message: "Fix settings style FOUC",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      background: true,
+      noStream: true,
+      taskRowContext: {
+        rowDbKey: "row-b2e06f801f-01TASK",
+      },
+      output,
+      fetchImpl: async () => {
+        return Response.json({ dialogId: "dialog-bg", status: "pending" }, { status: 202 });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-bg" });
+  });
+
+  test("runs forced local turns through the injected runtime adapter without HTTP", async () => {
+    const output = new CaptureOutput();
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async (messages) => ({
+            content: `local:${messages.at(-1)?.content}`,
+            model: "fake-local",
+            trace: messages,
+          }),
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("HTTP should not be called for forced local runs");
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-local" });
+    expect(output.text()).toContain("frontend -> working locally");
+    expect(output.text()).toContain("frontend > local:polish notifications");
+  });
+
+  test("continues forced local tool loops until the provider returns final text", async () => {
+    const output = new CaptureOutput();
+    let completeCalls = 0;
+    let toolCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "make screenshots",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["readFile"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local-retry" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls <= 3) {
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: `call-${completeCalls}`,
+                  type: "function",
+                  function: { name: "readFile", arguments: "{}" },
+                }],
+              };
+            }
+            return { content: "done after retry", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => {
+          toolCalls += 1;
+          return { content: "ok" };
+        },
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-local-retry" });
+    expect(toolCalls).toBe(3);
+    expect(output.text()).toContain("frontend > done after retry");
+  });
+
+  test("prints compact local tool trace by default", async () => {
+    const output = new CaptureOutput();
+    let completeCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "inspect repo",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["readFile"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-read",
+                  type: "function",
+                  function: { name: "readFile", arguments: JSON.stringify({ path: "README.md" }) },
+                }],
+              };
+            }
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({ content: "clean" }),
+      },
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local" });
+    expect(output.text()).toContain("[nolo:tool] #1 -> readFile README.md");
+    expect(output.text()).toContain("[nolo:tool] #1 <- readFile");
+    expect(output.text()).toContain("1 line");
+  });
+
+  test("does not print local tool trace when disabled by env", async () => {
+    const output = new CaptureOutput();
+    let completeCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "inspect repo",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_TRACE_TOOLS: "0" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["readFile"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local-no-trace" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-read",
+                  type: "function",
+                  function: { name: "readFile", arguments: JSON.stringify({ path: "README.md" }) },
+                }],
+              };
+            }
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({ content: "clean" }),
+      },
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local-no-trace" });
+    expect(output.text()).not.toContain("[nolo:tool]");
+  });
+
+  test("prints local tool events as jsonl when requested", async () => {
+    const output = new CaptureOutput();
+    let completeCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "inspect repo",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      eventsMode: "jsonl",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["execShell"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local-jsonl" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-shell",
+                  type: "function",
+                  function: { name: "execShell", arguments: JSON.stringify({ command: "git status --short" }) },
+                }],
+              };
+            }
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({ content: "stdout:\nclean\n\nexitCode: 0", metadata: { exitCode: 0 } }),
+      },
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local-jsonl" });
+    const events = output.text()
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line))
+      .filter((event) => typeof event.type === "string" && event.type.startsWith("tool-"));
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      schemaVersion: 1,
+      type: "tool-call",
+      round: 1,
+      tool: "execShell",
+      argsPreview: "git status --short",
+    });
+    expect(events[1]).toMatchObject({
+      schemaVersion: 1,
+      type: "tool-result",
+      round: 1,
+      tool: "execShell",
+      summary: expect.stringContaining("exit=0"),
+      metadata: { exitCode: 0 },
+    });
+  });
+
+  test("does not pass local tool evidence to an external writeback path", async () => {
+    const output = new CaptureOutput();
+    let completeCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "inspect repo",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      taskRowContext: {
+        rowDbKey: "row-b2e06f801f-01TASK",
+      },
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["readFile"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-read",
+                  type: "function",
+                  function: { name: "readFile", arguments: JSON.stringify({ path: "README.md" }) },
+                }],
+              };
+            }
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({ content: "clean" }),
+      },
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local" });
+  });
+
+  test("does not write local background handoff state", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "inspect repo in background",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      background: true,
+      taskRowContext: {
+        rowDbKey: "row-b2e06f801f-01TASK",
+      },
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local-bg" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => ({ content: "accepted locally", model: "fake-local" }),
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-local-bg" });
+  });
+
+  test("auto mode prefers a working local runtime before HTTP", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-auto-local" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => ({ content: "auto local ok", model: "fake-local" }),
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-auto-local" });
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).toContain("frontend -> working locally");
+  });
+
+  test("auto mode refreshes missing local agent config and retries local once before HTTP", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+    let loadAgentConfigCalls = 0;
+    let localCompletions = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "leveldb-persistence"],
+        loadAgentConfig: async (agentRef) => {
+          loadAgentConfigCalls += 1;
+          if (loadAgentConfigCalls < 3) return null;
+          return {
+            key: agentRef,
+            name: "Frontend",
+            prompt: "Fix UI",
+            model: "fake-local",
+          };
+        },
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-auto-local-retried" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            localCompletions += 1;
+            return { content: "auto local after refresh", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-auto-local-retried" });
+    expect(loadAgentConfigCalls).toBe(4);
+    expect(localCompletions).toBe(1);
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).toContain("refreshing from the configured server and retrying local once");
+    expect(output.text().match(/working locally/g)?.length).toBe(2);
+  });
+
+  test("auto mode falls back to HTTP when local agent config is still missing after one refresh retry", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: Array<{ url: string; body: any }> = [];
+    let loadAgentConfigCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "leveldb-persistence"],
+        loadAgentConfig: async () => {
+          loadAgentConfigCalls += 1;
+          return null;
+        },
+        loadDialogHistory: async () => [],
+        saveTurn: async () => {
+          throw new Error("local runtime should not save when config is missing");
+        },
+        resolveProvider: async () => {
+          throw new Error("local provider should not run when config is missing");
+        },
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async (url, init) => {
+        httpCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "server fallback", dialogId: "dialog-server-fallback" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-server-fallback" });
+    expect(loadAgentConfigCalls).toBe(3);
+    expect(httpCalls).toHaveLength(1);
+    expect(httpCalls[0]?.body.agentKey).toBe("frontend-local");
+    expect(output.text()).toContain("refreshing from the configured server and retrying local once");
+    expect(output.text()).toContain("frontend -> working");
+    expect(output.text()).toContain("frontend > server fallback");
+  });
+
+  test("auto mode skips local runtime for agents that declare server platform tools", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: Array<{ url: string; body: any }> = [];
+
+    const result = await runAgentTurn({
+      agentName: "pm",
+      agentKey: "agent-custom-platform-tools",
+      serverUrl: "https://nolo.chat",
+      message: "write task rows",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "PM",
+          prompt: "Manage task rows",
+          model: "fake-local",
+          toolNames: ["queryTableRows", "addTableRow", "updateTableRow"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => {
+          throw new Error("local runtime should be skipped");
+        },
+        resolveProvider: async () => {
+          throw new Error("local provider should be skipped");
+        },
+        executeTool: async () => {
+          throw new Error("local tools should be skipped");
+        },
+      },
+      fetchImpl: async (url, init) => {
+        httpCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "server ok", dialogId: "dialog-server" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-server" });
+    expect(httpCalls).toHaveLength(1);
+    expect(httpCalls[0]?.body.agentKey).toBe("agent-custom-platform-tools");
+    expect(output.text()).toContain("auto runtime: skipping local runtime");
+    expect(output.text()).toContain("queryTableRows, addTableRow, updateTableRow");
+    expect(output.text()).toContain("pm -> working");
+    expect(output.text()).toContain("pm > server ok");
+  });
+
+  test("auto mode keeps local runtime for CLI provider agents even when they declare platform tools", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+    let providerCalled = false;
+
+    const result = await runAgentTurn({
+      agentName: "frontend-implementer",
+      agentKey: "frontend-implementer",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "AGY",
+          prompt: "Implement frontend tasks.",
+          provider: "agy",
+          cliProvider: "agy",
+          toolNames: ["streamParallelAgents", "queryTableRows"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-agy-auto-local" }),
+        resolveProvider: async () => ({
+          model: "agy",
+          complete: async () => {
+            providerCalled = true;
+            return { content: "agy local ok", model: "agy" };
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server" });
+      },
+    });
+
+    expect(providerCalled).toBe(true);
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-agy-auto-local" });
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).not.toContain("skipping local runtime");
+    expect(output.text()).toContain("frontend-implementer -> working locally");
+    expect(output.text()).toContain("frontend-implementer > agy local ok");
+  });
+
+  test("auto mode does not skip monthly Mimo when a local shell cwd is already bound", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+    let providerCalled = false;
+
+    const result = await runAgentTurn({
+      agentName: MIMO_MONTH_AGENT_KEY,
+      agentKey: MIMO_MONTH_AGENT_KEY,
+      serverUrl: "https://us.nolo.chat",
+      message: "fix tests and commit",
+      scriptDir: "C:/missing/scripts",
+      env: {
+        AUTH_TOKEN: "token-123",
+      },
+      output,
+      runtimeMode: "auto",
+      localRuntimeCwd: "/repo/.worktrees/nolo-agent-mimo",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "包月 Mimo",
+          prompt: "Implement backend tasks.",
+          provider: "custom",
+          model: "mimo-v2.5-pro",
+          toolNames: ["queryTableRows"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-mimo-local" }),
+        resolveProvider: async () => ({
+          model: "mimo-v2.5-pro",
+          complete: async () => {
+            providerCalled = true;
+            return { content: "local mimo ok", model: "mimo-v2.5-pro" };
+          },
+        }),
+        executeTool: async () => ({ content: "ok" }),
+      },
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server" });
+      },
+    });
+
+    expect(providerCalled).toBe(true);
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-mimo-local" });
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).not.toContain("skipping local runtime");
+    expect(output.text()).toContain(`${MIMO_MONTH_AGENT_KEY} -> working locally`);
+  });
+
+  test("auto mode skips local runtime for machine-bound localhost custom providers", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: Array<{ url: string; body: any }> = [];
+
+    const result = await runAgentTurn({
+      agentName: "win-qwen",
+      agentKey: "agent-win-qwen",
+      serverUrl: "https://nolo.chat",
+      message: "run on the bound Windows machine",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", OPENAI_API_KEY: "local-provider-present" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Win Qwen",
+          prompt: "Windows local model",
+          provider: "custom",
+          model: "qwen",
+          customProviderUrl: "http://127.0.0.1:8080/v1/chat/completions",
+          runtimeBinding: {
+            machineId: "machine-win",
+            ownerUserId: "user-1",
+            connectorSurface: "cli",
+          },
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => {
+          throw new Error("local runtime should be skipped");
+        },
+        resolveProvider: async () => {
+          throw new Error("local provider should be skipped");
+        },
+        executeTool: async () => {
+          throw new Error("local tools should be skipped");
+        },
+      },
+      fetchImpl: async (url, init) => {
+        httpCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "server connector ok", dialogId: "dialog-win" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-win" });
+    expect(httpCalls).toHaveLength(1);
+    expect(httpCalls[0]?.body.agentKey).toBe("agent-win-qwen");
+    expect(output.text()).toContain("auto runtime: skipping local runtime");
+    expect(output.text()).toContain("machine-bound localhost custom provider");
+    expect(output.text()).not.toContain("win-qwen -> working locally");
+  });
+
+  test("auto mode keeps builtin nolo on local runtime so CLI workspace tools are available", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+    let providerCalled = false;
+
+    const result = await runAgentTurn({
+      agentName: "nolo",
+      agentKey: BUILTIN_NOLO_AGENT_KEY,
+      serverUrl: "https://nolo.chat",
+      message: "帮我总结最近 10 个对话",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async () => ({
+          key: BUILTIN_NOLO_AGENT_KEY,
+          name: "nolo",
+          prompt: "Use workspace tools.",
+          model: "fake-local",
+          toolNames: ["queryTableRows", "addTableRow", "updateTableRow"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-builtin-nolo-local" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            providerCalled = true;
+            return { content: "local nolo with tools", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({ content: "[]" }),
+      },
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server" });
+      },
+    });
+
+    expect(providerCalled).toBe(true);
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-builtin-nolo-local" });
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).not.toContain("skipping local runtime");
+    expect(output.text()).toContain("nolo -> working locally");
+  });
+
+  test("auto mode skips local runtime for server platform tools declared by runtime policy", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: Array<{ url: string; body: any }> = [];
+
+    const result = await runAgentTurn({
+      agentName: "pm",
+      agentKey: "agent-policy-platform-tools",
+      serverUrl: "https://nolo.chat",
+      message: "query task rows",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "PM",
+          prompt: "Manage task rows",
+          model: "fake-local",
+          runtimeToolPolicy: {
+            version: 1,
+            agentTools: ["queryTableRows", "streamParallelAgents"],
+            runtimeTools: ["execShell"],
+          },
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => {
+          throw new Error("local runtime should be skipped");
+        },
+        resolveProvider: async () => {
+          throw new Error("local provider should be skipped");
+        },
+        executeTool: async () => {
+          throw new Error("local tools should be skipped");
+        },
+      },
+      fetchImpl: async (url, init) => {
+        httpCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "server ok", dialogId: "dialog-server-policy" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-server-policy" });
+    expect(httpCalls).toHaveLength(1);
+    expect(httpCalls[0]?.body.agentKey).toBe("agent-policy-platform-tools");
+    expect(output.text()).toContain("auto runtime: skipping local runtime");
+    expect(output.text()).toContain("queryTableRows, streamParallelAgents");
+  });
+
+  test("auto mode skips known platform agents when local config cannot be read", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: Array<{ url: string; body: any }> = [];
+
+    const result = await runAgentTurn({
+      agentName: "nolo-project-manager",
+      agentKey: NOLO_PROJECT_MANAGER_AGENT_KEY,
+      serverUrl: "https://us.nolo.chat",
+      message: "write task rows",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", OPENAI_API_KEY: "local-provider-present" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async () => {
+          throw new Error("Database failed to open: LOCK");
+        },
+        loadDialogHistory: async () => {
+          throw new Error("local runtime should be skipped");
+        },
+        saveTurn: async () => {
+          throw new Error("local runtime should be skipped");
+        },
+        resolveProvider: async () => {
+          throw new Error("local provider should be skipped");
+        },
+        executeTool: async () => {
+          throw new Error("local tools should be skipped");
+        },
+      },
+      fetchImpl: async (url, init) => {
+        httpCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "server ok", dialogId: "dialog-server" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-server" });
+    expect(httpCalls).toHaveLength(1);
+    expect(httpCalls[0]?.body.agentKey).toBe(NOLO_PROJECT_MANAGER_AGENT_KEY);
+    expect(output.text()).toContain("known platform agent");
+    expect(output.text()).toContain("nolo-project-manager -> working");
+    expect(output.text()).toContain("nolo-project-manager > server ok");
+  });
+
+  test("builds the default local adapter when env requests local mode", async () => {
+    const output = new CaptureOutput();
+    const builtModes: string[] = [];
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { NOLO_RUNTIME_MODE: "local" },
+      output,
+      localRuntimeAdapterFactory: (env) => {
+        builtModes.push(env.NOLO_RUNTIME_MODE ?? "");
+        return {
+          host: "cli",
+          capabilities: ["local-provider", "local-persistence"],
+          loadAgentConfig: async (agentRef) => ({ key: agentRef, prompt: "Fix UI" }),
+          loadDialogHistory: async () => [],
+          saveTurn: async () => ({ dialogId: "dialog-local-env" }),
+          resolveProvider: async () => ({
+            model: "fake-local",
+            complete: async () => ({ content: "local env ok", model: "fake-local" }),
+          }),
+          executeTool: async () => {
+            throw new Error("no tools expected");
+          },
+        };
+      },
+      fetchImpl: async () => {
+        throw new Error("HTTP should not be called for env local runs");
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-local-env" });
+    expect(builtModes).toEqual(["local"]);
+    expect(output.text()).toContain("frontend -> working locally");
+  });
+
+  test("streams agent text responses to terminal output", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      fetchImpl: async () =>
+        new Response(
+          [
+            `data: ${JSON.stringify({ type: "text", content: "你" })}`,
+            "",
+            `data: ${JSON.stringify({ type: "text", content: "好" })}`,
+            "",
+            `data: ${JSON.stringify({ type: "done", dialogId: "dialog-stream" })}`,
+            "",
+          ].join("\n"),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }
+        ),
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-stream" });
+    expect(output.text()).toContain("nolo -> working");
+    expect(output.text()).toContain("nolo > 你好");
+  });
+
+  test("returns a recoverable dialog when a server stream drops after dialog creation", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      fetchImpl: async () => {
+        let sent = false;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              const encoder = new TextEncoder();
+              if (!sent) {
+                sent = true;
+                controller.enqueue(
+                  encoder.encode(
+                    [
+                      `data: ${JSON.stringify({
+                        type: "dialog",
+                        dialogId: "dialog-recoverable",
+                        status: "running",
+                      })}`,
+                      "",
+                      `data: ${JSON.stringify({ type: "text", content: "partial" })}`,
+                      "",
+                    ].join("\n")
+                  )
+                );
+                return;
+              }
+              controller.error(new Error("socket closed"));
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }
+        );
+      },
+    });
+
+    expect(result).toEqual({
+      exitCode: 0,
+      dialogId: "dialog-recoverable",
+      streamInterrupted: true,
+    });
+    expect(output.text()).toContain("dialog dialog-recoverable was created");
+    expect(output.text()).toContain("read the dialog before retrying");
+  });
+
+  test("prints an auth hint when installed without repo scripts or AUTH_TOKEN", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: {},
+      output,
+      fetchImpl: async () => {
+        throw new Error("fetch should not be called");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.text()).toContain("Run `nolo login`");
+  });
+
+  test("prints a friendly connection hint instead of crashing on transport errors", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "http://127.0.0.1:38123",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      fetchImpl: async () => {
+        throw new Error("ConnectionRefused");
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 1 });
+    expect(output.text()).toContain("Could not reach http://127.0.0.1:38123/api/agent/run");
+    expect(output.text()).toContain("set NOLO_SERVER");
+  });
+});

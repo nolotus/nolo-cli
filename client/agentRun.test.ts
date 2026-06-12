@@ -7,7 +7,9 @@ import {
   runAgentTurn,
 } from "./agentRun";
 import { BUILTIN_NOLO_AGENT_KEY } from "./localRuntimeAdapter";
-import { MIMO_MONTH_AGENT_KEY, NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
+
+const TEST_MONTHLY_MIMO_AGENT_KEY = "agent-user-1-monthly-mimo";
+const TEST_PROJECT_MANAGER_AGENT_KEY = "agent-user-1-project-manager";
 
 class CaptureOutput extends Writable {
   chunks: string[] = [];
@@ -929,8 +931,8 @@ describe("cli agent run client", () => {
     let providerCalled = false;
 
     const result = await runAgentTurn({
-      agentName: MIMO_MONTH_AGENT_KEY,
-      agentKey: MIMO_MONTH_AGENT_KEY,
+      agentName: TEST_MONTHLY_MIMO_AGENT_KEY,
+      agentKey: TEST_MONTHLY_MIMO_AGENT_KEY,
       serverUrl: "https://us.nolo.chat",
       message: "fix tests and commit",
       scriptDir: "C:/missing/scripts",
@@ -972,7 +974,7 @@ describe("cli agent run client", () => {
     expect(result).toEqual({ exitCode: 0, dialogId: "dialog-mimo-local" });
     expect(httpCalls).toEqual([]);
     expect(output.text()).not.toContain("skipping local runtime");
-    expect(output.text()).toContain(`${MIMO_MONTH_AGENT_KEY} -> working locally`);
+    expect(output.text()).toContain(`${TEST_MONTHLY_MIMO_AGENT_KEY} -> working locally`);
   });
 
   test("auto mode skips local runtime for machine-bound localhost custom providers", async () => {
@@ -1128,13 +1130,13 @@ describe("cli agent run client", () => {
     expect(output.text()).toContain("queryTableRows, streamParallelAgents");
   });
 
-  test("auto mode skips known platform agents when local config cannot be read", async () => {
+  test("auto mode falls back to server when local config cannot be read", async () => {
     const output = new CaptureOutput();
     const httpCalls: Array<{ url: string; body: any }> = [];
 
     const result = await runAgentTurn({
-      agentName: "nolo-project-manager",
-      agentKey: NOLO_PROJECT_MANAGER_AGENT_KEY,
+      agentName: "project-manager",
+      agentKey: TEST_PROJECT_MANAGER_AGENT_KEY,
       serverUrl: "https://us.nolo.chat",
       message: "write task rows",
       scriptDir: "C:/missing/scripts",
@@ -1168,10 +1170,10 @@ describe("cli agent run client", () => {
 
     expect(result).toEqual({ exitCode: 0, dialogId: "dialog-server" });
     expect(httpCalls).toHaveLength(1);
-    expect(httpCalls[0]?.body.agentKey).toBe(NOLO_PROJECT_MANAGER_AGENT_KEY);
-    expect(output.text()).toContain("known platform agent");
-    expect(output.text()).toContain("nolo-project-manager -> working");
-    expect(output.text()).toContain("nolo-project-manager > server ok");
+    expect(httpCalls[0]?.body.agentKey).toBe(TEST_PROJECT_MANAGER_AGENT_KEY);
+    expect(output.text()).not.toContain("known platform agent");
+    expect(output.text()).toContain("project-manager -> working");
+    expect(output.text()).toContain("project-manager > server ok");
   });
 
   test("builds the default local adapter when env requests local mode", async () => {

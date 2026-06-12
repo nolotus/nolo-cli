@@ -1,10 +1,5 @@
 import { runLocalAgentTurn } from "../agentRuntimeLocal";
 import { LOCAL_AGENT_CONFIG_MISSING_CODE } from "../agent-runtime/localLoop";
-import {
-  MIMO_MONTH_AGENT_KEY,
-  NOLO_PROJECT_MANAGER_AGENT_KEY,
-  WIN_CODEX_AGENT_KEY,
-} from "../agentAliases";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
@@ -115,36 +110,6 @@ const SERVER_PLATFORM_TOOL_NAMES = new Set([
   "updateTableRows",
 ]);
 
-const KNOWN_SERVER_PLATFORM_AGENT_KEYS = new Set([
-  MIMO_MONTH_AGENT_KEY,
-  NOLO_PROJECT_MANAGER_AGENT_KEY,
-  WIN_CODEX_AGENT_KEY,
-]);
-
-const KNOWN_SERVER_PLATFORM_AGENT_ALIASES = new Set([
-  "code-review",
-  "frontend",
-  "frontend-agent",
-  "frontend-implementer",
-  "full-stack",
-  "fullstack",
-  "nolo code review",
-  "nolo frontend",
-  "nolo fullstack",
-  "nolo project manager",
-  "nolo reviewer",
-  "nolo-code-review",
-  "nolo-frontend",
-  "nolo-fullstack",
-  "nolo-pm",
-  "nolo-project-manager",
-  "nolo-reviewer",
-  "pm",
-  "project-manager",
-  "review",
-  "reviewer",
-]);
-
 export function findServerPlatformTools(toolNames?: string[]) {
   if (!Array.isArray(toolNames)) return [];
   return toolNames.filter((toolName) => SERVER_PLATFORM_TOOL_NAMES.has(toolName));
@@ -157,16 +122,6 @@ function resolveServerPlatformToolNames(agentConfig: any) {
       ? agentConfig.runtimeToolPolicy.agentTools
       : []),
   ]);
-}
-
-function normalizeAgentRef(ref?: string) {
-  return ref?.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function isKnownServerPlatformAgent(options: RunAgentTurnOptions) {
-  if (KNOWN_SERVER_PLATFORM_AGENT_KEYS.has(options.agentKey)) return true;
-  const normalizedKey = normalizeAgentRef(options.agentKey);
-  return Boolean(normalizedKey && KNOWN_SERVER_PLATFORM_AGENT_ALIASES.has(normalizedKey));
 }
 
 function isMachineBoundLocalhostCustomProvider(agentConfig: any) {
@@ -233,30 +188,15 @@ async function shouldSkipAutoLocalForServerPlatformTools(options: RunAgentTurnOp
   if (options.localRuntimeCwd) {
     return false;
   }
-  const knownServerPlatformAgent = isKnownServerPlatformAgent(options);
   const adapter = resolveLocalRuntimeAdapter(options);
-  if (!adapter) return knownServerPlatformAgent;
+  if (!adapter) return false;
   let agentConfig;
   try {
     agentConfig = await adapter.loadAgentConfig(options.agentKey);
   } catch {
-    if (knownServerPlatformAgent) {
-      options.output.write(
-        `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is a known platform agent. ` +
-          "Use --local explicitly to force local workspace tools.\n"
-      );
-      return true;
-    }
     return false;
   }
   if (isCliProviderAgentConfig(agentConfig)) return false;
-  if (knownServerPlatformAgent) {
-    options.output.write(
-      `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is a known platform agent. ` +
-        "Use --local explicitly to force local workspace tools.\n"
-    );
-    return true;
-  }
   if (isMachineBoundLocalhostCustomProvider(agentConfig)) {
     options.output.write(
       `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is a machine-bound localhost custom provider. ` +

@@ -50,7 +50,6 @@ import {
   LOCAL_CODEX_AGENT_KEY,
   LOCAL_QODER_AGENT_ID,
   LOCAL_QODER_AGENT_KEY,
-  MIMO_MONTH_AGENT_KEY,
   NOLO_DEFAULT_AGENT_ID,
   NOLO_DEFAULT_AGENT_KEY,
 } from "../agentAliases";
@@ -424,10 +423,6 @@ function summarizeOpenAiToolNames(tools: Array<Record<string, unknown>>) {
     .filter((name): name is string => Boolean(name));
 }
 
-function shouldExposeLocalPlatformTools(agentKey?: string) {
-  return agentKey !== MIMO_MONTH_AGENT_KEY;
-}
-
 function addDefaultLightWebToolsForConfiguredAgents(
   toolNames: string[],
   agentConfig?: AgentRuntimeAgentConfig | null,
@@ -449,7 +444,6 @@ function addDefaultLightWebToolsForConfiguredAgents(
 
 function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: EnvLike }) {
   const toolset = buildLocalWorkspaceToolsetForEnv(args);
-  const exposePlatformTools = shouldExposeLocalPlatformTools(args.agentKey);
   return [
     ...buildLocalWorkspaceOpenAiTools({
       toolNames: toolset.toolNames,
@@ -463,8 +457,8 @@ function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: 
       searchFilesDescriptionVariant: resolveSearchFilesDescriptionVariant(args.env),
       searchFilesParameterVariant: resolveSearchFilesParameterVariant(args.env),
     }),
-    ...(exposePlatformTools ? buildServerPlatformOpenAiTools({ toolNames: args.toolNames }) : []),
-    ...(exposePlatformTools ? buildNoloWorkspaceOpenAiTools({ toolNames: args.toolNames }) : []),
+    ...buildServerPlatformOpenAiTools({ toolNames: args.toolNames }),
+    ...buildNoloWorkspaceOpenAiTools({ toolNames: args.toolNames }),
   ];
 }
 

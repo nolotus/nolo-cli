@@ -64,7 +64,7 @@ export function renderHelpText() {
     "  nolo agent pull agent-pub-01APPBUILDER00000001YAII3I",
   "  nolo agent read agent-pub-01APPBUILDER00000001YAII3I",
     "  nolo agent usage qoder",
-  '  nolo agent run frontend-implementer --msg "polish notifications"',
+  '  nolo agent run frontend --msg "polish notifications"',
     "  nolo agent bind-current agent-user-1-agent-1",
     "  nolo agent runtime-doctor agent-user-1-agent-1",
     '  nolo agent smoke-current agent-user-1-agent-1 --msg "ping"',
@@ -73,8 +73,8 @@ export function renderHelpText() {
     "  nolo space read 01KKY77TT0DA9NY7TNW3R7255N --content-key page-user-id --brief",
     "  nolo space delete --name-prefix rn_owner_verify_0504 --yes",
     "  nolo table query --table 01ABCXYZ",
-    '  nolo table query --table meta-0e95801d90-NOLOTASKBOARD --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
-    '  nolo table update-row --table meta-0e95801d90-NOLOTASKBOARD --row 01ROWID --changes \'{"status":"已完成"}\'',
+    '  nolo table query --table meta-your-user-TASKBOARD --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
+    '  nolo table update-row --table meta-your-user-TASKBOARD --row 01ROWID --changes \'{"status":"done"}\'',
     "  nolo llama status",
   ];
 

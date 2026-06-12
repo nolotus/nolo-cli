@@ -1,4 +1,3 @@
-import { resolveCliAgentKeyInput } from "./agentAliases";
 import { getReadableCliDb, type AgentCommandDeps } from "./agentCommandSupport";
 import {
   buildUpdatedAgentRecord,
@@ -28,7 +27,6 @@ export async function runAgentReadCommand(
     return 1;
   }
 
-  const agentKey = resolveCliAgentKeyInput(agentInput);
   const db = deps.db ?? await getReadableCliDb(output);
   const fetchImpl = deps.fetchImpl ?? fetch;
   const fallbackFetchImpl = deps.fallbackFetchImpl;
@@ -43,7 +41,7 @@ export async function runAgentReadCommand(
       fallbackFetchImpl,
     });
     if (!result) {
-      throw new Error(`agent not found: ${agentKey}`);
+      throw new Error(`agent not found: ${agentInput}`);
     }
     output.write(JSON.stringify({
       ...normalizeAgentRecordForOutput(result.agentKey, authToken, result.record),

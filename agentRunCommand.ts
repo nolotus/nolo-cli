@@ -4,7 +4,9 @@ import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode } from "./agent
 import { existsSync, readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { parseSkillDocProtocol, type WorkflowReferenceConfig } from "./ai/skills/skillDocProtocol";
-import { LOCAL_CODEX_AGENT_KEY, MIMO_MONTH_AGENT_KEY, isLocalCliAgentKey, resolveCliAgentKeyInput } from "./agentAliases";
+import { LOCAL_CODEX_AGENT_KEY, isLocalCliAgentKey, resolveCliAgentKeyInput } from "./agentAliases";
+import { resolveAgentInput } from "./agentNameResolver";
+import type { CliKvDb } from "./client/hybridRecordStore";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -21,6 +23,9 @@ type AgentRunCommandDeps = {
   localRuntimeAdapterFactory?: (env: EnvLike, options?: { cwd?: string }) => AgentRuntimeHostAdapter;
   inspectLocalRunWorkspace?: typeof inspectLocalRunWorkspace;
   resolveWorkflowReference?: typeof resolveWorkflowReference;
+  db?: CliKvDb;
+  fetchImpl?: typeof fetch;
+  fallbackFetchImpl?: typeof fetch;
 };
 
 type LocalRunWorkspaceInspection = {
@@ -93,18 +98,9 @@ function runtimeModeFromArgs(args: string[]): AgentRuntimeRequestedMode | undefi
 }
 
 function isMonthlyMimoAgentRef(raw: string | undefined, resolved: string) {
-  const normalized = raw?.trim().toLowerCase();
-  return (
-    resolved === MIMO_MONTH_AGENT_KEY ||
-    normalized === "fullstack" ||
-    normalized === "full-stack" ||
-    normalized === "nolo-fullstack" ||
-    normalized === "包月mimo" ||
-    normalized === "包月mimo2.5" ||
-    normalized === "mimo-month" ||
-    normalized === "全栈" ||
-    normalized === "nolo 全栈工程师"
-  );
+  void raw;
+  void resolved;
+  return false;
 }
 
 function parsePositiveInteger(value: string | undefined) {
@@ -473,6 +469,22 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
 
   const runner = deps.runner ?? runAgentTurn;
+  let runnerAgentName = parsed.agentKey;
+  try {
+    const resolvedAgent = await resolveAgentInput({
+      agentInput: parsed.agentKey,
+      env,
+      db: deps.db,
+      fetchImpl: deps.fetchImpl ?? fetch,
+      fallbackFetchImpl: deps.fallbackFetchImpl,
+      output,
+    });
+    parsed.agentKey = resolvedAgent.agentKey;
+    runnerAgentName = resolvedAgent.agentName;
+  } catch (error) {
+    output.write(`[nolo] ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
   let workflowReference: ResolvedWorkflowReference | undefined;
   if (parsed.workflowRef) {
     try {
@@ -493,7 +505,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     allowShell: parsed.allowShell,
   });
   const result: RunAgentTurnResult = await runner({
-    agentName: parsed.agentKey,
+    agentName: runnerAgentName,
     agentKey: parsed.agentKey,
     serverUrl: resolveServerUrl(env),
     message: prependWorkflowReferencePrompt(

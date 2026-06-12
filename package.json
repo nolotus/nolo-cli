@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.1.44",
+  "version": "0.1.45",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "repository": {
@@ -107,6 +107,7 @@
     "memoryCommands.ts",
     "dialogAttachmentCleanup.ts",
     "qoderUsageProbe.ts",
+    "agentNameResolver.ts",
     "localRuntimeAuthority.ts",
     "cli/commandRegistry.ts",
     "cli/client/profileConfig.ts",
@@ -127,8 +128,9 @@
     "cli/agentMachineCommands.ts",
     "cli/runtimeDoctorCommands.ts",
     "cli/connectorWebSocketTarget.ts",
-    "cli/agentAliases.ts",
+    "cli/agentNameResolver.ts",
     "cli/machineCommands.ts",
+    "cli/agentAliases.ts",
     "cli/client/localAgentRecords.ts",
     "cli/defaultServer.ts",
     "cli/client/agentRun.ts",

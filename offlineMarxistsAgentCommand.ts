@@ -28,7 +28,6 @@ type ParsedArgs = {
 
 const DEFAULT_USER_ID = "b2e06f801f";
 const DEFAULT_SPACE_ID = "01KKY77TT0DA9NY7TNW3R7255N";
-const DEFAULT_SOURCE_AGENT_ID = "01MIMO25MONTH0000000NEW001";
 const DEFAULT_TARGET_AGENT_ID = "01OFFMARXBOOK000000010AHL1";
 const DEFAULT_AGENT_NAME = "离线马克思主义文库书籍转换助手";
 const TOOL_NAME = "convertMarxistsBookToOfflineHtml";
@@ -75,8 +74,8 @@ function parseArgs(args: string[], env: EnvLike): ParsedArgs | null {
     DEFAULT_USER_ID;
   const sourceAgentKey =
     readFlagValue(args, "--source-agent") ??
-    env.NOLO_MIMO_SOURCE_AGENT_KEY ??
-    `agent-${userId}-${DEFAULT_SOURCE_AGENT_ID}`;
+    env.NOLO_OFFLINE_MARXISTS_SOURCE_AGENT_KEY ??
+    "";
   const targetAgentId =
     readFlagValue(args, "--target-agent-id") ??
     env.NOLO_OFFLINE_MARXISTS_AGENT_ID ??
@@ -90,7 +89,7 @@ function parseArgs(args: string[], env: EnvLike): ParsedArgs | null {
     env.NOLO_OFFLINE_MARXISTS_SPACE_ID ??
     DEFAULT_SPACE_ID;
 
-  if (!authToken.trim()) return null;
+  if (!authToken.trim() || !sourceAgentKey.trim()) return null;
   return {
     serverUrl,
     authToken,
@@ -227,7 +226,7 @@ async function attachAgentToSpace(args: {
 function writeUsage(output: OutputLike) {
   output.write(
     "Usage: nolo agent setup-offline-marxists [--server https://nolo.chat] [--source-agent <key>] [--space <spaceId>] [--target-agent-id <id>] [--json]\n" +
-      "Requires AUTH_TOKEN from `nolo login` or --token.\n"
+      "Requires AUTH_TOKEN from `nolo login` or --token, plus --source-agent or NOLO_OFFLINE_MARXISTS_SOURCE_AGENT_KEY.\n"
   );
 }
 

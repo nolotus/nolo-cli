@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
-import { LOCAL_CODEX_AGENT_KEY, LOCAL_QODER_AGENT_KEY, MIMO_MONTH_AGENT_KEY } from "../agentAliases";
+import { LOCAL_CODEX_AGENT_KEY, LOCAL_QODER_AGENT_KEY } from "../agentAliases";
 import { createCliLocalRuntimeAdapter } from "./localRuntimeAdapter";
+
+const TEST_CUSTOM_AGENT_KEY = "agent-user-1-custom-runtime";
 
 describe("CLI local runtime adapter", () => {
   const DEFAULT_LOCAL_CODING_TOOL_NAMES = [
@@ -1380,7 +1382,7 @@ describe("CLI local runtime adapter", () => {
     ]);
   });
 
-  test("keeps monthly Mimo local model tools to the compact coding surface", async () => {
+  test("keeps generic custom agent tools to the supported local and server surfaces", async () => {
     const requests: Array<{ body: any }> = [];
     const adapter = createCliLocalRuntimeAdapter({
       env: {
@@ -1389,7 +1391,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: TEST_CUSTOM_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1424,11 +1426,14 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: TEST_CUSTOM_AGENT_KEY,
       input: "inspect cwd",
     });
 
-    expect(toolNamesFromRequest(requests[0])).toEqual(SHELL_LOCAL_CODING_TOOL_NAMES);
+    expect(toolNamesFromRequest(requests[0])).toEqual([
+      ...SHELL_LOCAL_CODING_TOOL_NAMES,
+      "queryTableRows",
+    ]);
   });
 
   test("can expose only declared local workspace tools for tool ablations", async () => {
@@ -1441,7 +1446,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: TEST_CUSTOM_AGENT_KEY,
           prompt: "Use exactly the declared local tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1461,7 +1466,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: TEST_CUSTOM_AGENT_KEY,
       input: "inspect cwd",
     });
 
@@ -1478,7 +1483,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: TEST_CUSTOM_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1498,7 +1503,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: TEST_CUSTOM_AGENT_KEY,
       input: "inspect cwd",
     });
 
@@ -1557,7 +1562,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: TEST_CUSTOM_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1577,7 +1582,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: TEST_CUSTOM_AGENT_KEY,
       input: "find tests",
     });
 
@@ -1603,7 +1608,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: TEST_CUSTOM_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1623,7 +1628,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: TEST_CUSTOM_AGENT_KEY,
       input: "list directories",
     });
 
@@ -1648,7 +1653,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: TEST_CUSTOM_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1668,7 +1673,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: TEST_CUSTOM_AGENT_KEY,
       input: "read a file range",
     });
 
@@ -1695,7 +1700,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: TEST_CUSTOM_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1715,7 +1720,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: TEST_CUSTOM_AGENT_KEY,
       input: "find TODO",
     });
 

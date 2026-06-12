@@ -29,7 +29,14 @@ Add the smallest command sequence that reproduces the issue.
 - Install method:
 - Bun version:
 - nolo-cli version:
-- Provider or local CLI:
+- Provider category:
+  - [ ] Built-in HTTP provider
+  - [ ] Custom OpenAI-compatible endpoint
+  - [ ] Doctor-detected credential
+  - [ ] Local CLI agent
+  - [ ] Not provider-related
+- Provider name or local CLI:
+- Sanitized `nolo doctor` provider output:
 
 ## Logs
 

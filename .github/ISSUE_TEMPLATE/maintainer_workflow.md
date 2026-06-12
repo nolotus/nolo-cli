@@ -18,6 +18,13 @@ Which maintainer workflow should this improve?
 - Desktop local mode
 - Provider compatibility
 
+If this is provider-related, choose the category:
+
+- Built-in HTTP provider
+- Custom OpenAI-compatible endpoint
+- Doctor-detected credential
+- Local CLI agent
+
 ## Current friction
 
 Describe what is hard to repeat, inspect, or automate today.

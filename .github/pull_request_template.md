@@ -17,4 +17,5 @@ nolo doctor
       user data, production ops, billing paths, or signing secrets.
 - [ ] Any provider key, shell, machine connector, or auth boundary change is
       documented.
+- [ ] Provider-related changes name the affected provider category.
 - [ ] Docs or tests were updated when command behavior changed.

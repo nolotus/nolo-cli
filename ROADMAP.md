@@ -28,7 +28,8 @@ This roadmap tracks the public OSS work for `nolo-cli`.
 - Keep provider credentials local by default and avoid requiring a Nolo account
   for repository-local review, triage, and release checks.
 - Add desktop local-mode docs so users can run the desktop app with their own
-  provider keys before signing in.
+  provider keys before signing in. Initial docs:
+  [docs/desktop-local-mode.md](./docs/desktop-local-mode.md).
 - Add tests around authless local runs, provider resolution, shell permission
   prompts, and local workspace summaries.
 

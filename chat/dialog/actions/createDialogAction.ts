@@ -52,7 +52,7 @@ interface CreateDialogArgs {
   spaceId?: string;
   inheritFromDialogKey?: string;
   skipGreeting?: boolean;
-  triggerType?: "user" | "api" | "localhost" | "scheduled_run";
+  triggerType?: "user" | "api" | "localhost" | "scheduled_run" | "automation_run";
   schedule?: string;
   taskPrompt?: string;
   skipAgentConfigRead?: boolean;
@@ -240,7 +240,7 @@ export const createDialogAction = async (
     outputTokens: 0,
     totalCost: 0,
     ...(triggerType && { triggerType }),
-    ...(triggerType === "scheduled_run"
+    ...(triggerType === "scheduled_run" || triggerType === "automation_run"
       ? {
           executionMode: "background" as const,
           status: "pending" as const,

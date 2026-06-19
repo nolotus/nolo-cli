@@ -105,6 +105,7 @@ export default {
             description:
               "Pick the interface font you like, including Songti and other Chinese type styles.",
           },
+          moreSettings: "More appearance settings",
         },
         theme: {
           light: "Light Mode",
@@ -179,13 +180,13 @@ export default {
 
       // === Combined Welcome Section ===
       welcomeSection: {
-        heroTitle: "AI that remembers you and gets the work done",
-        heroDescription:
-          "Chat naturally, hand work to multiple agents, and turn ideas into docs, apps, images, videos, and repeatable workflows without rebuilding context every time.",
+        heroTitle: "AI that gets the work done with you",
+        heroDescription: "Give it a goal. Walk away with something you can use.",
         ctaButton: "Start free",
         secondaryExplore: "Explore public agents",
         secondaryDownload: "Download desktop or mobile",
         secondaryPricing: "View pricing",
+        trustMicro: "Free to join · No credit card needed · Cancel anytime",
         socialProof: {
           label: "Supported models and platforms",
           platforms: "Web · Desktop · iOS",
@@ -196,11 +197,11 @@ export default {
           cta: "Open my workspace",
           trust: "Free to join · No credit card needed",
         },
-        highlightsLabel: "Homepage value highlights",
+        highlightsLabel: "Three ways to start",
         highlights: {
-          memory: "Persistent context",
-          agents: "Multi-agent tasks",
-          output: "Docs, images, videos, apps",
+          useDirectly: "Public agents, ready to go",
+          customize: "Build your own agent in minutes",
+          orchestrate: "Multi-agent teams for your task",
         },
         proof: {
           kicker: "Why start here",
@@ -221,53 +222,218 @@ export default {
         },
         faq: {
           kicker: "FAQ",
-          title: "The questions that actually matter before you start",
-          description: "Real answers to what people ask before signing up.",
+          title: "What agent players actually want to know",
+          description:
+            "For people already playing with agents and trying to ship real work—not just prettier prompts.",
           context: {
-            question: "Is it free?",
+            question: "Is context shared between agents?",
             answer:
-              "The core workspace is free. Advanced models (GPT-4o, Claude, and others) are pay-as-you-go—no monthly subscription until you need more power. No task, no charge.",
+              "Yes. Rules, attached knowledge, and dialog history stay on the agent. When multiple agents collaborate, context flows as needed instead of restarting from zero every task.",
           },
           output: {
-            question: "How is this different from just using ChatGPT or Claude directly?",
+            question: "Can I bring my own models or local runtime?",
             answer:
-              "Nolo remembers your context, rules, and history across sessions. Instead of one model answering alone, you can run multiple agents in parallel on the same task—faster results, with more than one perspective.",
+              "Yes. BYOK, custom provider URLs, and CLI agents bound to local machines are supported. Pick models by task cost and performance.",
           },
           entry: {
-            question: "Do I need to know how to code?",
+            question: "Can one task run multiple agents?",
             answer:
-              "Not at all. Describe what you want in plain language. Build apps, generate images, write documents—all through conversation.",
+              "Yes. Nolo can route a task to multiple agents manually or automatically. They can work in parallel, review each other, and hand results back to you.",
           },
+          orchestration: {
+            question: "Is orchestration fixed to one pattern?",
+            answer:
+              "No. Coding delivery, parallel brainstorm, consensus deliberation, and video generation are just examples. You can use public orchestrator agents, build your own, or let AI design a multi-agent team for the current task while agents maintain their own collaboration.",
+          },
+        },
+        orchestration: {
+          kicker: "Multi-agent orchestration",
+          title: "Orchestration is not one-size-fits-all",
+          desc: "Different tasks need different team shapes. Agents can maintain their own relationships—you stay focused on whether the problem is solved.",
+          footnote: "These are common patterns—not the only ones. AI can design a team shape for your task too.",
+          tabs: {
+            coding: "Coding delivery",
+            brainstorm: "Parallel brainstorm",
+            consensus: "Consensus meeting",
+            video: "Video generation",
+          },
+        },
+        showcase: {
+          exampleLabel: "Example · coding delivery",
+          badge: "Example orchestration",
+          title: "Coding tasks: from split work to shipped result",
+          desc: "One common pattern—coordinate, build in parallel, review, iterate, and release. Not the only way to run a multi-agent team.",
+          input: "Input",
+          dispatch: "Dispatch",
+          submit: "Submit",
+          pass: "Pass",
+          refactor: "Iterate",
+          chat: "Chat",
+          taskboard: "Taskboard",
+          pm: "Task coordination",
+          fe: "UI implementation",
+          be: "Logic & data",
+          reviewer: "Quality check",
+          release: "Release",
+          website: "Live result",
+          mobileSteps: [
+            {
+              title: "Describe the goal",
+              desc: "Start in chat or on the task board with what you want done.",
+            },
+            {
+              title: "Work gets routed",
+              desc: "A coordinator agent assigns the right roles to the task.",
+            },
+            {
+              title: "Build in parallel",
+              desc: "UI, logic, and data can move forward at the same time.",
+            },
+            {
+              title: "Review and iterate",
+              desc: "If it is not good enough yet, agents send it back and improve it.",
+            },
+            {
+              title: "Ship the result",
+              desc: "Once it passes review, the output is released and ready to use.",
+            },
+          ],
+        },
+        showcaseBrainstorm: {
+          exampleLabel: "Example · parallel brainstorm",
+          title: "One question, multiple perspectives at once",
+          desc: "An orchestrator agent sends the same question to multiple models in parallel. You see different angles immediately—no manual tab switching.",
+          question: "Worth shipping the MVP first, or talking to users first?",
+          mobileSteps: [
+            {
+              title: "Ask one open question",
+              desc: "Hand the orchestrator agent a question worth exploring from multiple angles.",
+            },
+            {
+              title: "Parallel branches launch",
+              desc: "GPT, Grok, and Gemini answer the same question at the same time.",
+            },
+            {
+              title: "Compare and decide",
+              desc: "You read the branches side by side and pick the direction to continue.",
+            },
+          ],
+        },
+        showcaseConsensus: {
+          exampleLabel: "Example · consensus meeting",
+          title: "From parallel opinions to a clear conclusion",
+          desc: "An orchestrator agent gathers opinions from multiple models, continues discussion when needed, and hands you consensus, disagreements, and next steps.",
+          question: "Should we prioritize growth or profitability this quarter?",
+          outputLabels: {
+            consensus: "Consensus",
+            disagreements: "Open disagreements",
+            nextStep: "Next step",
+          },
+          mobileSteps: [
+            {
+              title: "Pose a decision worth debating",
+              desc: "Give the orchestrator agent a question where multiple viewpoints actually matter.",
+            },
+            {
+              title: "Parallel opinions first",
+              desc: "GPT, Grok, and Gemini each share their take at the same time.",
+            },
+            {
+              title: "Deliberate until it converges",
+              desc: "The orchestrator keeps the internal discussion going when more alignment is needed.",
+            },
+            {
+              title: "Get a structured answer",
+              desc: "You receive consensus, what still disagrees, and what to do next.",
+            },
+          ],
+        },
+        showcaseVideo: {
+          exampleLabel: "Example · video generation",
+          title: "From idea to finished video: multimodal delivery",
+          desc: "An orchestrator agent chains script, storyboard, visuals, voice, and editing into one pipeline—you bring a topic, it hands back a video ready to publish.",
+          brief: "30-second intro video for a new product",
+          stepLabels: {
+            brief: "Creative brief",
+            storyboard: "Storyboard",
+            generate: "Generate visuals",
+            edit: "Edit & mix",
+            deliver: "Final export",
+          },
+          agentLabels: {
+            orchestrator: "Orchestrator",
+            script: "Script agent",
+            storyboard: "Storyboard agent",
+            visual: "Visual agent",
+            editor: "Editor agent",
+            deliver: "Final export",
+          },
+          mobileSteps: [
+            {
+              title: "Describe the video goal",
+              desc: "Tell the orchestrator agent the topic, length, and tone you need.",
+            },
+            {
+              title: "Script and storyboard",
+              desc: "Agents draft the script and break it into scenes and shots.",
+            },
+            {
+              title: "Generate multimodal assets",
+              desc: "Images, clips, and voice are produced in parallel for each scene.",
+            },
+            {
+              title: "Edit into one cut",
+              desc: "The orchestrator stitches scenes, pacing, and audio into a coherent video.",
+            },
+            {
+              title: "Export the final file",
+              desc: "You get a publish-ready video without switching tools yourself.",
+            },
+          ],
+        },
+        builder: {
+          badge: "Make it yours",
+          title: "Build your agent",
+          desc: "Set the role, capabilities, and models—minutes later you have an AI that works for you. It can deliver docs, pages, images, and video, not just chat.",
+          cta: "Create your agent",
+          capabilities: [
+            {
+              title: "Persistent memory",
+              desc: "Set your rules once. Context carries across sessions and gets more aligned over time.",
+            },
+            {
+              title: "Custom capabilities",
+              desc: "Define the role, attach knowledge and skills, then enable search, docs, MCP, and more.",
+            },
+            {
+              title: "Choose your models",
+              desc: "Use platform models, your API keys, or CLI agents per task. The same agent can ship docs, pages, images, and video—not chat alone.",
+            },
+          ],
+        },
+        output: {
+          badge: "Multimodal output",
+          title: "Then let it create",
+          desc: "Docs, apps, images, video, and 3D—give it an idea and get something you can actually use.",
+          types: [
+            { label: "Docs", example: "Reports · briefs · contracts" },
+            { label: "3D", example: "Models · scenes · assets" },
+            { label: "Web", example: "Landing pages · mini apps" },
+            { label: "Images", example: "Posters · covers · mockups" },
+            { label: "Video", example: "Explainers · clips · edits" },
+          ],
         },
         finalCta: {
-          kicker: "Start from the path that matches your intent",
-          title: "Explore first if you want to browse. Sign up first if you already know what you want to build.",
-          description: "Both paths lead somewhere real. Pick the one that matches where you are right now.",
+          kicker: "Ready when you are",
+          title: "Know what you want to build? Start your workspace.",
+          description:
+            "Free to join — set up your first agent in minutes. Keep scrolling to browse public agents from the community.",
           primary: "Create your workspace",
-          secondary: "Browse public agents",
         },
         cards: {
-          context: {
-            title: "Say it once, it remembers",
-            desc: "Set your rules and context once. Stay in control with direct guidance, or step back and let it handle the whole flow.",
-            bubble: "Got it—no fluff. Step 3 last time. Let's continue.",
-          },
-          battle: {
-            title: "You set the direction, agents finish the path",
-            desc: "Drive it yourself or hand the goal to multiple agents working in parallel. Every step is visible, every result is accountable.",
-            topic: "Ship MVP first, or find users first?",
-            posA: "Ship the MVP—let data decide. Low cost to fail.",
-            posB: "Talk to users first. Build the right thing.",
-            result: "Two views, you decide",
-          },
           create: {
             title: "You bring the idea, it builds the thing",
             desc: "Docs, apps, images, videos, 3D—describe what you want and it produces something you can actually use or ship.",
-          },
-          auto: {
-            title: "Set it tonight, check results in the morning",
-            desc: "Queue tasks from your phone or desktop. It runs overnight and delivers when you're ready to review.",
-            taskName: "Workflow running",
           },
         },
       },
@@ -323,6 +489,7 @@ export default {
         ocrModel: {
           none: "No OCR (pdf.js extraction)",
           recommended: "recommended",
+          legacy: "legacy fallback",
         },
         sidebarVisibleTypes: {
           description:
@@ -364,12 +531,18 @@ export default {
         eyebrow: "Downloads",
         title: "Nolo on every device",
         subtitle:
-          "Android, Windows, Linux, and macOS are available now. iOS coming soon.",
+          "Pick the desktop app, mobile client, or terminal CLI that fits how you work.",
         tagline: "Quiet tools for clear thinking.",
         availableNow: "Available",
         comingSoon: "Coming soon",
         downloadNow: "Download",
         comingSoonAction: "Coming soon",
+        desktopSectionTitle: "Desktop",
+        desktopSectionDesc: "Native apps for Windows, Linux, and macOS.",
+        mobileSectionTitle: "Mobile",
+        mobileSectionDesc: "Android is ready now. iOS is on the way.",
+        cliSectionTitle: "Terminal",
+        cliSectionDesc: "Install the Nolo CLI for agent-first workflows in your shell.",
         androidTitle: "Android",
         androidDesc: "APK, ready to install.",
         windowsTitle: "Windows",
@@ -378,6 +551,14 @@ export default {
         linuxDesc: "Native package for your environment.",
         macosTitle: "macOS",
         macosDesc: "Optimized for Apple Silicon.",
+        cliTitle: "Nolo CLI",
+        cliDesc:
+          "Agent-first terminal workspace. Install with npm, then run nolo in your shell.",
+        cliInstallLabel: "Install command",
+        cliCopy: "Copy",
+        cliCopied: "Copied",
+        cliRequirement: "Requires Bun runtime.",
+        cliNpmLink: "View on npm",
         iosTitle: "iPhone / iPad",
         iosDesc: "In progress. Will be here when ready.",
       },
@@ -651,6 +832,7 @@ export default {
             title: "字体",
             description: "选择你喜欢的界面字体，包括宋体、楷体等中文风格。",
           },
+          moreSettings: "更多外观设置",
         },
         theme: {
           light: "浅色模式",
@@ -722,9 +904,8 @@ export default {
 
       // === Combined Welcome Section ===
       welcomeSection: {
-        heroTitle: "让 Nolo 认识你，记住你，和你一起创造",
-        heroDescription:
-          "你只要像平常一样聊天，就能把任务交给多个 Agent 协作推进，并把想法做成文档、应用、图片、视频和可复用流程，不用每次都重新铺垫上下文。",
+        heroTitle: "让 Nolo 和你一起创造",
+        heroDescription: "你说目标，它把结果交到你手里。",
         ctaButton: "免费开始",
         secondaryExplore: "先逛逛公开 AI",
         secondaryDownload: "下载桌面端或移动端",
@@ -740,11 +921,11 @@ export default {
           cta: "开启我的工作台",
           trust: "免费注册 · 无需信用卡",
         },
-        highlightsLabel: "首页价值亮点",
+        highlightsLabel: "三种用法",
         highlights: {
-          memory: "上下文持久记忆",
-          agents: "多 Agent 协作",
-          output: "文档图片视频可直接产出",
+          useDirectly: "公开 Agent 开箱即用",
+          customize: "几分钟定制专属 Agent",
+          orchestrate: "按任务组队，Agent 自己协作",
         },
         proof: {
           kicker: "为什么从这里开始",
@@ -765,54 +946,217 @@ export default {
         },
         faq: {
           kicker: "常见问题",
-          title: "你真正想知道的问题，在这里",
-          description: "几个注册前最常被问到的实际问题。",
+          title: "Agent 玩家真正想知道的",
+          description: "给已经在玩 Agent、想真正拿来干活的人，不是只想换个 prompt 皮肤的人。",
           context: {
-            question: "这是免费的吗？",
+            question: "Agent 之间的上下文是共享的吗？",
             answer:
-              "基础功能免费。高级模型（GPT-4o、Claude 等）按用量计费，不需要按月订阅。没有任务，不花钱。",
+              "可以。你定义的规则、挂载的知识和对话历史会保留在 Agent 身上。多个 Agent 协作时，上下文按需流转，不会每个任务都从零开始。",
           },
           output: {
-            question: "跟直接用 ChatGPT 或 Claude 有什么不一样？",
+            question: "我能接入自己的模型或本地环境吗？",
             answer:
-              "Nolo 会跨会话记住你的上下文、规则和历史。而且你可以同时调用多个 Agent 并行处理同一任务——更快，也能得到多个视角的答案。",
+              "可以。支持 BYOK、自定义服务商地址，也支持 CLI Agent 绑定本地机器。你可以按任务成本和性能选择不同的模型。",
           },
           entry: {
-            question: "我需要会编程吗？",
+            question: "一个任务里可以调度多个 Agent 吗？",
             answer:
-              "完全不需要。用自然语言说你想要什么就行。做应用、生成图片、写文档——全靠对话完成。",
+              "可以。Nolo 会根据任务自动或手动分发给不同的 Agent，它们可以并行工作、互相 Review，最后把结果汇总给你。",
           },
+          orchestration: {
+            question: "编排方式是固定的吗？",
+            answer:
+              "不是。编码交付、并行发散、共识会商、生成视频都只是示例。你可以直接用公开编排 Agent，也可以定制自己的 Agent，还能让 AI 按当前任务设计多 Agent 组队，由 Agent 自行维护协作关系。",
+          },
+        },
+        orchestration: {
+          kicker: "多 Agent 编排",
+          title: "编排不只有一种",
+          desc: "不同任务需要不同的组队方式。Agent 之间可以自行维护关系，你只关心问题有没有被解决。",
+          footnote: "下面几种是常见走法——你的任务也可以完全另起一套，让 AI 帮你设计。",
+          tabs: {
+            coding: "编码交付",
+            brainstorm: "并行发散",
+            consensus: "共识会商",
+            video: "生成视频",
+          },
+        },
+        showcase: {
+          exampleLabel: "示例 · 编码交付",
+          badge: "编排示例",
+          title: "编码任务：从分工到交付",
+          desc: "这是一种常见的多 Agent 编排——协调、并行实现、质量检查、自动返工，直到可上线。不是唯一的组队方式。",
+          input: "输入",
+          dispatch: "分发",
+          submit: "提交",
+          pass: "通过",
+          refactor: "返工优化",
+          chat: "对话",
+          taskboard: "任务看板",
+          pm: "任务协调",
+          fe: "界面实现",
+          be: "逻辑与数据",
+          reviewer: "质量检查",
+          release: "发布部署",
+          website: "线上成果",
+          mobileSteps: [
+            {
+              title: "说出目标",
+              desc: "在对话或任务看板里描述你想完成的事。",
+            },
+            {
+              title: "自动分工",
+              desc: "协调 Agent 把任务分给合适的角色并行推进。",
+            },
+            {
+              title: "并行实现",
+              desc: "界面、逻辑、数据可以同时往前推进。",
+            },
+            {
+              title: "检查与返工",
+              desc: "质量不过关会自动打回优化，直到达标。",
+            },
+            {
+              title: "交付上线",
+              desc: "通过后自动发布，成果可以直接使用。",
+            },
+          ],
+        },
+        showcaseBrainstorm: {
+          exampleLabel: "示例 · 并行发散",
+          title: "同一个问题，多视角同时展开",
+          desc: "编排 Agent 把同一问题同时交给多个模型并行回答。你直接看到不同角度，不用自己开很多标签页。",
+          question: "先做 MVP，还是先找用户？",
+          mobileSteps: [
+            {
+              title: "抛出一个开放问题",
+              desc: "把值得多角度展开的问题交给编排 Agent。",
+            },
+            {
+              title: "并行分支同时启动",
+              desc: "GPT、Grok、Gemini 同时回答同一个问题。",
+            },
+            {
+              title: "对比后你来定方向",
+              desc: "并排阅读各分支结果，选出要继续推进的方向。",
+            },
+          ],
+        },
+        showcaseConsensus: {
+          exampleLabel: "示例 · 共识会商",
+          title: "从并行意见，到清晰结论",
+          desc: "编排 Agent 先并行征询多个模型的意见，必要时继续内部讨论，最后给你共识、保留分歧和下一步。",
+          question: "这个季度应该优先增长，还是优先盈利？",
+          outputLabels: {
+            consensus: "共识",
+            disagreements: "保留分歧",
+            nextStep: "下一步",
+          },
+          mobileSteps: [
+            {
+              title: "抛出一个值得会商的问题",
+              desc: "把确实需要多视角碰撞的决策问题交给编排 Agent。",
+            },
+            {
+              title: "先并行听取意见",
+              desc: "GPT、Grok、Gemini 同时给出各自判断。",
+            },
+            {
+              title: "必要时继续内部讨论",
+              desc: "编排 Agent 会继续推动会商，直到形成足够清晰的结论。",
+            },
+            {
+              title: "拿到结构化答案",
+              desc: "你会收到共识、仍存在的分歧，以及建议的下一步。",
+            },
+          ],
+        },
+        showcaseVideo: {
+          exampleLabel: "示例 · 生成视频",
+          title: "从想法到成片：多模态视频交付",
+          desc: "编排 Agent 把脚本、分镜、画面和配音串成一条流水线——你给一个主题，它交出可发布的视频。",
+          brief: "为新品做一个 30 秒介绍视频",
+          stepLabels: {
+            brief: "创意 brief",
+            storyboard: "分镜脚本",
+            generate: "生成画面",
+            edit: "剪辑合成",
+            deliver: "成片导出",
+          },
+          agentLabels: {
+            orchestrator: "编排 Agent",
+            script: "脚本 Agent",
+            storyboard: "分镜 Agent",
+            visual: "画面 Agent",
+            editor: "剪辑 Agent",
+            deliver: "成片导出",
+          },
+          mobileSteps: [
+            {
+              title: "说清楚视频目标",
+              desc: "把主题、时长和风格告诉编排 Agent。",
+            },
+            {
+              title: "脚本与分镜",
+              desc: "Agent 写出脚本，并拆成镜头和场景。",
+            },
+            {
+              title: "多模态素材生成",
+              desc: "画面、片段和配音按场景并行产出。",
+            },
+            {
+              title: "剪辑成一条成片",
+              desc: "编排 Agent 把节奏、画面和音频合成完整视频。",
+            },
+            {
+              title: "导出最终文件",
+              desc: "你拿到可直接发布的视频，不用自己切换工具。",
+            },
+          ],
+        },
+        builder: {
+          badge: "专属配置",
+          title: "构建你的 Agent",
+          desc: "定好角色、能力和模型，几分钟就有一个只为你干活的 AI。配好之后，它也能交付文档、页面、图片和视频——不只聊天。",
+          cta: "创建你的 Agent",
+          capabilities: [
+            {
+              title: "永久记忆",
+              desc: "你定规则，它认真记住。跨会话保持上下文，越用越懂你的偏好。",
+            },
+            {
+              title: "自定义能力",
+              desc: "用指令定义角色，挂载知识库和 Skill，再打开搜索、文档、MCP 等工具。",
+            },
+            {
+              title: "自定义模型",
+              desc: "用平台模型，或接入你自己的 API Key、CLI Agent，按任务选最合适的脑子。同一个 Agent 也能产出文档、网页、图片和视频。",
+            },
+          ],
+        },
+        output: {
+          badge: "多模态产出",
+          title: "然后，让它去创造",
+          desc: "文档、应用、图片、视频、3D——给一个想法，它把成果交到你手里",
+          types: [
+            { label: "文档", example: "周报 · 方案 · 合同" },
+            { label: "3D", example: "模型 · 场景 · 素材" },
+            { label: "网页", example: "落地页 · 小应用" },
+            { label: "图片", example: "海报 · 封面 · 样机" },
+            { label: "视频", example: "讲解 · 短片 · 剪辑" },
+          ],
         },
         finalCta: {
-          kicker: "按你的意图走最短路径",
-          title: "想先看，就先逛。已经知道自己要做什么，就直接开始搭。",
+          kicker: "准备好就开始",
+          title: "知道自己要做什么，就直接搭起来。",
           description:
-            "两条路都有真实落点。选一个你现在更对得上的，走下去就行。",
+            "免费注册，几分钟就能搭出你的第一个 AI。继续往下，也能逛社区里的公开 AI。",
           primary: "创建我的工作台",
-          secondary: "浏览公开 AI",
         },
         cards: {
-          context: {
-            title: "说一次，它就一直记得",
-            desc: "你定规则，它认真记住。你想亲自掌舵，它就安静配合；你想省心托管，它就把流程接到底。",
-            bubble: "知道了，不废话。上次到第三步了，接着来。",
-          },
-          battle: {
-            title: "你定方向，Agent 把路走完",
-            desc: "你可以亲自指挥，也可以把目标交给多个 Agent 协同推进；每一步看得见，每个结果都让你有底。",
-            topic: "先做 MVP，还是先找用户？",
-            posA: "先做出来，用数据说话，试错成本低",
-            posB: "先找用户聊，搞清楚再动手，不走弯路",
-            result: "两种观点，你来定",
-          },
           create: {
             title: "你负责天马行空",
             desc: "网页、3D、图片、视频、文档都可以。你给一个想法，我们陪你把它做成拿得出手的成果。",
-          },
-          auto: {
-            title: "今晚交给它，明早来验收",
-            desc: "你现在做可以，手机下任务也可以；它会在夜里持续干活，早上把结果交到你手里。",
-            taskName: "夜间任务持续推进中",
           },
         },
       },
@@ -868,6 +1212,7 @@ export default {
         ocrModel: {
           none: "不使用 OCR（pdf.js 提取）",
           recommended: "推荐",
+          legacy: "旧版备用",
         },
         sidebarVisibleTypes: {
           title: "侧边栏默认显示内容",
@@ -909,12 +1254,18 @@ export default {
       clientDownloads: {
         eyebrow: "下载",
         title: "Nolo，在每台设备上",
-        subtitle: "Android、Windows、Linux、macOS 现已可用。iOS 即将推出。",
+        subtitle: "按你的使用场景选择桌面端、移动端或终端 CLI。",
         tagline: "安静的工具，清晰的思考。",
         availableNow: "可用",
         comingSoon: "即将推出",
         downloadNow: "立即下载",
         comingSoonAction: "即将推出",
+        desktopSectionTitle: "桌面端",
+        desktopSectionDesc: "适用于 Windows、Linux 和 macOS 的原生客户端。",
+        mobileSectionTitle: "移动端",
+        mobileSectionDesc: "Android 现已可用，iOS 即将推出。",
+        cliSectionTitle: "终端",
+        cliSectionDesc: "安装 Nolo CLI，在命令行里使用 Agent 工作台。",
         androidTitle: "Android",
         androidDesc: "APK，直接安装。",
         windowsTitle: "Windows",
@@ -923,6 +1274,13 @@ export default {
         linuxDesc: "适配你本地环境的原生包。",
         macosTitle: "macOS",
         macosDesc: "为 Apple Silicon 优化。",
+        cliTitle: "Nolo CLI",
+        cliDesc: "面向 Agent 的终端工作台。用 npm 安装后，在终端运行 nolo 即可开始。",
+        cliInstallLabel: "安装命令",
+        cliCopy: "复制",
+        cliCopied: "已复制",
+        cliRequirement: "需要 Bun 运行时。",
+        cliNpmLink: "在 npm 查看",
         iosTitle: "iPhone / iPad",
         iosDesc: "开发中，准备好即发布。",
       },
@@ -1196,6 +1554,7 @@ export default {
             title: "字體",
             description: "選擇你喜歡的介面字體，包括宋體、楷體等中文風格。",
           },
+          moreSettings: "更多外觀設定",
         },
         theme: {
           light: "淺色模式",
@@ -1267,9 +1626,8 @@ export default {
 
       // === Combined Welcome Section ===
       welcomeSection: {
-        heroTitle: "讓 Nolo 認識你，記住你，和你一起創造",
-        heroDescription:
-          "您只要像平常一樣聊天，就能把任務交給多個 Agent 協作推進，並把想法做成文件、應用、圖片、影片和可重複使用的流程，不用每次都重新鋪陳上下文。",
+        heroTitle: "讓 Nolo 和你一起創造",
+        heroDescription: "您說目標，它把結果交到您手裡。",
         ctaButton: "免費開始",
         secondaryExplore: "先逛逛公開 AI",
         secondaryDownload: "下載桌面端或行動端",
@@ -1285,11 +1643,11 @@ export default {
           cta: "開啟我的工作台",
           trust: "免費註冊 · 無需信用卡",
         },
-        highlightsLabel: "首頁價值亮點",
+        highlightsLabel: "三種用法",
         highlights: {
-          memory: "上下文持久記憶",
-          agents: "多 Agent 協作",
-          output: "文件圖片影片可直接產出",
+          useDirectly: "公開 Agent 開箱即用",
+          customize: "幾分鐘定制專屬 Agent",
+          orchestrate: "按任務組隊，Agent 自己協作",
         },
         proof: {
           kicker: "為什麼從這裡開始",
@@ -1310,54 +1668,217 @@ export default {
         },
         faq: {
           kicker: "常見問題",
-          title: "你真正想知道的問題，在這裡",
-          description: "幾個註冊前最常被問到的實際問題。",
+          title: "Agent 玩家真正想知道的",
+          description: "給已經在玩 Agent、想真正拿來幹活的人，不是只想換個 prompt 外皮的人。",
           context: {
-            question: "這是免費的嗎？",
+            question: "Agent 之間的上下文是共享的嗎？",
             answer:
-              "基礎功能免費。進階模型（GPT-4o、Claude 等）按用量計費，不需要按月訂閱。沒有任務，不花錢。",
+              "可以。您定義的規則、掛載的知識和對話歷史會保留在 Agent 身上。多個 Agent 協作時，上下文按需流轉，不會每個任務都從零開始。",
           },
           output: {
-            question: "跟直接用 ChatGPT 或 Claude 有什麼不一樣？",
+            question: "我能接入自己的模型或本地環境嗎？",
             answer:
-              "Nolo 會跨對話記住您的上下文、規則和歷史。而且您可以同時呼叫多個 Agent 並行處理同一任務——更快，也能獲得多個視角的答案。",
+              "可以。支援 BYOK、自訂服務商地址，也支援 CLI Agent 綁定本地機器。您可以按任務成本和性能選擇不同的模型。",
           },
           entry: {
-            question: "我需要會寫程式嗎？",
+            question: "一個任務裡可以調度多個 Agent 嗎？",
             answer:
-              "完全不需要。用自然語言說您想要什麼就行。做應用、生成圖片、寫文件——全靠對話完成。",
+              "可以。Nolo 會根據任務自動或手動分發給不同的 Agent，它們可以並行工作、互相 Review，最後把結果匯總給您。",
           },
+          orchestration: {
+            question: "編排方式是固定的嗎？",
+            answer:
+              "不是。編碼交付、並行發散、共識會商、生成影片都只是示例。您可以直接用公開編排 Agent，也可以定制自己的 Agent，還能讓 AI 按當前任務設計多 Agent 組隊，由 Agent 自行維護協作關係。",
+          },
+        },
+        orchestration: {
+          kicker: "多 Agent 編排",
+          title: "編排不只有一種",
+          desc: "不同任務需要不同的組隊方式。Agent 之間可以自行維護關係，您只關心問題有沒有被解決。",
+          footnote: "下面幾種是常見走法——您的任務也可以完全另起一套，讓 AI 幫您設計。",
+          tabs: {
+            coding: "編碼交付",
+            brainstorm: "並行發散",
+            consensus: "共識會商",
+            video: "生成影片",
+          },
+        },
+        showcase: {
+          exampleLabel: "示例 · 編碼交付",
+          badge: "編排示例",
+          title: "編碼任務：從分工到交付",
+          desc: "這是一種常見的多 Agent 編排——協調、並行實現、品質檢查、自動返工，直到可上線。不是唯一的組隊方式。",
+          input: "輸入",
+          dispatch: "分發",
+          submit: "提交",
+          pass: "通過",
+          refactor: "返工優化",
+          chat: "對話",
+          taskboard: "任務看板",
+          pm: "任務協調",
+          fe: "介面實現",
+          be: "邏輯與資料",
+          reviewer: "品質檢查",
+          release: "發佈部署",
+          website: "線上成果",
+          mobileSteps: [
+            {
+              title: "說出目標",
+              desc: "在對話或任務看板裡描述您想完成的事。",
+            },
+            {
+              title: "自動分工",
+              desc: "協調 Agent 把任務分給合適的角色並行推進。",
+            },
+            {
+              title: "並行實現",
+              desc: "介面、邏輯、資料可以同時往前推進。",
+            },
+            {
+              title: "檢查與返工",
+              desc: "品質不過關會自動打回優化，直到達標。",
+            },
+            {
+              title: "交付上線",
+              desc: "通過後自動發佈，成果可以直接使用。",
+            },
+          ],
+        },
+        showcaseBrainstorm: {
+          exampleLabel: "示例 · 並行發散",
+          title: "同一個問題，多視角同時展開",
+          desc: "編排 Agent 把同一問題同時交給多個模型並行回答。您直接看到不同角度，不用自己開很多分頁。",
+          question: "先做 MVP，還是先找用戶？",
+          mobileSteps: [
+            {
+              title: "拋出一個開放問題",
+              desc: "把值得多角度展開的問題交給編排 Agent。",
+            },
+            {
+              title: "並行分支同時啟動",
+              desc: "GPT、Grok、Gemini 同時回答同一個問題。",
+            },
+            {
+              title: "對比後您來定方向",
+              desc: "並排閱讀各分支結果，選出要繼續推進的方向。",
+            },
+          ],
+        },
+        showcaseConsensus: {
+          exampleLabel: "示例 · 共識會商",
+          title: "從並行意見，到清晰結論",
+          desc: "編排 Agent 先並行徵詢多個模型的意見，必要時繼續內部討論，最後給您共識、保留分歧和下一步。",
+          question: "這個季度應該優先增長，還是優先盈利？",
+          outputLabels: {
+            consensus: "共識",
+            disagreements: "保留分歧",
+            nextStep: "下一步",
+          },
+          mobileSteps: [
+            {
+              title: "拋出一個值得會商的問題",
+              desc: "把確實需要多視角碰撞的決策問題交給編排 Agent。",
+            },
+            {
+              title: "先並行聽取意見",
+              desc: "GPT、Grok、Gemini 同時給出各自判斷。",
+            },
+            {
+              title: "必要時繼續內部討論",
+              desc: "編排 Agent 會繼續推動會商，直到形成足夠清晰的結論。",
+            },
+            {
+              title: "拿到結構化答案",
+              desc: "您會收到共識、仍存在的分歧，以及建議的下一步。",
+            },
+          ],
+        },
+        showcaseVideo: {
+          exampleLabel: "示例 · 生成影片",
+          title: "從想法到成片：多模態影片交付",
+          desc: "編排 Agent 把腳本、分鏡、畫面和配音串成一條流水線——您給一個主題，它交出可發佈的影片。",
+          brief: "為新品做一支 30 秒介紹影片",
+          stepLabels: {
+            brief: "創意 brief",
+            storyboard: "分鏡腳本",
+            generate: "生成畫面",
+            edit: "剪輯合成",
+            deliver: "成片匯出",
+          },
+          agentLabels: {
+            orchestrator: "編排 Agent",
+            script: "腳本 Agent",
+            storyboard: "分鏡 Agent",
+            visual: "畫面 Agent",
+            editor: "剪輯 Agent",
+            deliver: "成片匯出",
+          },
+          mobileSteps: [
+            {
+              title: "說清楚影片目標",
+              desc: "把主題、時長和風格告訴編排 Agent。",
+            },
+            {
+              title: "腳本與分鏡",
+              desc: "Agent 寫出腳本，並拆成鏡頭和場景。",
+            },
+            {
+              title: "多模態素材生成",
+              desc: "畫面、片段和配音按場景並行產出。",
+            },
+            {
+              title: "剪輯成一條成片",
+              desc: "編排 Agent 把節奏、畫面和音訊合成完整影片。",
+            },
+            {
+              title: "匯出最終檔案",
+              desc: "您拿到可直接發佈的影片，不用自己切換工具。",
+            },
+          ],
+        },
+        builder: {
+          badge: "專屬配置",
+          title: "構建你的 Agent",
+          desc: "定好角色、能力和模型，幾分鐘就有一個只為您幹活的 AI。配好之後，它也能交付文件、頁面、圖片和影片——不只聊天。",
+          cta: "建立你的 Agent",
+          capabilities: [
+            {
+              title: "永久記憶",
+              desc: "您定規則，它認真記住。跨會話保持上下文，越用越懂您的偏好。",
+            },
+            {
+              title: "自訂能力",
+              desc: "用指令定義角色，掛載知識庫和 Skill，再開啟搜尋、文件、MCP 等工具。",
+            },
+            {
+              title: "自訂模型",
+              desc: "用平台模型，或接入您自己的 API Key、CLI Agent，按任務選最合適的腦子。同一個 Agent 也能產出文件、網頁、圖片和影片。",
+            },
+          ],
+        },
+        output: {
+          badge: "多模態產出",
+          title: "然後，讓它去創造",
+          desc: "文件、應用、圖片、影片、3D——給一個想法，它把成果交到您手裡",
+          types: [
+            { label: "文件", example: "週報 · 方案 · 合約" },
+            { label: "3D", example: "模型 · 場景 · 素材" },
+            { label: "網頁", example: "落地頁 · 小應用" },
+            { label: "圖片", example: "海報 · 封面 · 樣機" },
+            { label: "影片", example: "講解 · 短片 · 剪輯" },
+          ],
         },
         finalCta: {
-          kicker: "按您的意圖走最短路徑",
-          title: "想先看，就先逛。已經知道自己要做什麼，就直接開始搭。",
+          kicker: "準備好就開始",
+          title: "知道自己要做什麼，就直接搭起來。",
           description:
-            "兩条路都有真實落點。選一個您現在更對得上的，走下去就好。",
+            "免費註冊，幾分鐘就能搭出您的第一個 AI。繼續往下，也能逛社群裡的公開 AI。",
           primary: "建立我的工作台",
-          secondary: "瀏覽公開 AI",
         },
         cards: {
-          context: {
-            title: "說一次，它就一直記得",
-            desc: "您定規則，它認真記住。您想親自掌舵，它就安靜配合；您想省心託管，它就把流程接到底。",
-            bubble: "知道了，不廢話。上次到第三步了，接著來。",
-          },
-          battle: {
-            title: "您定方向，Agent 把路走完",
-            desc: "您可以親自指揮，也可以把目標交給多個 Agent 協同推進；每一步看得見，每個結果都讓您有底。",
-            topic: "先做 MVP，還是先找用戶？",
-            posA: "先做出來，用數據說話，試錯成本低",
-            posB: "先找用戶聊，搞清楚再動手，不走彎路",
-            result: "兩種觀點，您來定",
-          },
           create: {
             title: "您負責天馬行空",
             desc: "網頁、3D、圖片、影片、文件都可以。您給一個想法，我們陪您把它做成拿得出手的成果。",
-          },
-          auto: {
-            title: "今晚交給它，明早來驗收",
-            desc: "您現在做可以，手機下任務也可以；它會在夜裡持續幹活，早上把結果交到您手裡。",
-            taskName: "夜間任務持續推進中",
           },
         },
       },
@@ -1413,6 +1934,7 @@ export default {
         ocrModel: {
           none: "不使用 OCR（pdf.js 提取）",
           recommended: "推薦",
+          legacy: "舊版備用",
         },
         sidebarVisibleTypes: {
           title: "側邊欄預設顯示內容",
@@ -1454,12 +1976,18 @@ export default {
       clientDownloads: {
         eyebrow: "下載",
         title: "Nolo，在每台裝置上",
-        subtitle: "Android、Windows、Linux、macOS 現已可用。iOS 即將推出。",
+        subtitle: "依你的使用情境選擇桌面端、行動端或終端 CLI。",
         tagline: "安靜的工具，清晰的思考。",
         availableNow: "可用",
         comingSoon: "即將推出",
         downloadNow: "立即下載",
         comingSoonAction: "即將推出",
+        desktopSectionTitle: "桌面端",
+        desktopSectionDesc: "適用於 Windows、Linux 和 macOS 的原生客戶端。",
+        mobileSectionTitle: "行動端",
+        mobileSectionDesc: "Android 現已可用，iOS 即將推出。",
+        cliSectionTitle: "終端",
+        cliSectionDesc: "安裝 Nolo CLI，在命令列中使用 Agent 工作台。",
         androidTitle: "Android",
         androidDesc: "APK，直接安裝。",
         windowsTitle: "Windows",
@@ -1468,6 +1996,13 @@ export default {
         linuxDesc: "適配你本地環境的原生包。",
         macosTitle: "macOS",
         macosDesc: "為 Apple Silicon 優化。",
+        cliTitle: "Nolo CLI",
+        cliDesc: "面向 Agent 的終端工作台。用 npm 安裝後，在終端執行 nolo 即可開始。",
+        cliInstallLabel: "安裝命令",
+        cliCopy: "複製",
+        cliCopied: "已複製",
+        cliRequirement: "需要 Bun 執行環境。",
+        cliNpmLink: "在 npm 查看",
         iosTitle: "iPhone / iPad",
         iosDesc: "開發中，準備好即發布。",
       },
@@ -1746,6 +2281,7 @@ export default {
             description:
               "宋体のような中文フォントを含め、好みのインターフェース用フォントを選べます。",
           },
+          moreSettings: "外観の詳細設定",
         },
         theme: {
           light: "ライトモード",
@@ -1820,9 +2356,8 @@ export default {
 
       // === Combined Welcome Section ===
       welcomeSection: {
-        heroTitle: "AI が文脈を覚えて、仕事を仕上げる",
-        heroDescription:
-          "いつものように話しかけるだけで、複数の Agent に仕事を任せ、アイデアをドキュメント、アプリ、画像、動画、再利用できるワークフローへ変えられます。毎回ゼロから文脈を説明し直す必要はありません。",
+        heroTitle: "AI と一緒に仕事を仕上げる",
+        heroDescription: "目標を伝えれば、使える成果が手元に届く。",
         ctaButton: "無料で始める",
         secondaryExplore: "公開 AI を見る",
         secondaryDownload: "デスクトップ / モバイルを入手",
@@ -1838,11 +2373,11 @@ export default {
           cta: "ワークスペースを開く",
           trust: "無料 · クレジットカード不要",
         },
-        highlightsLabel: "ホームの価値ポイント",
+        highlightsLabel: "3つの使い方",
         highlights: {
-          memory: "文脈の永続記憶",
-          agents: "複数 Agent で協調実行",
-          output: "ドキュメント・画像・動画を出力",
+          useDirectly: "公開 Agent をすぐ使う",
+          customize: "数分で専用 Agent を作る",
+          orchestrate: "タスクに合わせて Agent チームを組む",
         },
         proof: {
           kicker: "ここから始める理由",
@@ -1863,54 +2398,218 @@ export default {
         },
         faq: {
           kicker: "FAQ",
-          title: "始める前に本当に知りたいこと",
-          description: "登録前によく聞かれる、率直な質問への答えです。",
+          title: "Agent プレイヤーが本当に知りたいこと",
+          description:
+            "すでに Agent を遊んでいて、本当に仕事に使いたい人向けです。prompt だけ整えたい人向けではありません。",
           context: {
-            question: "無料で使えますか？",
+            question: "Agent 間で文脈は共有されますか？",
             answer:
-              "基本機能は無料です。高度なモデル（GPT-4o、Claudeなど）は従量課金で、月額サブスクリプションは不要。タスクがなければ料金もかかりません。",
+              "はい。定義したルール、ナレッジ、会話履歴は Agent に残ります。複数 Agent が協調するときも、必要な文脈だけ流れ、毎回ゼロから始まりません。",
           },
           output: {
-            question: "ChatGPTやClaudeを直接使うのと何が違いますか？",
+            question: "自分のモデルやローカル環境を使えますか？",
             answer:
-              "Noloはセッションをまたいで文脈・ルール・履歴を記憶します。また、複数のAgentが同じタスクを並行処理できるため、結果が早く、複数の視点も得られます。",
+              "はい。BYOK、カスタムプロバイダ URL、ローカルマシンに紐づく CLI Agent に対応しています。タスクごとにコストと性能で選べます。",
           },
           entry: {
-            question: "プログラミングの知識は必要ですか？",
+            question: "1つのタスクで複数 Agent を動かせますか？",
             answer:
-              "まったく必要ありません。やりたいことを自然な言葉で伝えるだけ。アプリ制作・画像生成・文書作成、すべて会話で完結します。",
+              "はい。Nolo はタスクを手動または自動で複数 Agent に振り分け、並行作業や相互レビュー、結果の集約まで扱えます。",
           },
+          orchestration: {
+            question: "オーケストレーションは固定ですか？",
+            answer:
+              "いいえ。コーディング納品、並列ブレインストーム、合意形成、動画生成はあくまで例です。公開のオーケストレーター Agent を使うことも、自分で作ることも、AI に今のタスク向けのチームを設計させることもできます。",
+          },
+        },
+        orchestration: {
+          kicker: "複数 Agent オーケストレーション",
+          title: "オーケストレーションは一種類ではない",
+          desc: "タスクごとにチームの形は変わります。Agent 同士が協調関係を保ち、あなたは問題が解けたかだけを見ればいい。",
+          footnote: "よくあるパターンの一例です。タスクに合わせて AI に編成を設計させることもできます。",
+          tabs: {
+            coding: "コーディング納品",
+            brainstorm: "並列ブレインストーム",
+            consensus: "合意形成",
+            video: "動画生成",
+          },
+        },
+        showcase: {
+          exampleLabel: "例 · コーディング納品",
+          badge: "オーケストレーション例",
+          title: "コーディングタスク：分担から納品まで",
+          desc: "よくある複数 Agent パターンの一つ——調整、並行実装、レビュー、改善、リリース。唯一の組み方ではありません。",
+          input: "入力",
+          dispatch: "振り分け",
+          submit: "送信",
+          pass: "合格",
+          refactor: "改善ループ",
+          chat: "チャット",
+          taskboard: "タスクボード",
+          pm: "タスク調整",
+          fe: "UI 実装",
+          be: "ロジックとデータ",
+          reviewer: "品質チェック",
+          release: "リリース",
+          website: "公開成果",
+          mobileSteps: [
+            {
+              title: "目標を伝える",
+              desc: "チャットやタスクボードで、やりたいことをそのまま書きます。",
+            },
+            {
+              title: "自動で分担",
+              desc: "調整 Agent が、適切な役割へタスクを振り分けます。",
+            },
+            {
+              title: "並行して実装",
+              desc: "UI、ロジック、データを同時に前に進められます。",
+            },
+            {
+              title: "確認と改善",
+              desc: "基準に届かなければ戻して、改善を繰り返します。",
+            },
+            {
+              title: "納品・公開",
+              desc: "合格した成果物を公開し、そのまま使える形で届けます。",
+            },
+          ],
+        },
+        showcaseBrainstorm: {
+          exampleLabel: "例 · 並列ブレインストーム",
+          title: "同じ問いを、複数視点で同時に",
+          desc: "オーケストレーター Agent が同じ問いを複数モデルへ並列送信します。タブを何枚も開かずに視点を比較できます。",
+          question: "先に MVP を作る？それともユーザーと話す？",
+          mobileSteps: [
+            {
+              title: "開いた問いを渡す",
+              desc: "多角度で広げたい問いをオーケストレーター Agent に渡します。",
+            },
+            {
+              title: "並列ブランチを起動",
+              desc: "GPT、Grok、Gemini が同じ問いに同時に答えます。",
+            },
+            {
+              title: "比較して方向を決める",
+              desc: "並べて読み、進める方向を自分で選びます。",
+            },
+          ],
+        },
+        showcaseConsensus: {
+          exampleLabel: "例 · 合意形成",
+          title: "並列意見から、明確な結論へ",
+          desc: "オーケストレーター Agent が複数モデルの意見を並列で集め、必要なら内部議論を続け、合意・残る相違・次の一手を返します。",
+          question: "今四半期は成長と利益のどちらを優先すべき？",
+          outputLabels: {
+            consensus: "合意",
+            disagreements: "残る相違",
+            nextStep: "次の一手",
+          },
+          mobileSteps: [
+            {
+              title: "議論に値する問いを渡す",
+              desc: "複数視点が本当に必要な意思決定をオーケストレーター Agent に渡します。",
+            },
+            {
+              title: "まず並列で意見収集",
+              desc: "GPT、Grok、Gemini が同時にそれぞれの見解を出します。",
+            },
+            {
+              title: "必要なら内部議論を継続",
+              desc: "より明確な結論が必要なとき、オーケストレーターが議論を続けます。",
+            },
+            {
+              title: "構造化された回答を受け取る",
+              desc: "合意、残る相違、次にやることをまとめて受け取ります。",
+            },
+          ],
+        },
+        showcaseVideo: {
+          exampleLabel: "例 · 動画生成",
+          title: "アイデアから完成動画へ：マルチモーダル納品",
+          desc: "オーケストレーター Agent が脚本、絵コンテ、映像、音声、編集を一つのパイプラインにつなぎます——テーマを渡せば、公開できる動画が返ってきます。",
+          brief: "新製品の 30 秒紹介動画を作る",
+          stepLabels: {
+            brief: "クリエイティブ brief",
+            storyboard: "絵コンテ",
+            generate: "映像生成",
+            edit: "編集・ミックス",
+            deliver: "書き出し",
+          },
+          agentLabels: {
+            orchestrator: "オーケストレーター",
+            script: "脚本 Agent",
+            storyboard: "絵コンテ Agent",
+            visual: "映像 Agent",
+            editor: "編集 Agent",
+            deliver: "書き出し",
+          },
+          mobileSteps: [
+            {
+              title: "動画の目的を伝える",
+              desc: "テーマ、尺、トーンをオーケストレーター Agent に伝えます。",
+            },
+            {
+              title: "脚本と絵コンテ",
+              desc: "Agent が脚本を書き、シーンとカットに分解します。",
+            },
+            {
+              title: "マルチモーダル素材を生成",
+              desc: "画像、クリップ、音声をシーンごとに並列で作ります。",
+            },
+            {
+              title: "一本の動画に編集",
+              desc: "オーケストレーターがテンポ、映像、音声をまとめます。",
+            },
+            {
+              title: "最終ファイルを書き出し",
+              desc: "ツールを切り替えずに、公開できる動画を受け取れます。",
+            },
+          ],
+        },
+        builder: {
+          badge: "自分好みに",
+          title: "Agent を構築",
+          desc: "役割・能力・モデルを決めれば、数分で自分専用の AI が手に入ります。ドキュメント、ページ、画像、動画まで届けられます。会話だけでは終わりません。",
+          cta: "Agent を作成",
+          capabilities: [
+            {
+              title: "永続メモリ",
+              desc: "ルールを一度決めれば、セッションをまたいで文脈を保持します。",
+            },
+            {
+              title: "カスタム能力",
+              desc: "役割を定義し、ナレッジや Skill を付け、検索・ドキュメント・MCP などを有効化します。",
+            },
+            {
+              title: "モデルを選択",
+              desc: "プラットフォームモデル、独自 API Key、CLI Agent からタスクに合うものを選べます。同じ Agent がドキュメント、Web、画像、動画も届けられます。",
+            },
+          ],
+        },
+        output: {
+          badge: "マルチモーダル出力",
+          title: "そのあと、創造へ",
+          desc: "ドキュメント、アプリ、画像、動画、3D——アイデアを渡せば、使える成果が返ってきます。",
+          types: [
+            { label: "ドキュメント", example: "レポート · 企画書 · 契約書" },
+            { label: "3D", example: "モデル · シーン · アセット" },
+            { label: "Web", example: "LP · ミニアプリ" },
+            { label: "画像", example: "ポスター · カバー · モック" },
+            { label: "動画", example: "解説 · クリップ · 編集" },
+          ],
         },
         finalCta: {
-          kicker: "意図に合う最短ルートへ",
-          title: "まず見たいなら browse。やりたいことが決まっているならそのまま start。",
+          kicker: "準備ができたら始めよう",
+          title: "やりたいことが決まっているなら、そのまま作り始めましょう。",
           description:
-            "どちらのルートも、ちゃんとした目的地につながっています。今の自分に合う方を選んでください。",
+            "無料登録で、数分で最初のエージェントを用意できます。下にスクロールすれば、コミュニティの公開 AI も見られます。",
           primary: "自分のワークスペースを作る",
-          secondary: "公開 AI を見る",
         },
         cards: {
-          context: {
-            title: "文脈を理解するAI",
-            desc: "ドキュメントをアップロードすれば、文脈を完全に理解します。ただチャットするだけでなく、最適な専門モデルへ自動で接続します。",
-            bubble: "わかった、無駄なし。前回ステップ3まで、続けよう。",
-          },
-          battle: {
-            title: "もう一人で迷わない",
-            desc: "決断に迷ったら、複数の Agent に任せましょう。多様な視点からの意見を聞き、自信を持って前に進めます。",
-            topic: "MVP を先に作る？それともユーザー調査から？",
-            posA: "まず作る。データで判断、失敗コストも低い",
-            posB: "まずユーザーと話す。正しいものを作る",
-            result: "2つの観点、あなたが決める",
-          },
           create: {
             title: "想像を、現実に",
             desc: "Webサイトや3Dモデルを作りたいですか？アイデアさえあれば大丈夫。コードもモデリングも、私たちが形にします。",
-          },
-          auto: {
-            title: "時間は人生のために",
-            desc: "一度「A、次にB、そしてC」という手順を教えてください。その後の繰り返し作業は私が引き受けます。どうぞ人生を楽しんでください。",
-            taskName: "自動化フロー実行中",
           },
         },
       },
@@ -1966,6 +2665,7 @@ export default {
         ocrModel: {
           none: "OCRなし（pdf.js抽出）",
           recommended: "推奨",
+          legacy: "旧版フォールバック",
         },
         sidebarVisibleTypes: {
           title: "サイドバーの既定表示内容",
@@ -2007,12 +2707,19 @@ export default {
       clientDownloads: {
         eyebrow: "ダウンロード",
         title: "Nolo を、すべての端末に",
-        subtitle: "Android・Windows・Linux・macOS は今すぐ利用できます。iOS は近日公開。",
+        subtitle:
+          "使い方に合わせて、デスクトップ、モバイル、ターミナル CLI から選べます。",
         tagline: "静かなツール、明快な思考。",
         availableNow: "利用可能",
         comingSoon: "近日公開",
         downloadNow: "ダウンロード",
         comingSoonAction: "近日公開",
+        desktopSectionTitle: "デスクトップ",
+        desktopSectionDesc: "Windows、Linux、macOS 向けネイティブアプリ。",
+        mobileSectionTitle: "モバイル",
+        mobileSectionDesc: "Android は今すぐ利用可能。iOS は近日公開。",
+        cliSectionTitle: "ターミナル",
+        cliSectionDesc: "Nolo CLI をインストールして、シェルで Agent ワークスペースを使えます。",
         androidTitle: "Android",
         androidDesc: "APK、すぐインストール可能。",
         windowsTitle: "Windows",
@@ -2021,6 +2728,14 @@ export default {
         linuxDesc: "ローカル環境向けネイティブパッケージ。",
         macosTitle: "macOS",
         macosDesc: "Apple Silicon に最適化済み。",
+        cliTitle: "Nolo CLI",
+        cliDesc:
+          "Agent-first のターミナルワークスペース。npm でインストール後、シェルで nolo を実行できます。",
+        cliInstallLabel: "インストールコマンド",
+        cliCopy: "コピー",
+        cliCopied: "コピーしました",
+        cliRequirement: "Bun ランタイムが必要です。",
+        cliNpmLink: "npm で見る",
         iosTitle: "iPhone / iPad",
         iosDesc: "開発中。準備でき次第公開します。",
       },

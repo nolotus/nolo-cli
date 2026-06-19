@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +9,7 @@ import {
   runResolvedCommand,
 } from "./commandRegistry";
 import { buildCliRuntimeEnv, loadProfileConfig } from "./client/profileConfig";
+import { spawnProcess } from "./processSpawn";
 import { resolveTuiLaunchMode } from "./runtimeModeArgs";
 import { startTuiWorkspace } from "./tui/readlineWorkspace";
 import { readPackageInfo } from "./updateCommands";
@@ -22,7 +21,7 @@ const packageInfo = readPackageInfo();
 
 async function runScript(script: string, forwardedArgs: string[], env: NodeJS.ProcessEnv) {
   const scriptPath = join(SCRIPT_DIR, script);
-  const proc = Bun.spawn({
+  const proc = spawnProcess({
     cmd: [process.execPath, scriptPath, ...forwardedArgs],
     stdin: "inherit",
     stdout: "inherit",

@@ -1,8 +1,10 @@
 import { createInterface } from "node:readline";
 import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
+import { readPipeText, spawnProcess } from "../processSpawn";
 import { runSelfUpdate } from "../updateCommands";
 import {
   createInitialTuiState,
@@ -66,11 +68,10 @@ async function runAgentChat(
 }
 
 async function pipeReadableToOutput(
-  readable: ReadableStream<Uint8Array> | null,
+  stream: Readable | null,
   output: NodeJS.WritableStream
 ) {
-  if (!readable) return;
-  const text = await new Response(readable).text();
+  const text = await readPipeText(stream);
   if (text) output.write(text);
 }
 
@@ -87,7 +88,7 @@ async function runCliCommandInChildProcess(
     cliEntrypointPath: string;
   }
 ) {
-  const proc = Bun.spawn({
+  const proc = spawnProcess({
     cmd: [process.execPath, context.cliEntrypointPath, ...args],
     stdout: "pipe",
     stderr: "pipe",

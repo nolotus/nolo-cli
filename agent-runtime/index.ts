@@ -182,3 +182,4 @@ export type {
   AgentRuntimeToolCall,
   AgentRuntimeWorkspaceMode,
 } from "./types";
+export * from "./externalTools";

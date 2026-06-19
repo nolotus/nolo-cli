@@ -224,10 +224,21 @@ export const matchesSidebarVisibleType = (
     return itemType === "app" || contentKey.startsWith("app-");
   }
   if (type === "scheduled") {
-    return itemType === "task" || contentKey.startsWith("task-");
+    return (
+      itemType === "agent-automation" ||
+      contentKey.startsWith("agent-automation-") ||
+      itemType === "task" ||
+      contentKey.startsWith("task-")
+    );
   }
   if (type === "dialog") {
-    return itemType === type && item.triggerType !== "scheduled_run";
+    return (
+      itemType === type &&
+      item.triggerType !== "scheduled_run" &&
+      item.triggerType !== "automation_run" &&
+      !item.parentTaskKey &&
+      !item.parentAutomationKey
+    );
   }
   if (type === "file") {
     return itemType === "file" || itemType === "image";

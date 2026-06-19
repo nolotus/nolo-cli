@@ -229,7 +229,7 @@ const selectSpaceState = (state: RootState) => state.space;
 
 export const selectCurrentSpaceId = createSelector(
   selectSpaceState,
-  (space) => space.currentSpaceId
+  (space) => space.viewMode === "all" ? null : space.currentSpaceId
 );
 
 export const selectCurrentSpace = createSelector(
@@ -237,12 +237,14 @@ export const selectCurrentSpace = createSelector(
     selectSpaceState,
     (state: RootState) => {
       const spaceState = state.space;
+      if (spaceState?.viewMode === "all") return undefined;
       if (!spaceState?.currentSpaceId) return undefined;
       const dbKey = createSpaceKey.space(spaceState.currentSpaceId);
       return selectEntities(state)[dbKey];
     },
   ],
   (space, spaceEntity) => {
+    if (space.viewMode === "all") return null;
     if (!space.currentSpaceId) return null;
     if (!space.currentSpace) return spaceEntity || null;
     if (!spaceEntity) return space.currentSpace;

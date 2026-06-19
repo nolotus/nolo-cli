@@ -324,21 +324,24 @@ export const buildEditingContextSummary = (
             "",
             "【给 AI 的操作指南 / 非用户原话】",
             "1. 用户要求修改当前应用时，先调用 appRead 获取当前代码/文件，再基于现有实现修改。",
-            "2. 先识别当前应用是否已有 theme / tokens / design system；已有就优先改这层，没有再补一层最小共享 token，再基于 token 调整组件。",
-            "3. 如果当前应用还是旧写法：视觉值散落在组件硬编码 style 里，而用户只是做字体/颜色/间距等视觉微调，默认先把命中的视觉值抽到最小 token 层，再完成本次修改；除非用户明确要求不要重构。",
-            `4. 重新部署当前应用时，appDeploy 必须继续传同一个 appId（${appId}），避免创建新应用。`,
-            framework === "react-spa"
-                ? '5. 当前应用是 React SPA，修改时继续沿用 framework: "react-spa" + files，不要退回单文件 Worker。'
-                : "5. 当前应用目前是 Worker 形态；如果需求变成复杂交互或图表，可以评估升级为 React SPA。",
+            "2. 如果 appRead 返回 workspaceRef/sourceFiles/sourceOmitted，不要整站重写；使用 App Builder 的受限 workspace 文件工具：appFileList=listFiles、appFileSearch=searchFiles、appFileRead=readFile、appFileReplace=editFile、appFileWrite=writeFile。先定位文件与命中行，大文件只读取必要行范围；文字、样式、token、局部逻辑等小改动必须优先用 appFileReplace 精确替换唯一片段，只有新建文件或确实需要整文件重写时才用 appFileWrite。",
+            "3. 先识别当前应用是否已有 theme / tokens / design system；已有就优先改这层，没有再补一层最小共享 token，再基于 token 调整组件。",
+            "4. 如果当前应用还是旧写法：视觉值散落在组件硬编码 style 里，而用户只是做字体/颜色/间距等视觉微调，默认先把命中的视觉值抽到最小 token 层，再完成本次修改；除非用户明确要求不要重构。",
+            `5. 重新部署当前应用时，appDeploy 必须继续传同一个 appId（${appId}），避免创建新应用。`,
+            framework === "nolo-react"
+                ? '6. 当前应用是 Nolo React SSR，修改时优先使用受限 app workspace 文件工具操作源码工作区，然后 appPreflight/appDeploy；不要退回 react-spa 或单文件 Worker。'
+                : framework === "react-spa"
+                  ? '6. 当前应用是 React SPA，修改时继续沿用 framework: "react-spa" + files，不要退回单文件 Worker。'
+                  : "6. 当前应用目前是 Worker 形态；如果需求变成复杂交互或图表，可以评估升级为 React SPA。",
             ...(fileNames.length
                 ? []
                 : [
-                    "6. 当前没有源码文件清单时，必须先用 appRead 判断读到的是可维护源码还是部署产物 / 打包 bundle。",
-                    "7. 如果 appRead 返回的是 HTML 壳、importmap、压缩 bundle 或明显不是原始源码文件，禁止在未告知用户风险的情况下整站重写；应先说明“当前缺少原始源码快照，继续修改更像整体重建”，等用户确认后再继续。",
+                    "7. 当前没有源码文件清单时，必须先用 appRead 判断读到的是可维护源码还是部署产物 / 打包 bundle。",
+                    "8. 如果 appRead 返回的是 HTML 壳、importmap、压缩 bundle 或明显不是原始源码文件，禁止在未告知用户风险的情况下整站重写；应先说明“当前缺少原始源码快照，继续修改更像整体重建”，等用户确认后再继续。",
                 ]),
-            "8. 如果用户只是要调字体大小、配色、圆角、阴影、留白等视觉细节，默认优先改设计 token 或命中的局部组件；对旧写法应用则优先做最小 token 迁移，不要只改散落硬编码。",
-            "9. 每次修改完成后，先 appPreflight，再 appDeploy；如果失败，按返回 issues 定点修复。",
-            "10. 回复用户时优先说明做了什么变化、现在应用可以怎么用，而不是直接堆代码。",
+            "9. 如果用户只是要调字体大小、配色、圆角、阴影、留白等视觉细节，默认优先改设计 token 或命中的局部组件；对旧写法应用则优先做最小 token 迁移，不要只改散落硬编码。",
+            "10. 每次修改完成后，先 appPreflight，再 appDeploy；如果失败，按返回 issues 定点修复。",
+            "11. 回复用户时优先说明做了什么变化、现在应用可以怎么用，而不是直接堆代码。",
             ...formatAppConstraintPacks(constraintPacks),
         ].join("\n");
     }

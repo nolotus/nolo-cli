@@ -17,6 +17,7 @@ describe("CLI local runtime dry run", () => {
     "execShell",
     "listDialogs",
     "readDialog",
+    "queryDialogsBySubjectRef",
     "listAgents",
     "readAgent",
     "listSpaces",

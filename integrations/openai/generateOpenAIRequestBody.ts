@@ -6,6 +6,7 @@ import { getUsageRequestOptions } from "../../ai/llm/usageRequestOptions";
 import {
   isDeepInfraKimiModel,
   isFireworksKimiModel,
+  isVultrKimiModel,
   resolveFireworksKimiModel,
 } from "../../ai/llm/kimi";
 import { Contexts } from "../../ai/types";
@@ -102,6 +103,7 @@ const shouldDisableKimiThinking = (
   if (agentConfig.enableThinking !== false) return false;
   if (providerName === "deepinfra") return isDeepInfraKimiModel(resolvedModel);
   if (providerName === "fireworks") return isFireworksKimiModel(resolvedModel);
+  if (providerName === "vultr") return isVultrKimiModel(resolvedModel);
   return false;
 };
 

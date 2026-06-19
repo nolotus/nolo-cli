@@ -128,6 +128,21 @@ export const authRoutes = {
       method: "POST" as const,
       createPath: () => `${API_VERSION}/users/send-email`,
     },
+    spaceInvite: {
+      path: `${API_VERSION}/users/space-invite`,
+      method: "POST" as const,
+      createPath: () => `${API_VERSION}/users/space-invite`,
+    },
+    spaceInviteStatus: {
+      path: `${API_VERSION}/users/space-invite/status`,
+      method: "GET" as const,
+      createPath: () => `${API_VERSION}/users/space-invite/status`,
+    },
+    spaceInviteAccept: {
+      path: `${API_VERSION}/users/space-invite/accept`,
+      method: "POST" as const,
+      createPath: () => `${API_VERSION}/users/space-invite/accept`,
+    },
     emailPreferencesGet: {
       path: `${API_VERSION}/users/email-preferences`,
       method: "GET" as const,

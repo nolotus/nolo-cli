@@ -30,7 +30,9 @@ const COMMAND_CAPABILITIES: Array<[probes: CommandProbe[], capabilities: string[
   [[{ command: "gemini", args: ["--version"] }], ["gemini-cli"]],
   [[{ command: "kimi", args: ["--version"] }], ["kimi-cli"]],
   [[{ command: "agy", args: ["--help"] }], ["agy-cli"]],
-  [[{ command: "qoder", args: ["--version"] }], ["qoder-cli", "qoder-usage"]],
+  [[{ command: "qoder", args: ["--version"] }], ["qoder-cli"]],
+  [[{ command: "opencode", args: ["--version"] }], ["opencode-cli"]],
+  [[{ command: "grok", args: ["--version"] }], ["grok-cli"]],
 ];
 
 function defaultCommandExists(command: string) {

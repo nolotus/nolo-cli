@@ -2,12 +2,11 @@ import { selectUserId } from "../../../auth/authSlice";
 import { addContentToSpace } from "../../../create/space/spaceSlice";
 import { DataType } from "../../../create/types";
 import { write } from "../../../database/dbSlice";
-import { createTaskKey } from "../../../database/keys";
-import { extractCustomId } from "../../../core/prefix";
+import { createAgentAutomationKey } from "../../../database/keys";
 import { computeNextScheduledAt } from "../schedule";
-import type { ScheduledTaskConfig } from "../../../app/types";
+import type { AgentAutomationConfig } from "../../../app/types";
 
-interface CreateScheduledTaskArgs {
+interface CreateAgentAutomationArgs {
   agentKey: string;
   title: string;
   schedule: string;
@@ -15,8 +14,8 @@ interface CreateScheduledTaskArgs {
   spaceId?: string | null;
 }
 
-export const createScheduledTaskAction = async (
-  args: CreateScheduledTaskArgs,
+export const createAgentAutomationAction = async (
+  args: CreateAgentAutomationArgs,
   thunkApi: any
 ) => {
   const { dispatch, getState } = thunkApi;
@@ -27,48 +26,49 @@ export const createScheduledTaskAction = async (
 
   const agentKey = args.agentKey?.trim();
   const schedule = args.schedule?.trim();
-  const taskPrompt = args.taskPrompt?.trim();
-  if (!agentKey || !schedule || !taskPrompt) {
-    throw new Error("agentKey, schedule and taskPrompt are required.");
+  const instruction = args.taskPrompt?.trim();
+  if (!agentKey || !schedule || !instruction) {
+    throw new Error("agentKey, schedule and instruction are required.");
   }
 
-  const nextRunAt = computeNextScheduledAt(schedule);
-  if (!nextRunAt) {
+  const nextWakeAt = computeNextScheduledAt(schedule);
+  if (!nextWakeAt) {
     throw new Error("Invalid cron schedule.");
   }
 
-  const dbKey = createTaskKey(userId);
-  const id = extractCustomId(dbKey);
+  const dbKey = createAgentAutomationKey(userId);
+  const id = dbKey.slice(`${DataType.AGENT_AUTOMATION}-${userId}-`.length);
   const nowIso = new Date().toISOString();
-  const title = args.title?.trim() || "Scheduled agent task";
+  const title = args.title?.trim() || "Agent automation";
   const spaceId = args.spaceId || undefined;
-  const task: ScheduledTaskConfig = {
+  const automation: AgentAutomationConfig = {
     id,
     dbKey,
-    type: DataType.TASK,
+    type: DataType.AGENT_AUTOMATION,
     title,
-    agentKey,
-    cybots: [agentKey],
+    ownerAgentKey: agentKey,
     createdBy: userId,
     createdAt: nowIso,
     updatedAt: nowIso,
     status: "active",
     runStatus: "idle",
-    schedule,
-    taskPrompt,
-    nextRunAt,
-    runDialogKeys: [],
+    instruction,
+    trigger: {
+      type: "cron",
+      expression: schedule,
+      nextWakeAt,
+    },
     ...(spaceId ? { spaceId } : {}),
   };
 
-  const result = await dispatch(write({ data: task, customKey: dbKey })).unwrap();
+  const result = await dispatch(write({ data: automation, customKey: dbKey })).unwrap();
 
   if (spaceId) {
     await dispatch(
       addContentToSpace({
         spaceId,
         contentKey: dbKey,
-        type: DataType.TASK,
+        type: DataType.AGENT_AUTOMATION,
         title,
       })
     );

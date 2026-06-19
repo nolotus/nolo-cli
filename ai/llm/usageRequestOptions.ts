@@ -16,6 +16,8 @@ const STREAM_USAGE_PROVIDERS = new Set([
   "openai",
   "fireworks",
   "mistral",
+  "cloudflare",
+  "gmi",
 ]);
 
 const EXTRA_USAGE_FIELD_PROVIDERS = new Set(["openrouter"]);

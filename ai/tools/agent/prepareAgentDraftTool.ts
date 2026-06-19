@@ -73,6 +73,10 @@ export const buildPreparedAgentDraft = (
     references: referencesArray(args.references),
     tags: stringArray(args.tags),
     unresolved: stringArray(args.unresolved),
+    assemblyNotes: stringArray(args.assemblyNotes),
+    suggestedSkillIdeas: stringArray(args.suggestedSkillIdeas),
+    suggestedWorkflowIdeas: stringArray(args.suggestedWorkflowIdeas),
+    suggestedEvalCases: stringArray(args.suggestedEvalCases),
   };
 };
 
@@ -126,6 +130,30 @@ export const prepareAgentDraftToolFunctionSchema = {
         type: "array",
         items: { type: "string" },
         description: "仍需确认的字段或问题。",
+      },
+      assemblyNotes: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "可选：能力装配说明，只服务创建 UI 和下一步建议，不写入 Agent record。",
+      },
+      suggestedSkillIdeas: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "可选：可沉淀为 skill 的专家经验建议。必须用户确认后才能创建 skill。",
+      },
+      suggestedWorkflowIdeas: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "可选：可沉淀为 workflow-config 的流程建议。必须用户确认后才能创建文档。",
+      },
+      suggestedEvalCases: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "可选：建议生成的 eval case 草稿；默认只生成，不跑 live eval。",
       },
     },
     required: ["name", "introduction", "promptSummary"],

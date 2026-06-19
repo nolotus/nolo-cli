@@ -4,6 +4,7 @@ import {
   parseUserIdFromAuthToken,
   readOption,
   resolveAuthToken,
+  resolveDeleteServerCandidates,
   resolveServerCandidates,
   resolveServerUrl,
 } from "./cliEnvHelpers";
@@ -44,10 +45,15 @@ const DIALOG_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
 const DIALOG_PATH_RE = /^\/(?:space\/([^/]+)\/)?dialog-(.+)-([0-9A-HJKMNP-TV-Z]{26})\/?$/i;
 const VALUE_FLAGS = new Set([
   "--limit",
+  "--exclude-dialog",
+  "--row-dbkey",
   "--server",
   "--server-url",
   "--space",
   "--space-id",
+  "--subject-id",
+  "--subject-kind",
+  "--subject-role",
   "--token",
   "--machine-key",
   "--user",
@@ -192,7 +198,12 @@ function sortDialogs(dialogs: ListedDialog[]) {
 }
 
 function isScheduledDialog(record: ListedDialog) {
-  return record.triggerType === "scheduled_run";
+  return (
+    record.triggerType === "automation_run" ||
+    record.triggerType === "scheduled_run" ||
+    Boolean((record as { parentAutomationKey?: unknown }).parentAutomationKey) ||
+    Boolean((record as { parentTaskKey?: unknown }).parentTaskKey)
+  );
 }
 
 function printListUsage(output: { write(chunk: string): unknown }) {
@@ -254,6 +265,28 @@ Options:
   --user <userId> Override dialog owner for raw dialog ids.
 
 Prints compact dialog run status and next-step hints.
+`);
+}
+
+function printQueryUsage(output: { write(chunk: string): unknown }) {
+  output.write(`Usage:
+  nolo dialog query --subject-kind <kind> --subject-id <id> [--subject-role <role>]
+  nolo dialog query --row-dbkey <rowDbKey>
+
+Options:
+  --row-dbkey <dbKey>       Convenience target for table-row task subject refs.
+  --subject-kind <kind>     Generic subject ref kind. Defaults to table-row with --row-dbkey.
+  --subject-id <id>         Generic subject ref id. Defaults to --row-dbkey.
+  --subject-role <role>     Optional role included in the query payload.
+  --limit <n>               Query limit. Default: 100.
+  --exclude-dialog <id>     Exclude one dialog id or dbKey from evidence results.
+  --allow-empty             Exit 0 when no dialogs match.
+  --json                    Print machine-readable JSON.
+  --server <url>            Target server. Defaults to NOLO_SERVER/BASE_URL/profile.
+  --token <jwt>             Override AUTH_TOKEN.
+
+Reads dialog evidence by dialog.subjectRefs through the server query endpoint.
+It is read-only and does not write task rows, row-side evidence caches, or retired orchestration metadata.
 `);
 }
 
@@ -553,6 +586,210 @@ function compact(value: unknown, max = 180) {
   return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
+function normalizeNonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+type DialogSubjectRef = {
+  kind: string;
+  id: string;
+  role?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeSubjectKind(kind: string) {
+  return kind === "tableRow" ? "table-row" : kind;
+}
+
+function normalizeDialogSubjectRef(value: unknown): DialogSubjectRef | null {
+  if (!isRecord(value)) return null;
+  const kind = typeof value.kind === "string" && value.kind.trim()
+    ? normalizeSubjectKind(value.kind.trim())
+    : "";
+  const id = typeof value.id === "string" && value.id.trim()
+    ? value.id.trim()
+    : "";
+  if (!kind || !id) return null;
+  const role = typeof value.role === "string" && value.role.trim()
+    ? value.role.trim()
+    : "";
+  return {
+    kind,
+    id,
+    ...(role ? { role } : {}),
+  };
+}
+
+function extractDialogSubjectRefs(dialog: unknown): DialogSubjectRef[] {
+  if (!isRecord(dialog) || !Array.isArray(dialog.subjectRefs)) return [];
+  return dialog.subjectRefs
+    .map(normalizeDialogSubjectRef)
+    .filter((ref): ref is DialogSubjectRef => Boolean(ref));
+}
+
+function dialogMatchesSubjectRef(dialog: unknown, target: DialogSubjectRef) {
+  const normalizedTarget = normalizeDialogSubjectRef(target);
+  if (!normalizedTarget) return false;
+  return extractDialogSubjectRefs(dialog).some(
+    (ref) => ref.kind === normalizedTarget.kind && ref.id === normalizedTarget.id
+  );
+}
+
+function hasArtifactEvidence(value: unknown) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (isRecord(value)) return Object.keys(value).length > 0;
+  return Boolean(value);
+}
+
+function artifactEvidenceCount(value: unknown) {
+  if (Array.isArray(value)) return value.length;
+  if (isRecord(value)) return Object.keys(value).length > 0 ? 1 : 0;
+  return value ? 1 : 0;
+}
+
+function summarizeDialogEvidence(dialog: any, target: DialogSubjectRef) {
+  const dialogKey = typeof dialog?.dbKey === "string" && dialog.dbKey.trim()
+    ? dialog.dbKey.trim()
+    : "";
+  const checkpoint = isRecord(dialog?.runtimeCheckpoint) ? dialog.runtimeCheckpoint : {};
+  const matchedSubjectRefs = extractDialogSubjectRefs(dialog).filter(
+    (ref) => ref.kind === normalizeSubjectKind(target.kind) && ref.id === target.id
+  );
+  const lastToolNames = Array.isArray(checkpoint.lastToolNames)
+    ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim())
+    : [];
+
+  return {
+    dialogId:
+      typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
+        ? dialog.dialogId.trim()
+        : typeof dialog?.id === "string" && dialog.id.trim()
+          ? dialog.id.trim()
+          : dialogKey
+            ? getDialogIdFromKey(dialogKey)
+            : null,
+    dialogKey: dialogKey || null,
+    title: typeof dialog?.title === "string" && dialog.title.trim() ? dialog.title.trim() : null,
+    status: typeof dialog?.status === "string" && dialog.status.trim() ? dialog.status.trim() : null,
+    checkpointStatus: typeof checkpoint.status === "string" && checkpoint.status.trim() ? checkpoint.status.trim() : null,
+    updatedAt:
+      typeof dialog?.updatedAt === "string" || typeof dialog?.updatedAt === "number"
+        ? dialog.updatedAt
+        : null,
+    hasArtifacts: hasArtifactEvidence(dialog?.artifacts),
+    artifactCount: artifactEvidenceCount(dialog?.artifacts),
+    subjectRefs: matchedSubjectRefs,
+    lastToolNames,
+  };
+}
+
+function verifyDialogSubjectQuery(dialogs: any[], target: DialogSubjectRef, allowEmpty: boolean) {
+  const unmatchedDialogs = dialogs
+    .filter((dialog) => !dialogMatchesSubjectRef(dialog, target))
+    .map((dialog) => ({
+      dialogId:
+        typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
+          ? dialog.dialogId.trim()
+          : typeof dialog?.id === "string" && dialog.id.trim()
+            ? dialog.id.trim()
+            : typeof dialog?.dbKey === "string"
+              ? getDialogIdFromKey(dialog.dbKey)
+              : null,
+      dialogKey: typeof dialog?.dbKey === "string" && dialog.dbKey.trim() ? dialog.dbKey.trim() : null,
+      subjectRefs: extractDialogSubjectRefs(dialog),
+    }));
+  const reason =
+    unmatchedDialogs.length > 0
+      ? "unmatched_results"
+      : dialogs.length === 0 && !allowEmpty
+        ? "empty_results"
+        : "ok";
+  return {
+    ok: reason === "ok",
+    reason,
+    target,
+    returnedCount: dialogs.length,
+    matchedCount: dialogs.length - unmatchedDialogs.length,
+    unmatchedCount: unmatchedDialogs.length,
+    unmatchedDialogs,
+  };
+}
+
+function normalizeExcludedDialogIds(value: unknown) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const ids = new Set<string>();
+  for (const rawValue of rawValues) {
+    if (typeof rawValue !== "string") continue;
+    const trimmed = rawValue.trim();
+    if (!trimmed) continue;
+    ids.add(trimmed);
+    if (trimmed.startsWith("dialog-")) {
+      ids.add(getDialogIdFromKey(trimmed));
+    }
+  }
+  return [...ids];
+}
+
+function getDialogIdentityValues(dialog: unknown) {
+  if (!isRecord(dialog)) return [];
+  const values = new Set<string>();
+  for (const rawValue of [dialog.dialogId, dialog.id, dialog.dbKey]) {
+    if (typeof rawValue !== "string") continue;
+    const trimmed = rawValue.trim();
+    if (!trimmed) continue;
+    values.add(trimmed);
+    if (trimmed.startsWith("dialog-")) {
+      values.add(getDialogIdFromKey(trimmed));
+    }
+  }
+  return [...values];
+}
+
+function excludeDialogsById(dialogs: any[], excludeDialogIds: string[]) {
+  if (excludeDialogIds.length === 0) return dialogs;
+  const excluded = new Set(excludeDialogIds);
+  return dialogs.filter((dialog) =>
+    getDialogIdentityValues(dialog).every((value) => !excluded.has(value))
+  );
+}
+
+async function queryDialogEvidenceBySubjectRef(args: {
+  authToken: string;
+  fetchImpl: typeof fetch;
+  limit: number;
+  serverUrl: string;
+  subjectRef: DialogSubjectRef;
+  userId: string;
+}) {
+  const res = await args.fetchImpl(
+    `${args.serverUrl}/api/v1/db/query/${encodeURIComponent(args.userId)}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${args.authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "dialog",
+        limit: args.limit,
+        subjectRef: args.subjectRef,
+      }),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`dialog subject query failed: HTTP ${res.status} ${JSON.stringify(data)}`);
+  }
+  return Array.isArray(data?.data?.data)
+    ? data.data.data
+    : Array.isArray(data?.data)
+      ? data.data
+      : [];
+}
+
 function renderCompactDialogStatus(snapshot: any) {
   const checkpoint = snapshot.runtimeCheckpoint ?? {};
   const checkpointStatus = typeof checkpoint.status === "string" ? checkpoint.status : null;
@@ -589,6 +826,23 @@ function renderCompactDialogStatus(snapshot: any) {
       .filter(Boolean)
       .slice(0, 8)
     : [];
+  const runtimeContext = isRecord(snapshot.runtimeContext) ? snapshot.runtimeContext : {};
+  const runtimeFieldLines = [
+    ["triggerType", snapshot.triggerType],
+    ["executionMode", snapshot.executionMode],
+    ["threadKind", snapshot.threadKind],
+    ["presentationIntent", snapshot.presentationIntent],
+    ["parentThreadId", snapshot.parentThreadId],
+    ["rootThreadId", snapshot.rootThreadId],
+    ["runtimeEntrypoint", runtimeContext.entrypoint ?? checkpoint.runtimeContext?.entrypoint],
+    ["parentWakeStatus", snapshot.parentWake?.terminalStatus],
+    ["parentWakeAt", snapshot.parentWake?.terminalNotifiedAt],
+  ]
+    .map(([label, value]) => {
+      const normalized = typeof value === "number" ? String(value) : normalizeNonEmptyString(value);
+      return normalized ? `${label}: ${normalized}` : "";
+    })
+    .filter(Boolean);
   const toolErrors = Array.isArray(snapshot.toolErrors)
     ? snapshot.toolErrors.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim()).slice(0, 8)
     : [];
@@ -611,6 +865,7 @@ function renderCompactDialogStatus(snapshot: any) {
     ...(snapshot.title ? [`title: ${snapshot.title}`] : []),
     ...(snapshot.parentDialogId ? [`parentDialogId: ${snapshot.parentDialogId}`] : []),
     ...(snapshot.rootDialogId ? [`rootDialogId: ${snapshot.rootDialogId}`] : []),
+    ...runtimeFieldLines,
     `status: ${status}`,
     ...(checkpointStatus ? [`checkpoint: ${checkpointStatus}`] : []),
     `state: ${state}`,
@@ -747,6 +1002,16 @@ export async function runDialogReadCommand(
       inheritedFromDialogTitle: read.meta?.inheritedFromDialogTitle ?? null,
       parentDialogId: read.meta?.parentDialogId ?? null,
       rootDialogId: read.meta?.rootDialogId ?? null,
+      triggerType: read.meta?.triggerType ?? null,
+      executionMode: read.meta?.executionMode ?? null,
+      threadKind: read.meta?.threadKind ?? null,
+      presentationIntent: read.meta?.presentationIntent ?? null,
+      parentThreadId: read.meta?.parentThreadId ?? null,
+      rootThreadId: read.meta?.rootThreadId ?? null,
+      runtimeBinding: read.meta?.runtimeBinding ?? null,
+      runtimeContext: read.meta?.runtimeContext ?? null,
+      parentWake: read.meta?.parentWake ?? null,
+      subjectRefs: Array.isArray(read.meta?.subjectRefs) ? read.meta.subjectRefs : [],
       status: read.meta?.status,
       errorMessage: read.meta?.errorMessage ?? null,
       runtimeCheckpoint: read.meta?.runtimeCheckpoint ?? null,
@@ -825,6 +1090,97 @@ export async function runDialogStatusCommand(
     return 0;
   } catch (error) {
     output.write(`[nolo] dialog status failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+export async function runDialogQueryCommand(
+  args: string[],
+  deps: AgentCommandDeps = {}
+) {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    printQueryUsage(output);
+    return 0;
+  }
+
+  const authToken = resolveAuthToken(args, env);
+  if (!authToken) {
+    output.write("[nolo] dialog query requires an auth token. Run `nolo login` or set AUTH_TOKEN.\n");
+    return 1;
+  }
+  const userId = parseUserIdFromAuthToken(authToken);
+  if (!userId) {
+    output.write("[nolo] dialog query could not read userId from AUTH_TOKEN.\n");
+    return 1;
+  }
+
+  const rowDbKey = readOption(args, "--row-dbkey") ?? env.TASK_ROW_DBKEY;
+  const subjectKind = readOption(args, "--subject-kind") ?? (rowDbKey ? "table-row" : "");
+  const subjectId = readOption(args, "--subject-id") ?? rowDbKey ?? "";
+  const subjectRole = readOption(args, "--subject-role") ?? (rowDbKey ? "task" : "");
+  if (!subjectKind || !subjectId) {
+    printQueryUsage(output);
+    return 1;
+  }
+
+  const subjectRef: DialogSubjectRef = {
+    kind: normalizeSubjectKind(subjectKind),
+    id: subjectId,
+    ...(subjectRole ? { role: subjectRole } : {}),
+  };
+  const serverUrl = resolveServerUrl(args, env);
+  const limit = readLimit(args, 100);
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const excludeDialogIds = normalizeExcludedDialogIds(readOption(args, "--exclude-dialog"));
+
+  try {
+    const rawRecords = await queryDialogEvidenceBySubjectRef({
+      authToken,
+      fetchImpl,
+      limit,
+      serverUrl,
+      subjectRef,
+      userId,
+    });
+    const records = excludeDialogsById(rawRecords, excludeDialogIds);
+    const strict = verifyDialogSubjectQuery(records, subjectRef, hasFlag(args, "--allow-empty"));
+    const dialogs = records
+      .filter((record) => dialogMatchesSubjectRef(record, subjectRef))
+      .map((record) => summarizeDialogEvidence(record, subjectRef));
+
+    if (hasFlag(args, "--json")) {
+      output.write(JSON.stringify({
+        source: "db.query.subjectRef",
+        readOnly: true,
+        server: serverUrl,
+        userId,
+        ...(rowDbKey ? { rowDbKey } : {}),
+        target: subjectRef,
+        ...(excludeDialogIds.length ? { excludedDialogIds: excludeDialogIds } : {}),
+        strict,
+        total: dialogs.length,
+        dialogs,
+      }, null, 2));
+      output.write("\n");
+    } else {
+      output.write(`source: db.query.subjectRef\n`);
+      output.write(`server: ${serverUrl}\n`);
+      output.write(`subject: ${subjectRef.kind}:${subjectRef.id}${subjectRef.role ? `#${subjectRef.role}` : ""}\n`);
+      if (excludeDialogIds.length) output.write(`excluded dialogs: ${excludeDialogIds.join(", ")}\n`);
+      output.write(`strict: ${strict.ok ? "ok" : strict.reason}\n`);
+      output.write(`total dialogs: ${dialogs.length}\n`);
+      for (const dialog of dialogs) {
+        output.write(
+          `\n${dialog.title ?? "(untitled)"}\nid=${dialog.dialogId ?? "-"}\nstatus=${dialog.status ?? "-"}\ncheckpoint=${dialog.checkpointStatus ?? "-"}\nartifacts=${dialog.artifactCount}\nupdatedAt=${dialog.updatedAt ?? "-"}\ndbKey=${dialog.dialogKey ?? "-"}\n`
+        );
+      }
+    }
+
+    return strict.ok ? 0 : 1;
+  } catch (error) {
+    output.write(`[nolo] dialog query failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
 }
@@ -972,7 +1328,7 @@ export async function runDialogDeleteCommand(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const fallbackFetchImpl = deps.fallbackFetchImpl;
   const serverUrl = resolveServerUrl(args, env);
-  const serverUrls = resolveServerCandidates(args, env, serverUrl);
+  const serverUrls = resolveDeleteServerCandidates(args, env, serverUrl);
   const shouldDelete = hasFlag(args, "--yes");
   const includeReferencedAttachments = hasFlag(args, "--include-referenced-attachments");
   const includeAttachments = hasFlag(args, "--include-attachments") || includeReferencedAttachments;

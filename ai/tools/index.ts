@@ -26,16 +26,18 @@ import { canonicalizeToolName } from "./toolNameAliases";
 import {
   completeDialogGoalFunc,
   completeDialogGoalFunctionSchema,
+  createAgentAutomationFunc,
+  createAgentAutomationFunctionSchema,
   createDialogGoalFunc,
   createDialogGoalFunctionSchema,
-  createScheduledTaskFunc,
-  createScheduledTaskFunctionSchema,
   getDialogGoalFunc,
   getDialogGoalFunctionSchema,
   notifyUserFunc,
   notifyUserFunctionSchema,
   queryModelUsageFunc,
   queryModelUsageFunctionSchema,
+  queryUserGrowthReportFunc,
+  queryUserGrowthReportFunctionSchema,
 } from "./modelUsageTools";
 
 // Agent 相关工具的 schema（用于 patch enum），具体定义移到 agentTools.ts
@@ -85,12 +87,17 @@ import {
   cliDoctorFunctionSchema,
   cliWhoamiFunc,
   cliWhoamiFunctionSchema,
+  deleteDialogsFunc,
+  deleteDialogsFunctionSchema,
+  deleteDialogsPreviewFunc,
   listAgentsFunc,
   listAgentsFunctionSchema,
   listDialogsFunc,
   listDialogsFunctionSchema,
   listSpacesFunc,
   listSpacesFunctionSchema,
+  queryDialogsBySubjectRefFunc,
+  queryDialogsBySubjectRefFunctionSchema,
   readAgentFunc,
   readAgentFunctionSchema,
   readDialogFunc,
@@ -233,9 +240,21 @@ import {
   browser_readContent_Func,
 } from "./browserTools/readContent";
 import {
+  chromeConnectorToolSchemas,
+  chromeConnectorUnavailableFunc,
+  getChromeConnectorToolBehavior,
+  getChromeConnectorToolDefaultConsent,
+} from "./chromeConnectorTools";
+import {
   exaSearchSchema,
   exaSearchFunc,
 } from "./exaSearchTool";
+import {
+  firecrawlScrapeSchema,
+  firecrawlScrapeFunc,
+  firecrawlSearchSchema,
+  firecrawlSearchFunc,
+} from "./firecrawlTool";
 import {
   olmOcrSchema,
   olmOcrFunc,
@@ -342,6 +361,16 @@ import {
   appDeleteFunc,
   appReadFunctionSchema,
   appReadFunc,
+  appFileListFunctionSchema,
+  appFileListFunc,
+  appFileReadFunctionSchema,
+  appFileReadFunc,
+  appFileSearchFunctionSchema,
+  appFileSearchFunc,
+  appFileReplaceFunctionSchema,
+  appFileReplaceFunc,
+  appFileWriteFunctionSchema,
+  appFileWriteFunc,
 } from "./appTools";
 import {
   cfSpeechToTextFunctionSchema,
@@ -703,6 +732,22 @@ const baseToolDefinitions: ToolDefinition[] = [
     defaultConsent: "auto",
   },
   {
+    id: "queryUserGrowthReport",
+    schema: queryUserGrowthReportFunctionSchema,
+    executor: queryUserGrowthReportFunc,
+    description: {
+      name: "queryUserGrowthReport",
+      description: "读取管理员增长统计报表，用于生成增长汇报。",
+      category: "统计",
+    },
+    behavior: "data",
+    uiGroup: "general",
+    capability: "general",
+    riskLevel: "low",
+    costLevel: "low",
+    defaultConsent: "auto",
+  },
+  {
     id: "createDialogGoal",
     schema: createDialogGoalFunctionSchema,
     executor: createDialogGoalFunc,
@@ -751,13 +796,13 @@ const baseToolDefinitions: ToolDefinition[] = [
     defaultConsent: "auto",
   },
   {
-    id: "createScheduledTask",
-    schema: createScheduledTaskFunctionSchema,
-    executor: createScheduledTaskFunc,
+    id: "createAgentAutomation",
+    schema: createAgentAutomationFunctionSchema,
+    executor: createAgentAutomationFunc,
     description: {
-      name: "createScheduledTask",
+      name: "createAgentAutomation",
       description:
-        "创建由 agent 执行的 cron 定时任务，可选择创建后立即试运行一次。",
+        "创建由 agent 执行的 cron automation，可选择创建后立即试运行一次。",
       category: "计划与编排",
     },
     behavior: "action",
@@ -1409,6 +1454,40 @@ const baseToolDefinitions: ToolDefinition[] = [
     costLevel: "medium",
   },
   {
+    id: "queryDialogsBySubjectRef",
+    schema: queryDialogsBySubjectRefFunctionSchema,
+    executor: queryDialogsBySubjectRefFunc,
+    description: {
+      name: "queryDialogsBySubjectRef",
+      description: "Query Nolo dialog evidence by generic subjectRefs.",
+      category: "Nolo workspace",
+    },
+    behavior: "data",
+    uiGroup: "content",
+    capability: "space_context",
+    riskLevel: "low",
+    costLevel: "low",
+  },
+  {
+    id: "deleteDialogs",
+    schema: deleteDialogsFunctionSchema,
+    executor: deleteDialogsFunc,
+    previewExecutor: deleteDialogsPreviewFunc,
+    description: {
+      name: "deleteDialogs",
+      description:
+        "按标题或 ID 删除当前用户拥有的对话；先列出候选，用户确认后才删除。",
+      category: "Nolo workspace",
+    },
+    behavior: "action",
+    uiGroup: "content",
+    capability: "space_context",
+    interaction: "confirm",
+    riskLevel: "high",
+    costLevel: "low",
+    defaultConsent: "ask",
+  },
+  {
     id: "listAgents",
     schema: listAgentsFunctionSchema,
     executor: listAgentsFunc,
@@ -1786,7 +1865,7 @@ const baseToolDefinitions: ToolDefinition[] = [
     behavior: "data",
     capability: "web_access",
     riskLevel: "low",
-    costLevel: "low",
+    costLevel: "high",
     defaultConsent: "auto",
     cancelable: true,
   },
@@ -1887,6 +1966,24 @@ const baseToolDefinitions: ToolDefinition[] = [
     },
     behavior: "data",
   },
+  ...chromeConnectorToolSchemas.map((schema) => ({
+    id: schema.name,
+    schema,
+    executor: chromeConnectorUnavailableFunc,
+    description: {
+      name: schema.name,
+      description: schema.description,
+      category: "网络与智能",
+    },
+    behavior: getChromeConnectorToolBehavior(schema.name),
+    capability: "browser_automation" as const,
+    riskLevel: schema.name === "chrome_click" || schema.name === "chrome_type"
+      ? "medium" as const
+      : "low" as const,
+    costLevel: "low" as const,
+    defaultConsent: getChromeConnectorToolDefaultConsent(schema.name),
+    cancelable: true,
+  })),
   {
     id: "exaSearch",
     schema: exaSearchSchema,
@@ -1894,6 +1991,30 @@ const baseToolDefinitions: ToolDefinition[] = [
     description: {
       name: "exa_search",
       description: "使用 Exa 神经网络搜索引擎获取高质量、结构化的网络信息（包含正文）。",
+      category: "网络与智能",
+    },
+    behavior: "data",
+  },
+  {
+    id: "firecrawlScrape",
+    schema: firecrawlScrapeSchema,
+    executor: firecrawlScrapeFunc,
+    description: {
+      name: "firecrawl_scrape",
+      description:
+        "使用 Firecrawl 抓取网页或 PDF 并返回 Markdown，适合反爬页面和 PDF 解析。",
+      category: "网络与智能",
+    },
+    behavior: "data",
+  },
+  {
+    id: "firecrawlSearch",
+    schema: firecrawlSearchSchema,
+    executor: firecrawlSearchFunc,
+    description: {
+      name: "firecrawl_search",
+      description:
+        "使用 Firecrawl 搜索互联网，并可返回每个结果的 Markdown 正文。",
       category: "网络与智能",
     },
     behavior: "data",
@@ -2037,6 +2158,66 @@ const baseToolDefinitions: ToolDefinition[] = [
     description: {
       name: "appRead",
       description: "读取已部署应用的当前代码，修改应用前必须先调用此工具获取现有代码。",
+      category: "应用部署",
+    },
+    behavior: "data",
+    uiGroup: "general",
+  },
+  {
+    id: "appFileList",
+    schema: appFileListFunctionSchema,
+    executor: appFileListFunc,
+    description: {
+      name: "appFileList",
+      description: "列出 Nolo React SSR 应用源码工作区文件。",
+      category: "应用部署",
+    },
+    behavior: "data",
+    uiGroup: "general",
+  },
+  {
+    id: "appFileRead",
+    schema: appFileReadFunctionSchema,
+    executor: appFileReadFunc,
+    description: {
+      name: "appFileRead",
+      description: "读取 Nolo React SSR 应用源码工作区单个文件。",
+      category: "应用部署",
+    },
+    behavior: "data",
+    uiGroup: "general",
+  },
+  {
+    id: "appFileWrite",
+    schema: appFileWriteFunctionSchema,
+    executor: appFileWriteFunc,
+    description: {
+      name: "appFileWrite",
+      description: "写入 Nolo React SSR 应用源码工作区单个文件。",
+      category: "应用部署",
+    },
+    behavior: "data",
+    uiGroup: "general",
+  },
+  {
+    id: "appFileSearch",
+    schema: appFileSearchFunctionSchema,
+    executor: appFileSearchFunc,
+    description: {
+      name: "appFileSearch",
+      description: "搜索 Nolo React SSR 应用源码工作区文件片段。",
+      category: "应用部署",
+    },
+    behavior: "data",
+    uiGroup: "general",
+  },
+  {
+    id: "appFileReplace",
+    schema: appFileReplaceFunctionSchema,
+    executor: appFileReplaceFunc,
+    description: {
+      name: "appFileReplace",
+      description: "精确替换 Nolo React SSR 应用源码工作区单个文件片段。",
       category: "应用部署",
     },
     behavior: "data",

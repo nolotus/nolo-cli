@@ -19,6 +19,7 @@ import type {
   TableColumnType,
   CreateTableColumnInput,
   TableMeta,
+  TablePublicIntakeConfig,
 } from "./types";
 
 /**
@@ -40,6 +41,7 @@ export interface CreateTableArgs {
   purpose?: string;
   description?: string;
   tags?: string[];
+  publicIntake?: TablePublicIntakeConfig;
   categoryId?: string;
   columns?: CreateTableColumnInput[];
   withDefaultRows?: boolean;
@@ -134,6 +136,45 @@ const normalizeColumns = (
   }));
 };
 
+const normalizeStringArray = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+  return items.length ? Array.from(new Set(items)) : undefined;
+};
+
+const normalizePublicIntake = (
+  input: TablePublicIntakeConfig | undefined
+): TablePublicIntakeConfig | undefined => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+
+  const allowedFields = normalizeStringArray(input.allowedFields) ?? [];
+  if (input.enabled !== true) {
+    return { enabled: false, allowedFields };
+  }
+  if (allowedFields.length === 0) {
+    throw new Error("publicIntake.allowedFields 至少需要一个字段。");
+  }
+
+  const slug =
+    typeof input.slug === "string" && input.slug.trim() ? input.slug.trim() : undefined;
+  const honeypotField =
+    typeof input.honeypotField === "string" && input.honeypotField.trim()
+      ? input.honeypotField.trim()
+      : undefined;
+  return {
+    enabled: true,
+    ...(slug ? { slug } : {}),
+    ...(normalizeStringArray(input.appIds) ? { appIds: normalizeStringArray(input.appIds) } : {}),
+    allowedFields,
+    ...(normalizeStringArray(input.requiredFields)
+      ? { requiredFields: normalizeStringArray(input.requiredFields) }
+      : {}),
+    ...(honeypotField ? { honeypotField } : {}),
+  };
+};
+
 /**
  * 类似 createPageAction：
  * 1) 基于当前 userId 生成 tableId + metaKey
@@ -149,6 +190,7 @@ export const createTableAction = async (
     purpose: customPurpose,
     description: customDescription,
     tags: customTags,
+    publicIntake,
     categoryId,
     columns,
     withDefaultRows = true,
@@ -187,6 +229,7 @@ export const createTableAction = async (
         .map((t) => (typeof t === "string" ? t.trim() : ""))
         .filter(Boolean)
       : undefined;
+  const finalPublicIntake = normalizePublicIntake(publicIntake);
 
   // 1) 归一化列定义
   const finalColumns: TableColumn[] = normalizeColumns(columns);
@@ -206,6 +249,7 @@ export const createTableAction = async (
     views: [], // 后续可以在 UI 中新增视图
     triggers: [], // 后续可以在 UI/配置中新增触发器
     aiConfig: undefined,
+    ...(finalPublicIntake ? { publicIntake: finalPublicIntake } : {}),
     createdAt: nowIso,
     updatedAt: nowIso,
     type: DataType.TABLE,
@@ -259,7 +303,7 @@ export const createTableAction = async (
   // 4) 如果在某个 Space 中，把表挂到 Space.contents（关键点）
   if (spaceId) {
     await dispatch(
-      addContentToSpace({
+      (addContentToSpace as any)({
         spaceId,
         contentKey: dbKey,
         type: DataType.TABLE, // ContentType 里要有 "table"

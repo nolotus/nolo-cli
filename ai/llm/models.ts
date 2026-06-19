@@ -11,6 +11,8 @@ import { openrouterModels } from "./openrouterModels";
 import { fireworksModels } from "./fireworks";
 import { mistralModels } from "./mistral";
 import { mimoModels } from "./mimo";
+import { cloudflareModels } from "./cloudflare";
+import { gmiModels } from "./gmi";
 
 /**
  * @interface ModelWithProvider
@@ -42,4 +44,6 @@ export const ALL_MODELS: ModelWithProvider[] = [
   ...withProvider("fireworks")(fireworksModels),
   ...withProvider("mistral")(mistralModels),
   ...withProvider("mimo")(mimoModels),
+  ...withProvider("cloudflare")(cloudflareModels),
+  ...withProvider("gmi")(gmiModels),
 ];

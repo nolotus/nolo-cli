@@ -18,7 +18,10 @@ const REASONING_MODEL_NAMES = new Set([
   "gpt-5.4-pro-flex",
   "gpt-5",
   "gpt-5-mini",
-  "o3-pro",
+  "@cf/zai-org/glm-5.2",
+  "zai-org/GLM-5.2",
+  "accounts/fireworks/models/glm-5p2",
+  "zai-org/GLM-5.2-FP8",
 ]);
 
 export const isModelSupportReasoningEffort = (model: string): boolean =>

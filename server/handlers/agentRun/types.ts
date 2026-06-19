@@ -69,6 +69,12 @@ export interface AgentRunRuntimeContext {
     entrypoint?: string;
     capabilities?: string[];
     subjectRefs?: DialogSubjectRef[];
+    allowedChildAgentKeys?: string[];
+    allowedToolNames?: string[];
+    threadKind?: string;
+    presentationIntent?: string;
+    parentThreadId?: string;
+    rootThreadId?: string;
 }
 
 export interface LoopResult extends Omit<AgentRuntimeResult, "policyState"> {
@@ -102,4 +108,5 @@ export interface ToolExecutionContext {
     currentSpaceId?: string | null;
     userInput?: string | null;
     imageUrls?: string[];
+    hostedWorkspaceLease?: Record<string, unknown> | null;
 }

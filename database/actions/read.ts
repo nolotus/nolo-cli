@@ -32,11 +32,24 @@ const updateClientDbIfNewer = async (
   if (!clientDb) return;
   try {
     if (isRemoteDataNewer(remoteData, localData)) {
-      await clientDb.put(dbKey, remoteData);
+      await clientDb.put(
+        dbKey,
+        normalizeReadRecord(dbKey, remoteData, { forCache: true })
+      );
     }
   } catch (err) {
     throw err;
   }
+};
+
+const normalizeReadRecord = (
+  dbKey: string,
+  data: any,
+  options: { forCache?: boolean } = {}
+): any => {
+  if (!data || typeof data !== "object") return data;
+  const baseRecord = options.forCache ? data : { ...data, dbKey };
+  return baseRecord;
 };
 
 const isRemoteDataNewer = (remoteData: any, localData: any): boolean => {
@@ -75,14 +88,17 @@ const saveRemoteDataToClientDb = async (
 ): Promise<void> => {
   if (!clientDb) return;
   try {
+    const normalizedRemoteData = normalizeReadRecord(dbKey, remoteData, {
+      forCache: true,
+    });
     await clientDb.put(
       dbKey,
       serverOrigin
         ? {
-            ...remoteData,
+            ...normalizedRemoteData,
             serverOrigin,
           }
-        : remoteData
+        : normalizedRemoteData
     );
   } catch (err) {
     // Error ignored
@@ -224,7 +240,7 @@ export const readAction = async (
     // 离线 / 无可用远程服务器：只看本地
     if (authorityPlannedServers.length === 0) {
       if (localData) {
-        return { ...localData, dbKey };
+        return normalizeReadRecord(dbKey, localData);
       }
       readRequestManager.markMiss(dbKey, now);
       throw new Error(
@@ -262,7 +278,7 @@ export const readAction = async (
           );
         }
       }
-      return { ...localData, dbKey };
+      return normalizeReadRecord(dbKey, localData);
     }
 
     if (preferredServer) {
@@ -282,7 +298,10 @@ export const readAction = async (
             preferredServer
           );
           readRequestManager.clearMiss(dbKey);
-          return { ...preferredRemoteData, dbKey, serverOrigin: preferredServer };
+          return normalizeReadRecord(dbKey, {
+            ...preferredRemoteData,
+            serverOrigin: preferredServer,
+          });
         }
       } catch (error) {
         if (signal?.aborted || (error as { name?: string } | null)?.name === "AbortError") {
@@ -332,9 +351,10 @@ export const readAction = async (
         );
       }
       readRequestManager.clearMiss(dbKey);
-      return serverOrigin
+      const remoteData = serverOrigin
         ? { ...validRemoteData, dbKey, serverOrigin }
         : { ...validRemoteData, dbKey };
+      return normalizeReadRecord(dbKey, remoteData);
     }
 
     readRequestManager.markMiss(dbKey, Date.now());

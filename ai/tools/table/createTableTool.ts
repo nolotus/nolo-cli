@@ -21,12 +21,22 @@ interface ToolTableColumnInput {
     options?: string[];
 }
 
+type PublicIntakeConfigInput = {
+    enabled: boolean;
+    slug?: string;
+    appIds?: string[];
+    allowedFields: string[];
+    requiredFields?: string[];
+    honeypotField?: string;
+};
+
 type CreateTableToolArgs = {
     spaceId?: string;
     title?: string;
     purpose?: string;
     description?: string;
     tags?: string[];
+    publicIntake?: PublicIntakeConfigInput;
     categoryId?: string;
     columns: ToolTableColumnInput[];
     withDefaultRows?: boolean;
@@ -99,6 +109,46 @@ export const createTableFunctionSchema = {
                 items: { type: "string" },
                 description:
                     "可选：表示该表的关键词标签列表，例如 [\"记账\",\"交易\",\"预算\"]。主要供 AI 选表使用，用户无需手动维护。",
+            },
+            publicIntake: {
+                type: "object",
+                description:
+                    "可选：开启公开匿名表单提交。只适合收集需求、报名、反馈等 append-only 数据；公开访客只能写入 allowedFields，不能读取/修改/删除表。",
+                properties: {
+                    enabled: {
+                        type: "boolean",
+                        description: "是否开启公开提交。",
+                    },
+                    slug: {
+                        type: "string",
+                        description:
+                            "公开提交使用的短标识，例如 consult-leads。前端提交时传 table=slug。",
+                    },
+                    appIds: {
+                        type: "array",
+                        items: { type: "string" },
+                        description:
+                            "可选：允许提交到这张表的 appId 列表。配置后，公开提交必须携带匹配 appId。",
+                    },
+                    allowedFields: {
+                        type: "array",
+                        items: { type: "string" },
+                        description:
+                            "允许公开访客写入的字段 machine name 白名单，例如 [\"need\",\"email\",\"wechat\"]。",
+                    },
+                    requiredFields: {
+                        type: "array",
+                        items: { type: "string" },
+                        description:
+                            "公开提交时必填的字段 machine name，例如 [\"need\"]。",
+                    },
+                    honeypotField: {
+                        type: "string",
+                        description:
+                            "可选：反垃圾隐藏字段名。访客填写了该字段时，服务端会忽略提交。",
+                    },
+                },
+                required: ["enabled", "allowedFields"],
             },
             categoryId: {
                 type: "string",
@@ -204,6 +254,12 @@ export async function createTableFunc(
                 .map((t) => (typeof t === "string" ? t.trim() : ""))
                 .filter(Boolean)
             : undefined;
+    const publicIntake =
+        args?.publicIntake &&
+            typeof args.publicIntake === "object" &&
+            !Array.isArray(args.publicIntake)
+            ? args.publicIntake
+            : undefined;
     const categoryId =
         typeof args?.categoryId === "string" && args.categoryId.trim()
             ? args.categoryId.trim()
@@ -267,6 +323,7 @@ export async function createTableFunc(
         purpose,
         description,
         tags,
+        publicIntake,
         categoryId,
         columns: sanitizedColumns,
         withDefaultRows,
@@ -300,6 +357,7 @@ export async function createTableFunc(
             displayName: finalTitle,
             description,
             tags,
+            publicIntake,
             columns: sanitizedColumns, // [{ name, label?, type?, description?, required?, options? }]
         };
 

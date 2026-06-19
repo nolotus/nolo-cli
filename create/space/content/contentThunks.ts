@@ -8,6 +8,7 @@ import { updateContentTitleAction } from "./updateContentTitleAction";
 import { updateContentCategoryAction } from "./updateContentCategoryAction";
 import { deleteMultipleContentAction } from "./deleteMultipleContentAction"; // <-- 新增: 导入批量删除 Action
 import { uploadAndAddFileToSpaceAction } from "./uploadAndAddFileToSpaceAction";
+import { normalizeSpaceId } from "../spaceKeys";
 
 type Create = ReturnType<typeof asyncThunkCreator<SpaceState>>;
 
@@ -45,7 +46,11 @@ export const createContentThunks = (create: Create) => ({
   deleteContentFromSpace: create.asyncThunk(deleteContentFromSpaceAction, {
     fulfilled: (state, action) => {
       const { spaceId, updatedSpaceData } = action.payload;
-      if (spaceId === state.currentSpaceId) {
+      const normalizedSpaceId = normalizeSpaceId(spaceId);
+      const normalizedCurrentSpaceId = state.currentSpaceId
+        ? normalizeSpaceId(state.currentSpaceId)
+        : null;
+      if (normalizedCurrentSpaceId === normalizedSpaceId) {
         state.currentSpace = updatedSpaceData;
       }
     },
@@ -54,7 +59,11 @@ export const createContentThunks = (create: Create) => ({
   // --- 新增: 批量删除内容的 Thunk ---
   deleteMultipleContent: create.asyncThunk(deleteMultipleContentAction, {
     fulfilled: (state, action) => {
-      if (state.currentSpaceId === action.payload.spaceId) {
+      const normalizedSpaceId = normalizeSpaceId(action.payload.spaceId);
+      const normalizedCurrentSpaceId = state.currentSpaceId
+        ? normalizeSpaceId(state.currentSpaceId)
+        : null;
+      if (normalizedCurrentSpaceId === normalizedSpaceId) {
         state.currentSpace = action.payload.updatedSpaceData;
       }
     },

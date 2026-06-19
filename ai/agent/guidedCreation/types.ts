@@ -5,7 +5,8 @@ export type GuidedAgentCapabilityId =
   | "docs"
   | "tables"
   | "agents"
-  | "apps";
+  | "apps"
+  | "imageProcessing";
 
 export type GuidedAgentReferenceChoice = ReferenceItem & {
   selected: boolean;
@@ -25,6 +26,10 @@ export type GuidedAgentDraft = {
   references: GuidedAgentReferenceChoice[];
   tags: string[];
   unresolved: string[];
+  assemblyNotes?: string[];
+  suggestedSkillIdeas?: string[];
+  suggestedWorkflowIdeas?: string[];
+  suggestedEvalCases?: string[];
 };
 
 export type GuidedAgentAssistantMessage = {

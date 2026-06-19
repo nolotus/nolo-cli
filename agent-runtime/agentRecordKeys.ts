@@ -2,8 +2,10 @@ export function buildAgentRuntimeAgentLookupKeys(args: {
   agentRef: string;
   userId: string;
 }) {
+  if (/^(agent|cybot)(-pub)?-/.test(args.agentRef)) {
+    return [args.agentRef];
+  }
   return [
-    args.agentRef,
     `agent-${args.userId}-${args.agentRef}`,
     `cybot-${args.userId}-${args.agentRef}`,
   ];

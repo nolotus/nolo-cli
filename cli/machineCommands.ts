@@ -122,7 +122,14 @@ function resolveConnectorReconnectDelayMs(env: EnvLike) {
 async function defaultExecuteCli(
   provider: string,
   prompt: string,
-  options: { model?: string; timeout?: number; cwd?: string; yolo?: boolean; env?: EnvLike }
+  options: {
+    model?: string;
+    timeout?: number;
+    cwd?: string;
+    yolo?: boolean;
+    env?: EnvLike;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  }
 ) {
   const { executeCli } = await import("../ai/agent/cliExecutor");
   return executeCli(provider as any, prompt, options);
@@ -150,20 +157,20 @@ function buildTaskEvidencePrompt(args: {
 }) {
   const rowDbKey = findTaskRowSubjectRef(args.runtimeContext);
   if (!rowDbKey) return "";
-  const taskBoardTableKey = typeof args.runtimeContext?.taskBoardTableKey === "string"
-    ? args.runtimeContext.taskBoardTableKey.trim()
-    : "";
   return [
     "--- Nolo task evidence context ---",
     "This CLI runtime does not receive server-side function tools directly.",
-    "Use the task row subjectRef and linked dialog/activity evidence as the durable task context.",
+    "Use the task row subjectRef and linked dialog evidence as durable task evidence.",
     "Run commands from the repository root. The runner already provides server URL and auth in the environment.",
-    "Release boundary: after review passes, AI/reviewer/Codex may advance alpha for verification. Do not merge, push, or release main/release unless the human owner explicitly authorizes it in the current task context.",
-    "Handoff context: inspect activityRefs/latestActivityRef, dialog checkpoints, artifacts, commits, and test evidence. Use dialog read/search for exact evidence; do not infer completion from handoff text alone.",
-    taskBoardTableKey
-      ? `Read task row: bun packages/cli/index.ts table query --table ${JSON.stringify(taskBoardTableKey)} --row ${JSON.stringify(rowDbKey)} --include-activity --output json`
-      : `Task row subjectRef: ${JSON.stringify(rowDbKey)}. If a task board table key is provided in context, read it with: bun packages/cli/index.ts table query --table <tableKey> --row ${JSON.stringify(rowDbKey)} --include-activity --output json`,
-    "Then read linked activity dialog ids with: bun packages/cli/index.ts dialog read <dialogId>",
+    "Release boundary: after review passes, AI/reviewer/Codex may advance alpha for verification. Do not merge, push, or release main/release unless the human owner explicitly authorizes it in the current request.",
+    "Handoff context: query dialog.subjectRefs first, then inspect dialog checkpoints, artifacts, commits, and test evidence. Treat row activityRefs/latestActivityRef as cache hints, not state truth.",
+    "Reviewer autonomy: if you are reviewing and find a concrete fix, you may directly dispatch the rework agent/dialog instead of sending the task back to PM first.",
+    "Rework evidence rule: every implementation, review, and rework dialog must preserve the same table-row subjectRef and report any child/rework dialog id it starts.",
+    `Read task row: bun packages/cli/index.ts table query --table meta-0e95801d90-NOLOTASKBOARD --row ${JSON.stringify(rowDbKey)} --include-activity --output json`,
+    `Query linked dialogs: bun packages/cli/index.ts dialog query --row-dbkey ${JSON.stringify(rowDbKey)} --json`,
+    "If this run already has a dialog id, exclude it from evidence queries: bun packages/cli/index.ts dialog query --row-dbkey <rowDbKey> --exclude-dialog <currentDialogId> --json",
+    "Then read exact dialog traces with: bun packages/cli/index.ts dialog read <dialogId>",
+    "Reviewers must end with exactly one line: Review decision: approved | needs_changes | blocked",
     "Report progress, blockers, worktree, branch, commit/diff, tests, and unverified items in the dialog.",
   ].join("\n");
 }
@@ -199,22 +206,6 @@ export async function runMachineConnectCommand(
 
   const serverUrl = resolveConnectServerUrl(args, env);
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const machine = (deps.machineInfo ?? detectLaunchableMachineInfo)();
-  const sendHeartbeat = async () => {
-    const res = await fetchImpl(`${serverUrl}/api/machines/heartbeat`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(machine),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status}\n${text}`);
-    }
-  };
 
   if (hasFlag(args, "--daemon") || hasFlag(args, "--background")) {
     return runMachineDaemonCommand({
@@ -225,6 +216,23 @@ export async function runMachineConnectCommand(
       spawnDaemon: deps.spawnDaemon,
     });
   }
+
+  const machine = (deps.machineInfo ?? detectLaunchableMachineInfo)();
+  const sendHeartbeat = async () => {
+    const res = await fetchImpl(`${serverUrl}/api/machines/heartbeat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(machine),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}\n${text}`);
+    }
+  };
 
   if (hasFlag(args, "--ws")) {
     const validateWorkspaceLinks = deps.validateWorkspaceLinks ?? (() => []);

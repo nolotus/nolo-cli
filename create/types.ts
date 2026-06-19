@@ -11,6 +11,7 @@ export enum DataType {
   TRANSACTION = "transaction",
   SETTING = "setting",
   TASK = "task",
+  AGENT_AUTOMATION = "agent-automation",
 
   TABLE = "table",
   TABLE_ROW = "table_row",

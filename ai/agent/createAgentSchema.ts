@@ -24,6 +24,26 @@ const greetingConfigSchema = z.object({
   menu: z.array(greetingMenuItemSchema).optional(),
 });
 
+const runtimeToolPolicySchema = z
+  .object({
+    version: z.literal(1).optional(),
+    agentTools: z.array(z.string()).optional(),
+    runtimeTools: z.array(z.string()).optional(),
+    workspace: z
+      .object({
+        mode: z.enum(["none", "current", "lease"]).optional(),
+        writableRoots: z.array(z.string()).optional(),
+        cwd: z.string().optional(),
+      })
+      .optional(),
+    shell: z.record(z.unknown()).optional(),
+    isolation: z.record(z.unknown()).optional(),
+    git: z.record(z.unknown()).optional(),
+    budget: z.record(z.unknown()).optional(),
+    audit: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
 const isLocalCustomProviderUrl = (value: unknown): boolean => {
   if (typeof value !== "string" || !value.trim()) return false;
   try {
@@ -55,6 +75,12 @@ export const getCreateAgentSchema = (t: TFunction) =>
         .trim()
         .min(1, t("validation.nameRequired"))
         .max(50, t("validation.nameTooLong")),
+
+      /**
+       * Stable machine-callable name for agent routing. Unlike name, this is
+       * not a display label and should stay unique within the user's agent set.
+       */
+      handle: z.string().trim().optional().or(z.string().length(0)),
 
       /**
        * provider 不再必填：只是一个可选的标识字段
@@ -89,10 +115,10 @@ export const getCreateAgentSchema = (t: TFunction) =>
       }).optional(),
 
       /**
-       * CLI provider（apiSource=cli 时有效）：支持 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder"
+       * CLI provider（apiSource=cli 时有效）：支持 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok"
        */
       cliProvider: z
-        .enum(["copilot", "gemini", "codex", "claude", "agy", "qoder"])
+        .enum(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok"])
         .optional()
         .or(z.literal("")),
 
@@ -121,6 +147,8 @@ export const getCreateAgentSchema = (t: TFunction) =>
       prompt: z.string().trim().optional().or(z.string().length(0)),
 
       tools: z.array(z.string()).default([]),
+
+      runtimeToolPolicy: runtimeToolPolicySchema.nullable().optional(),
 
       isPublic: z.boolean().default(false),
 

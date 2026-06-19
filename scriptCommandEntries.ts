@@ -43,7 +43,6 @@ function getAgentScriptCommands(): CommandEntry[] {
     createScriptCommand(["agent", "create-custom"], "createCustomCodingAgent.ts", "Create a custom coding agent"),
     createScriptCommand(["agent", "create-space"], "createSpaceAgents.ts", "Create or attach shared-space agents"),
     createScriptCommand(["agent", "setup-demo"], "setupDemoAgent.ts", "Bootstrap demo publisher agents"),
-    createScriptCommand(["agent", "supervise"], "runAutonomousAgent.ts", "Run an agent in autonomous cycles"),
   ];
 }
 

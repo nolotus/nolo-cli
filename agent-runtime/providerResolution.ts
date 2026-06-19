@@ -1,5 +1,6 @@
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import { pickAgentRuntimeInferenceOptions } from "./agentConfigOptions";
+import { getModelConfig } from "../ai/llm/providers";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -12,7 +13,45 @@ const PROVIDER_ENDPOINTS: Record<string, string> = {
   mimo: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  vultr: "https://api.vultrinference.com/v1/chat/completions",
 };
+
+function isOpenAiResponsesModel(args: {
+  provider?: string;
+  model?: string;
+  endpointKey?: string;
+}) {
+  if ((args.provider ?? "").trim().toLowerCase() !== "openai") return false;
+  if (args.endpointKey === "responses") return true;
+  if (!args.model) return false;
+  try {
+    return getModelConfig("openai", args.model).endpointKey === "responses";
+  } catch {
+    return false;
+  }
+}
+
+function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
+  const customProviderUrl = agentConfig.customProviderUrl?.trim();
+  if (customProviderUrl) return resolveChatCompletionsEndpoint(customProviderUrl);
+
+  const provider = agentConfig.provider?.trim().toLowerCase();
+  if (!provider) {
+    throw new Error("Platform chat provider requires agentConfig.provider.");
+  }
+  if (isOpenAiResponsesModel({
+    provider,
+    model: agentConfig.model,
+    endpointKey: (agentConfig as any).endpointKey,
+  })) {
+    return "https://api.openai.com/v1/responses";
+  }
+  const endpoint = PROVIDER_ENDPOINTS[provider];
+  if (!endpoint) {
+    throw new Error(`Platform chat provider does not support provider "${provider}".`);
+  }
+  return endpoint;
+}
 
 export type AgentProviderMode = "cli" | "platform" | "custom";
 export type ProviderExecutionTransport = "direct" | "proxy";
@@ -110,21 +149,6 @@ export function hasDirectOpenAiCompatibleProvider(env: EnvLike) {
       env.OPENAI_BASE_URL ||
       env.OLLAMA_BASE_URL
   );
-}
-
-function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
-  const customProviderUrl = agentConfig.customProviderUrl?.trim();
-  if (customProviderUrl) return resolveChatCompletionsEndpoint(customProviderUrl);
-
-  const provider = agentConfig.provider?.trim().toLowerCase();
-  if (!provider) {
-    throw new Error("Platform chat provider requires agentConfig.provider.");
-  }
-  const endpoint = PROVIDER_ENDPOINTS[provider];
-  if (!endpoint) {
-    throw new Error(`Platform chat provider does not support provider "${provider}".`);
-  }
-  return endpoint;
 }
 
 export function resolveAgentProviderMode(agentConfig: AgentRuntimeAgentConfig): AgentProviderMode {

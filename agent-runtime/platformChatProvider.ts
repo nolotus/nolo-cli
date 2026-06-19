@@ -4,6 +4,12 @@ import type {
   AgentRuntimeResult,
 } from "./types";
 import {
+  convertMessagesToResponsesInput,
+  extractTextFromResponseOutput,
+  extractToolCallsFromResponseOutput,
+  toResponsesTools,
+} from "../integrations/openai/responsesHelpers";
+import {
   buildProviderExecutionPlan,
   canUsePlatformChatProvider as canUsePlatformChatProviderFromEnv,
   hasDirectOpenAiCompatibleProvider as hasDirectOpenAiCompatibleProviderFromEnv,
@@ -47,6 +53,24 @@ function toOpenAiCompatibleMessages(messages: AgentRuntimeChatMessage[]) {
     ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls } : {}),
     ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
   }));
+}
+
+function isResponsesEndpoint(endpoint: string) {
+  return /\/responses$/i.test(endpoint.trim());
+}
+
+function toResponsesRequestOptions(options: Record<string, number | string>) {
+  const next: Record<string, number | string> = { ...options };
+  const reasoningEffort = next.reasoning_effort;
+  if (typeof reasoningEffort === "string" && reasoningEffort) {
+    (next as Record<string, any>).reasoning = { effort: reasoningEffort };
+    delete next.reasoning_effort;
+  }
+  if (next.max_tokens !== undefined) {
+    next.max_output_tokens = next.max_tokens;
+    delete next.max_tokens;
+  }
+  return next;
 }
 
 export function resolvePlatformChatProviderConfig(args: {
@@ -94,12 +118,23 @@ export function buildPlatformChatCompletionRequest(args: {
   messages: AgentRuntimeChatMessage[];
   tools?: PlatformChatTool[];
 }) {
+  const usesResponsesApi = isResponsesEndpoint(args.providerConfig.endpoint);
+  const requestOptions = usesResponsesApi
+    ? toResponsesRequestOptions(args.providerConfig.requestOptions)
+    : args.providerConfig.requestOptions;
   const body = {
     model: args.providerConfig.model,
-    messages: toOpenAiCompatibleMessages(args.messages),
+    ...(usesResponsesApi
+      ? { input: convertMessagesToResponsesInput(args.messages as any) }
+      : { messages: toOpenAiCompatibleMessages(args.messages) }),
     stream: false,
-    ...args.providerConfig.requestOptions,
-    ...(args.tools && args.tools.length > 0 ? { tools: args.tools, tool_choice: "auto" } : {}),
+    ...requestOptions,
+    ...(args.tools && args.tools.length > 0
+      ? {
+          tools: usesResponsesApi ? toResponsesTools(args.tools as any) : args.tools,
+          ...(usesResponsesApi ? {} : { tool_choice: "auto" }),
+        }
+      : {}),
     ...(shouldDisableThinking(args.providerConfig) ? { thinking: { type: "disabled" } } : {}),
     url: args.providerConfig.endpoint,
     provider: args.providerConfig.provider,
@@ -185,6 +220,19 @@ export function parsePlatformChatCompletionResponse(args: {
   data: any;
   trace: AgentRuntimeChatMessage[];
 }): AgentRuntimeResult {
+  if (isResponsesEndpoint(args.providerConfig.endpoint)) {
+    const content = extractTextFromResponseOutput(args.data);
+    const tool_calls = extractToolCallsFromResponseOutput(args.data);
+    return {
+      content,
+      model: args.providerConfig.model,
+      provider: args.providerConfig.provider,
+      ...(tool_calls.length > 0 ? { tool_calls } : {}),
+      usage: args.data?.usage,
+      trace: args.trace,
+    };
+  }
+
   const choiceMessage = args.data?.choices?.[0]?.message ?? {};
   return {
     content: String(choiceMessage?.content ?? ""),

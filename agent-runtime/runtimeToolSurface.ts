@@ -1,6 +1,7 @@
 export const DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOLS = [
   "listDialogs",
   "readDialog",
+  "queryDialogsBySubjectRef",
   "listAgents",
   "readAgent",
   "listSpaces",

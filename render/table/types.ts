@@ -68,7 +68,7 @@ export interface TableColumn {
  * 创建表时，传入的列配置：
  * - id 由系统生成，外部一般不传
  */
-export type CreateTableColumnInput = Omit<TableColumn, "id">;
+export type CreateTableColumnInput = Omit<TableColumn, "id"> & { id?: string };
 
 /* --------------------------------------------------------------------------
  * 2. 视图（TableView）
@@ -191,6 +191,15 @@ export interface TableAiConfig {
     };
 }
 
+export interface TablePublicIntakeConfig {
+    enabled: boolean;
+    slug?: string;
+    appIds?: string[];
+    allowedFields: string[];
+    requiredFields?: string[];
+    honeypotField?: string;
+}
+
 /* --------------------------------------------------------------------------
  * 5. 表 Meta（TableMeta）
  * ------------------------------------------------------------------------*/
@@ -253,6 +262,12 @@ export interface TableMeta {
 
     /** AI 配置（可选） */
     aiConfig?: TableAiConfig;
+
+    /**
+     * 公开匿名写入配置。
+     * 只用于 append-only intake 场景；公开提交端点必须按 allowedFields 白名单写入。
+     */
+    publicIntake?: TablePublicIntakeConfig;
 
     createdAt: string;
     updatedAt: string;

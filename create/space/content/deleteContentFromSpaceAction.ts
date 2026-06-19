@@ -1,5 +1,5 @@
 // create/space/deleteContentFromSpaceAction.ts
-import { createSpaceKey } from "../../space/spaceKeys";
+import { createSpaceKey, normalizeSpaceId } from "../../space/spaceKeys";
 import { patch, read, remove } from "../../../database/dbSlice";
 import { SpaceData, Agent } from "../../../app/types";
 import { selectUserId } from "../../../auth/authSlice";
@@ -109,7 +109,8 @@ export const deleteContentFromSpaceAction = async (
   input: { contentKey: string; spaceId: string; sourceServerOrigin?: string | null },
   thunkAPI: any
 ) => {
-  const { contentKey, spaceId, sourceServerOrigin } = input;
+  const { contentKey, sourceServerOrigin } = input;
+  const spaceId = normalizeSpaceId(input.spaceId);
   const { dispatch, getState } = thunkAPI;
   const userId = selectUserId(getState());
 

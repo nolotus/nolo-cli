@@ -99,6 +99,9 @@ const AGENT_ORCHESTRATION_INSTRUCTIONS = `--- Agent 编排与协作 ---
 1）子 Agent 协作
 - 如果目标 Agent 记录已经声明 delegation.serverBase / runtimeServerBase，工具会自动路由到对应 nolo server；你不需要重复填写 serverBase。
 - 如果用户明确给了另一个可访问的 server origin（例如 Windows 机器的 Cloudflare 域名），可以在工具参数里传 serverBase 覆盖自动路由；不要臆造地址，也不要把普通 localhost 当成远端机器。
+- 需要异步启动一个子对话、让当前对话稍后根据子 Agent 的完成/失败继续判断时，使用 startAgentDialog。它只表示 child dialog 已启动或排队，不表示任务已经完成；child 进入 done/failed 后，系统会用 terminal wake 继续父对话，你再读取 child evidence 决定下一步。
+- startAgentDialog 是通用多 Agent 协作能力，不限于代码任务；游戏设计、电影策划、写作、运营、研究等需要异步分工的场景也可以使用。
+- 需要等待一个短结果并直接综合时，使用 callAgent；需要用户前台实时看到另一个 Agent 发言时，使用 runStreamingAgent；需要多 Agent 并行比较或分支展示时，使用 streamParallelAgents。
 - 当用户需要多视角分析或辩论时，你可以：
   - 先用 callAgent 依次询问多个 Agent 对同一问题的看法；
   - 在最后一条回复中，用你自己的话帮用户总结这些观点的异同，并给出综合结论。
@@ -444,7 +447,7 @@ export const buildSystemPromptContext = (options: {
 
   // 按工具能力条件注入各指令块
   const agentOrchestrationSection = agentTools.some((t) =>
-    ["callAgent", "runStreamingAgent", "streamParallelAgents"].includes(t)
+    ["callAgent", "runStreamingAgent", "streamParallelAgents", "startAgentDialog"].includes(t)
   )
     ? [
       AGENT_ORCHESTRATION_INSTRUCTIONS,
@@ -523,9 +526,10 @@ export const buildSystemPromptContext = (options: {
     ? `-- - 用户全局偏好-- -\n${contexts.userGlobalPrompt.trim()} `
     : "";
 
+  const fallbackViewportWidth =
+    isBrowser && typeof window !== "undefined" ? window.innerWidth : 1440;
   const isMobile =
-    (viewport?.width ?? (isBrowser ? window.innerWidth : 1440)) <
-    mobileBreakpoint;
+    (viewport?.width ?? fallbackViewportWidth) < mobileBreakpoint;
 
   const responseGuidelinesSection = buildResponseGuidelines(isMobile);
   const editingContextSection = buildEditingContextBlock(contexts);
@@ -550,12 +554,6 @@ export const buildSystemPromptContext = (options: {
 
   return compileContextLayers([
     { id: "identity", owner: "platform", content: identitySection },
-    {
-      id: "current-time",
-      owner: "platform",
-      cacheScope: "turn",
-      content: buildCurrentTimeBlock(now, timeZone),
-    },
     { id: "core-persona", owner: "agent", content: corePersonaSection },
     { id: "agent-orchestration", owner: "platform", content: agentOrchestrationSection },
     { id: "web-access", owner: "platform", content: webAccessSection },
@@ -584,14 +582,20 @@ export const buildSystemPromptContext = (options: {
     { id: "user-global-prompt", owner: "user", content: userGlobalPromptSection },
     { id: "response-guidelines", owner: "platform", content: responseGuidelinesSection },
     { id: "skill-guidance", owner: "runtime", content: skillGuidanceSection },
-    { id: "dialog-summary", owner: "runtime", content: dialogSummarySection },
-    { id: "proactive-summary", owner: "runtime", content: proactiveSummarySection },
     { id: "space-context", owner: "runtime", content: spaceContextSection },
     { id: "user-policy", owner: "user", content: userPolicySection },
-    { id: "memory-overlay", owner: "runtime", content: memoryOverlaySection },
     { id: "reference-materials", owner: "agent", content: referenceMaterialsSection },
+    { id: "memory-overlay", owner: "runtime", content: memoryOverlaySection },
     { id: "app-working-memory", owner: "runtime", content: appWorkingMemorySection },
+    { id: "dialog-summary", owner: "runtime", content: dialogSummarySection },
+    { id: "proactive-summary", owner: "runtime", content: proactiveSummarySection },
     { id: "editing-context", owner: "runtime", content: editingContextSection },
+    {
+      id: "current-time",
+      owner: "platform",
+      cacheScope: "turn",
+      content: buildCurrentTimeBlock(now, timeZone),
+    },
   ]);
 };
 

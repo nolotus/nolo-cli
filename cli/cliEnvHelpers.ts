@@ -1,3 +1,4 @@
+import { DEFAULT_LOCAL_API_ORIGIN } from "../core/localOrigins";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { NOLO_CLUSTER_SERVERS } from "../database/config";
 
@@ -67,6 +68,45 @@ export function resolveServerCandidates(
     DEFAULT_NOLO_SERVER_URL,
     ...NOLO_CLUSTER_SERVERS,
   ]);
+}
+
+function resolveDeleteServerCandidatesFromEnv(
+  env: EnvLike,
+  ...preferredValues: Array<string | null | undefined>
+) {
+  return buildServerCandidates([
+    ...preferredValues,
+    env.NOLO_SERVER,
+    env.BASE_URL,
+    env.NOLO_SERVER_URL,
+    env.READ_DIALOG_BASE,
+    DEFAULT_NOLO_SERVER_URL,
+    ...NOLO_CLUSTER_SERVERS,
+    DEFAULT_LOCAL_API_ORIGIN,
+  ]);
+}
+
+export function resolveDeleteServerCandidates(env: EnvLike, preferred?: string | null): string[];
+export function resolveDeleteServerCandidates(
+  args: string[],
+  env: EnvLike,
+  preferred?: string | null,
+): string[];
+export function resolveDeleteServerCandidates(
+  input: ResolverInput,
+  envOrPreferred?: EnvLike | string | null,
+  preferred?: string | null,
+) {
+  if (isCliArgs(input)) {
+    const env = (envOrPreferred ?? {}) as EnvLike;
+    const explicitServer = resolveServerUrl(input, env);
+    return resolveDeleteServerCandidatesFromEnv(env, explicitServer, preferred?.trim());
+  }
+  const env = input;
+  return resolveDeleteServerCandidatesFromEnv(
+    env,
+    typeof envOrPreferred === "string" ? envOrPreferred.trim() : undefined,
+  );
 }
 
 export function resolveAuthTokenFromEnv(env: EnvLike, extraEnvKeys: string[] = []) {

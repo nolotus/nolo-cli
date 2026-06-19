@@ -1,3 +1,4 @@
+import { resolveCliAgentKeyInput } from "./agentAliases";
 import { getReadableCliDb, type AgentCommandDeps } from "./agentCommandSupport";
 import {
   buildUpdatedAgentRecord,
@@ -27,6 +28,7 @@ export async function runAgentReadCommand(
     return 1;
   }
 
+  const agentKey = resolveCliAgentKeyInput(agentInput);
   const db = deps.db ?? await getReadableCliDb(output);
   const fetchImpl = deps.fetchImpl ?? fetch;
   const fallbackFetchImpl = deps.fallbackFetchImpl;
@@ -41,7 +43,7 @@ export async function runAgentReadCommand(
       fallbackFetchImpl,
     });
     if (!result) {
-      throw new Error(`agent not found: ${agentInput}`);
+      throw new Error(`agent not found: ${agentKey}`);
     }
     output.write(JSON.stringify({
       ...normalizeAgentRecordForOutput(result.agentKey, authToken, result.record),
@@ -75,6 +77,7 @@ export async function runAgentUpdateCommand(
   if (!parsed) {
     output.write(
       "Usage: nolo agent update <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--usage-probe qoder-local-quota-log] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--field key=value]\n"
+        .replace("[--field key=value]", "[--handle <name>] [--field key=value]")
     );
     return args[0] ? 0 : 1;
   }
@@ -157,6 +160,7 @@ export async function runAgentCreateCommand(
   if (!parsed) {
     output.write(
       "Usage: nolo agent create <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--usage-probe qoder-local-quota-log] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--name <name>] [--custom-provider-url <url>] [--provider-api-key <key>] [--field key=value]\n"
+        .replace("[--field key=value]", "[--handle <name>] [--field key=value]")
     );
     return args[0] ? 0 : 1;
   }

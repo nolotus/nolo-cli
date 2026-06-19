@@ -41,7 +41,7 @@ export const shouldUseRecentRelationshipRecap = (input: {
   cybotsCount?: number;
   inheritFromDialogKey?: string | null;
   skipGreeting?: boolean;
-  triggerType?: "user" | "api" | "localhost" | "scheduled_run";
+  triggerType?: "user" | "api" | "localhost" | "scheduled_run" | "automation_run";
 }): boolean => {
   if (!input.userId || !input.agentKey) return false;
   if (!resolveAgentMemoryPolicy({ agentKey: input.agentKey }).allowDynamicGreetingMemory) {

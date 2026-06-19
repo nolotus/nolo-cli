@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { MachineRunPermissionPolicy } from "./ai/agent/machineRunPermissions";
+import { readPipeText, spawnProcess } from "./processSpawn";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -46,14 +47,15 @@ async function runGit(
   cwd: string,
   options: { trim?: boolean } = {}
 ): Promise<string | null> {
-  const proc = Bun.spawn(["git", ...args], {
+  const proc = spawnProcess({
+    cmd: ["git", ...args],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
   });
   const [stdout, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
+    readPipeText(proc.stdout),
     proc.exited,
   ]);
   if (exitCode !== 0) return null;

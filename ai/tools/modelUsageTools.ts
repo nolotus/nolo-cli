@@ -64,41 +64,83 @@ export const queryModelUsageFunctionSchema = {
   },
 };
 
-export const createScheduledTaskFunctionSchema = {
-  name: "createScheduledTask",
+export const queryUserGrowthReportFunctionSchema = {
+  name: "queryUserGrowthReport",
   description:
-    "创建一个每日/周期性后台任务。适合让 agent 按 cron 定时检查用量、生成报告或执行提醒；可选择创建后立刻试运行一次。",
+    "查询当前用户有权访问的增长统计报表。返回总用户、今日活跃/新增、7天/30天窗口、激活漏斗和每日趋势。",
+  parameters: {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  },
+};
+
+export const createAgentAutomationFunctionSchema = {
+  name: "createAgentAutomation",
+  description:
+    "创建一个长期 agent automation 规则。适合让 agent 按 cron 定时检查用量、生成报告或执行提醒；可选择创建后立刻试运行一次。",
   parameters: {
     type: "object",
     properties: {
       title: {
         type: "string",
-        description: "任务标题。",
+        description: "automation 标题。",
       },
-      taskPrompt: {
+      instruction: {
         type: "string",
         description:
-          "定时任务每次执行时交给 agent 的完整任务描述，应包含检查条件和通知方式。",
+          "automation 每次执行时交给 agent 的完整任务描述，应包含检查条件和通知方式。",
       },
-      schedule: {
-        type: "string",
-        description: "cron 表达式，例如每天 09:00 执行为 0 9 * * *。",
+      trigger: {
+        type: "object",
+        description: "触发规则。v0 只支持 cron。",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["cron"],
+            description: "触发类型。v0 只支持 cron。",
+          },
+          expression: {
+            type: "string",
+            description: "cron 表达式，例如每天 09:00 执行为 0 9 * * *。",
+          },
+          timezone: {
+            type: "string",
+            description: "可选时区，例如 Asia/Shanghai。",
+          },
+        },
+        required: ["type", "expression"],
+        additionalProperties: false,
       },
-      agentKey: {
+      ownerAgentKey: {
         type: "string",
-        description: "执行该任务的 agentKey。默认使用当前 agent。",
+        description: "执行该 automation 的 agentKey。默认使用当前 agent。",
       },
       spaceId: {
         type: "string",
-        description: "可选空间 ID；任务对话会归属到该空间。",
+        description: "可选空间 ID；automation 运行对话会归属到该空间。",
+      },
+      subjectRefs: {
+        type: "array",
+        description: "可选业务关联引用，会追加到每次运行的 subjectRefs。",
+        items: {
+          type: "object",
+          properties: {
+            kind: { type: "string" },
+            id: { type: "string" },
+            role: { type: "string" },
+          },
+          required: ["kind", "id"],
+          additionalProperties: true,
+        },
       },
       runOnceNow: {
         type: "boolean",
-        description: "创建后是否立即执行一次，用来验证任务会产生什么结果。",
+        description: "创建后是否立即执行一次，用来验证 automation 会产生什么结果。",
         default: false,
       },
     },
-    required: ["schedule", "taskPrompt"],
+    required: ["instruction", "trigger"],
   },
 };
 
@@ -199,7 +241,9 @@ const serverOnlyResult = (toolName: string) => ({
 });
 
 export const queryModelUsageFunc = async () => serverOnlyResult("queryModelUsage");
-export const createScheduledTaskFunc = async () => serverOnlyResult("createScheduledTask");
+export const queryUserGrowthReportFunc = async () =>
+  serverOnlyResult("queryUserGrowthReport");
+export const createAgentAutomationFunc = async () => serverOnlyResult("createAgentAutomation");
 export const createDialogGoalFunc = async () => serverOnlyResult("createDialogGoal");
 export const getDialogGoalFunc = async () => serverOnlyResult("getDialogGoal");
 export const completeDialogGoalFunc = async () => serverOnlyResult("completeDialogGoal");

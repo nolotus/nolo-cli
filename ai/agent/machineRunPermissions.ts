@@ -39,8 +39,7 @@ export function resolveMachineRunPermissionPolicy(agentConfig: any): MachineRunP
   const raw = asObject(
     agentConfig?.machinePermissions ??
       runtimeBinding.permissions ??
-      runtimeBinding.machinePermissions ??
-      agentConfig?.boundRuntimeMachine?.permissions
+      runtimeBinding.machinePermissions
   );
 
   const mode: MachineRunPermissionMode =

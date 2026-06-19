@@ -138,12 +138,13 @@ interface SettingState {
   defaultAgentId?: string;
 
   // PDF OCR 模型选择（"none" 表示不使用 OCR，用 pdf.js 提取文本）
-  ocrModel: "none" | "olm_ocr";
+  ocrModel: "none" | "google_document_ocr" | "olm_ocr";
 
   // 对话页面快捷滚动按钮
   showScrollToTopButton: boolean;
   showScrollToBottomButton: boolean;
   createMenuOpenCount: number;
+  desktopChromeConnectorEnabled: boolean;
 
   [key: string]: any;
 }
@@ -202,10 +203,11 @@ const initialState: SettingState = {
   aiRecentContentLimit: 50,
   contextRetention: 50,
   defaultAgentId: SYSTEM_DEFAULT_AGENT_ID,
-  ocrModel: "olm_ocr",
+  ocrModel: "google_document_ocr",
   showScrollToTopButton: false,
   showScrollToBottomButton: false,
   createMenuOpenCount: 0,
+  desktopChromeConnectorEnabled: false,
 };
 
 // --- Slice 创建 ---
@@ -1030,8 +1032,11 @@ export const selectDefaultAgentId = (state: RootState): string =>
 
 export const selectOcrModel = (
   state: RootState
-): "none" | "olm_ocr" =>
-  state.settings.ocrModel === "none" ? "none" : "olm_ocr";
+): "none" | "google_document_ocr" | "olm_ocr" => {
+  if (state.settings.ocrModel === "none") return "none";
+  if (state.settings.ocrModel === "olm_ocr") return "olm_ocr";
+  return "google_document_ocr";
+};
 
 export const selectShowScrollToTopButton = (state: RootState): boolean =>
   state.settings.showScrollToTopButton ?? false;
@@ -1041,6 +1046,8 @@ export const selectCreateMenuOpenCount = (state: RootState): number => {
   const value = Number(state.settings.createMenuOpenCount);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 };
+export const selectDesktopChromeConnectorEnabled = (state: RootState): boolean =>
+  state.settings.desktopChromeConnectorEnabled === true;
 
 
 export const selectEditorDefaultMode = (
@@ -1124,13 +1131,29 @@ export const selectTheme = createSelector(
         lg: compact ? "40px" : "46px",
         xl: compact ? "48px" : "56px",
       },
-      // Border radius scale
-      radius: {
-        sm: compact ? "4px"  : "6px",
-        md: compact ? "8px"  : "10px",
-        lg: compact ? "12px" : "14px",
-        xl: compact ? "16px" : "20px",
-      },
+      // Border radius scale — xs/sm/md map to control/surface/overlay tiers.
+      // lg/xl remain as aliases for gradual migration of legacy CSS.
+      radius: (() => {
+        const trail = validThemeName === "trail";
+        const xs = compact ? "10px" : "12px";
+        const sm = trail
+          ? compact
+            ? "15px"
+            : "17px"
+          : compact
+            ? "14px"
+            : "16px";
+        const md = compact ? "20px" : "24px";
+        return { xs, sm, md, lg: sm, xl: md };
+      })(),
+      motionEase:
+        validThemeName === "trail"
+          ? "cubic-bezier(0.22, 1, 0.36, 1)"
+          : "cubic-bezier(0.33, 0, 0.2, 1)",
+      motionEaseTide: "cubic-bezier(0.22, 1, 0.36, 1)",
+      motionEaseBreath: "cubic-bezier(0.4, 0, 0.6, 1)",
+      motionDuration: "0.32s",
+      motionDurationSlow: "0.52s",
       font: FONT_PRESET_CSS_VARIABLES[validFontPreset],
       ...c,
       borderSubtle: c.borderLight,

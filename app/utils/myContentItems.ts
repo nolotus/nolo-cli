@@ -16,7 +16,8 @@ export type ContentTab =
   | "video"
   | "audio"
   | "table"
-  | "file";
+  | "file"
+  | "attachment";
 
 export type OwnedAppContentItem = {
   source: "owned-app";
@@ -47,6 +48,8 @@ export type QueriedContentItem = {
   spaceId: string | null;
   spaceName: string;
   serverOrigin?: string;
+  cybots?: string[];
+  primaryAgentKey?: string;
 };
 
 export type MyContentListItem = QueriedContentItem | OwnedAppContentItem;
@@ -260,6 +263,8 @@ export function buildMyContentItemsFromUserData(
           typeof record.serverOrigin === "string" && record.serverOrigin.trim().length > 0
             ? record.serverOrigin
             : undefined,
+        cybots: (record as any).cybots,
+        primaryAgentKey: (record as any).primaryAgentKey || (record as any).primaryCybotKey,
       },
     ];
   });

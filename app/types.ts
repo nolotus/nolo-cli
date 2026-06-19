@@ -24,7 +24,7 @@ export interface DialogRuntimeBinding {
   /** 当前长期 runtime 的 durable anchor；现阶段直接复用 dialog。 */
   runtimeAnchorDialogId: string;
   controller: DialogRuntimeController;
-  triggerType?: "user" | "api" | "localhost" | "scheduled_run";
+  triggerType?: "user" | "api" | "localhost" | "scheduled_run" | "automation_run";
   executionMode?: "foreground" | "background";
   runtimeProfile?: DialogRuntimeProfile;
   spaceId?: string;
@@ -53,7 +53,7 @@ export interface DialogGoalState {
 export interface DialogSubjectRef {
   kind: "table-row" | "page" | "dialog" | "asset" | "external" | string;
   id: string;
-  role?: "subject" | "parent" | "work-item" | "artifact" | string;
+  role?: "subject" | "parent" | "assignment" | "artifact" | string;
 }
 
 export interface DialogConfig {
@@ -85,8 +85,8 @@ export interface DialogConfig {
   maxTokens?: number; // 此对话最大回复 token 数，覆盖 agent 默认值
 
   // --- 执行模式（API/后台/定时场景扩展，前台对话不填） ---
-  /** 谁触发的：user=用户前台输入 api=外部API调用 localhost=本机调用 scheduled_run=定时任务运行 */
-  triggerType?: "user" | "api" | "localhost" | "scheduled_run";
+  /** 谁触发的：user=用户前台输入 api=外部API调用 localhost=本机调用 automation_run=自动化运行 */
+  triggerType?: "user" | "api" | "localhost" | "scheduled_run" | "automation_run";
   /** foreground=用户等结果(流式) background=后台静默执行 */
   executionMode?: "foreground" | "background";
   /** 仅 background/scheduled 场景有意义 */
@@ -104,8 +104,10 @@ export interface DialogConfig {
   rootDialogId?: string;
   /** 当前 dialog 关联的业务对象；保持行业中立，不只服务任务表 */
   subjectRefs?: DialogSubjectRef[];
-  /** 定时任务运行产生的对话归属的任务 key */
+  /** Legacy scheduled task run parent. New automation runs use parentAutomationKey plus subjectRefs. */
   parentTaskKey?: string;
+  /** 自动化运行产生的对话归属的 automation key；关联真值仍是 subjectRefs。 */
+  parentAutomationKey?: string;
   /** 定时任务去重 key */
   idempotencyKey?: string;
   /** cron 表达式，用于重复执行，如 "0 2 * * *" */
@@ -137,6 +139,37 @@ export interface ScheduledTaskConfig {
   lastRunDialogKey?: string;
   lastRunError?: string;
   runDialogKeys?: string[];
+}
+
+export type AgentAutomationTrigger =
+  | {
+      type: "cron";
+      expression: string;
+      timezone?: string;
+      nextWakeAt: number;
+    };
+
+export interface AgentAutomationConfig {
+  id: string;
+  dbKey: string;
+  type: DataType.AGENT_AUTOMATION;
+  title: string;
+  ownerAgentKey: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  spaceId?: string;
+  status: "active" | "paused" | "cancelled" | "completed";
+  runStatus?: "idle" | "running" | "done" | "failed";
+  instruction: string;
+  subjectRefs?: DialogSubjectRef[];
+  trigger: AgentAutomationTrigger;
+  notifyPolicy?: unknown;
+  stopPolicy?: unknown;
+  lastRunAt?: number;
+  lastRunThreadId?: string;
+  lastRunDialogKey?: string;
+  lastRunError?: string;
 }
 export type ReferenceItem = {
   dbKey: string;
@@ -180,9 +213,11 @@ export interface Agent {
   /** 执行来源：platform=平台API  custom=自定义API/本地  cli=命令行工具 */
   apiSource?: "platform" | "custom" | "cli";
   /** cli 时指定使用哪个 CLI 工具。CLI 可复用 prompt/model/最近文本历史，但不走本地 tool 协议。 */
-  cliProvider?: "copilot" | "gemini" | "codex" | "claude" | "agy";
+  cliProvider?: "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok";
   prompt?: string;
   name?: string;
+  /** Stable machine-callable name for routing, e.g. "pm", "fullstack", "reviewer". */
+  handle?: string;
   [key: string]: any;
   tools?: string[];
   userId: string;
@@ -240,6 +275,7 @@ export interface Agent {
   linkedSpaces?: string[];
   basePolicy?: AgentBasePolicy;
   runtimeBinding?: AgentRuntimeBinding | null;
+  runtimeToolPolicy?: Record<string, unknown> | null;
 }
 
 

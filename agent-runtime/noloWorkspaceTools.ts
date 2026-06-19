@@ -1,6 +1,10 @@
+import { spawnToWebStreams } from "./runtimeCompat";
+
 export const NOLO_WORKSPACE_TOOL_NAMES = [
   "listDialogs",
   "readDialog",
+  "queryDialogsBySubjectRef",
+  "deleteDialogs",
   "listAgents",
   "readAgent",
   "listSpaces",
@@ -16,7 +20,7 @@ export const NOLO_WORKSPACE_TOOL_NAMES = [
 export type NoloWorkspaceToolName = typeof NOLO_WORKSPACE_TOOL_NAMES[number];
 
 export const NOLO_WORKSPACE_TOOL_PROMPT =
-  "Nolo workspace tools are available for Nolo data: use listDialogs/readDialog, listAgents/readAgent, listSpaces/readSpace, readDoc/readSkillDoc, listTables/queryTableRows, cliWhoami, and cliDoctor when the user asks to inspect Nolo workspace data. Prefer tools over guessing, and combine tool results when the user asks for summaries or analysis.";
+  "Nolo workspace tools are available for Nolo data: use listDialogs/readDialog/queryDialogsBySubjectRef, listAgents/readAgent, listSpaces/readSpace, readDoc/readSkillDoc, listTables/queryTableRows, cliWhoami, and cliDoctor when the user asks to inspect Nolo workspace data. Use deleteDialogs only when the user explicitly asks to delete dialogs; it must preview matches and wait for user confirmation before deleting. Prefer tools over guessing, and combine tool results when the user asks for summaries or analysis.";
 
 const NOLO_WORKSPACE_TOOL_NAME_SET = new Set<string>(NOLO_WORKSPACE_TOOL_NAMES);
 const DIALOG_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
@@ -61,6 +65,30 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
     dialog: stringToolParam("Dialog id, dialog db key, or dialog URL."),
     limit: { type: "integer", description: "Optional message limit." },
   }, ["dialog"]);
+  add("queryDialogsBySubjectRef", "Query persisted dialog evidence by a generic dialog.subjectRefs target.", {
+    rowDbKey: stringToolParam("Optional convenience alias for subjectKind=table-row, subjectId=<rowDbKey>, subjectRole=task."),
+    subjectKind: stringToolParam("Generic subject ref kind, for example table-row, page, file, commit, or artifact."),
+    subjectId: stringToolParam("Generic subject ref id."),
+    subjectRole: stringToolParam("Optional subject ref role."),
+    limit: { type: "integer", description: "Maximum matching dialog summaries to return." },
+    status: stringToolParam("Optional dialog status filter, for example running, done, or failed."),
+    checkpointStatus: stringToolParam("Optional runtimeCheckpoint.status filter."),
+    hasArtifacts: { type: "boolean", description: "When true, only return dialogs with artifact evidence." },
+    excludeDialogId: stringToolParam("Optional dialog id or dialog dbKey to exclude from evidence results, typically the current caller dialog."),
+  });
+  add("deleteDialogs", "Find and delete the current user's dialogs by title/id/dbKey. This is destructive: preview matches first and wait for explicit user confirmation before deleting.", {
+    query: stringToolParam("Dialog title/id/dbKey search text, for example 中医评测 or a dialog id."),
+    matchMode: {
+      type: "string",
+      enum: ["contains", "exact", "prefix", "dialogId"],
+      description: "Matching mode. Default contains.",
+    },
+    confirmedDialogIds: {
+      type: "array",
+      items: { type: "string" },
+      description: "Confirmed dialog ids or dbKeys to delete.",
+    },
+  }, ["query"]);
   add("listAgents", "List the current user's agents in the Nolo workspace.", {
     space: stringToolParam("Optional space id or URL."),
     publicOnly: { type: "boolean", description: "Only show public agents." },
@@ -193,6 +221,199 @@ export function getNoloComparableUpdatedAt(record: any) {
   return 0;
 }
 
+export type NoloSubjectRef = {
+  kind: string;
+  id: string;
+  role?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function normalizeNoloSubjectKind(kind: string) {
+  return kind === "tableRow" ? "table-row" : kind;
+}
+
+export function normalizeNoloSubjectRef(value: unknown): NoloSubjectRef | null {
+  if (!isRecord(value)) return null;
+  const kind = typeof value.kind === "string" && value.kind.trim()
+    ? normalizeNoloSubjectKind(value.kind.trim())
+    : "";
+  const id = typeof value.id === "string" && value.id.trim()
+    ? value.id.trim()
+    : "";
+  if (!kind || !id) return null;
+  const role = typeof value.role === "string" && value.role.trim()
+    ? value.role.trim()
+    : "";
+  return {
+    kind,
+    id,
+    ...(role ? { role } : {}),
+  };
+}
+
+export function buildNoloSubjectRefQueryTarget(args: Record<string, any>): NoloSubjectRef | null {
+  const rowDbKey = noloStringArg(args.rowDbKey ?? args.row ?? args.taskRowDbKey);
+  const subjectKind = noloStringArg(args.subjectKind ?? args.kind) ?? (rowDbKey ? "table-row" : null);
+  const subjectId = noloStringArg(args.subjectId ?? args.id) ?? rowDbKey;
+  const subjectRole = noloStringArg(args.subjectRole ?? args.role) ?? (rowDbKey ? "task" : null);
+  if (!subjectKind || !subjectId) return null;
+  return {
+    kind: normalizeNoloSubjectKind(subjectKind),
+    id: subjectId,
+    ...(subjectRole ? { role: subjectRole } : {}),
+  };
+}
+
+export function extractNoloDialogSubjectRefs(dialog: unknown): NoloSubjectRef[] {
+  if (!isRecord(dialog) || !Array.isArray(dialog.subjectRefs)) return [];
+  return dialog.subjectRefs
+    .map(normalizeNoloSubjectRef)
+    .filter((ref): ref is NoloSubjectRef => Boolean(ref));
+}
+
+export function noloDialogMatchesSubjectRef(dialog: unknown, target: NoloSubjectRef) {
+  const normalizedTarget = normalizeNoloSubjectRef(target);
+  if (!normalizedTarget) return false;
+  return extractNoloDialogSubjectRefs(dialog).some(
+    (ref) => ref.kind === normalizedTarget.kind && ref.id === normalizedTarget.id
+  );
+}
+
+function noloArtifactCount(value: unknown) {
+  if (Array.isArray(value)) return value.length;
+  if (isRecord(value)) return Object.keys(value).length > 0 ? 1 : 0;
+  return value ? 1 : 0;
+}
+
+export function summarizeNoloDialogSubjectRefEvidence(dialog: any, target: NoloSubjectRef) {
+  const dialogKey = typeof dialog?.dbKey === "string" && dialog.dbKey.trim()
+    ? dialog.dbKey.trim()
+    : "";
+  const checkpoint = isRecord(dialog?.runtimeCheckpoint) ? dialog.runtimeCheckpoint : {};
+  const matchedSubjectRefs = extractNoloDialogSubjectRefs(dialog).filter(
+    (ref) => ref.kind === normalizeNoloSubjectKind(target.kind) && ref.id === target.id
+  );
+  const lastToolNames = Array.isArray(checkpoint.lastToolNames)
+    ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim())
+    : [];
+  const artifactCount = noloArtifactCount(dialog?.artifacts);
+
+  return {
+    dialogId:
+      typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
+        ? dialog.dialogId.trim()
+        : typeof dialog?.id === "string" && dialog.id.trim()
+          ? dialog.id.trim()
+          : dialogKey
+            ? getNoloDialogIdFromKey(dialogKey)
+            : null,
+    dialogKey: dialogKey || null,
+    title: typeof dialog?.title === "string" && dialog.title.trim() ? dialog.title.trim() : null,
+    status: typeof dialog?.status === "string" && dialog.status.trim() ? dialog.status.trim() : null,
+    checkpointStatus: typeof checkpoint.status === "string" && checkpoint.status.trim() ? checkpoint.status.trim() : null,
+    updatedAt:
+      typeof dialog?.updatedAt === "string" || typeof dialog?.updatedAt === "number"
+        ? dialog.updatedAt
+        : null,
+    hasArtifacts: artifactCount > 0,
+    artifactCount,
+    subjectRefs: matchedSubjectRefs,
+    lastToolNames,
+  };
+}
+
+export function normalizeNoloExcludeDialogIds(value: unknown) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const ids = new Set<string>();
+  for (const rawValue of rawValues) {
+    if (typeof rawValue !== "string") continue;
+    const trimmed = rawValue.trim();
+    if (!trimmed) continue;
+    ids.add(trimmed);
+    if (trimmed.startsWith("dialog-")) {
+      ids.add(getNoloDialogIdFromKey(trimmed));
+    }
+  }
+  return [...ids];
+}
+
+function getNoloDialogIdentityValues(dialog: unknown) {
+  if (!isRecord(dialog)) return [];
+  const values = new Set<string>();
+  for (const rawValue of [dialog.dialogId, dialog.id, dialog.dbKey]) {
+    if (typeof rawValue !== "string") continue;
+    const trimmed = rawValue.trim();
+    if (!trimmed) continue;
+    values.add(trimmed);
+    if (trimmed.startsWith("dialog-")) {
+      values.add(getNoloDialogIdFromKey(trimmed));
+    }
+  }
+  return [...values];
+}
+
+export function filterNoloDialogsByExcludedIds(dialogs: any[], excludeDialogIds?: unknown) {
+  const excluded = new Set(normalizeNoloExcludeDialogIds(excludeDialogIds));
+  if (excluded.size === 0) return dialogs;
+  return dialogs.filter((dialog) =>
+    getNoloDialogIdentityValues(dialog).every((value) => !excluded.has(value))
+  );
+}
+
+export function filterNoloDialogSubjectRefEvidence(args: {
+  dialogs: any[];
+  target: NoloSubjectRef;
+  limit: number;
+  status?: string | null;
+  checkpointStatus?: string | null;
+  hasArtifacts?: boolean | null;
+  excludeDialogIds?: unknown;
+}) {
+  return filterNoloDialogsByExcludedIds(args.dialogs, args.excludeDialogIds)
+    .filter((dialog) => noloDialogMatchesSubjectRef(dialog, args.target))
+    .sort((left, right) => getNoloComparableUpdatedAt(right) - getNoloComparableUpdatedAt(left))
+    .map((dialog) => summarizeNoloDialogSubjectRefEvidence(dialog, args.target))
+    .filter((dialog) => !args.status || dialog.status === args.status)
+    .filter((dialog) => !args.checkpointStatus || dialog.checkpointStatus === args.checkpointStatus)
+    .filter((dialog) => args.hasArtifacts == null || dialog.hasArtifacts === args.hasArtifacts)
+    .slice(0, args.limit);
+}
+
+export function verifyNoloDialogSubjectRefQuery(
+  dialogs: any[],
+  target: NoloSubjectRef,
+  options: { excludeDialogIds?: unknown } = {},
+) {
+  const checkedDialogs = filterNoloDialogsByExcludedIds(dialogs, options.excludeDialogIds);
+  const unmatchedDialogs = checkedDialogs
+    .filter((dialog) => !noloDialogMatchesSubjectRef(dialog, target))
+    .map((dialog) => ({
+      dialogId:
+        typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
+          ? dialog.dialogId.trim()
+          : typeof dialog?.id === "string" && dialog.id.trim()
+            ? dialog.id.trim()
+            : typeof dialog?.dbKey === "string"
+              ? getNoloDialogIdFromKey(dialog.dbKey)
+              : null,
+      dialogKey: typeof dialog?.dbKey === "string" && dialog.dbKey.trim() ? dialog.dbKey.trim() : null,
+      subjectRefs: extractNoloDialogSubjectRefs(dialog),
+    }));
+  const reason = unmatchedDialogs.length > 0 ? "unmatched_results" : "ok";
+  return {
+    ok: reason === "ok",
+    reason,
+    target,
+    returnedCount: checkedDialogs.length,
+    matchedCount: checkedDialogs.length - unmatchedDialogs.length,
+    unmatchedCount: unmatchedDialogs.length,
+    unmatchedDialogs,
+  };
+}
+
 export function normalizeNoloDocReadArgs(args: Record<string, any>) {
   const id = args.id ?? args.doc ?? args.docKey ?? args.pageKey ?? args.key;
   return id == null ? args : { ...args, id };
@@ -246,6 +467,24 @@ export function buildNoloWorkspaceCommandArgs(call: { name: string; arguments: s
       const cliArgs = ["dialog", "read", dialog];
       const limit = noloPositiveIntegerString(args.limit);
       if (limit) cliArgs.push(limit);
+      return cliArgs;
+    }
+    case "queryDialogsBySubjectRef": {
+      const target = buildNoloSubjectRefQueryTarget(args);
+      if (!target) throw new Error("queryDialogsBySubjectRef requires rowDbKey or subjectKind plus subjectId.");
+      const cliArgs = ["dialog", "query"];
+      const rowDbKey = noloStringArg(args.rowDbKey ?? args.row ?? args.taskRowDbKey);
+      if (rowDbKey && target.kind === "table-row" && target.id === rowDbKey) {
+        cliArgs.push("--row-dbkey", rowDbKey);
+      } else {
+        cliArgs.push("--subject-kind", target.kind, "--subject-id", target.id);
+        if (target.role) cliArgs.push("--subject-role", target.role);
+      }
+      const limit = noloPositiveIntegerString(args.limit);
+      if (limit) cliArgs.push("--limit", limit);
+      const excludeDialogId = noloStringArg(args.excludeDialogId ?? args.excludeDialog);
+      if (excludeDialogId) cliArgs.push("--exclude-dialog", excludeDialogId);
+      cliArgs.push("--json");
       return cliArgs;
     }
     case "listAgents": {
@@ -343,10 +582,11 @@ export async function runNoloWorkspaceCliTool(call: {
   spawn?: NoloSpawn;
 }) {
   const cliArgs = buildNoloWorkspaceCommandArgs(call);
-  const spawn = args.spawn ?? (globalThis as any).Bun?.spawn;
-  if (typeof spawn !== "function") {
-    throw new Error("Nolo workspace CLI tools require a Bun-compatible spawn runtime.");
-  }
+  const bunSpawn = (globalThis as { Bun?: { spawn?: unknown } }).Bun?.spawn;
+  const spawn: NoloSpawn = args.spawn
+    ?? (typeof bunSpawn === "function"
+      ? (bunSpawn as NoloSpawn)
+      : nodeSpawnFallback);
   const proc = spawn({
     cmd: [args.processExecPath ?? process.execPath, args.cliEntrypoint, ...cliArgs],
     stdout: "pipe",
@@ -388,3 +628,7 @@ export function buildNoloWorkspaceCliToolExecutors(args: {
   }
   return executors;
 }
+
+const nodeSpawnFallback: NoloSpawn = (options) => {
+  return spawnToWebStreams({ cmd: options.cmd, env: options.env });
+};

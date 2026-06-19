@@ -65,7 +65,7 @@ const BROWSER_UNAVAILABLE_CORE_TOOLS = new Set([
     "createDialogGoal",
     "getDialogGoal",
     "completeDialogGoal",
-    "createScheduledTask",
+    "createAgentAutomation",
     "notifyUser",
 ]);
 
@@ -451,9 +451,11 @@ export const fetchMemoryOverlayContext = async (
     const spaceId =
         typeof (dialogConfig as any)?.spaceId === "string" && (dialogConfig as any).spaceId.trim()
             ? (dialogConfig as any).spaceId.trim()
-            : typeof (state as any)?.space?.currentSpaceId === "string" && (state as any).space.currentSpaceId.trim()
-                ? (state as any).space.currentSpaceId.trim()
-                : undefined;
+            : (state as any)?.space?.viewMode === "all"
+                ? undefined
+                : typeof (state as any)?.space?.currentSpaceId === "string" && (state as any).space.currentSpaceId.trim()
+                    ? (state as any).space.currentSpaceId.trim()
+                    : undefined;
 
     try {
         const response = await fetch(`${baseUrl}/api/memory/query`, {

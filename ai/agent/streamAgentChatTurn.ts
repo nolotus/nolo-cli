@@ -646,6 +646,14 @@ const hasAgentRunUserInputContent = (userInput: string | any[]) => {
     return Array.isArray(userInput) && userInput.length > 0;
 };
 
+const setLoopStopReason = (reason: string) => {
+    const w =
+        typeof globalThis !== "undefined" && (globalThis as any).window
+            ? (globalThis as any).window
+            : null;
+    if (w) w.__LOOP_STOP_REASON__ = reason;
+};
+
 /**
  * 真正用于“聊天轮次”的流式 Agent 调用（带 Agent Loop）：
  * - 每轮检查权限 & 余额
@@ -803,6 +811,7 @@ export const streamAgentChatTurnHandler = async (
                     } else {
                         dispatch(removeTransientMessage(messageId));
                     }
+                    setLoopStopReason("error");
                     remoteTransientMessageFinalized = true;
                     return rejectWithValue(message);
                 };
@@ -922,6 +931,7 @@ export const streamAgentChatTurnHandler = async (
                 role: "assistant",
                 ...cliMessageMetadata,
             }));
+            remoteTransientMessageId = messageId;
 
             const ensureCliSession = async () => {
                 if (cliSessionId) {
@@ -940,7 +950,8 @@ export const streamAgentChatTurnHandler = async (
                         cliProvider: agentConfig.cliProvider || "copilot",
                         model: agentConfig.model || undefined,
                         systemPrompt: agentConfig.prompt || undefined,
-                        reasoningEffort: agentConfig.reasoning_effort || undefined,
+                        reasoningEffort:
+                          agentConfig.reasoning_effort || agentConfig.reasoningEffort || undefined,
                         temperature: agentConfig.temperature,
                         topP: agentConfig.top_p,
                         frequencyPenalty: agentConfig.frequency_penalty,
@@ -1013,12 +1024,18 @@ export const streamAgentChatTurnHandler = async (
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({ error: resp.statusText }));
                 console.error("[streamAgentChatTurn] Local CLI fetch failed. Status:", resp.status, "Error details:", err);
+                dispatch(removeTransientMessage(messageId));
+                setLoopStopReason("error");
+                remoteTransientMessageFinalized = true;
                 return rejectWithValue(err.error || "CLI 执行失败");
             }
 
             // 读取 SSE 流并逐步更新消息内容
             const reader = resp.body?.getReader();
             if (!reader) {
+                dispatch(removeTransientMessage(messageId));
+                setLoopStopReason("error");
+                remoteTransientMessageFinalized = true;
                 return rejectWithValue("无法读取流式响应");
             }
 
@@ -1033,6 +1050,16 @@ export const streamAgentChatTurnHandler = async (
                 ...cliMessageMetadata,
                 userId: selectUserId(getState() as RootState),
             });
+            const rejectCliStream = async (message: string) => {
+                if (accumulated.length > 0) {
+                    await persistMessageWithFixedId(dispatch, buildCliAssistantMessage());
+                } else {
+                    dispatch(removeTransientMessage(messageId));
+                }
+                setLoopStopReason("error");
+                remoteTransientMessageFinalized = true;
+                return rejectWithValue(message);
+            };
             const abortCliStream = async () => {
                 if (w) w.__LOOP_STOP_REASON__ = "aborted";
                 if (accumulated.length <= 0) {
@@ -1062,7 +1089,7 @@ export const streamAgentChatTurnHandler = async (
                         try {
                             const payload = JSON.parse(line.slice(6));
                             if (payload.error) {
-                                return rejectWithValue(payload.error);
+                                return await rejectCliStream(payload.error);
                             }
                             if (payload.chunk) {
                                 if (loopController.signal.aborted || thunkApi.signal.aborted) {
@@ -1111,6 +1138,7 @@ export const streamAgentChatTurnHandler = async (
 
                 // 持久化最终消息：用已有 ID，避免 prepareAndPersistMessage 重新生成 ID 导致重复
                 await persistMessageWithFixedId(dispatch, buildCliAssistantMessage());
+                remoteTransientMessageFinalized = true;
             } finally {
                 try {
                     await reader.cancel();
@@ -1165,6 +1193,7 @@ export const streamAgentChatTurnHandler = async (
             if (!localResult.ok) {
                 dispatch(removeTransientMessage(messageId));
                 remoteTransientMessageFinalized = true;
+                setLoopStopReason("error");
                 return rejectWithValue(localResult.error);
             }
 
@@ -1279,6 +1308,7 @@ export const streamAgentChatTurnHandler = async (
                     } else {
                         dispatch(removeTransientMessage(messageId));
                     }
+                    setLoopStopReason("error");
                     remoteTransientMessageFinalized = true;
                     return rejectWithValue(message);
                 };
@@ -1599,6 +1629,7 @@ export const streamAgentChatTurnHandler = async (
                             new Error(accessError),
                         );
                     }
+                    setLoopStopReason("error");
                     return rejectWithValue(accessError);
                 }
 
@@ -1693,6 +1724,7 @@ export const streamAgentChatTurnHandler = async (
                     );
 
                     if (!agentHasVision && hasImageInMessages(processedMessages)) {
+                        setLoopStopReason("error");
                         return rejectWithValue(
                             "当前 Agent 不支持图片输入，请改用文本或文档。",
                         );
@@ -1872,6 +1904,7 @@ export const streamAgentChatTurnHandler = async (
                         new Error(accessError),
                     );
                 }
+                setLoopStopReason("error");
                 return rejectWithValue(accessError);
             }
 
@@ -1970,6 +2003,7 @@ export const streamAgentChatTurnHandler = async (
                 );
 
                 if (!agentHasVision && hasImageInMessages(processedMessages)) {
+                    setLoopStopReason("error");
                     return rejectWithValue(
                         "当前 Agent 不支持图片输入，请改用文本或文档。",
                     );
@@ -2103,6 +2137,7 @@ export const streamAgentChatTurnHandler = async (
         if (remoteTransientMessageId && !remoteTransientMessageFinalized) {
             dispatch(removeTransientMessage(remoteTransientMessageId));
             remoteTransientMessageFinalized = true;
+            setLoopStopReason("error");
         }
         if (
             quickChatPerfStartedAt &&
@@ -2116,6 +2151,8 @@ export const streamAgentChatTurnHandler = async (
                 agentKey,
                 error,
             );
+        } else if (!isAbortError(error)) {
+            setLoopStopReason("error");
         }
 
         return rejectWithValue(

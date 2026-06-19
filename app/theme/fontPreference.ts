@@ -8,7 +8,7 @@ export const FONT_PRESET_VALUES = [
 
 export type FontPreset = (typeof FONT_PRESET_VALUES)[number];
 
-export const DEFAULT_FONT_PRESET: FontPreset = "system";
+export const DEFAULT_FONT_PRESET: FontPreset = "hei";
 export const FONT_PRESET_STORAGE_KEY = "nolo-font-preset";
 
 const FONT_PRESET_ALIASES: Record<string, FontPreset> = {

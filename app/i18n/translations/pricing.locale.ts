@@ -27,25 +27,17 @@ export default {
             features: [
               "Batch file analysis",
               "Real-time web search",
-              "Priority processing queue"
+              "Priority processing queue",
+              "Google Scholar Academic Search"
             ]
           },
           advanced: {
             name: "Advanced",
-            meta: "Balance ≥ 199 Points",
-            price: "Unlock with ≥ 199 Points",
+            meta: "Balance ≥ 199 / 999 Points",
+            price: "Unlock with ≥ 199 / 999 Points",
             features: [
               "Advanced reasoning models",
               "Claude Opus access",
-              "Overnight Autopilot runs",
-              "Flex Pro smart routing"
-            ]
-          },
-          dedicated: {
-            name: "Dedicated VM",
-            meta: "Balance ≥ 999 Points",
-            price: "Unlock with ≥ 999 Points",
-            features: [
               "Dedicated VM runtime",
               "Isolated compute resources",
               "Long-running workload execution"
@@ -55,7 +47,7 @@ export default {
         cta: {
           titleLoggedIn: "Flexible Recharge",
           titleLoggedOut: "Try Free",
-          descLoggedIn: "Points are credited instantly. Pro unlocks at 19 points, Advanced at 199 points.",
+          descLoggedIn: "Points are credited instantly. Pro unlocks at 19 points, Advanced at 199 / 999 points.",
           descLoggedOut: "Sign up and start with the free tier before recharging.",
           btnRecharge: "Recharge Points",
           btnFreeStart: "Start Free",
@@ -125,25 +117,17 @@ export default {
             features: [
               "批量文件分析",
               "实时联网搜索",
-              "优先处理队列"
+              "优先处理队列",
+              "Google Scholar 学术检索"
             ]
           },
           advanced: {
             name: "高阶版",
-            meta: "余额保持 ≥ 199 积分",
-            price: "余额 ≥ 199 积分解锁",
+            meta: "余额保持 ≥ 199 / 999 积分",
+            price: "余额 ≥ 199 / 999 积分解锁",
             features: [
               "GPT Pro 系列模型",
               "Claude Opus 模型",
-              "夜间自主运行 (Autopilot)",
-              "Flex Pro 智能路由"
-            ]
-          },
-          dedicated: {
-            name: "独享实例",
-            meta: "余额保持 ≥ 999 积分",
-            price: "余额 ≥ 999 积分解锁",
-            features: [
               "独立虚拟机执行环境",
               "隔离的计算资源",
               "支持长时间超重任务"
@@ -153,7 +137,7 @@ export default {
         cta: {
           titleLoggedIn: "灵活充值",
           titleLoggedOut: "免费体验",
-          descLoggedIn: "充值积分即时到账。余额达到 19 解锁专业版，达到 199 解锁高阶版。",
+          descLoggedIn: "充值积分即时到账。余额达到 19 解锁专业版，达到 199 / 999 解锁高阶版。",
           descLoggedOut: "注册即可体验免费额度，先试再决定是否充值。",
           btnRecharge: "充值积分",
           btnFreeStart: "免费开始",
@@ -224,25 +208,17 @@ export default {
             features: [
               "批次檔案分析",
               "即時聯網搜尋",
-              "優先處理佇列"
+              "優先處理佇列",
+              "Google Scholar 學術檢索"
             ]
           },
           advanced: {
             name: "高階版",
-            meta: "餘額保持 ≥ 199 積分",
-            price: "餘額 ≥ 199 積分解鎖",
+            meta: "餘額保持 ≥ 199 / 999 積分",
+            price: "餘額 ≥ 199 / 999 積分解鎖",
             features: [
               "GPT Pro 系列模型",
               "Claude Opus 模型",
-              "夜間自主運行 (Autopilot)",
-              "Flex Pro 智能路由"
-            ]
-          },
-          dedicated: {
-            name: "獨享實例",
-            meta: "餘額保持 ≥ 999 積分",
-            price: "餘額 ≥ 999 積分解鎖",
-            features: [
               "獨立虛擬機執行環境",
               "隔離的計算資源",
               "支援長時間超重任務"
@@ -252,7 +228,7 @@ export default {
         cta: {
           titleLoggedIn: "靈活充值",
           titleLoggedOut: "免費體驗",
-          descLoggedIn: "充值積分即時到帳。餘額達到 19 解鎖專業版，達到 199 解鎖高階版。",
+          descLoggedIn: "充值積分即時到帳。餘額達到 19 解鎖專業版，達到 199 / 999 解鎖高階版。",
           descLoggedOut: "註冊即可體驗免費額度，先試再決定是否充值。",
           btnRecharge: "充值積分",
           btnFreeStart: "免費開始",
@@ -322,25 +298,17 @@ export default {
             features: [
               "複数ファイル分析",
               "リアルタイムWeb検索",
-              "優先処理キュー"
+              "優先処理キュー",
+              "Google Scholar 学術検索"
             ]
           },
           advanced: {
             name: "アドバンスド",
-            meta: "残高199ポイント以上を維持",
-            price: "199ポイントでアンロック",
+            meta: "残高199 / 999ポイント以上を維持",
+            price: "199 / 999ポイントでアンロック",
             features: [
               "GPT Pro 系列モデル",
               "Claude Opus へのアクセス",
-              "夜間 Autopilot 自律実行",
-              "Flex Pro スマートルーティング"
-            ]
-          },
-          dedicated: {
-            name: "専有インスタンス",
-            meta: "残高999ポイント以上を維持",
-            price: "999ポイントでアンロック",
-            features: [
               "独立した仮想マシン実行環境",
               "隔離された計算リソース",
               "長時間・高負荷タスクの実行"
@@ -350,7 +318,7 @@ export default {
         cta: {
           titleLoggedIn: "フレキシブルなチャージ",
           titleLoggedOut: "無料体験",
-          descLoggedIn: "チャージ後、ポイントは即座に反映されます。19ポイントでプロ版、199ポイントでアドバンスドがアンロックされます。",
+          descLoggedIn: "チャージ後、ポイントは即座に反映されます。19ポイントでプロ版、199 / 999ポイントでアドバンスドがアンロックされます。",
           descLoggedOut: "登録後すぐに無料枠を体験できます。",
           btnRecharge: "ポイントをチャージ",
           btnFreeStart: "無料で開始",

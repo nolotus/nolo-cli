@@ -221,16 +221,20 @@ export const createSpaceThunks = (create: Create) => ({
 
   deleteSpace: create.asyncThunk(deleteSpaceAction, {
     fulfilled: (state, action) => {
-      const { spaceId } = action.payload;
+      const normalizedSpaceId = normalizeSpaceId(action.payload.spaceId);
+      const normalizedCurrentSpaceId = state.currentSpaceId
+        ? normalizeSpaceId(state.currentSpaceId)
+        : null;
       if (state.memberSpaces) {
         state.memberSpaces = state.memberSpaces.filter(
-          (space) => space.spaceId !== spaceId
+          (space) => normalizeSpaceId(space.spaceId) !== normalizedSpaceId
         );
       }
-      if (spaceId === state.currentSpaceId) {
+      if (normalizedCurrentSpaceId === normalizedSpaceId) {
         state.currentSpace = null;
         state.currentSpaceId = null;
         state.collapsedCategories = {};
+        state.viewMode = "all";
       }
     },
   }),

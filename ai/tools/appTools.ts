@@ -17,7 +17,7 @@ import {
 import { evaluateSmallVisualEditGuard } from "./appEditGuard";
 
 type AppSourceFile = { name: string; code: string };
-type AppDeployFramework = "worker" | "react-spa";
+type AppDeployFramework = "worker" | "react-spa" | "nolo-react";
 
 interface AppDeployArgs {
   name?: string;
@@ -155,9 +155,9 @@ export async function resolveAppDeploySpaceId(
   args: AppDeployArgs,
   thunkApi: any
 ): Promise<string | undefined> {
-  const currentSpaceId = normalizeOptionalString(
-    thunkApi?.getState?.()?.space?.currentSpaceId
-  );
+  const state = thunkApi?.getState?.();
+  const rawSpaceId = state?.space?.viewMode === "all" ? null : state?.space?.currentSpaceId;
+  const currentSpaceId = normalizeOptionalString(rawSpaceId);
 
   if (!args.appId) {
     return decideAppDeploySpaceId({
@@ -941,11 +941,12 @@ export const appDeployFunctionSchema = {
       },
       framework: {
         type: "string",
-        enum: ["worker", "react-spa"],
+        enum: ["worker", "react-spa", "nolo-react"],
         description:
           "应用框架。" +
           "'worker'（默认）：直接部署 export default { fetch } 代码。" +
-          "'react-spa'：部署多文件 React 单页应用，适合复杂交互、图表和组件化页面。React SPA 模式必须配合 files 使用。",
+          "'react-spa'：部署多文件 React 单页应用，适合复杂交互、图表和组件化页面。React SPA 模式必须配合 files 使用。" +
+          "'nolo-react'：部署统一 Nolo React SSR 应用，适合自定义域名、SEO、OG/meta 和可维护多文件源码。默认依赖只支持 react 与 react-dom，必须配合 files 使用。",
       },
       spaceId: {
         type: "string",
@@ -1008,7 +1009,7 @@ export const appPreflightFunctionSchema = {
       },
       framework: {
         type: "string",
-        enum: ["worker", "react-spa"],
+        enum: ["worker", "react-spa", "nolo-react"],
       },
       spaceId: {
         type: "string",
@@ -1084,7 +1085,9 @@ export async function appDeployFunc(
   if (framework === "react-spa" && code && (!files || files.length === 0)) {
     throw new Error('React SPA 需要传 `files`（至少 `main.tsx` + `App.tsx`），不能只传 `code`。');
   }
-  if (!code && (!files || files.length === 0)) throw new Error("必须提供 code 或 files 参数");
+  if (!code && (!files || files.length === 0) && !appId) {
+    throw new Error("新建应用必须提供 code 或 files；更新已有应用可仅传 appId，服务端会从源码工作区/历史源码重新部署。");
+  }
   if ((rawArgs as { deployTarget?: string }).deployTarget && (rawArgs as { deployTarget?: string }).deployTarget !== "platform") {
     throw new Error("已不再支持 Cloudflare 部署目标，请使用平台托管。");
   }
@@ -1095,7 +1098,11 @@ export async function appDeployFunc(
     "prepare",
     "正在整理部署参数…",
     "running",
-    framework === "react-spa" ? "准备 React SPA 多文件构建" : "准备单文件 Worker / 多文件 Worker 部署"
+    !code && (!files || files.length === 0) && appId
+      ? "准备从已有源码工作区重新部署"
+      : framework === "react-spa"
+        ? "准备 React SPA 多文件构建"
+        : "准备单文件 Worker / 多文件 Worker 部署"
   );
 
   const guardUserInput = context?.userInput ?? getLatestUserInputFromThunk(thunkApi);
@@ -1485,7 +1492,7 @@ export async function appDeleteFunc(
 export const appReadFunctionSchema = {
   name: "appRead",
   description:
-    "读取已部署应用的当前代码。在修改应用（增删功能、调整样式等）之前，必须先调用此工具获取现有代码，再基于现有代码进行修改后重新部署。必须传 appId；如还不知道 appId，请先调用 appList。",
+    "读取已部署应用的当前代码。在修改应用（增删功能、调整样式等）之前，必须先调用此工具获取现有代码，再基于现有代码进行修改后重新部署。必须传 appId；如还不知道 appId，请先调用 appList。对于大型应用，服务端 agent runtime 可能返回源码摘要、文件清单和预览，而不是完整源码；这不是读取失败，应先基于摘要定位范围，避免把整站源码原样塞进下一次工具调用。",
   parameters: {
     type: "object",
     properties: {
@@ -1511,17 +1518,44 @@ export async function appReadFunc(
     userFriendlyName: string;
     url: string;
     customUrl?: string;
-    code: string;
+    code?: string;
     files?: Array<{ name: string; code: string }>;
-    framework?: "worker" | "react-spa";
+    sourceFiles?: Array<{
+      path: string;
+      sizeBytes: number;
+      lineCount: number;
+      preview: string;
+      truncated: boolean;
+    }>;
+    workspaceRef?: Record<string, any>;
+    activeCommit?: string;
+    framework?: "worker" | "react-spa" | "nolo-react";
   }>(thunkApi, "/api/app/prepare-edit", { appId }, { withAuth: true });
 
   const primaryUrl = data.customUrl ?? data.url;
-  const displayBody = Array.isArray(data.files) && data.files.length > 0
-    ? data.files
+  const displayBody =
+    Array.isArray(data.files) && data.files.length > 0
+      ? data.files
         .map((file) => `### ${file.name}\n\`\`\`${file.name.endsWith(".tsx") || file.name.endsWith(".ts") ? "typescript" : "javascript"}\n${file.code}\n\`\`\``)
         .join("\n\n")
-    : "```javascript\n" + data.code + "\n```";
+      : Array.isArray(data.sourceFiles) && data.sourceFiles.length > 0
+        ? data.sourceFiles
+            .map((file) => {
+              const lang = file.path.endsWith(".tsx") || file.path.endsWith(".ts")
+                ? "typescript"
+                : file.path.endsWith(".json")
+                  ? "json"
+                  : "text";
+              return [
+                `### ${file.path}`,
+                `- ${file.sizeBytes} bytes, ${file.lineCount} lines${file.truncated ? " (preview)" : ""}`,
+                `\`\`\`${lang}`,
+                file.preview,
+                "```",
+              ].join("\n");
+            })
+            .join("\n\n")
+        : "```javascript\n" + (data.code ?? "") + "\n```";
   const snapshotWarning = buildAppReadSnapshotWarning(
     classifyAppReadSnapshot(data)
   );
@@ -1541,9 +1575,243 @@ export async function appReadFunc(
       `📄 应用 "${data.userFriendlyName}" 当前代码：\n` +
       `- appId: ${data.appId}\n` +
       `- 访问地址: ${primaryUrl}\n` +
+      (data.workspaceRef ? `- workspace: ${data.workspaceRef.kind ?? "workspace"}\n` : "") +
+      (data.activeCommit ? `- activeCommit: ${data.activeCommit}\n` : "") +
       (snapshotWarning ? `\n${snapshotWarning}\n` : "\n") +
       (styleSystemHint ? `\n${styleSystemHint}\n` : "") +
       "\n" +
       displayBody,
+  };
+}
+
+// ──────────────────────────────────────────────────────────
+// appFileList / appFileRead / appFileReplace / appFileWrite — app-scoped aliases over the
+// shared coding-agent workspace file semantics.
+// ──────────────────────────────────────────────────────────
+export const appFileListFunctionSchema = {
+  name: "appFileList",
+  description:
+    "列出 Nolo React SSR 应用源码工作区的文件清单。它是 App Builder 受限版 listFiles：只绑定当前 app 源码 workspace，不会返回完整源码。",
+  parameters: {
+    type: "object",
+    properties: {
+      appId: {
+        type: "string",
+        description: "应用 ID。必须先用 appList/appRead 获取。",
+      },
+    },
+    required: ["appId"],
+  },
+};
+
+export const appFileReadFunctionSchema = {
+  name: "appFileRead",
+  description:
+    "读取 Nolo React SSR 应用源码工作区里的单个文件或指定行范围。它是 App Builder 受限版 readFile；大文件应优先传 startLine/endLine。",
+  parameters: {
+    type: "object",
+    properties: {
+      appId: {
+        type: "string",
+        description: "应用 ID。必须先用 appList/appRead 获取。",
+      },
+      path: {
+        type: "string",
+        description: "源码工作区内的相对路径，例如 src/App.tsx 或 nolo.app.json。不能使用绝对路径或 ../。",
+      },
+      startLine: {
+        type: "number",
+        description: "可选，1-based 起始行。读取大文件时优先使用。",
+      },
+      endLine: {
+        type: "number",
+        description: "可选，1-based 结束行。读取大文件时优先使用。",
+      },
+    },
+    required: ["appId", "path"],
+  },
+};
+
+export const appFileSearchFunctionSchema = {
+  name: "appFileSearch",
+  description:
+    "在 Nolo React SSR 应用源码工作区搜索关键词或正则。它是 App Builder 受限版 searchFiles；先定位命中行，再用 appFileRead 读取范围或 appFileReplace 精确编辑。",
+  parameters: {
+    type: "object",
+    properties: {
+      appId: {
+        type: "string",
+        description: "应用 ID。必须先用 appList/appRead 获取。",
+      },
+      query: {
+        type: "string",
+        description: "要搜索的关键词或正则表达式。",
+      },
+      path: {
+        type: "string",
+        description: "可选，限制在某个源码相对路径中搜索，例如 src/App.tsx。",
+      },
+      contextLines: {
+        type: "number",
+        description: "可选，每条命中前后返回几行上下文，最大 5，默认 2。",
+      },
+      maxMatches: {
+        type: "number",
+        description: "可选，最多返回多少条命中，最大 50，默认 20。",
+      },
+      regex: {
+        type: "boolean",
+        description: "可选，为 true 时按正则匹配；默认按普通字符串包含匹配。",
+      },
+    },
+    required: ["appId", "query"],
+  },
+};
+
+export const appFileWriteFunctionSchema = {
+  name: "appFileWrite",
+  description:
+    "写入 Nolo React SSR 应用源码工作区里的单个文件。它是 App Builder 受限版 writeFile，会提交 app workspace git；仅用于新建文件或确实需要整文件重写。文字、样式、token、局部逻辑等小改动应先用 appFileReplace；写完后必须 appPreflight 再 appDeploy。",
+  parameters: {
+    type: "object",
+    properties: {
+      appId: {
+        type: "string",
+        description: "应用 ID。必须先用 appList/appRead 获取。",
+      },
+      path: {
+        type: "string",
+        description: "源码工作区内的相对路径，例如 src/App.tsx。不能使用绝对路径或 ../。",
+      },
+      code: {
+        type: "string",
+        description: "完整的新文件内容。这个工具按单文件替换写入，不接受 diff。",
+      },
+      message: {
+        type: "string",
+        description: "可选的 git commit message；不传时服务端会用 Update {path}。",
+      },
+    },
+    required: ["appId", "path", "code"],
+  },
+};
+
+export const appFileReplaceFunctionSchema = {
+  name: "appFileReplace",
+  description:
+    "在 Nolo React SSR 应用源码工作区里用唯一 oldText 精确替换为 newText。它是 App Builder 受限版 editFile，会提交 app workspace git；文字、样式、token、局部逻辑等小改动优先使用此工具。",
+  parameters: {
+    type: "object",
+    properties: {
+      appId: {
+        type: "string",
+        description: "应用 ID。必须先用 appList/appRead 获取。",
+      },
+      path: {
+        type: "string",
+        description: "源码工作区内的相对路径，例如 src/App.tsx。不能使用绝对路径或 ../。",
+      },
+      oldText: {
+        type: "string",
+        description: "目标文件中必须唯一出现的旧代码片段。若出现 0 次或多次，工具会拒绝。",
+      },
+      newText: {
+        type: "string",
+        description: "替换后的新代码片段。",
+      },
+      message: {
+        type: "string",
+        description: "可选的 git commit message；不传时服务端会用 Update {path}。",
+      },
+    },
+    required: ["appId", "path", "oldText", "newText"],
+  },
+};
+
+export async function appFileListFunc(
+  args: { appId: string },
+  thunkApi: any
+): Promise<{ rawData: any; displayData: string }> {
+  const data = await callToolApi<any>(thunkApi, "/api/app/file/list", args, { withAuth: true });
+  const files = Array.isArray(data.sourceFiles) ? data.sourceFiles : [];
+  return {
+    rawData: data,
+    displayData:
+      `📁 应用源码文件：${data.appId}\n` +
+      `- activeCommit: ${data.activeCommit ?? "unknown"}\n` +
+      files.map((file: any) => `- ${file.path} (${file.sizeBytes} bytes)`).join("\n"),
+  };
+}
+
+export async function appFileReadFunc(
+  args: { appId: string; path: string; startLine?: number; endLine?: number },
+  thunkApi: any
+): Promise<{ rawData: any; displayData: string }> {
+  const data = await callToolApi<any>(thunkApi, "/api/app/file/read", args, { withAuth: true });
+  const lang =
+    String(data.path ?? args.path).endsWith(".tsx") || String(data.path ?? args.path).endsWith(".ts")
+      ? "typescript"
+      : String(data.path ?? args.path).endsWith(".json")
+        ? "json"
+        : "text";
+  return {
+    rawData: data,
+    displayData:
+      `📄 ${data.path}\n` +
+      `- appId: ${data.appId}\n` +
+      `- activeCommit: ${data.activeCommit ?? "unknown"}\n\n` +
+      (data.startLine || data.endLine
+        ? `- lines: ${data.startLine ?? 1}-${data.endLine ?? data.lineCount} of ${data.lineCount}\n\n`
+        : "") +
+      `\`\`\`${lang}\n${data.code ?? ""}\n\`\`\``,
+  };
+}
+
+export async function appFileSearchFunc(
+  args: { appId: string; query: string; path?: string; contextLines?: number; maxMatches?: number; regex?: boolean },
+  thunkApi: any
+): Promise<{ rawData: any; displayData: string }> {
+  const data = await callToolApi<any>(thunkApi, "/api/app/file/search", args, { withAuth: true });
+  const matches = Array.isArray(data.matches) ? data.matches : [];
+  return {
+    rawData: data,
+    displayData:
+      `🔎 应用源码搜索：${args.query}\n` +
+      `- appId: ${data.appId}\n` +
+      `- activeCommit: ${data.activeCommit ?? "unknown"}\n` +
+      `- matches: ${matches.length}\n\n` +
+      matches
+        .map((match: any) => `${match.path}:${match.line}: ${match.text}`)
+        .join("\n"),
+  };
+}
+
+export async function appFileWriteFunc(
+  args: { appId: string; path: string; code: string; message?: string },
+  thunkApi: any
+): Promise<{ rawData: any; displayData: string }> {
+  const data = await callToolApi<any>(thunkApi, "/api/app/file/write", args, { withAuth: true });
+  return {
+    rawData: data,
+    displayData:
+      `✏️ 已写入应用源码文件：${args.path}\n` +
+      `- appId: ${data.appId}\n` +
+      `- activeCommit: ${data.activeCommit ?? "unknown"}\n` +
+      "下一步：先 appPreflight，再 appDeploy。",
+  };
+}
+
+export async function appFileReplaceFunc(
+  args: { appId: string; path: string; oldText: string; newText: string; message?: string },
+  thunkApi: any
+): Promise<{ rawData: any; displayData: string }> {
+  const data = await callToolApi<any>(thunkApi, "/api/app/file/replace", args, { withAuth: true });
+  return {
+    rawData: data,
+    displayData:
+      `✏️ 已替换应用源码文件片段：${args.path}\n` +
+      `- appId: ${data.appId}\n` +
+      `- activeCommit: ${data.activeCommit ?? "unknown"}\n` +
+      "下一步：先 appPreflight，再 appDeploy。",
   };
 }

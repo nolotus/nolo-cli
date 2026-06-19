@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveDefaultSpawn, type SpawnFn, type SpawnedProcess } from "./processSpawn";
 
 type PackageInfo = {
   name: string;
@@ -17,7 +18,7 @@ type DoctorInfo = {
 
 type RunSelfUpdateOptions = {
   output?: NodeJS.WritableStream;
-  spawn?: typeof Bun.spawn;
+  spawn?: SpawnFn;
 };
 
 type SpawnOutputChunk = string | ArrayBuffer | ArrayBufferView;
@@ -71,7 +72,7 @@ function isRunSelfUpdateOptions(
 }
 
 async function forwardSpawnOutput(
-  stream: AsyncIterable<SpawnOutputChunk> | undefined,
+  stream: AsyncIterable<SpawnOutputChunk> | null | undefined,
   output: NodeJS.WritableStream
 ) {
   if (!stream) {
@@ -107,12 +108,12 @@ export async function runSelfUpdate(
         ? outputOrOptions
         : { output: outputOrOptions };
   const output = options.output ?? process.stdout;
-  const spawn = options.spawn ?? Bun.spawn;
+  const spawn: SpawnFn = options.spawn ?? resolveDefaultSpawn();
   const command = buildSelfUpdateCommand();
   output.write(`Updating nolo with: ${command.join(" ")}\n`);
 
   const useCustomSink = options.output !== undefined;
-  const proc = spawn({
+  const proc: SpawnedProcess = spawn({
     cmd: command,
     stdin: "inherit",
     stdout: useCustomSink ? "pipe" : "inherit",

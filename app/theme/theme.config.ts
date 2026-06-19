@@ -1,5 +1,6 @@
 import {
   neutral,
+  trail,
   ocean,
   iris,
   forest,
@@ -34,9 +35,9 @@ export const SPACE = {
   24: "96px",
 };
 
-// 2. 主题色系（7 个核心 + 向后兼容 alias）
+// 2. 主题色系（8 个核心 + 向后兼容 alias）
 export const THEME_COLORS = {
-  neutral, ocean, iris, forest, wave, rose, ember,
+  neutral, trail, ocean, iris, forest, wave, rose, ember,
   // alias — DB 中可能存了旧 key，映射到最近似的新主题
   blue, purple, green, orange, yellow, graphite, pink, red, mocha,
 };

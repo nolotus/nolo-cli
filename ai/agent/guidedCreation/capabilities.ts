@@ -24,7 +24,7 @@ export const GUIDED_AGENT_CAPABILITIES: Record<
       zhCN: "需要获取外部网页、资料或最新信息时使用。",
       en: "Use when the agent needs external webpages, research, or current information.",
     },
-    toolIds: ["exa_search", "fetchWebpage"],
+    toolIds: ["exa_search", "firecrawl_search", "firecrawl_scrape", "fetchWebpage"],
   },
   docs: {
     id: "docs",
@@ -60,7 +60,16 @@ export const GUIDED_AGENT_CAPABILITIES: Record<
       zhCN: "需要生成应用、代码或使用 App Builder 能力时使用。",
       en: "Use when the agent should build apps, code, or App Builder outputs.",
     },
-    toolIds: ["appDeploy", "appList", "appRead"],
+    toolIds: ["appDeploy", "appList", "appRead", "appFileList", "appFileSearch", "appFileRead", "appFileReplace", "appFileWrite"],
+  },
+  imageProcessing: {
+    id: "imageProcessing",
+    label: { zhCN: "图片处理", en: "Image processing" },
+    description: {
+      zhCN: "需要压缩图片、调整图片大小或用可执行脚本处理图片文件时使用。",
+      en: "Use when the agent should compress images, resize images, or process image files with executable scripts.",
+    },
+    toolIds: ["execShell"],
   },
 };
 

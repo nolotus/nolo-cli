@@ -71,104 +71,6 @@ export function translateSchema(schema: any): any {
   return nextSchema;
 }
 
-function buildActivitySchema() {
-  const refs = {
-    type: "array",
-    items: {
-      type: "object",
-      properties: {
-        type: { type: "string", enum: ["file", "terminal", "url"] },
-        path: { type: "string" },
-        id: { type: "string" },
-        label: { type: "string" },
-        url: { type: "string" },
-      },
-    },
-  };
-  const action = {
-    type: "object",
-    properties: {
-      title: { type: "string" },
-      kind: {
-        type: "string",
-        enum: ["read", "write", "edit", "search", "terminal", "version", "test", "build", "preview", "other"],
-      },
-      detail: { type: "string" },
-      refs,
-    },
-    required: ["title"],
-  };
-  const planPhase = {
-    type: "object",
-    properties: {
-      id: { type: "string" },
-      title: { type: "string" },
-      index: { type: "number" },
-      status: { type: "string", enum: ["pending", "running", "success", "failed"] },
-    },
-    required: ["id", "title"],
-  };
-  return {
-    type: "object",
-    description:
-      "Optional human-readable activity metadata for UI progress display only. Use plan for the visible task skeleton, phase for the current task step, and action for this specific tool call.",
-    properties: {
-      plan: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          phases: {
-            type: "array",
-            items: planPhase,
-          },
-        },
-        required: ["phases"],
-      },
-      phase: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          title: { type: "string" },
-          index: { type: "number" },
-          total: { type: "number" },
-          status: { type: "string", enum: ["pending", "running", "success", "failed"] },
-        },
-        required: ["id", "title"],
-      },
-      action,
-      title: { type: "string" },
-      kind: action.properties.kind,
-      detail: { type: "string" },
-      refs,
-    },
-  };
-}
-
-function addActivityMetadataToToolSchema(tool: any) {
-  if (!tool?.function?.parameters || typeof tool.function.parameters !== "object") {
-    return tool;
-  }
-  const parameters = tool.function.parameters;
-  if (parameters.type !== "object" || !parameters.properties || typeof parameters.properties !== "object") {
-    return tool;
-  }
-  if (parameters.properties._activity) return tool;
-
-  return {
-    ...tool,
-    function: {
-      ...tool.function,
-      parameters: {
-        ...parameters,
-        properties: {
-          ...parameters.properties,
-          _activity: buildActivitySchema(),
-        },
-      },
-    },
-  };
-}
-
 export const prepareTools = (
   toolNames: string[],
   options?: { provider?: string; disabledToolNames?: string[] }
@@ -187,7 +89,6 @@ export const prepareTools = (
         function: translateSchema(regTool.function),
       };
     })
-    .map(addActivityMetadataToToolSchema)
     .map((tool) => sanitizeToolForProvider(tool, options?.provider))
     .filter(Boolean); // 过滤掉未找到的工具
 };

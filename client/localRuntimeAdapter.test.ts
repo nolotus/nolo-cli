@@ -4,10 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
-import { LOCAL_CODEX_AGENT_KEY, LOCAL_QODER_AGENT_KEY } from "../agentAliases";
+import { LOCAL_CODEX_AGENT_KEY, LOCAL_GROK_AGENT_KEY, LOCAL_OPENCODE_AGENT_KEY, LOCAL_QODER_AGENT_KEY, MIMO_MONTH_AGENT_KEY } from "../agentAliases";
 import { createCliLocalRuntimeAdapter } from "./localRuntimeAdapter";
-
-const TEST_CUSTOM_AGENT_KEY = "agent-user-1-custom-runtime";
 
 describe("CLI local runtime adapter", () => {
   const DEFAULT_LOCAL_CODING_TOOL_NAMES = [
@@ -34,6 +32,7 @@ describe("CLI local runtime adapter", () => {
   const DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES = [
     "listDialogs",
     "readDialog",
+    "queryDialogsBySubjectRef",
     "listAgents",
     "readAgent",
     "listSpaces",
@@ -56,6 +55,14 @@ describe("CLI local runtime adapter", () => {
 
   function publicSchemaKeys(schema: any) {
     return Object.keys(schema.parameters.properties).filter((key) => key !== "_activity");
+  }
+
+  function authTokenForUser(userId: string) {
+    return [
+      Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+      Buffer.from(JSON.stringify({ userId })).toString("base64url"),
+      "sig",
+    ].join(".");
   }
 
   test("loads stored local CLI agent records before falling back to built-ins", async () => {
@@ -95,6 +102,40 @@ describe("CLI local runtime adapter", () => {
     });
   });
 
+  test("loads local CLI agent records by their handle", async () => {
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+      },
+      db: {
+        get: async () => {
+          throw new Error("not found");
+        },
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {
+          yield ["agent-user-1-frontend", {
+            dbKey: "agent-user-1-frontend",
+            id: "frontend",
+            name: "Frontend Implementer",
+            handle: "frontend-implementer",
+            prompt: "Fix product UI.",
+            apiSource: "cli",
+            provider: "agy",
+            cliProvider: "agy",
+          }];
+        })(),
+      },
+      fetchImpl: async () => new Response("not found", { status: 404 }),
+    } as any);
+
+    await expect(adapter.loadAgentConfig("frontend-implementer")).resolves.toMatchObject({
+      key: "agent-user-1-frontend",
+      name: "Frontend Implementer",
+      cliProvider: "agy",
+    });
+  });
+
   test("falls back to built-in local Codex and Qoder CLI agents without machine binding", async () => {
     const adapter = createCliLocalRuntimeAdapter({
       env: {
@@ -113,6 +154,8 @@ describe("CLI local runtime adapter", () => {
 
     const codex = await adapter.loadAgentConfig(LOCAL_CODEX_AGENT_KEY);
     const qoder = await adapter.loadAgentConfig(LOCAL_QODER_AGENT_KEY);
+    const opencode = await adapter.loadAgentConfig(LOCAL_OPENCODE_AGENT_KEY);
+    const grok = await adapter.loadAgentConfig(LOCAL_GROK_AGENT_KEY);
 
     expect(codex).toMatchObject({
       key: LOCAL_CODEX_AGENT_KEY,
@@ -129,10 +172,30 @@ describe("CLI local runtime adapter", () => {
       cliProvider: "qoder",
       model: "Qwen3.7-Max",
     });
+    expect(opencode).toMatchObject({
+      key: LOCAL_OPENCODE_AGENT_KEY,
+      name: "Local OpenCode",
+      apiSource: "cli",
+      provider: "cli",
+      cliProvider: "opencode",
+    });
+    expect(grok).toMatchObject({
+      key: LOCAL_GROK_AGENT_KEY,
+      name: "Local Grok",
+      apiSource: "cli",
+      provider: "cli",
+      cliProvider: "grok",
+    });
+    expect((grok as any)?.model).toBeUndefined();
+    expect((grok as any)?.rawRecord?.model).toBeUndefined();
     expect((codex as any)?.runtimeBinding).toBeUndefined();
     expect((qoder as any)?.runtimeBinding).toBeUndefined();
+    expect((opencode as any)?.runtimeBinding).toBeUndefined();
+    expect((grok as any)?.runtimeBinding).toBeUndefined();
     expect((codex as any)?.rawRecord?.runtimeBinding).toBeUndefined();
     expect((qoder as any)?.rawRecord?.runtimeBinding).toBeUndefined();
+    expect((opencode as any)?.rawRecord?.runtimeBinding).toBeUndefined();
+    expect((grok as any)?.rawRecord?.runtimeBinding).toBeUndefined();
   });
 
   test("runs cli-provider agents through the local CLI executor instead of OpenAI-compatible direct mode", async () => {
@@ -194,6 +257,319 @@ describe("CLI local runtime adapter", () => {
     expect(cliExecutions[0].prompt).toContain("add tooltip");
   });
 
+  test("syncs subjectRef local CLI dialog evidence to the configured server", async () => {
+    const remoteWrites: Array<{ url: string; auth: string | null; body: any }> = [];
+    const store = new Map<string, any>([
+      ["agent-user-1-frontend", {
+        dbKey: "agent-user-1-frontend",
+        id: "frontend",
+        name: "Frontend",
+        prompt: "You are the frontend implementer.",
+        apiSource: "cli",
+        cliProvider: "agy",
+      }],
+    ]);
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      cwd: "/repo/worktree",
+      now: () => 1710000000000,
+      createId: () => "01LOCAL",
+      fetchImpl: async (url, init) => {
+        remoteWrites.push({
+          url: String(url),
+          auth: new Headers(init?.headers).get("Authorization"),
+          body: JSON.parse(String(init?.body)),
+        });
+        return Response.json({ ok: true });
+      },
+      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
+    } as any);
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "frontend",
+      input: "fix tabs",
+      runtimeContext: {
+        subjectRefs: [{ kind: "table-row", id: "row-user-1-board-task", role: "task" }],
+      },
+    });
+
+    expect(result.dialogId).toBe("01LOCAL");
+    expect(remoteWrites.map((write) => write.url)).toEqual([
+      "https://us.nolo.chat/api/v1/db/write/",
+      "https://us.nolo.chat/api/v1/db/write/",
+      "https://us.nolo.chat/api/v1/db/write/",
+    ]);
+    expect(remoteWrites.every((write) => write.auth === "Bearer token-1")).toBe(true);
+    expect(remoteWrites[0].body).toMatchObject({
+      customKey: "dialog-01LOCAL-msg-1710000000000-001",
+      userId: "user-1",
+      data: {
+        type: "msg",
+        dialogId: "01LOCAL",
+        role: "user",
+        content: "fix tabs",
+      },
+    });
+    expect(remoteWrites[1].body).toMatchObject({
+      customKey: "dialog-01LOCAL-msg-1710000000000-002",
+      userId: "user-1",
+      data: {
+        type: "msg",
+        dialogId: "01LOCAL",
+        role: "assistant",
+        content: "cli ok",
+      },
+    });
+    expect(remoteWrites[2].body).toMatchObject({
+      customKey: "dialog-user-1-01LOCAL",
+      userId: "user-1",
+      data: {
+        id: "01LOCAL",
+        type: "dialog",
+        userId: "user-1",
+        primaryAgentKey: "agent-user-1-frontend",
+        subjectRefs: [{ kind: "table-row", id: "row-user-1-board-task", role: "task" }],
+        localRuntime: {
+          host: "cli",
+          worktreePath: "/repo/worktree",
+        },
+      },
+    });
+  });
+
+  test("wakes the parent dialog after a local subjectRef child run reaches done", async () => {
+    const remoteRequests: Array<{ url: string; method: string; body?: any; auth: string | null }> = [];
+    const store = new Map<string, any>([
+      ["agent-user-1-fullstack", {
+        dbKey: "agent-user-1-fullstack",
+        id: "fullstack",
+        name: "Fullstack",
+        prompt: "Implement the task.",
+        apiSource: "cli",
+        cliProvider: "codex",
+      }],
+    ]);
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      cwd: "/repo/worktree",
+      now: () => 1710000000000,
+      createId: () => "01LOCAL",
+      fetchImpl: async (url, init) => {
+        const target = String(url);
+        const method = String(init?.method ?? "GET");
+        const rawBody = typeof init?.body === "string" ? init.body : "";
+        const body = rawBody ? JSON.parse(rawBody) : undefined;
+        remoteRequests.push({
+          url: target,
+          method,
+          ...(body ? { body } : {}),
+          auth: new Headers(init?.headers).get("Authorization"),
+        });
+        if (target.endsWith("/api/v1/db/read/dialog-user-1-parent-1")) {
+          return Response.json({
+            data: {
+              id: "parent-1",
+              dbKey: "dialog-user-1-parent-1",
+              primaryAgentKey: "agent-user-1-pm",
+            },
+          });
+        }
+        if (target.endsWith("/api/agent/run")) {
+          expect(body).toMatchObject({
+            agentKey: "agent-user-1-pm",
+            background: true,
+            continueDialogId: "parent-1",
+            runtimeContext: {
+              entrypoint: "agent-runtime:parent-child-terminal-wake",
+              subjectRefs: expect.arrayContaining([
+                { kind: "table-row", id: "row-user-1-board-task", role: "task" },
+                { kind: "dialog", id: "01LOCAL", role: "completed-child-dialog" },
+              ]),
+            },
+          });
+          expect(body.userInput).toContain("A child agent dialog you started has reached a terminal status.");
+          expect(body.userInput).toContain("childDialogId: 01LOCAL");
+          expect(body.userInput).toContain("status: done");
+          expect(body.userInput).toContain("childEvidenceSummary:");
+          expect(body.userInput).toContain("implemented locally");
+          return Response.json({ dialogId: "parent-1", status: "pending" }, { status: 202 });
+        }
+        return Response.json({ ok: true });
+      },
+      executeCli: async () => ({ text: "implemented locally", raw: "implemented locally", elapsed: 1 }),
+    } as any);
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "fullstack",
+      input: "fix the prompt contract",
+      parentDialogId: "parent-1",
+      runtimeContext: {
+        parentWakeOnTerminal: true,
+        subjectRefs: [{ kind: "table-row", id: "row-user-1-board-task", role: "task" }],
+      },
+    });
+
+    expect(result.dialogId).toBe("01LOCAL");
+    expect(remoteRequests.map((request) => request.url)).toContain(
+      "https://us.nolo.chat/api/v1/db/read/dialog-user-1-parent-1",
+    );
+    expect(remoteRequests.map((request) => request.url)).toContain(
+      "https://us.nolo.chat/api/agent/run",
+    );
+    const wakeWrite = remoteRequests.find((request) =>
+      request.body?.customKey === "dialog-user-1-01LOCAL" &&
+      request.body?.data?.parentWake?.terminalStatus === "done"
+    );
+    expect(wakeWrite?.body?.data?.parentWake).toMatchObject({
+      terminalStatus: "done",
+      parentDialogId: "parent-1",
+      childDialogId: "01LOCAL",
+    });
+  });
+
+  test("uses the auth token user id for remote subjectRef evidence when local user id is unset", async () => {
+    const remoteWrites: Array<{ body: any }> = [];
+    const store = new Map<string, any>([
+      ["agent-token-user-frontend", {
+        dbKey: "agent-token-user-frontend",
+        id: "frontend",
+        name: "Frontend",
+        prompt: "You are the frontend implementer.",
+        apiSource: "cli",
+        cliProvider: "agy",
+      }],
+    ]);
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: authTokenForUser("token-user"),
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      now: () => 1710000000000,
+      createId: () => "01LOCAL",
+      fetchImpl: async (_url, init) => {
+        remoteWrites.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ ok: true });
+      },
+      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
+    } as any);
+
+    await runLocalAgentTurn({
+      adapter,
+      agentRef: "frontend",
+      input: "fix tabs",
+      runtimeContext: {
+        subjectRefs: [{ kind: "table-row", id: "row-token-user-board-task", role: "task" }],
+      },
+    });
+
+    expect(remoteWrites.at(-1)?.body).toMatchObject({
+      customKey: "dialog-token-user-01LOCAL",
+      userId: "token-user",
+    });
+  });
+
+  test("fails subjectRef local CLI runs when remote evidence cannot be written", async () => {
+    const store = new Map<string, any>([
+      ["agent-user-1-frontend", {
+        dbKey: "agent-user-1-frontend",
+        id: "frontend",
+        name: "Frontend",
+        prompt: "You are the frontend implementer.",
+        apiSource: "cli",
+        cliProvider: "agy",
+      }],
+    ]);
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      createId: () => "01LOCAL",
+      fetchImpl: async () => new Response("nope", { status: 500 }),
+      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
+    } as any);
+
+    await expect(runLocalAgentTurn({
+      adapter,
+      agentRef: "frontend",
+      input: "fix tabs",
+      runtimeContext: {
+        subjectRefs: [{ kind: "table-row", id: "row-user-1-board-task", role: "task" }],
+      },
+    })).rejects.toThrow("remote dialog evidence write failed");
+  });
+
   test("fails cli-provider local runs clearly when the requested local CLI is unavailable", async () => {
     const adapter = createCliLocalRuntimeAdapter({
       env: {
@@ -229,6 +605,79 @@ describe("CLI local runtime adapter", () => {
       agentRef: "frontend",
       input: "add tooltip",
     })).rejects.toThrow("Local CLI provider \"agy\" is unavailable");
+  });
+
+  test("creates read-compatible ULID dialog ids for local CLI runs by default", async () => {
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+      },
+      db: {
+        get: async (key) => {
+          if (key !== "agent-user-1-cli") throw new Error(`not found: ${key}`);
+          return {
+            dbKey: "agent-user-1-cli",
+            id: "cli",
+            name: "CLI",
+            prompt: "You are local.",
+            apiSource: "cli",
+            cliProvider: "codex",
+          };
+        },
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async () => new Response("not found", { status: 404 }),
+      executeCli: async () => ({ text: "ok", raw: "ok", elapsed: 1 }),
+    } as any);
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "agent-user-1-cli",
+      input: "ping",
+    });
+
+    expect(result.dialogId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+  });
+
+  test("forwards reasoningEffort camelCase to the CLI executor", async () => {
+    let cliCalledWith: any = null;
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+      },
+      db: {
+        get: async (key) => {
+          if (key !== "agent-user-1-grok") throw new Error(`not found: ${key}`);
+          return {
+            dbKey: "agent-user-1-grok",
+            id: "grok",
+            name: "Grok",
+            prompt: "You are Grok.",
+            apiSource: "cli",
+            cliProvider: "grok",
+            reasoningEffort: "high",
+          };
+        },
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      executeCli: async (provider, prompt, options) => {
+        cliCalledWith = { provider, prompt, options };
+        return { text: "grok ok", raw: "", elapsed: 1 };
+      },
+    } as any);
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "grok",
+      input: "hello",
+    });
+
+    expect(result.content).toBe("grok ok");
+    expect(cliCalledWith?.options?.reasoningEffort).toBe("high");
   });
 
   test("passes cli-provider image inputs to the CLI executor instead of rejecting", async () => {
@@ -1382,7 +1831,7 @@ describe("CLI local runtime adapter", () => {
     ]);
   });
 
-  test("keeps generic custom agent tools to the supported local and server surfaces", async () => {
+  test("keeps monthly Mimo local model tools to the compact coding surface", async () => {
     const requests: Array<{ body: any }> = [];
     const adapter = createCliLocalRuntimeAdapter({
       env: {
@@ -1391,7 +1840,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: TEST_CUSTOM_AGENT_KEY,
+          dbKey: MIMO_MONTH_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1426,14 +1875,11 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: TEST_CUSTOM_AGENT_KEY,
+      agentRef: MIMO_MONTH_AGENT_KEY,
       input: "inspect cwd",
     });
 
-    expect(toolNamesFromRequest(requests[0])).toEqual([
-      ...SHELL_LOCAL_CODING_TOOL_NAMES,
-      "queryTableRows",
-    ]);
+    expect(toolNamesFromRequest(requests[0])).toEqual(SHELL_LOCAL_CODING_TOOL_NAMES);
   });
 
   test("can expose only declared local workspace tools for tool ablations", async () => {
@@ -1446,7 +1892,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: TEST_CUSTOM_AGENT_KEY,
+          dbKey: MIMO_MONTH_AGENT_KEY,
           prompt: "Use exactly the declared local tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1466,7 +1912,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: TEST_CUSTOM_AGENT_KEY,
+      agentRef: MIMO_MONTH_AGENT_KEY,
       input: "inspect cwd",
     });
 
@@ -1483,7 +1929,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: TEST_CUSTOM_AGENT_KEY,
+          dbKey: MIMO_MONTH_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1503,7 +1949,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: TEST_CUSTOM_AGENT_KEY,
+      agentRef: MIMO_MONTH_AGENT_KEY,
       input: "inspect cwd",
     });
 
@@ -1562,7 +2008,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: TEST_CUSTOM_AGENT_KEY,
+          dbKey: MIMO_MONTH_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1582,7 +2028,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: TEST_CUSTOM_AGENT_KEY,
+      agentRef: MIMO_MONTH_AGENT_KEY,
       input: "find tests",
     });
 
@@ -1608,7 +2054,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: TEST_CUSTOM_AGENT_KEY,
+          dbKey: MIMO_MONTH_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1628,7 +2074,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: TEST_CUSTOM_AGENT_KEY,
+      agentRef: MIMO_MONTH_AGENT_KEY,
       input: "list directories",
     });
 
@@ -1653,7 +2099,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: TEST_CUSTOM_AGENT_KEY,
+          dbKey: MIMO_MONTH_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1673,7 +2119,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: TEST_CUSTOM_AGENT_KEY,
+      agentRef: MIMO_MONTH_AGENT_KEY,
       input: "read a file range",
     });
 
@@ -1700,7 +2146,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: TEST_CUSTOM_AGENT_KEY,
+          dbKey: MIMO_MONTH_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -1720,7 +2166,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: TEST_CUSTOM_AGENT_KEY,
+      agentRef: MIMO_MONTH_AGENT_KEY,
       input: "find TODO",
     });
 
@@ -2001,7 +2447,11 @@ describe("CLI local runtime adapter", () => {
         cliWorkspaceTool: true,
         exitCode: 0,
       });
-      expect(spawnCalls[0]?.cmd.at(-5)?.endsWith("index.ts")).toBe(true);
+      const cliEntrypoint = spawnCalls[0]?.cmd.at(-5) ?? "";
+      expect(
+        cliEntrypoint.endsWith("packages/cli/index.ts") ||
+          cliEntrypoint.endsWith("packages/cli/dist/index.ts"),
+      ).toBe(true);
       expect(spawnCalls[0]?.cmd.slice(-4)).toEqual([
         "dialog",
         "list",
@@ -2048,6 +2498,7 @@ describe("CLI local runtime adapter", () => {
 
   test("applies runtime policy shell settings to local executors without adding a timeout", async () => {
     const requests: Array<{ body: any }> = [];
+    const shellCalls: any[] = [];
     const adapter = createCliLocalRuntimeAdapter({
       env: {
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2068,6 +2519,15 @@ describe("CLI local runtime adapter", () => {
         iterator: () => (async function* () {})(),
       },
       cwd: import.meta.dir,
+      localToolExecutors: {
+        execShell: async (call) => {
+          shellCalls.push(call);
+          return {
+            content: "x".repeat(50),
+            metadata: { exitCode: 0, timedOut: false },
+          };
+        },
+      },
       fetchImpl: async (_url, init) => {
         requests.push({ body: JSON.parse(String(init?.body)) });
         if (requests.length === 1) {
@@ -2105,8 +2565,10 @@ describe("CLI local runtime adapter", () => {
 
     expect(result.content).toBe("limits applied");
     const toolResult = requests[1]?.body.messages.at(-1)?.content ?? "";
-    expect(toolResult).toContain("exitCode: 0");
+    expect(toolResult).toContain("xxxxxxxx");
     expect(toolResult).not.toContain("command timed out");
+    expect(shellCalls).toHaveLength(1);
+    expect(JSON.parse(shellCalls[0].arguments)).not.toHaveProperty("commandTimeoutMs");
   });
 
   test("accepts execShell aliases from the local model", async () => {

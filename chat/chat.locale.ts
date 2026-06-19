@@ -174,6 +174,8 @@ export default {
       toolNames: {
         tool: "Tool",
         exa_search: "Search",
+        firecrawl_scrape: "Firecrawl scrape",
+        firecrawl_search: "Firecrawl search",
         read_file: "Read file",
         readFile: "Read file",
         searchWorkspace: "Search workspace",
@@ -377,6 +379,8 @@ export default {
       toolNames: {
         tool: "工具",
         exa_search: "搜索",
+        firecrawl_scrape: "Firecrawl 抓取",
+        firecrawl_search: "Firecrawl 搜索",
         read_file: "读取文件",
         readFile: "读取文件",
         searchWorkspace: "搜索工作区",
@@ -569,6 +573,8 @@ export default {
       toolNames: {
         tool: "工具",
         exa_search: "搜尋",
+        firecrawl_scrape: "Firecrawl 抓取",
+        firecrawl_search: "Firecrawl 搜尋",
         read_file: "讀取檔案",
         readFile: "讀取檔案",
         searchWorkspace: "搜尋工作區",
@@ -774,6 +780,8 @@ export default {
       toolNames: {
         tool: "ツール",
         exa_search: "検索",
+        firecrawl_scrape: "Firecrawl スクレイプ",
+        firecrawl_search: "Firecrawl 検索",
         read_file: "ファイル読み取り",
         readFile: "ファイル読み取り",
         searchWorkspace: "ワークスペース検索",

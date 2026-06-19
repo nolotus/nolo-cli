@@ -5,6 +5,7 @@ import { googleModels } from "../../integrations/google/models";
 import { openAIModels } from "../../integrations/openai/models";
 import { openrouterModels } from "../llm/openrouterModels";
 import { deepinfraModels } from "../llm/deepinfra";
+import { vultrModels } from "../llm/vultr";
 // import { xaiModels } from "../../integrations/xai/models";
 import './fireworks'
 import type { Model } from "./types";
@@ -12,9 +13,15 @@ import type { Agent } from "../../app/types";
 import { fireworksModels } from "./fireworks";
 import { mistralModels } from "./mistral";
 import { mimoModels } from "./mimo";
+import {
+  cloudflareModels,
+  getCloudflareWorkersAiChatCompletionsUrl,
+} from "./cloudflare";
+import { gmiModels, GMI_CHAT_COMPLETIONS_URL } from "./gmi";
 import type { ModelPrice } from "./types";
-import { FIREWORKS_KIMI_LATEST_MODEL } from "./kimi";
+import { VULTR_KIMI_MODEL } from "./kimi";
 export { supportedReasoningModels } from "./reasoningModels";
+export { getCloudflareWorkersAiChatCompletionsUrl } from "./cloudflare";
 
 /* ──────────────────────────────────────────
  * 所有模型（仅用于功能过滤）
@@ -29,10 +36,13 @@ const MODEL_MAP = {
   google: googleModels,
   openai: openAIModels,
   deepinfra: deepinfraModels,
+  vultr: vultrModels,
   openrouter: openrouterModels,
   fireworks: fireworksModels,
   mistral: mistralModels,
   mimo: mimoModels,
+  cloudflare: cloudflareModels,
+  gmi: gmiModels,
 } as const;
 
 const MODEL_LOOKUP_MAP = {
@@ -192,6 +202,9 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   deepinfra: {
     default: "https://api.deepinfra.com/v1/openai/chat/completions",
   },
+  vultr: {
+    default: "https://api.vultrinference.com/v1/chat/completions",
+  },
   mistral: {
     default: "https://api.mistral.ai/v1/chat/completions",
   },
@@ -207,7 +220,13 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   },
   mimo: {
     default: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
-  }
+  },
+  cloudflare: {
+    default: "__cloudflare_workers_ai_chat_completions__",
+  },
+  gmi: {
+    default: GMI_CHAT_COMPLETIONS_URL,
+  },
 } as const;
 
 /* ──────────────────────────────────────────
@@ -240,8 +259,8 @@ export function getProviderByModelName(modelName: string): Provider | undefined 
 
 /** 默认模型配置（provider + model 成对出现，避免分散硬编码） */
 export const DEFAULT_MODEL = {
-  provider: "fireworks" as Provider,
-  name: FIREWORKS_KIMI_LATEST_MODEL,
+  provider: "vultr" as Provider,
+  name: VULTR_KIMI_MODEL,
 } as const;
 
 /** 统一获取 ChatCompletion / Responses 等端点 */
@@ -284,6 +303,10 @@ export function getApiEndpoint(agent: Agent): string {
     throw new Error(
       "Custom provider URL is required when apiSource is 'custom'."
     );
+  }
+
+  if (effectiveProvider === "cloudflare") {
+    return getCloudflareWorkersAiChatCompletionsUrl();
   }
 
   /* Provider 端点表 */

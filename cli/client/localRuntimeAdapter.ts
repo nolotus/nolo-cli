@@ -43,13 +43,19 @@ import {
 } from "./hybridRecordStore";
 import { executeLocalToolWithPolicy } from "./localToolPolicy";
 import { inferCaptureIntent } from "../../ai/policy/runtimePolicy";
+import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
 import { TOOL_PACKS } from "../../ai/tools/toolPacks";
 import { prepareTools } from "../../ai/tools/prepareTools";
 import {
   LOCAL_CODEX_AGENT_ID,
   LOCAL_CODEX_AGENT_KEY,
+  LOCAL_GROK_AGENT_ID,
+  LOCAL_GROK_AGENT_KEY,
+  LOCAL_OPENCODE_AGENT_ID,
+  LOCAL_OPENCODE_AGENT_KEY,
   LOCAL_QODER_AGENT_ID,
   LOCAL_QODER_AGENT_KEY,
+  MIMO_MONTH_AGENT_KEY,
   NOLO_DEFAULT_AGENT_ID,
   NOLO_DEFAULT_AGENT_KEY,
 } from "../agentAliases";
@@ -69,6 +75,7 @@ import {
   readXPostFunc,
   readXPostFunctionSchema,
 } from "../../ai/tools/readXPostTool";
+import { ulid } from "ulid";
 
 type EnvLike = Record<string, string | undefined>;
 type FetchInput = Parameters<typeof fetch>[0];
@@ -82,6 +89,7 @@ type LocalCliExecutor = (
     cwd?: string;
     yolo?: boolean;
     env?: Record<string, string | undefined>;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
     imageInputs?: CliImageInput[];
   }
 ) => Promise<CliExecuteResult>;
@@ -124,11 +132,14 @@ async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
 }
 
 function createFallbackId() {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.toUpperCase();
+  return ulid();
 }
 
 function resolveLocalUserId(env: EnvLike) {
-  return env.NOLO_LOCAL_USER_ID || env.NOLO_USER_ID || "local";
+  const explicitUserId = env.NOLO_LOCAL_USER_ID || env.NOLO_USER_ID;
+  if (explicitUserId) return explicitUserId;
+  const tokenUserId = parseUserIdFromAuthToken(resolveRuntimeAuthToken(env));
+  return tokenUserId || "local";
 }
 
 function resolveBuiltinLocalCliAgentConfig(agentRef: string, userId: string): AgentRuntimeAgentConfig | null {
@@ -174,6 +185,48 @@ function resolveBuiltinLocalCliAgentConfig(agentRef: string, userId: string): Ag
         provider: "cli",
         cliProvider: "qoder",
         model: "Qwen3.7-Max",
+      },
+    };
+  }
+  if (normalized === LOCAL_OPENCODE_AGENT_KEY || normalized === LOCAL_OPENCODE_AGENT_ID) {
+    return {
+      key: LOCAL_OPENCODE_AGENT_KEY,
+      name: "Local OpenCode",
+      prompt: "You are a local OpenCode CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
+      apiSource: "cli",
+      provider: "cli",
+      cliProvider: "opencode",
+      toolNames: ["readFile", "searchFiles", "execShell"],
+      rawRecord: {
+        dbKey: LOCAL_OPENCODE_AGENT_KEY,
+        id: LOCAL_OPENCODE_AGENT_ID,
+        userId,
+        type: "agent",
+        name: "Local OpenCode",
+        apiSource: "cli",
+        provider: "cli",
+        cliProvider: "opencode",
+      },
+    };
+  }
+  if (normalized === LOCAL_GROK_AGENT_KEY || normalized === LOCAL_GROK_AGENT_ID) {
+    return {
+      key: LOCAL_GROK_AGENT_KEY,
+      name: "Local Grok",
+      prompt: "You are a local Grok CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
+      apiSource: "cli",
+      provider: "cli",
+      cliProvider: "grok",
+      toolNames: ["readFile", "searchFiles", "execShell"],
+      rawRecord: {
+        dbKey: LOCAL_GROK_AGENT_KEY,
+        id: LOCAL_GROK_AGENT_ID,
+        userId,
+        type: "agent",
+        name: "Local Grok",
+        apiSource: "cli",
+        provider: "cli",
+        cliProvider: "grok",
       },
     };
   }
@@ -423,6 +476,10 @@ function summarizeOpenAiToolNames(tools: Array<Record<string, unknown>>) {
     .filter((name): name is string => Boolean(name));
 }
 
+function shouldExposeLocalPlatformTools(agentKey?: string) {
+  return agentKey !== MIMO_MONTH_AGENT_KEY;
+}
+
 function addDefaultLightWebToolsForConfiguredAgents(
   toolNames: string[],
   agentConfig?: AgentRuntimeAgentConfig | null,
@@ -434,6 +491,8 @@ function addDefaultLightWebToolsForConfiguredAgents(
   const webCapable = explicitToolNames.some((toolName) =>
     toolName === "fetchWebpage" ||
     toolName === "exa_search" ||
+    toolName === "firecrawl_scrape" ||
+    toolName === "firecrawl_search" ||
     toolName === "read_x_post" ||
     toolName === "read_xhs_profile" ||
     toolName.startsWith("browser_")
@@ -444,6 +503,7 @@ function addDefaultLightWebToolsForConfiguredAgents(
 
 function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: EnvLike }) {
   const toolset = buildLocalWorkspaceToolsetForEnv(args);
+  const exposePlatformTools = shouldExposeLocalPlatformTools(args.agentKey);
   return [
     ...buildLocalWorkspaceOpenAiTools({
       toolNames: toolset.toolNames,
@@ -457,8 +517,8 @@ function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: 
       searchFilesDescriptionVariant: resolveSearchFilesDescriptionVariant(args.env),
       searchFilesParameterVariant: resolveSearchFilesParameterVariant(args.env),
     }),
-    ...buildServerPlatformOpenAiTools({ toolNames: args.toolNames }),
-    ...buildNoloWorkspaceOpenAiTools({ toolNames: args.toolNames }),
+    ...(exposePlatformTools ? buildServerPlatformOpenAiTools({ toolNames: args.toolNames }) : []),
+    ...(exposePlatformTools ? buildNoloWorkspaceOpenAiTools({ toolNames: args.toolNames }) : []),
   ];
 }
 
@@ -618,6 +678,289 @@ function resolveRuntimeAuthToken(env: EnvLike) {
   return env.AUTH_TOKEN || env.AUTH || env.NOLO_MACHINE_API_KEY || "";
 }
 
+function localTurnHasSubjectRefs(input: AgentRuntimeSaveTurnInput) {
+  return Array.isArray(input.runtimeContext?.subjectRefs) && input.runtimeContext.subjectRefs.length > 0;
+}
+
+function prepareRemoteDialogEvidenceRecord(key: string, value: any) {
+  const record = value && typeof value === "object" ? { ...value } : {};
+  if (key.includes("-msg-") && typeof record.type !== "string") {
+    record.type = "msg";
+  }
+  return record;
+}
+
+function normalizeRemoteString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeRemoteStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value
+        .map(normalizeRemoteString)
+        .filter((item): item is string => Boolean(item)),
+    ),
+  ];
+}
+
+function normalizeRemoteSubjectRef(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const kind = normalizeRemoteString(raw.kind);
+  const id = normalizeRemoteString(raw.id);
+  if (!kind || !id) return null;
+  const role = normalizeRemoteString(raw.role);
+  return { kind, id, ...(role ? { role } : {}) };
+}
+
+function mergeRemoteSubjectRefs(...groups: unknown[]) {
+  const refs: Array<{ kind: string; id: string; role?: string }> = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    if (!Array.isArray(group)) continue;
+    for (const item of group) {
+      const ref = normalizeRemoteSubjectRef(item);
+      if (!ref) continue;
+      const key = `${ref.kind}\0${ref.id}\0${ref.role ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      refs.push(ref);
+    }
+  }
+  return refs;
+}
+
+function resolveParentAgentKeyFromDialog(parentDialog: Record<string, any>) {
+  return normalizeRemoteString(parentDialog.primaryAgentKey) ??
+    normalizeRemoteString(parentDialog.agentKey) ??
+    (Array.isArray(parentDialog.cybots)
+      ? parentDialog.cybots.map(normalizeRemoteString).find(Boolean)
+      : undefined);
+}
+
+function clipLocalWakeEvidence(value: unknown, max = 1200) {
+  if (typeof value !== "string") return undefined;
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return undefined;
+  return compact.length > max ? `${compact.slice(0, max - 3)}...` : compact;
+}
+
+function buildLocalParentWakeMessage(args: {
+  childAgentKey: string;
+  childDialogId: string;
+  childDialogKey: string;
+  childEvidenceSummary?: string;
+}) {
+  return [
+    "A child agent dialog you started has reached a terminal status.",
+    "",
+    `childDialogId: ${args.childDialogId}`,
+    `childDialogKey: ${args.childDialogKey}`,
+    `childAgentKey: ${args.childAgentKey}`,
+    "status: done",
+    ...(args.childEvidenceSummary
+      ? [
+          "",
+          "childEvidenceSummary:",
+          args.childEvidenceSummary,
+        ]
+      : []),
+    "",
+    "Read the childEvidenceSummary and decide the next step yourself. This wake came from a local CLI run, so completion evidence is the synced child dialog, subjectRefs, commits, artifacts, and test output rather than a server-side child process.",
+  ].join("\n");
+}
+
+async function postRemoteRecord(args: {
+  authToken: string;
+  data: any;
+  fetchImpl: typeof fetch;
+  key: string;
+  serverUrl: string;
+  userId: string;
+}) {
+  const response = await args.fetchImpl(`${args.serverUrl}/api/v1/db/write/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${args.authToken}`,
+    },
+    body: JSON.stringify({
+      customKey: args.key,
+      userId: args.userId,
+      data: prepareRemoteDialogEvidenceRecord(args.key, args.data),
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`remote dialog evidence write failed: HTTP ${response.status} ${text.slice(0, 500)}`);
+  }
+}
+
+async function readRemoteRecord(args: {
+  authToken: string;
+  fetchImpl: typeof fetch;
+  key: string;
+  serverUrl: string;
+}) {
+  const response = await args.fetchImpl(
+    `${args.serverUrl}/api/v1/db/read/${encodeURIComponent(args.key)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${args.authToken}`,
+      },
+    },
+  );
+  if (!response.ok) return null;
+  const payload = await response.json().catch(() => null);
+  return payload?.data && typeof payload.data === "object" ? payload.data : null;
+}
+
+async function maybeWakeParentDialogAfterLocalSync(args: {
+  authToken: string;
+  childDialogKey: string;
+  childDialogRecord: Record<string, any>;
+  fetchImpl: typeof fetch;
+  input: AgentRuntimeSaveTurnInput;
+  serverUrl: string;
+  userId: string;
+}) {
+  if (args.input.runtimeContext?.parentWakeOnTerminal !== true) return;
+  if (args.childDialogRecord.parentWake?.terminalNotifiedAt) return;
+  const parentDialogId = normalizeRemoteString(args.childDialogRecord.parentDialogId);
+  if (!parentDialogId) return;
+
+  const parentDialogKey = `dialog-${args.userId}-${parentDialogId}`;
+  const parentDialog = await readRemoteRecord({
+    authToken: args.authToken,
+    fetchImpl: args.fetchImpl,
+    key: parentDialogKey,
+    serverUrl: args.serverUrl,
+  });
+  if (!parentDialog) return;
+  const parentAgentKey = resolveParentAgentKeyFromDialog(parentDialog);
+  if (!parentAgentKey) return;
+
+  const childDialogId = normalizeRemoteString(args.childDialogRecord.id);
+  if (!childDialogId) return;
+  const subjectRefs = mergeRemoteSubjectRefs(
+    args.childDialogRecord.subjectRefs,
+    [{ kind: "dialog", id: childDialogId, role: "completed-child-dialog" }],
+  );
+  const allowedChildAgentKeys = normalizeRemoteStringList(args.input.runtimeContext?.allowedChildAgentKeys);
+  const allowedToolNames = normalizeRemoteStringList(args.input.runtimeContext?.allowedToolNames);
+  const wakeResponse = await args.fetchImpl(`${args.serverUrl}/api/agent/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${args.authToken}`,
+    },
+    body: JSON.stringify({
+      agentKey: parentAgentKey,
+      userInput: buildLocalParentWakeMessage({
+        childAgentKey: args.childDialogRecord.primaryAgentKey ?? args.input.agentKey,
+        childDialogId,
+        childDialogKey: args.childDialogKey,
+        childEvidenceSummary: clipLocalWakeEvidence(args.input.result.content),
+      }),
+      background: true,
+      continueDialogId: parentDialogId,
+      runtimeContext: {
+        surface: "cli",
+        host: "terminal",
+        runtime: "bun",
+        entrypoint: "agent-runtime:parent-child-terminal-wake",
+        subjectRefs,
+        ...(allowedChildAgentKeys.length ? { allowedChildAgentKeys } : {}),
+        ...(allowedToolNames.length ? { allowedToolNames } : {}),
+      },
+    }),
+  });
+  if (!wakeResponse.ok) {
+    const text = await wakeResponse.text().catch(() => "");
+    throw new Error(`parent dialog wake failed: HTTP ${wakeResponse.status} ${text.slice(0, 500)}`);
+  }
+
+  const notifiedAt = Date.now();
+  await postRemoteRecord({
+    authToken: args.authToken,
+    data: {
+      ...args.childDialogRecord,
+      parentWake: {
+        terminalNotifiedAt: notifiedAt,
+        terminalStatus: "done",
+        parentDialogId,
+        childDialogId,
+      },
+      updatedAt: new Date(notifiedAt).toISOString(),
+    },
+    fetchImpl: args.fetchImpl,
+    key: args.childDialogKey,
+    serverUrl: args.serverUrl,
+    userId: args.userId,
+  });
+}
+
+async function syncLocalDialogEvidenceToRemote(args: {
+  env: EnvLike;
+  fetchImpl: typeof fetch;
+  input: AgentRuntimeSaveTurnInput;
+  ops: Array<{ type: "put"; key: string; value: any }>;
+  output?: { write(chunk: string): unknown };
+  userId: string;
+}) {
+  const serverUrl = resolveRuntimeServerUrl(args.env);
+  const authToken = resolveRuntimeAuthToken(args.env);
+  if (!serverUrl || !authToken) {
+    return { attempted: false as const };
+  }
+
+  const orderedOps = [
+    ...args.ops.filter((op) => op.type === "put" && op.key.includes("-msg-")),
+    ...args.ops.filter((op) => op.type === "put" && !op.key.includes("-msg-")),
+  ];
+
+  for (const op of orderedOps) {
+    if (op.type !== "put") continue;
+    await postRemoteRecord({
+      authToken,
+      data: op.value,
+      fetchImpl: args.fetchImpl,
+      key: op.key,
+      serverUrl,
+      userId: args.userId,
+    });
+  }
+
+  const childDialogOp = args.ops.find((op) => op.type === "put" && !op.key.includes("-msg-"));
+  const childDialogRecord = childDialogOp?.value && typeof childDialogOp.value === "object"
+    ? childDialogOp.value
+    : null;
+  if (childDialogOp && childDialogRecord) {
+    try {
+      await maybeWakeParentDialogAfterLocalSync({
+        authToken,
+        childDialogKey: childDialogOp.key,
+        childDialogRecord,
+        fetchImpl: args.fetchImpl,
+        input: args.input,
+        serverUrl,
+        userId: args.userId,
+      });
+    } catch (error) {
+      args.output?.write(
+        `[nolo] Parent dialog wake failed; synced local child evidence remains queryable: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`,
+      );
+    }
+  }
+
+  return { attempted: true as const };
+}
+
 function buildServerPlatformToolExecutors(args: {
   env: EnvLike;
   fetchImpl: typeof fetch;
@@ -763,6 +1106,19 @@ async function readAgentFromStore(args: {
     if (!record || typeof record !== "object") continue;
     return resolveAgentRuntimeConfigFromRecord(key, record);
   }
+  const normalizedRef = normalizeRemoteString(args.agentRef)?.toLowerCase().replace(/\s+/g, " ");
+  if (!normalizedRef) return null;
+  try {
+    const iterator = args.store.iterator({ gte: "agent-", lte: "agent-\uffff" });
+    for await (const [key, record] of iterator) {
+      if (!record || typeof record !== "object") continue;
+      const handle = normalizeRemoteString((record as any).handle)?.toLowerCase().replace(/\s+/g, " ");
+      if (handle !== normalizedRef) continue;
+      return resolveAgentRuntimeConfigFromRecord(key, record);
+    }
+  } catch {
+    // local handle scan unavailable
+  }
   return null;
 }
 
@@ -786,6 +1142,9 @@ async function writeDialog(args: {
   userId: string;
   now: () => number;
   createId: () => string;
+  env: EnvLike;
+  fetchImpl: typeof fetch;
+  output?: { write(chunk: string): unknown };
   cwd?: string;
 }) {
   let existingDialog: any = null;
@@ -802,6 +1161,33 @@ async function writeDialog(args: {
     cwd: args.cwd,
   });
   await args.store.batch(plan.ops);
+  const shouldSyncRemoteEvidence = localTurnHasSubjectRefs(args.input);
+  try {
+    const syncResult = shouldSyncRemoteEvidence
+      ? await syncLocalDialogEvidenceToRemote({
+          env: args.env,
+          fetchImpl: args.fetchImpl,
+          input: args.input,
+          ops: plan.ops,
+          output: args.output,
+          userId: args.userId,
+        })
+      : { attempted: false as const };
+    if (shouldSyncRemoteEvidence && !syncResult.attempted) {
+      args.output?.write(
+        "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n"
+      );
+    }
+  } catch (error) {
+    if (shouldSyncRemoteEvidence) {
+      throw error;
+    }
+    args.output?.write(
+      `[nolo] Remote dialog evidence sync failed; local dialog only: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`
+    );
+  }
   return { dialogId: plan.dialogId };
 }
 
@@ -877,6 +1263,9 @@ export function createCliLocalRuntimeAdapter(
       userId,
       now,
       createId,
+      env: deps.env,
+      fetchImpl,
+      output: deps.output,
       cwd: workspaceRoot,
     }),
     resolveProvider: async (agentConfig) => {
@@ -901,8 +1290,11 @@ export function createCliLocalRuntimeAdapter(
                 : undefined;
             const prompt = buildPromptForCliProvider(messages);
             try {
+              const reasoningEffort =
+                agentConfig.reasoning_effort || agentConfig.reasoningEffort;
               const result = await executeCli(provider, prompt, {
                 ...(agentConfig.model ? { model: agentConfig.model } : {}),
+                ...(reasoningEffort ? { reasoningEffort } : {}),
                 ...(options?.timeoutMs ? { timeout: options.timeoutMs } : {}),
                 cwd: workspaceRoot,
                 yolo: true,

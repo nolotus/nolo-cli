@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -55,6 +56,25 @@ function findWorkspaceRoot(startPath: string) {
   }
 }
 
+function listWorkspacePackageJsonFiles(workspaceParent: string): string[] {
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(workspaceParent, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const results: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const relativePath = `${entry.name}/package.json`;
+    if (existsSync(join(workspaceParent, relativePath))) {
+      results.push(relativePath);
+    }
+  }
+  return results;
+}
+
 function validateConnectorWorkspaceLinks(cwd: string) {
   const repoRoot = findWorkspaceRoot(cwd);
   if (!repoRoot) return [];
@@ -70,7 +90,7 @@ function validateConnectorWorkspaceLinks(cwd: string) {
     const workspaceParent = join(repoRoot, pattern.slice(0, -2));
     if (!existsSync(workspaceParent)) continue;
 
-    for (const entry of Array.from(new Bun.Glob("*/package.json").scanSync({ cwd: workspaceParent }))) {
+    for (const entry of listWorkspacePackageJsonFiles(workspaceParent)) {
       const packageDir = join(workspaceParent, dirname(entry));
       const packageJson = readJsonFile<PackageJson>(join(workspaceParent, entry));
       if (!packageJson?.name || !CONNECTOR_RUNTIME_WORKSPACE_PACKAGES.has(packageJson.name)) {
@@ -125,7 +145,7 @@ function resolveDaemonLogPath(env: EnvLike) {
 }
 
 function buildDaemonCommand(cliEntrypointPath: string | undefined) {
-  return [process.execPath, cliEntrypointPath || import.meta.path, "connect", "--ws"];
+  return [process.execPath, cliEntrypointPath || fileURLToPath(import.meta.url), "connect", "--ws"];
 }
 
 function defaultSpawnDaemon(args: {

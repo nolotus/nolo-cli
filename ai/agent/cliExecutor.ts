@@ -25,7 +25,7 @@ import { buildCliPrompt } from "./cliPrompt";
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
 
 /** 已支持的 CLI 工具。新增时在此联合类型追加，并在 EXECUTORS 里注册实现 */
-export type CliProvider = "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder";
+export type CliProvider = "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok";
 
 /**
  * CLI provider 图片输入。
@@ -66,17 +66,84 @@ export interface CliExecuteResult {
   warnings?: string[];
 }
 
+/**
+ * 当底层 CLI（opencode / qoder / grok 等付费订阅 CLI）报告配额/限额时抛出的专用错误。
+ * 上层派发逻辑（PM 手写 fallback 或 supervisor）可以 catch 这个错误，快速切换另一个 agent 重新派发。
+ */
+export class CliProviderQuotaError extends Error {
+  readonly provider: CliProvider;
+  constructor(provider: CliProvider, message: string) {
+    super(`[QUOTA_LIMITED:${provider}] ${message}`);
+    this.name = "CliProviderQuotaError";
+    this.provider = provider;
+  }
+}
+
+/**
+ * 快速检测给定 CLI provider 的输出是否表明配额/限额（rate limit / quota exceeded）。
+ * 这是“快速发现是限额的”核心，用于实现 PM 选 opencode → 限额 → 立刻换另一个派发。
+ *
+ * 改进：优先检查 stderr，模式更具体以避免误判正常讨论 "quota" 的情况。
+ */
+export function detectCliProviderQuotaLimit(
+  provider: CliProvider,
+  stdout: string,
+  stderr: string,
+  exitCode: number | null,
+): { limited: boolean; message?: string } {
+  const stderrText = String(stderr || "");
+  const stdoutText = String(stdout || "");
+  const combined = stderrText + "\n" + stdoutText;
+
+  const isQuotaText = (text: string) => {
+    const t = text.toLowerCase();
+    // 严格模式：只认明确的错误/额度耗尽信号，避免业务代码中提到 quota 被误判
+    const strongPatterns = [
+      /quota (exceeded|reached|limit|used up|insufficient|hit)/i,
+      /usage limit (reached|exceeded|hit)/i,
+      /weekly usage limit/i,
+      /rate.?limit (exceeded|reached|hit)/i,
+      /\b429\b.*(limit|quota|rate)/i,
+      /too many request/i,
+      /no (more|remaining) (credit|quota|usage)/i,
+      /plan limit|membership limit/i,
+      /daily limit|hourly limit reached/i,
+      /limit reached.*reset/i,
+      /resets in .* days/i,  // from real opencode error
+    ];
+    for (const re of strongPatterns) {
+      if (re.test(t)) return true;
+    }
+    return false;
+  };
+
+  // Prefer stderr for error signals
+  if (isQuotaText(stderrText)) {
+    return { limited: true, message: `quota/rate limit signal from ${provider} (stderr)` };
+  }
+  if (isQuotaText(combined)) {
+    return { limited: true, message: `quota/rate limit signal from ${provider}` };
+  }
+  return { limited: false };
+}
+
 type CliSessionMessage = {
   role: "user" | "assistant";
   content: string;
 };
 
 const DEFAULT_AGY_TIMEOUT_MS = 600_000;
+// DEFAULT_CODEX_TIMEOUT_MS removed/disabled: timeout killing code stripped to fix
+// long-running local-codex reviews via `nolo agent run local-codex --local` etc.
+const DEFAULT_OPENCODE_TIMEOUT_MS = 600_000;
+const DEFAULT_GROK_TIMEOUT_MS = 600_000;
 const BUFFERED_STREAMING_PROVIDERS = new Set<CliProvider>([
   "codex",
   "claude",
   "agy",
   "qoder",
+  "opencode",
+  "grok",
 ]);
 
 export function isBufferedCliStreamingProvider(provider: CliProvider): boolean {
@@ -220,6 +287,10 @@ function getCliProviderLabel(provider: CliProvider): string {
       return "Qoder CLI";
     case "gemini":
       return "Gemini CLI";
+    case "opencode":
+      return "OpenCode CLI";
+    case "grok":
+      return "Grok CLI";
   }
 }
 
@@ -234,7 +305,13 @@ function supportsModel(provider: CliProvider): boolean {
 }
 
 function supportsReasoningEffort(provider: CliProvider): boolean {
-  return provider === "claude" || provider === "copilot" || provider === "qoder";
+  return (
+    provider === "claude" ||
+    provider === "copilot" ||
+    provider === "qoder" ||
+    provider === "opencode" ||
+    provider === "grok"
+  );
 }
 
 function shouldPassClaudeModel(options: CliExecuteOptions): boolean {
@@ -627,10 +704,11 @@ function executeCodex(
   options: CliExecuteOptions
 ): Promise<CliExecuteResult> {
   const {
-    timeout = 120_000,
     cwd = process.cwd(),
     yolo = true,
   } = options;
+  // timeout handling removed at this layer to prevent premature kill on long local codex reviews
+  // (e.g. via `nolo agent run local-codex --local`)
 
   // Collect materialized image paths from imageInputs
   const imagePaths = (options.imageInputs ?? [])
@@ -668,14 +746,9 @@ function executeCodex(
     });
     const stdout = createUtf8Collector();
     const stderr = createUtf8Collector();
-    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    if (timeout > 0) {
-      timer = setTimeout(() => {
-        proc.kill("SIGTERM");
-        reject(new Error(`Codex CLI timed out after ${timeout}ms`));
-      }, timeout);
-    }
+    // Timeout killing removed for codex to support long reviews via nolo local-codex.
+    // Runs until completion or external kill.
 
     proc.stdout.on("data", (data: Buffer) => {
       stdout.write(data);
@@ -686,11 +759,15 @@ function executeCodex(
     });
 
     proc.on("close", (code) => {
-      if (timer) clearTimeout(timer);
       const stdoutText = stdout.end();
       const stderrText = stderr.end();
       if (code !== 0 && code !== null) {
         rmSync(tempDir, { recursive: true, force: true });
+        const quota = detectCliProviderQuotaLimit("codex", stdoutText, stderrText, code);
+        if (quota.limited) {
+          reject(new CliProviderQuotaError("codex", quota.message || "Codex reported quota/limit"));
+          return;
+        }
         reject(new Error(`Codex CLI exited with code ${code}\nstderr: ${stderrText}`));
         return;
       }
@@ -713,7 +790,6 @@ function executeCodex(
     });
 
     proc.on("error", (err) => {
-      if (timer) clearTimeout(timer);
       rmSync(tempDir, { recursive: true, force: true });
       reject(err);
     });
@@ -782,6 +858,11 @@ function executeClaude(
       const stdoutText = stdout.end();
       const stderrText = stderr.end();
       if (code !== 0 && code !== null) {
+        const quota = detectCliProviderQuotaLimit("claude", stdoutText, stderrText, code);
+        if (quota.limited) {
+          reject(new CliProviderQuotaError("claude", quota.message || "Claude reported quota/limit"));
+          return;
+        }
         reject(new Error(`Claude CLI exited with code ${code}\nstderr: ${stderrText}`));
         return;
       }
@@ -942,6 +1023,11 @@ function executeAgy(
       const stderrText = stderr.end();
       if (code !== 0 && code !== null) {
         console.error("[cliExecutor] agy process exited with non-zero code:", code, "stderr:", stderrText);
+        const quota = detectCliProviderQuotaLimit("agy", stdoutText, stderrText, code);
+        if (quota.limited) {
+          reject(new CliProviderQuotaError("agy", quota.message || "Agy reported quota/limit"));
+          return;
+        }
         reject(new Error(`Antigravity CLI exited with code ${code}\nstderr: ${stderrText}`));
         return;
       }
@@ -1001,6 +1087,13 @@ function executeQoder(
 
     if (timeout > 0) {
       timer = setTimeout(() => {
+        const partial = stdout.end() + "\n" + stderr.end();
+        const q = detectCliProviderQuotaLimit("qoder", "", partial, null);  // partial is stderr biased in practice
+        if (q.limited) {
+          proc.kill("SIGTERM");
+          reject(new CliProviderQuotaError("qoder", q.message || "Qoder quota signal seen before timeout"));
+          return;
+        }
         proc.kill("SIGTERM");
         reject(new Error(`Qoder CLI timed out after ${timeout}ms`));
       }, timeout);
@@ -1012,12 +1105,25 @@ function executeQoder(
 
     proc.stderr.on("data", (data: Buffer) => {
       stderr.write(data);
+      const currentStderr = stderr.text;
+      if (detectCliProviderQuotaLimit("qoder", "", currentStderr, null).limited) {
+        if (timer) clearTimeout(timer);
+        proc.kill("SIGTERM");
+        reject(new CliProviderQuotaError("qoder", "quota signal detected incrementally in stderr"));
+        return;
+      }
     });
 
     proc.on("close", (code) => {
       if (timer) clearTimeout(timer);
       const stdoutText = stdout.end();
       const stderrText = stderr.end();
+      const quota = detectCliProviderQuotaLimit("qoder", stdoutText, stderrText, code);
+      const hasRealErrorSignal = code !== 0 || /error|fail|quota|limit|429|rate limit|exceeded/i.test(stderrText);
+      if (quota.limited && hasRealErrorSignal) {
+        reject(new CliProviderQuotaError("qoder", quota.message || "Qoder reported quota/limit"));
+        return;
+      }
       if (code !== 0 && code !== null) {
         console.error("[cliExecutor] qoder process exited with non-zero code:", code, "stderr:", stderrText);
         reject(new Error(`Qoder CLI exited with code ${code}\nstderr: ${stderrText}`));
@@ -1039,6 +1145,266 @@ function executeQoder(
   });
 }
 
+type OpenCodeJsonEvent = {
+  type?: string;
+  part?: {
+    type?: string;
+    text?: string;
+  };
+};
+
+function parseOpenCodeJsonlEvents(stdout: string): string {
+  const parts: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const event = JSON.parse(trimmed) as OpenCodeJsonEvent;
+      if (event.type === "text" && event.part?.type === "text" && typeof event.part.text === "string") {
+        parts.push(event.part.text);
+      }
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return parts.join("");
+}
+
+function executeOpenCode(
+  prompt: string,
+  options: CliExecuteOptions
+): Promise<CliExecuteResult> {
+  const {
+    model,
+    reasoningEffort,
+    timeout = DEFAULT_OPENCODE_TIMEOUT_MS,
+    cwd = process.cwd(),
+    yolo = true,
+  } = options;
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      "run",
+      "--format",
+      "json",
+      "--dir",
+      cwd,
+      "--print-logs",   // surface stream errors / quota / limit messages to stderr for fast detection
+    ];
+    if (model) {
+      args.push("--model");
+      args.push(model);
+    }
+    if (reasoningEffort) {
+      args.push("--variant");
+      args.push(reasoningEffort);
+    }
+    if (yolo) {
+      args.push("--dangerously-skip-permissions");
+    }
+    args.push(prompt);
+
+    const start = Date.now();
+    const proc = spawn("opencode", args, {
+      cwd,
+      env: buildCliProcessEnv(options.env),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = createUtf8Collector();
+    const stderr = createUtf8Collector();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (timeout > 0) {
+      timer = setTimeout(() => {
+        // For timeout we can safely finalize
+        const stdoutPartial = stdout.end();
+        const stderrPartial = stderr.end();
+        const q = detectCliProviderQuotaLimit("opencode", stdoutPartial, stderrPartial, null);
+        if (q.limited) {
+          proc.kill("SIGTERM");
+          reject(new CliProviderQuotaError("opencode", q.message || "OpenCode quota signal seen before timeout"));
+          return;
+        }
+        proc.kill("SIGTERM");
+        reject(new Error(`OpenCode CLI timed out after ${timeout}ms`));
+      }, timeout);
+    }
+
+    proc.stdout.on("data", (data: Buffer) => {
+      stdout.write(data);
+    });
+
+    proc.stderr.on("data", (data: Buffer) => {
+      stderr.write(data);
+      // Incremental detection on stderr for fast quota signals (as recommended)
+      // Use .text (live, non-finalizing) not .end()
+      const currentStderr = stderr.text;
+      if (detectCliProviderQuotaLimit("opencode", "", currentStderr, null).limited) {
+        if (timer) clearTimeout(timer);
+        proc.kill("SIGTERM");
+        reject(new CliProviderQuotaError("opencode", "quota signal detected incrementally in stderr"));
+        return;
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      const stdoutText = stdout.end();
+      const stderrText = stderr.end();
+
+      // Quota: stderr (or error-shaped) always. stdout only checked on real error exit to avoid FP from LLM text mentioning "limit".
+      const quota = detectCliProviderQuotaLimit("opencode", stdoutText, stderrText, code);
+      const hasRealErrorSignal = code !== 0 || /error|fail|quota|limit|429|rate limit|exceeded/i.test(stderrText);
+      if (quota.limited && hasRealErrorSignal) {
+        reject(new CliProviderQuotaError("opencode", quota.message || "OpenCode reported quota/limit"));
+        return;
+      }
+
+      if (code !== 0 && code !== null) {
+        console.error("[cliExecutor] opencode process exited with non-zero code:", code, "stderr:", stderrText);
+        reject(new Error(`OpenCode CLI exited with code ${code}\nstderr: ${stderrText}`));
+        return;
+      }
+
+      resolve({
+        text: parseOpenCodeJsonlEvents(stdoutText).trim(),
+        raw: stdoutText,
+        elapsed: Date.now() - start,
+      });
+    });
+
+    proc.on("error", (err) => {
+      if (timer) clearTimeout(timer);
+      console.error("[cliExecutor] opencode process error event:", err);
+      reject(err);
+    });
+  });
+}
+
+type GrokJsonOutput = {
+  type?: string;
+  text?: string;
+  message?: string;
+};
+
+function parseGrokJsonOutput(stdout: string): string {
+  const trimmed = stdout.trim();
+  if (!trimmed) return "";
+  const parsed = JSON.parse(trimmed) as GrokJsonOutput;
+  if (parsed.type === "error") {
+    throw new Error(typeof parsed.message === "string" ? parsed.message : "Grok CLI failed");
+  }
+  return typeof parsed.text === "string" ? parsed.text : "";
+}
+
+function buildGrokProcessEnv(extraEnv?: Record<string, string | undefined>) {
+  return buildCliProcessEnv({
+    GROK_TELEMETRY_TRACE_UPLOAD: "0",
+    GROK_TELEMETRY_ENABLED: "0",
+    GROK_FEEDBACK_ENABLED: "0",
+    GROK_TELEMETRY_MIXPANEL_ENABLED: "0",
+    ...extraEnv,
+  });
+}
+
+function executeGrok(
+  prompt: string,
+  options: CliExecuteOptions
+): Promise<CliExecuteResult> {
+  const {
+    model,
+    reasoningEffort,
+    timeout = DEFAULT_GROK_TIMEOUT_MS,
+    cwd = process.cwd(),
+    yolo = true,
+  } = options;
+
+  return new Promise((resolve, reject) => {
+    const args = ["-p", prompt, "--cwd", cwd, "--output-format", "json"];
+    if (model) {
+      args.push("-m", model);
+    }
+    if (reasoningEffort) {
+      args.push("--effort", reasoningEffort);
+    }
+    if (yolo) {
+      args.push("--yolo");
+    }
+
+    const start = Date.now();
+    const proc = spawn("grok", args, {
+      cwd,
+      env: buildGrokProcessEnv(options.env),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = createUtf8Collector();
+    const stderr = createUtf8Collector();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (timeout > 0) {
+      timer = setTimeout(() => {
+        const partial = stdout.end() + "\n" + stderr.end();
+        const q = detectCliProviderQuotaLimit("grok", "", partial, null);
+        if (q.limited) {
+          proc.kill("SIGTERM");
+          reject(new CliProviderQuotaError("grok", q.message || "Grok quota signal seen before timeout"));
+          return;
+        }
+        proc.kill("SIGTERM");
+        reject(new Error(`Grok CLI timed out after ${timeout}ms`));
+      }, timeout);
+    }
+
+    proc.stdout.on("data", (data: Buffer) => {
+      stdout.write(data);
+    });
+
+    proc.stderr.on("data", (data: Buffer) => {
+      stderr.write(data);
+      const currentStderr = stderr.text;
+      if (detectCliProviderQuotaLimit("grok", "", currentStderr, null).limited) {
+        if (timer) clearTimeout(timer);
+        proc.kill("SIGTERM");
+        reject(new CliProviderQuotaError("grok", "quota signal detected incrementally in stderr"));
+        return;
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      const stdoutText = stdout.end();
+      const stderrText = stderr.end();
+      const quota = detectCliProviderQuotaLimit("grok", stdoutText, stderrText, code);
+      const hasRealErrorSignal = code !== 0 || /error|fail|quota|limit|429|rate limit|exceeded/i.test(stderrText);
+      if (quota.limited && hasRealErrorSignal) {
+        reject(new CliProviderQuotaError("grok", quota.message || "Grok reported quota/limit"));
+        return;
+      }
+      if (code !== 0 && code !== null) {
+        console.error("[cliExecutor] grok process exited with non-zero code:", code, "stderr:", stderrText);
+        reject(new Error(`Grok CLI exited with code ${code}\nstderr: ${stderrText}`));
+        return;
+      }
+
+      try {
+        resolve({
+          text: parseGrokJsonOutput(stdoutText).trim(),
+          raw: stdoutText,
+          elapsed: Date.now() - start,
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    proc.on("error", (err) => {
+      if (timer) clearTimeout(timer);
+      console.error("[cliExecutor] grok process error event:", err);
+      reject(err);
+    });
+  });
+}
+
 // ── 注册表（新增 CLI 工具时在这里加） ────────────────────────────────────────
 
 const EXECUTORS: Record<
@@ -1051,6 +1417,8 @@ const EXECUTORS: Record<
   claude: executeClaude,
   agy: executeAgy,
   qoder: executeQoder,
+  opencode: executeOpenCode,
+  grok: executeGrok,
 };
 
 function formatCliSessionTask(messages: CliSessionMessage[]): string {
@@ -1087,7 +1455,7 @@ function getCliSessionOrThrow(sessionId: string): CliSessionState {
 /**
  * 执行 CLI 任务
  *
- * @param provider  CLI 工具类型（如 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder"）
+ * @param provider  CLI 工具类型（如 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode"）
  * @param prompt    完整 prompt（system prompt 已由调用方拼好）
  * @param options   执行选项
  */
@@ -1273,7 +1641,7 @@ export function executeCliStreaming(
       })
     );
   }
-  if (provider === "agy" || provider === "qoder") {
+  if (provider === "agy" || provider === "qoder" || provider === "opencode" || provider === "grok") {
     return withCleanup(
       executor(resolved.prompt, resolved.options).then((result) => {
         const merged = { ...result, warnings: [...resolved.warnings, ...(result.warnings ?? [])] };

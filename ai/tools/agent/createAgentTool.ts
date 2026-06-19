@@ -49,7 +49,14 @@ export type CreateAgentToolArgs = {
     presence_penalty?: number;
     max_tokens?: number;
     reasoning_effort?: ReasoningEffort;
+    runtimeToolPolicy?: Record<string, unknown> | null;
 };
+
+const HOSTED_EXEC_RUNTIME_TOOL_POLICY = {
+    version: 1,
+    runtimeTools: ["execShell"],
+    workspace: { mode: "lease" },
+} as const;
 
 const toTrimmed = (v: unknown): string =>
     typeof v === "string"
@@ -199,6 +206,11 @@ export const createAgentToolFunctionSchema = {
                 items: { type: "string" },
                 description: i18n.t("tools.createAgent.params.tools"),
             },
+            runtimeToolPolicy: {
+                type: "object",
+                description:
+                    "Internal runtime policy for executable agent capabilities. Use only when an agent needs shell/script execution; do not expose this as a user-facing setup step.",
+            },
             references: {
                 type: "array",
                 description: i18n.t("tools.createAgent.params.references.desc"),
@@ -306,6 +318,7 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
         presence_penalty,
         max_tokens,
         reasoning_effort,
+        runtimeToolPolicy,
     } = args;
 
     const trimmedName = toTrimmed(name);
@@ -315,6 +328,13 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
     // 用 (model, provider) 查模型元数据，顺便拿 hasVision 等能力
     const modelConfig = await findModelConfig(trimmedModel, trimmedProvider);
     const { getModelPricing } = await import("../../llm/getPricing");
+
+    const normalizedTools = tools ?? [];
+    const resolvedRuntimeToolPolicy =
+        runtimeToolPolicy ??
+        (normalizedTools.includes("execShell")
+            ? HOSTED_EXEC_RUNTIME_TOOL_POLICY
+            : undefined);
 
     const formData: AgentFormData = {
         name: trimmedName,
@@ -333,7 +353,8 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
         isPublic: !!isPublic,
         tags: normalizeTags(tags),
 
-        tools: tools ?? [],
+        tools: normalizedTools,
+        ...(resolvedRuntimeToolPolicy ? { runtimeToolPolicy: resolvedRuntimeToolPolicy } : {}),
         references: (references as any) ?? [],
         linkedSpaces: linkedSpaces ?? [], // Leave raw inputs, resolve in executor
 

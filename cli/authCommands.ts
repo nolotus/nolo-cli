@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 import {
+  buildCliRuntimeEnv,
   getCurrentProfile,
   getDefaultProfileConfigPath,
   loadProfileConfig,
@@ -208,17 +209,24 @@ export async function runLoginCommand(args: string[], deps: LoginCommandDeps = {
   });
 }
 
-export function runWhoamiCommand() {
-  const config = loadProfileConfig();
+export function runWhoamiCommand(deps: { configPath?: string; env?: NodeJS.ProcessEnv; output?: Pick<Console, "log"> } = {}) {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? console;
+  const config = loadProfileConfig(deps.configPath);
   const profile = getCurrentProfile(config);
   if (!config || !profile) {
-    console.log("Not logged in. Run: nolo login");
+    output.log("Not logged in. Run: nolo login");
     return 1;
   }
+  const runtimeEnv = buildCliRuntimeEnv(env, config);
+  const effectiveServer = runtimeEnv.NOLO_SERVER ?? profile.serverUrl;
+  const explicitServer = env.NOLO_SERVER || env.NOLO_SERVER_URL || env.BASE_URL;
 
-  console.log(`profile: ${config.currentProfile}`);
-  console.log(`server: ${profile.serverUrl}`);
-  console.log(`token: ${profile.authToken.slice(0, 8)}...`);
+  output.log(`profile: ${config.currentProfile}`);
+  output.log(`profile server: ${profile.serverUrl}`);
+  output.log(`effective server: ${effectiveServer}`);
+  output.log(`server source: ${explicitServer ? "env" : "profile"}`);
+  output.log(`token: ${profile.authToken.slice(0, 8)}...`);
   return 0;
 }
 

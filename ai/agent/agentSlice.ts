@@ -8,6 +8,7 @@ import { createCybotKey, createAgentKey } from "../../database/keys";
 import { DataType } from "../../create/types";
 import { ulid } from "ulid";
 import type { FormData as AgentFormData } from "../agent/createAgentSchema";
+import { normalizeAgentRuntimeToolPolicy } from "../../agent-runtime/runtimeToolPolicy";
 
 const createSliceWithThunks = buildCreateSlice({
   creators: { asyncThunk: asyncThunkCreator },
@@ -79,6 +80,22 @@ const normalizeAgentReferences = (references: any[]): ReferenceItem[] => {
   }));
 };
 
+const normalizeRuntimeToolPolicy = (value: unknown) => {
+  const policy = normalizeAgentRuntimeToolPolicy(value);
+  if (!policy) return undefined;
+  const hasPolicyContent = Boolean(
+    policy.agentTools?.length ||
+      policy.runtimeTools?.length ||
+      policy.workspace ||
+      policy.shell ||
+      policy.isolation ||
+      policy.git ||
+      policy.budget ||
+      policy.audit
+  );
+  return hasPolicyContent ? policy : undefined;
+};
+
 /**
  * 创建场景：表单数据 -> 持久化数据（全量）
  */
@@ -104,6 +121,13 @@ const processAgentCreateForm = (formData: AgentFormData, userId: string) => {
   };
 
   delete result.machineId;
+  result.runtimeToolPolicy = normalizeRuntimeToolPolicy(
+    (formData as any).runtimeToolPolicy
+  );
+  if (!result.runtimeToolPolicy) {
+    delete result.runtimeToolPolicy;
+  }
+
   if (formData.apiSource === "cli" && machineId) {
     const binding: AgentRuntimeBinding = {
       ...(result.runtimeBinding && typeof result.runtimeBinding === "object"
@@ -210,6 +234,13 @@ const processAgentUpdateChanges = (
   }
   if ("tools" in data) {
     changes.tools = Array.isArray(data.tools) ? data.tools.slice() : [];
+  }
+  if ("runtimeToolPolicy" in data) {
+    const rawRuntimeToolPolicy = (data as any).runtimeToolPolicy;
+    changes.runtimeToolPolicy =
+      rawRuntimeToolPolicy === null
+        ? null
+        : normalizeRuntimeToolPolicy(rawRuntimeToolPolicy) ?? null;
   }
 
   // 数值字段

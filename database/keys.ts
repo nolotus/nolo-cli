@@ -54,6 +54,10 @@ export const isTaskKey = (key: string): boolean => {
   return parts.length >= 3 && parts[0] === DataType.TASK;
 };
 
+export const isAgentAutomationKey = (key: string): boolean => {
+  return key.startsWith(`${DataType.AGENT_AUTOMATION}-`);
+};
+
 /**
  * 判断一个 dbKey 是否是 File/Image 的 key
  * 形如：file-{userId}-{fileId} 或 image-{userId}-{imageId}
@@ -432,6 +436,18 @@ export const createTaskKey = Object.assign(
     }),
   }
 );
+
+export const createAgentAutomationKey = Object.assign(
+  (userId: string) => createKey(DataType.AGENT_AUTOMATION, userId, ulid()),
+  {
+    rangeOfUser: (userId: string) => ({
+      start: createKey(DataType.AGENT_AUTOMATION, userId, ""),
+      end: createKey(DataType.AGENT_AUTOMATION, userId, "\uffff"),
+    }),
+  }
+);
+
+export const agentAutomationKey = createAgentAutomationKey;
 
 /* ---- Notification ---- */
 export const createNotificationKey = {

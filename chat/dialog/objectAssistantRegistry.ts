@@ -1,6 +1,6 @@
 import type { Agent } from "../../app/types";
 import type { AgentRuntimeOptions } from "../../ai/agent/types";
-import { FIREWORKS_KIMI_LATEST_MODEL } from "../../ai/llm/kimi";
+import { VULTR_KIMI_MODEL } from "../../ai/llm/kimi";
 import { DataType } from "../../create/types";
 import { createAgentKey } from "../../database/keys";
 import { APP_BUILDER_PUBLIC_AGENT_KEY } from "../../app/constants/appEditor";
@@ -116,12 +116,12 @@ export const buildBuiltinObjectAssistantAgent = (
     type: DataType.AGENT,
     userId,
     isPublic: false,
-    provider: "fireworks",
-    model: FIREWORKS_KIMI_LATEST_MODEL,
+    provider: "vultr",
+    model: VULTR_KIMI_MODEL,
     apiSource: "platform" as const,
     useServerProxy: true,
-    inputPrice: 0.95 * 8,
-    outputPrice: 4 * 8,
+    inputPrice: 0.3 * 8,
+    outputPrice: 1.2 * 8,
     createdAt: now,
     updatedAt: now,
     dialogCount: 0,
@@ -223,7 +223,17 @@ export const buildObjectAssistantRuntimeOptions = (
 
   if (kind === "app") {
     return {
-      extraTools: ["appRead", "appPreflight", "appDeploy", "openAIGptImage"],
+      extraTools: [
+        "appRead",
+        "appFileList",
+        "appFileSearch",
+        "appFileRead",
+        "appFileWrite",
+        "appFileReplace",
+        "appPreflight",
+        "appDeploy",
+        "openAIGptImage",
+      ],
       editingTarget: {
         kind: "app",
         key: contentKey ?? undefined,

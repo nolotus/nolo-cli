@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { DataType } from "../create/types";
 import { createAgentKey } from "../database/keys";
 import { resolveCliAgentKeyInput } from "./agentAliases";
-import { resolveAgentInput } from "./agentNameResolver";
 import type { CliKvDb } from "./client/hybridRecordStore";
 import { buildLocalAgentLookupKeys, shouldReadAgentKeyRemotely } from "./client/localAgentRecords";
 import {
@@ -13,6 +12,7 @@ import {
   resolveServerUrl,
   type EnvLike,
 } from "./cliEnvHelpers";
+import { readPipeText, spawnProcess } from "./processSpawn";
 
 const PROVIDER_COPY_FIELDS = [
   "apiSource",
@@ -25,8 +25,6 @@ const PROVIDER_COPY_FIELDS = [
   "inputPrice",
   "outputPrice",
 ] as const;
-
-const silentOutput = { write() {} };
 
 function readRepeatedOption(args: string[], flag: string) {
   const values: string[] = [];
@@ -44,6 +42,59 @@ function parseJsonishValue(raw: string) {
   } catch {
     return raw;
   }
+}
+
+function normalizeAgentHandle(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim()
+    ? value.trim().toLowerCase().replace(/\s+/g, " ")
+    : undefined;
+}
+
+function recordHasAgentHandle(record: unknown, handle: string) {
+  if (!record || typeof record !== "object") return false;
+  const normalized = normalizeAgentHandle(handle);
+  if (!normalized) return false;
+  return normalizeAgentHandle((record as any).handle) === normalized;
+}
+
+async function findLocalAgentRecordByHandle(args: {
+  handle: string;
+  db: CliKvDb;
+}) {
+  const normalized = normalizeAgentHandle(args.handle);
+  if (!normalized) return null;
+  try {
+    const iterator = args.db.iterator({ gte: "agent-", lte: "agent-\uffff" });
+    for await (const [key, record] of iterator) {
+      if (!recordHasAgentHandle(record, normalized)) continue;
+      return { key, record };
+    }
+  } catch {
+    // local handle scan unavailable
+  }
+  return null;
+}
+
+async function findRemoteAgentRecordByHandle(args: {
+  handle: string;
+  authToken: string;
+  fallbackFetchImpl?: typeof fetch;
+  fetchImpl: typeof fetch;
+  serverUrl: string;
+  userId: string;
+}) {
+  const normalized = normalizeAgentHandle(args.handle);
+  if (!normalized) return null;
+  const records = await queryUserRecords({
+    authToken: args.authToken,
+    fallbackFetchImpl: args.fallbackFetchImpl,
+    fetchImpl: args.fetchImpl,
+    limit: 200,
+    serverUrl: args.serverUrl,
+    userId: args.userId,
+    type: DataType.AGENT,
+  });
+  return records.find((record) => recordHasAgentHandle(record, normalized)) ?? null;
 }
 
 function parsePositiveIntegerOption(raw: string | undefined, flag: string) {
@@ -90,10 +141,10 @@ async function curlFetch(url: string, init?: RequestInit): Promise<Response> {
   }
 
   command.push("-w", "\n__NOLO_STATUS__:%{http_code}", url);
-  const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+  const proc = spawnProcess({ cmd: command, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+    readPipeText(proc.stdout),
+    readPipeText(proc.stderr),
     proc.exited,
   ]);
   if (exitCode !== 0) {
@@ -286,32 +337,18 @@ export async function resolveAgentRecordFromHybridStore(args: {
   fetchImpl: typeof fetch;
   fallbackFetchImpl?: typeof fetch;
 }) {
+  const agentKey = resolveCliAgentKeyInput(args.agentInput);
   const authToken = args.cliArgs
     ? resolveAuthToken(args.cliArgs, args.env)
     : resolveAuthToken(args.env);
-  const resolvedAgent = await resolveAgentInput({
-    agentInput: args.agentInput,
-    authToken,
-    db: args.db,
-    env: args.env,
-    fallbackFetchImpl: args.fallbackFetchImpl,
-    fetchImpl: args.fetchImpl,
-    output: silentOutput,
-  }).catch((error) => {
-    if (error instanceof Error && error.message.startsWith("ambiguous agent name:")) {
-      throw error;
-    }
-    return null;
-  });
-  if (!resolvedAgent) return null;
-  const agentKey = resolvedAgent.agentKey;
   const defaultServerUrl = args.cliArgs
     ? resolveServerUrl(args.cliArgs, args.env)
     : resolveServerUrl(args.env);
+  const userId = parseUserIdFromAuthToken(authToken) || "local";
 
   for (const key of buildLocalAgentLookupKeys({
     agentRef: agentKey,
-    userId: parseUserIdFromAuthToken(authToken) || "local",
+    userId,
   })) {
     try {
       const record = await args.db.get(key);
@@ -340,6 +377,53 @@ export async function resolveAgentRecordFromHybridStore(args: {
           fetchImpl: args.fetchImpl,
           serverUrl,
         });
+        const cached = { ...remoteRecord, dbKey: key, serverOrigin: serverUrl };
+        await args.db.put(key, cached);
+        return {
+          agentKey: key,
+          record: cached,
+          source: "remote-cache",
+        } as const;
+      } catch {
+        // try next
+      }
+    }
+  }
+
+  const localHandleRecord = await findLocalAgentRecordByHandle({
+    handle: args.agentInput,
+    db: args.db,
+  });
+  if (localHandleRecord) {
+    return {
+      agentKey: localHandleRecord.key,
+      record: localHandleRecord.record,
+      source: localHandleRecord.record?.serverOrigin ? "remote-cache" : "local-cache",
+    } as const;
+  }
+
+  if (authToken && userId !== "local") {
+    for (const serverUrl of (
+      args.cliArgs
+        ? resolveServerCandidates(args.cliArgs, args.env, defaultServerUrl)
+        : resolveServerCandidates(args.env, defaultServerUrl)
+    )) {
+      try {
+        const remoteRecord = await findRemoteAgentRecordByHandle({
+          handle: args.agentInput,
+          authToken,
+          fallbackFetchImpl: args.fallbackFetchImpl,
+          fetchImpl: args.fetchImpl,
+          serverUrl,
+          userId,
+        });
+        if (!remoteRecord || typeof remoteRecord !== "object") continue;
+        const key = typeof remoteRecord.dbKey === "string" && remoteRecord.dbKey
+          ? remoteRecord.dbKey
+          : typeof remoteRecord.key === "string" && remoteRecord.key
+            ? remoteRecord.key
+            : "";
+        if (!key) continue;
         const cached = { ...remoteRecord, dbKey: key, serverOrigin: serverUrl };
         await args.db.put(key, cached);
         return {
@@ -397,6 +481,7 @@ export function parseAgentUpdateArgs(args: string[]) {
   );
   const expiresAt = parseIsoTimestampOption(readOption(args, "--expires-at"), "--expires-at");
   const usageProbe = buildUsageProbeConfig(readOption(args, "--usage-probe"));
+  const handle = readOption(args, "--handle")?.trim();
 
   const promptSources = [prompt, promptFile, promptDoc].filter(Boolean);
   if (promptSources.length > 1) {
@@ -420,6 +505,7 @@ export function parseAgentUpdateArgs(args: string[]) {
       ...(usageProbe ? { usageProbe } : {}),
     };
   }
+  if (handle) updates.handle = handle;
 
   for (const entry of readRepeatedOption(args, "--field")) {
     const index = entry.indexOf("=");
@@ -523,10 +609,7 @@ export async function buildUpdatedAgentRecord(args: {
     fetchImpl: args.fetchImpl,
     fallbackFetchImpl: args.fallbackFetchImpl,
   });
-  if (!cached) {
-    throw new Error(`agent not found: ${args.parsed.agentInput}`);
-  }
-  const agentKey = cached.agentKey;
+  const agentKey = cached?.agentKey ?? resolveCliAgentKeyInput(args.parsed.agentInput);
   const explicitServerUrl = args.cliArgs
     ? readOption(args.cliArgs, "--server-url") || readOption(args.cliArgs, "--server")
     : undefined;

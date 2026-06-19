@@ -1,10 +1,12 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
+import { spawn as spawnChildProcess } from "node:child_process";
 
 import type {
   AgentRuntimeToolCallInput,
   AgentRuntimeToolResult,
 } from "./hostAdapter";
+import { createGlob, resolveExecutableOnPath } from "./runtimeCompat";
 
 type LocalWorkspaceToolArgs = {
   workspaceRoot: string;
@@ -51,6 +53,10 @@ export type ToolActivity = Partial<ToolActivityAction> & {
 
 type WorkspaceFileArgs = {
   path?: unknown;
+  file_path?: unknown;
+  filePath?: unknown;
+  filename?: unknown;
+  file?: unknown;
   content?: unknown;
   oldText?: unknown;
   newText?: unknown;
@@ -135,83 +141,6 @@ const REMOVED_WORKSPACE_TOOL_NAMES = new Set([
   "gitCommit",
   "commitWorkspace",
 ]);
-
-function buildActivityProperty() {
-  const refsProperty = {
-    type: "array",
-    items: {
-      type: "object",
-      properties: {
-        type: { type: "string", enum: ["file", "terminal", "url"] },
-        path: { type: "string" },
-        id: { type: "string" },
-        label: { type: "string" },
-        url: { type: "string" },
-      },
-    },
-    description: "Referenced files, terminals, or URLs for this action.",
-  };
-  const actionProperty = {
-    type: "object",
-    properties: {
-      title: { type: "string", description: "Short human-readable action label." },
-      kind: {
-        type: "string",
-        enum: ["read", "write", "edit", "search", "terminal", "version", "test", "build", "preview", "other"],
-      },
-      detail: { type: "string", description: "Optional concise detail shown after the label." },
-      refs: refsProperty,
-    },
-    required: ["title"],
-  };
-  const planPhaseProperty = {
-    type: "object",
-    properties: {
-      id: { type: "string", description: "Stable phase id reused by activity.phase.id." },
-      title: { type: "string", description: "Human-readable planned task phase." },
-      index: { type: "number" },
-      status: { type: "string", enum: ["pending", "running", "success", "failed"] },
-    },
-    required: ["id", "title"],
-  };
-  return {
-    type: "object",
-    description:
-      "Optional lightweight human-readable activity hint for UI display only. Prefer { plan, phase, action }. The executor ignores this for execution semantics but echoes it back in result metadata.",
-    properties: {
-      title: { type: "string", description: "Short human-readable action label." },
-      kind: {
-        type: "string",
-        enum: ["read", "write", "edit", "search", "terminal", "version", "test", "build", "preview", "other"],
-      },
-      detail: { type: "string", description: "Optional longer description shown on expand." },
-      refs: refsProperty,
-      plan: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Optional label for the visible task progress block." },
-          phases: {
-            type: "array",
-            items: planPhaseProperty,
-          },
-        },
-        required: ["phases"],
-      },
-      phase: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Stable phase id reused across related tool calls." },
-          title: { type: "string", description: "Human-readable current task phase." },
-          index: { type: "number" },
-          total: { type: "number" },
-          status: { type: "string", enum: ["pending", "running", "success", "failed"] },
-        },
-        required: ["id", "title"],
-      },
-      action: actionProperty,
-    },
-  };
-}
 
 function readTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -351,7 +280,6 @@ function buildListWorkspaceDescription(variant?: ListFilesDescriptionVariant) {
 
 function buildListWorkspaceParameters(variant?: ListFilesParameterVariant) {
   const path = buildWorkspacePathProperty();
-  const _activity = buildActivityProperty();
   const maxDepth = {
     type: "integer",
     description: "Maximum directory depth to include. Defaults to 1 for the requested directory only.",
@@ -368,7 +296,7 @@ function buildListWorkspaceParameters(variant?: ListFilesParameterVariant) {
   if (variant === "minimal") {
     return {
       type: "object",
-      properties: { path, _activity },
+      properties: { path },
     };
   }
   if (variant === "rich") {
@@ -379,7 +307,6 @@ function buildListWorkspaceParameters(variant?: ListFilesParameterVariant) {
         maxDepth,
         maxResults,
         entryType,
-        _activity,
       },
     };
   }
@@ -388,7 +315,6 @@ function buildListWorkspaceParameters(variant?: ListFilesParameterVariant) {
     properties: {
       path,
       maxResults,
-      _activity,
     },
   };
 }
@@ -422,7 +348,6 @@ function buildReadWorkspaceDescription(variant?: ReadFileDescriptionVariant) {
 
 function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
   const path = buildWorkspacePathProperty();
-  const _activity = buildActivityProperty();
   const startLine = {
     type: "integer",
     description: "1-based first line to return. Use with endLine or maxLines after searchFiles gives a line number.",
@@ -442,7 +367,7 @@ function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
   if (variant === "minimal") {
     return {
       type: "object",
-      properties: { path, _activity },
+      properties: { path },
       required: ["path"],
     };
   }
@@ -455,7 +380,6 @@ function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
         endLine,
         maxLines,
         tailLines,
-        _activity,
       },
       required: ["path"],
     };
@@ -467,7 +391,6 @@ function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
       startLine,
       endLine,
       maxLines,
-      _activity,
     },
     required: ["path"],
   };
@@ -502,7 +425,6 @@ function buildWriteWorkspaceFileTool(): OpenAiCompatibleTool {
             type: "string",
             description: "Full UTF-8 file content to write.",
           },
-          _activity: buildActivityProperty(),
         },
         required: ["path", "content"],
       },
@@ -533,7 +455,6 @@ function buildReplaceWorkspaceTextTool(): OpenAiCompatibleTool {
             type: "integer",
             description: "Expected replacement count. Defaults to 1.",
           },
-          _activity: buildActivityProperty(),
         },
         required: ["path", "oldText", "newText"],
       },
@@ -589,7 +510,7 @@ function buildSearchWorkspaceParameters(variant?: SearchFilesParameterVariant) {
   if (variant === "minimal") {
     return {
       type: "object",
-      properties: { query, _activity: buildActivityProperty() },
+      properties: { query },
       required: ["query"],
     };
   }
@@ -605,7 +526,6 @@ function buildSearchWorkspaceParameters(variant?: SearchFilesParameterVariant) {
         literal,
         caseSensitive,
         contextLines,
-        _activity: buildActivityProperty(),
       },
       required: ["query"],
     };
@@ -617,7 +537,6 @@ function buildSearchWorkspaceParameters(variant?: SearchFilesParameterVariant) {
       path,
       includeIgnored,
       maxResults,
-      _activity: buildActivityProperty(),
     },
     required: ["query"],
   };
@@ -673,7 +592,7 @@ function buildGlobWorkspaceParameters(variant?: GlobFilesParameterVariant) {
   if (variant === "minimal") {
     return {
       type: "object",
-      properties: { pattern, _activity: buildActivityProperty() },
+      properties: { pattern },
       required: ["pattern"],
     };
   }
@@ -686,7 +605,6 @@ function buildGlobWorkspaceParameters(variant?: GlobFilesParameterVariant) {
         exclude,
         includeIgnored,
         maxResults,
-        _activity: buildActivityProperty(),
       },
       required: ["pattern"],
     };
@@ -703,7 +621,6 @@ function buildGlobWorkspaceParameters(variant?: GlobFilesParameterVariant) {
       exclude,
       includeIgnored,
       maxResults,
-      _activity: buildActivityProperty(),
     },
   };
 }
@@ -805,7 +722,6 @@ function buildExecShellTool(toolName: string): OpenAiCompatibleTool {
             type: "string",
             description: "Shell command to run.",
           },
-          _activity: buildActivityProperty(),
         },
       },
     },
@@ -823,7 +739,7 @@ function wrapPowerShellCommand(command: string) {
 }
 
 function findPowerShellExecutable() {
-  return Bun.which("pwsh") || Bun.which("powershell.exe") || Bun.which("powershell");
+  return resolveExecutableOnPath("pwsh") || resolveExecutableOnPath("powershell.exe") || resolveExecutableOnPath("powershell");
 }
 
 function buildPowerShellCommand(command: string) {
@@ -842,7 +758,7 @@ function buildPowerShellCommand(command: string) {
 }
 
 function buildBashCommand(command: string) {
-  const executable = Bun.which("bash") || Bun.which("sh");
+  const executable = resolveExecutableOnPath("bash") || resolveExecutableOnPath("sh");
   if (!executable) throw new Error("bash/sh is not available on this machine.");
   return [executable, "-lc", command];
 }
@@ -1030,9 +946,19 @@ function isPathInsideWorkspace(args: {
 }
 
 function requireWorkspaceToolPath(args: WorkspaceFileArgs) {
-  const requestedPath = typeof args.path === "string" ? args.path.trim() : "";
+  const requestedPath = readWorkspacePathAlias(args) ?? "";
   if (!requestedPath) throw new Error("Workspace tool requires a non-empty path.");
   return requestedPath;
+}
+
+function readWorkspacePathAlias(args: WorkspaceFileArgs) {
+  const path =
+    args.path ??
+    args.file_path ??
+    args.filePath ??
+    args.filename ??
+    args.file;
+  return typeof path === "string" && path.trim() ? path.trim() : undefined;
 }
 
 function requireWorkspaceFileContent(args: WorkspaceFileArgs) {
@@ -1343,7 +1269,15 @@ async function runWorkspacePackageScript(args: {
 
 function truncateToolOutput(value: string, limit = 20_000) {
   if (value.length <= limit) return value;
-  return `${value.slice(0, limit)}\n\n[truncated ${value.length - limit} chars]`;
+  const approxMarkerLen = 40;
+  if (limit <= approxMarkerLen) return value.slice(0, limit);
+  const remaining = limit - approxMarkerLen;
+  const headSize = Math.floor(remaining * 0.3);
+  const tailSize = remaining - headSize;
+  const head = value.slice(0, headSize);
+  const tail = value.slice(-tailSize);
+  const actualRemoved = value.length - headSize - tailSize;
+  return `${head}\n\n[... truncated ${actualRemoved} chars ...]\n\n${tail}`;
 }
 
 function parseLastJsonObject(text: string): Record<string, unknown> | null {
@@ -1359,24 +1293,29 @@ function parseLastJsonObject(text: string): Record<string, unknown> | null {
   return null;
 }
 
-async function writeProcessInput(proc: any, input: string) {
-  const stdin = proc.stdin;
-  if (!stdin) return;
-  const encoded = new TextEncoder().encode(input);
-  if (typeof stdin.getWriter === "function") {
-    const writer = stdin.getWriter();
-    try {
-      await writer.write(encoded);
-      await writer.close();
-    } finally {
-      writer.releaseLock();
-    }
-    return;
-  }
-  if (typeof stdin.write === "function") {
-    await stdin.write(encoded);
-    await stdin.end?.();
-  }
+function readNodeStream(stream: NodeJS.ReadableStream | null): Promise<string> {
+  if (!stream) return Promise.resolve("");
+  return new Promise((resolveRead, rejectRead) => {
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    });
+    stream.on("error", rejectRead);
+    stream.on("end", () => resolveRead(Buffer.concat(chunks).toString("utf8")));
+  });
+}
+
+function waitForNodeProcessExit(proc: ReturnType<typeof spawnChildProcess>) {
+  return new Promise<number>((resolveExit, rejectExit) => {
+    proc.once("error", rejectExit);
+    proc.once("close", (code, signal) => {
+      if (typeof code === "number") {
+        resolveExit(code);
+        return;
+      }
+      resolveExit(signal ? 1 : 0);
+    });
+  });
 }
 
 async function runWorkspaceCommand(args: {
@@ -1396,26 +1335,32 @@ async function runWorkspaceCommand(args: {
     ...(args.commandPrefix ?? []),
     ...args.command,
   ];
-  const proc = Bun.spawn(command, {
+  const proc = spawnChildProcess(command[0] ?? "", command.slice(1), {
     cwd: resolve(args.workspaceRoot),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: args.stdin === undefined ? "ignore" : "pipe",
+    stdio: [
+      args.stdin === undefined ? "ignore" : "pipe",
+      "pipe",
+      "pipe",
+    ],
     detached,
   });
-  if (args.stdin !== undefined) await writeProcessInput(proc, args.stdin);
-  const stdoutPromise = new Response(proc.stdout).text();
-  const stderrPromise = new Response(proc.stderr).text();
+  if (args.stdin !== undefined && proc.stdin) {
+    proc.stdin.write(args.stdin);
+    proc.stdin.end();
+  }
+  const exitPromise = waitForNodeProcessExit(proc);
+  const stdoutPromise = readNodeStream(proc.stdout);
+  const stderrPromise = readNodeStream(proc.stderr);
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutResult = Symbol("timeout");
   const exitOrTimeout = timeoutMs
     ? await Promise.race([
-        proc.exited,
+        exitPromise,
         new Promise<typeof timeoutResult>((resolveTimeout) => {
           timeout = setTimeout(() => resolveTimeout(timeoutResult), timeoutMs);
         }),
       ])
-    : await proc.exited;
+    : await exitPromise;
   if (timeout) clearTimeout(timeout);
   const timedOut = exitOrTimeout === timeoutResult;
   if (timedOut) {
@@ -1436,7 +1381,7 @@ async function runWorkspaceCommand(args: {
     };
     kill("SIGTERM");
     await Promise.race([
-      proc.exited.catch(() => 124),
+      exitPromise.catch(() => 124),
       new Promise((resolveKill) => setTimeout(resolveKill, 500)),
     ]);
     kill("SIGKILL");
@@ -1472,24 +1417,19 @@ async function runWorkspaceCommandLimitedLines(args: {
     ...(args.commandPrefix ?? []),
     ...args.command,
   ];
-  const proc = Bun.spawn(command, {
+  const proc = spawnChildProcess(command[0] ?? "", command.slice(1), {
     cwd: resolve(args.workspaceRoot),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   });
-  const stderrPromise = new Response(proc.stderr).text();
-  const reader = proc.stdout.getReader();
-  const decoder = new TextDecoder();
+  const exitPromise = waitForNodeProcessExit(proc);
+  const stderrPromise = readNodeStream(proc.stderr);
   const lines: string[] = [];
   let pending = "";
   let limitedByMaxResults = false;
-  try {
-    while (lines.length < args.maxLines) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      pending += decoder.decode(chunk.value, { stream: true });
+  await new Promise<void>((resolveRead, rejectRead) => {
+    proc.stdout?.on("data", (chunk) => {
+      pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
       const parts = pending.split(/\r?\n/);
       pending = parts.pop() ?? "";
       for (const part of parts) {
@@ -1497,25 +1437,23 @@ async function runWorkspaceCommandLimitedLines(args: {
         lines.push(part);
         if (lines.length >= args.maxLines) {
           limitedByMaxResults = true;
+          try {
+            proc.kill("SIGTERM");
+          } catch {
+            // The command may already have exited.
+          }
           break;
         }
       }
-    }
+    });
+    proc.stdout?.on("error", rejectRead);
+    proc.stdout?.on("end", () => resolveRead());
+  });
     if (!limitedByMaxResults && pending.trim()) lines.push(pending);
-  } finally {
-    reader.releaseLock();
-  }
-  if (limitedByMaxResults) {
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      // The command may already have exited.
-    }
-  }
-  const exitCode = limitedByMaxResults ? 0 : Number(await proc.exited);
+  const exitCode = limitedByMaxResults ? 0 : await exitPromise;
   const stderr = await stderrPromise;
   return {
-    stdout: lines.join("\n"),
+    stdout: lines.slice(0, args.maxLines).join("\n"),
     stderr,
     exitCode,
     limitedByMaxResults,
@@ -1714,9 +1652,7 @@ async function listFilesTool(args: {
   workspaceRoot: string;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
-  const requestedPath = typeof parsed.path === "string" && parsed.path.trim()
-    ? parsed.path.trim()
-    : ".";
+  const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
   const maxDepth = readWorkspaceMaxDepth(parsed);
   const maxResults = readWorkspaceMaxResults(parsed);
   const entryType = readWorkspaceEntryType(parsed);
@@ -1758,9 +1694,7 @@ async function searchFilesTool(args: {
   const contextLines = readWorkspaceContextLines(parsed);
   const literal = parsed.literal === true;
   const caseSensitive = parsed.caseSensitive === false ? false : true;
-  const requestedPath = typeof parsed.path === "string" && parsed.path.trim()
-    ? parsed.path.trim()
-    : ".";
+  const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
   const includeIgnored = parsed.includeIgnored === true;
   const searchPath = resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
@@ -1912,7 +1846,7 @@ async function filterRootGitignoredFiles(args: {
   if (args.includeIgnored) return args.files;
   const patterns = await readRootGitignorePatterns(args.workspaceRoot);
   if (patterns.length === 0) return args.files;
-  const globs = patterns.map((pattern) => new Bun.Glob(pattern));
+  const globs = patterns.map((pattern) => createGlob(pattern));
   return args.files.filter((file) => !globs.some((glob) => glob.match(file)));
 }
 
@@ -1925,7 +1859,7 @@ function scanWorkspaceGlobFiles(args: {
   const pathPrefix = args.relativeSearchPath === "."
     ? ""
     : `${args.relativeSearchPath.replace(/\/+$/, "")}/`;
-  return Array.from(new Bun.Glob(args.pattern).scanSync({
+  return Array.from(createGlob(args.pattern).scanSync({
     cwd: args.workspaceRoot,
     dot: true,
     onlyFiles: true,
@@ -1934,7 +1868,7 @@ function scanWorkspaceGlobFiles(args: {
     .filter(Boolean)
     .filter((line) => !line.startsWith(".git/") && !line.startsWith("node_modules/"))
     .filter((line) => !pathPrefix || line === args.relativeSearchPath || line.startsWith(pathPrefix))
-    .filter((line) => !args.exclude.some((pattern) => new Bun.Glob(pattern).match(line)))
+    .filter((line) => !args.exclude.some((pattern) => createGlob(pattern).match(line)))
     .sort((left, right) => left.localeCompare(right));
 }
 
@@ -2029,9 +1963,7 @@ async function globFilesTool(args: {
   const pattern = requireWorkspaceGlobPattern(parsed);
   const exclude = readWorkspaceExcludeGlobs(parsed);
   const maxResults = readWorkspaceMaxResults(parsed);
-  const requestedPath = typeof parsed.path === "string" && parsed.path.trim()
-    ? parsed.path.trim()
-    : ".";
+  const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
   const includeIgnored = parsed.includeIgnored === true;
   const searchPath = resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,

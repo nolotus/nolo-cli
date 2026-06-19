@@ -67,7 +67,8 @@ export function resolveAgentRuntimeConfigFromRecord(
   const frequencyPenalty = numberField(record, "frequency_penalty");
   const presencePenalty = numberField(record, "presence_penalty");
   const maxTokens = numberField(record, "max_tokens");
-  const reasoningEffort = stringField(record, "reasoning_effort");
+  const reasoningEffort =
+    stringField(record, "reasoning_effort") || stringField(record, "reasoningEffort");
   const runtimeBinding = objectField(record, "runtimeBinding");
   const runtimeToolPolicy =
     objectField(record, "runtimeToolPolicy") ??

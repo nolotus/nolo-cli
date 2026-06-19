@@ -11,7 +11,6 @@ import {
   runAgentCreateCommand,
 } from "./agentRecordCommands";
 import { runAgentRunCommand } from "./agentRunCommand";
-import { runQoderUsageCommand } from "./qoderUsageProbe";
 import {
   createEnvCommand,
   createEnvScriptDirCommand,
@@ -33,7 +32,6 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
     createEnvCommand(["agent", "pull"], "Cache an agent for local runs", runAgentPullCommand),
     createEnvCommand(["agent", "read"], "Read a single agent", runAgentReadCommand),
     createAgentRunCommand(["agent", "run"], "Run an agent"),
-    createEnvCommand(["agent", "usage"], "Read local provider usage for an agent", runQoderUsageCommand),
     createEnvCommand(["agent", "setup-offline-marxists"], "Create or update the Marxists.org offline book agent", runSetupOfflineMarxistsAgentCommand),
     createEnvCommand(["agent", "update"], "Update agent fields", runAgentUpdateCommand),
     createEnvCommand(["agent", "bind-current"], "Bind an agent to this machine", runAgentBindCurrentCommand),

@@ -1,12 +1,11 @@
 // 文件路径: database/actions/readAndWait.ts
 
 import type { AppThunkApi } from "../../app/store";
-import { buildBuiltinPlatformAgentRecord } from "../../core/builtinAgents";
 import { fetchFromClientDb, fetchFromServer } from "./common";
 import { readRequestManager } from "./readRequestManager";
 import { scheduleExistingRecordReplication } from "./replication";
 import { getRuntimeServerContext } from "../runtimeServerContext";
-import { isBuiltinPlatformAgentKey, resolveAgentReadServers } from "./agentReadResolution";
+import { resolveAgentReadServers } from "./agentReadResolution";
 import {
   compareRemoteRecordsByComparableTime,
   planAuthorityReadServers,
@@ -171,14 +170,6 @@ export const readAndWaitAction = async (
   const isLoggedIn = !!currentToken;
 
   const executeReadAndWait = async (): Promise<any> => {
-    if (isBuiltinPlatformAgentKey(dbKey)) {
-      const builtinRecord = buildBuiltinPlatformAgentRecord(dbKey);
-      if (builtinRecord) {
-        await db.put(dbKey, builtinRecord);
-        return { ...builtinRecord, dbKey };
-      }
-    }
-
     // 1. 准备所有需要访问的远程服务器（带去重 + 离线检测）
     // 2. 首先，尝试从本地数据库获取数据（可能为 null）
     const localData = await fetchFromClientDb(db, dbKey);

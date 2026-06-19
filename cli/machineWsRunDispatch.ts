@@ -26,6 +26,7 @@ export type LocalCliExecutor = (
     cwd?: string;
     yolo?: boolean;
     env?: EnvLike;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
     imageInputs?: Array<{ source: string; materializedPath?: string }>;
   }
 ) => Promise<{ text: string; raw?: string; elapsed?: number }>;
@@ -568,11 +569,14 @@ export async function handleConnectorRunMessage(
         });
       }, 15_000);
       const effectiveRuntimeEnv = withForwardedUserAuthToken(runtimeEnv, parsed);
+      const reasoningEffort =
+        agentConfig.reasoning_effort || agentConfig.reasoningEffort || undefined;
       const result = await executeCli(provider, materializedPrompt.prompt, {
         model: agentConfig.model || undefined,
         timeout,
         cwd,
         yolo: true,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
         env: {
           NOLO_SERVER:
             effectiveRuntimeEnv.NOLO_SERVER ||

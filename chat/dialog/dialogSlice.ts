@@ -153,9 +153,9 @@ const runCreateDialogAction = async (args: any, thunkApi: any) => {
   return createDialogAction(args, thunkApi);
 };
 
-const runCreateScheduledTaskAction = async (args: any, thunkApi: any) => {
-  const { createScheduledTaskAction } = await import("./actions/createScheduledTaskAction");
-  return createScheduledTaskAction(args, thunkApi);
+const runCreateAgentAutomationAction = async (args: any, thunkApi: any) => {
+  const { createAgentAutomationAction } = await import("./actions/createAgentAutomationAction");
+  return createAgentAutomationAction(args, thunkApi);
 };
 
 const runUpdateDialogTitleAction = async (args: any, thunkApi: any) => {
@@ -631,7 +631,7 @@ const dialogSlice = createSliceWithThunks({
       }
     ),
     createDialog: create.asyncThunk(runCreateDialogAction),
-    createScheduledTask: create.asyncThunk(runCreateScheduledTaskAction),
+    createAgentAutomation: create.asyncThunk(runCreateAgentAutomationAction),
     updateDialogTitle: create.asyncThunk(runUpdateDialogTitleAction),
     addCybot: create.asyncThunk(runAddCybotAction),
     removeCybot: create.asyncThunk(runRemoveCybotAction),
@@ -879,7 +879,7 @@ export const {
   saveCompletedDialogGoal,
   clearDialogState,
   createDialog,
-  createScheduledTask,
+  createAgentAutomation,
   createDialogGoal,
   completeDialogGoal,
   updateDialogTitle,

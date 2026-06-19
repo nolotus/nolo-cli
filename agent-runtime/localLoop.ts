@@ -114,7 +114,7 @@ function summarizeToolArguments(toolName: string, rawArgs: string | undefined) {
   };
   const command = pick("command", "cmd", "runCommand", "executeCommand", "bash");
   if (command) return clip(command);
-  const filePath = pick("filePath", "path", "filename", "file");
+  const filePath = pick("filePath", "file_path", "path", "filename", "file");
   if (filePath) return clip(filePath);
   const query = pick("query", "pattern", "search", "q");
   if (query) return clip(query);
@@ -168,6 +168,33 @@ function formatToolMessageContent(args: {
   return `${args.content}\n\n[tool metadata]\n${JSON.stringify(args.metadata)}`;
 }
 
+const MAX_HISTORICAL_TOOL_CONTENT_CHARS = 2400;
+
+function summarizeHistoricalToolContent(content: AgentRuntimeMessageContent): AgentRuntimeMessageContent {
+  if (typeof content !== "string") return content;
+  if (content.length <= MAX_HISTORICAL_TOOL_CONTENT_CHARS) return content;
+
+  const compact = compactWhitespace(content);
+  const clipped = compact.length > MAX_HISTORICAL_TOOL_CONTENT_CHARS
+    ? compact.slice(0, MAX_HISTORICAL_TOOL_CONTENT_CHARS - 160)
+    : compact;
+  return [
+    "[historical tool result truncated for the next turn]",
+    `originalChars=${content.length}`,
+    clipped,
+  ].join("\n");
+}
+
+function prepareHistoryForNextTurn(history: AgentRuntimeChatMessage[]): AgentRuntimeChatMessage[] {
+  return history.map((message) => {
+    if (message.role !== "tool") return message;
+    return {
+      ...message,
+      content: summarizeHistoricalToolContent(message.content),
+    };
+  });
+}
+
 function buildMessages(args: {
   prompt?: string;
   history: AgentRuntimeChatMessage[];
@@ -178,7 +205,7 @@ function buildMessages(args: {
     ...(systemContent
       ? [{ role: "system" as const, content: systemContent }]
       : []),
-    ...args.history,
+    ...prepareHistoryForNextTurn(args.history),
     { role: "user" as const, content: args.input },
   ];
 }

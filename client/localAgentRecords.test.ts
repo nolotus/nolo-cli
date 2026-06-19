@@ -6,12 +6,11 @@ import {
 } from "./localAgentRecords";
 
 describe("CLI local agent records", () => {
-  test("builds explicit and user-scoped agent lookup keys in order", () => {
+  test("builds user-scoped agent lookup keys for handles", () => {
     expect(buildLocalAgentLookupKeys({
       agentRef: "frontend",
       userId: "user-1",
     })).toEqual([
-      "frontend",
       "agent-user-1-frontend",
       "cybot-user-1-frontend",
     ]);

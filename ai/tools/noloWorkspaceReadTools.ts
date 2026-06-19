@@ -4,12 +4,22 @@ import { createSpaceKey } from "../../create/space/spaceKeys";
 import { redactAgentRecordForWorkspaceTool } from "../../agent-runtime/runtimeToolSurface";
 import {
   clampNoloPositiveInteger,
+  buildNoloSubjectRefQueryTarget,
+  filterNoloDialogSubjectRefEvidence,
   getNoloComparableUpdatedAt,
   getNoloDialogIdFromKey,
   NOLO_WORKSPACE_TOOL_NAMES,
+  normalizeNoloExcludeDialogIds,
   normalizeNoloSpaceInput,
   resolveNoloDialogInput,
+  verifyNoloDialogSubjectRefQuery,
 } from "../../agent-runtime/noloWorkspaceTools";
+import {
+  buildDeleteDialogsPreview,
+  filterDialogDeletionCandidates,
+  resolveConfirmedDialogDeletionTargets,
+  type DeleteDialogsMatchMode,
+} from "./deleteDialogsToolModel";
 
 type ToolResult = {
   rawData: unknown;
@@ -58,6 +68,7 @@ async function queryRemoteUserRecords(args: {
   userId?: string;
   type: string | string[];
   limit: number;
+  subjectRef?: object;
 }) {
   const serverBase = normalizeServer(args.serverBase);
   if (!serverBase || !args.token || !args.userId) return [];
@@ -69,7 +80,10 @@ async function queryRemoteUserRecords(args: {
         "Content-Type": "application/json",
         ...authHeaders(args.token),
       },
-      body: JSON.stringify({ type: args.type }),
+      body: JSON.stringify({
+        type: args.type,
+        ...(args.subjectRef ? { subjectRef: args.subjectRef } : {}),
+      }),
     }
   );
   if (!response.ok) return [];
@@ -125,7 +139,14 @@ export async function listDialogsFunc(args: any, thunkApi: any): Promise<ToolRes
   const includeScheduled = args?.includeScheduled === true;
   const records = await queryBestRecords(thunkApi, DataType.DIALOG, limit * 3);
   const dialogs = records
-    .filter((record: any) => includeScheduled || record?.triggerType !== "scheduled_run")
+    .filter((record: any) =>
+      includeScheduled
+        ? true
+        : record?.triggerType !== "scheduled_run" &&
+          record?.triggerType !== "automation_run" &&
+          !record?.parentTaskKey &&
+          !record?.parentAutomationKey
+    )
     .sort((left: any, right: any) => getNoloComparableUpdatedAt(right) - getNoloComparableUpdatedAt(left))
     .slice(0, limit)
     .map((record: any) => ({
@@ -157,6 +178,108 @@ export const readDialogFunctionSchema = {
     required: ["dialog"],
   },
 } as const;
+
+export const queryDialogsBySubjectRefFunctionSchema = {
+  name: "queryDialogsBySubjectRef",
+  description:
+    "Query persisted Nolo dialog evidence by generic dialog.subjectRefs. Read-only; use readDialog for full message traces.",
+  parameters: {
+    type: "object",
+    properties: {
+      rowDbKey: { type: "string", description: "Convenience target for a table-row task subject ref." },
+      subjectKind: { type: "string", description: "Generic subject ref kind, such as table-row, page, file, commit, or artifact." },
+      subjectId: { type: "string", description: "Generic subject ref id." },
+      subjectRole: { type: "string", description: "Optional subject ref role." },
+      limit: { type: "integer", description: "Maximum matching dialog summaries to return. Default 20, max 100." },
+      status: { type: "string", description: "Optional dialog status filter." },
+      checkpointStatus: { type: "string", description: "Optional runtimeCheckpoint.status filter." },
+      hasArtifacts: { type: "boolean", description: "When true, only return dialogs with artifacts." },
+      excludeDialogId: { type: "string", description: "Optional dialog id or dbKey to exclude from evidence results, typically the current caller dialog." },
+    },
+  },
+} as const;
+
+export const deleteDialogsFunctionSchema = {
+  name: "deleteDialogs",
+  description: [
+    "Find and delete the current user's Nolo dialogs by title, id, or dbKey.",
+    "Dangerous operation: first preview matching dialogs and wait for user confirmation, then delete.",
+    "Only dialogs owned by the current user are deletable. The current running dialog is skipped by default.",
+  ].join("\n"),
+  parameters: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description: "Dialog title/id/dbKey search text, for example 中医评测 or a dialog id.",
+      },
+      matchMode: {
+        type: "string",
+        enum: ["contains", "exact", "prefix", "dialogId"],
+        description:
+          "Matching mode. contains=title/id/dbKey contains query, exact=exact title/id/dbKey, prefix=title/id prefix, dialogId=exact dialog id/dbKey. Default contains.",
+        default: "contains",
+      },
+      confirmedDialogIds: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Dialog IDs or dbKeys supplied by the UI confirmation step. The tool will not delete anything unless these IDs are present.",
+      },
+    },
+    required: ["query"],
+  },
+} as const;
+
+export async function queryDialogsBySubjectRefFunc(args: any, thunkApi: any): Promise<ToolResult> {
+  const runtime = getRuntime(thunkApi);
+  const target = buildNoloSubjectRefQueryTarget(args ?? {});
+  if (!target) throw new Error("queryDialogsBySubjectRef requires rowDbKey or subjectKind plus subjectId.");
+  const queryLimit = clampNoloPositiveInteger(args?.queryLimit, 500, 500);
+  const outputLimit = clampNoloPositiveInteger(args?.limit, 20, 100);
+  const dialogs = await queryRemoteUserRecords({
+    serverBase: runtime?.currentServer,
+    token: runtime?.currentToken,
+    userId: runtime?.currentUserId,
+    type: DataType.DIALOG,
+    limit: queryLimit,
+    subjectRef: target,
+  });
+  const status = typeof args?.status === "string" && args.status.trim() ? args.status.trim() : null;
+  const checkpointStatus =
+    typeof args?.checkpointStatus === "string" && args.checkpointStatus.trim()
+      ? args.checkpointStatus.trim()
+      : null;
+  const hasArtifacts = typeof args?.hasArtifacts === "boolean" ? args.hasArtifacts : null;
+  const excludeDialogIds = normalizeNoloExcludeDialogIds([
+    args?.excludeDialogId,
+    args?.excludeDialog,
+    ...(Array.isArray(args?.excludeDialogIds) ? args.excludeDialogIds : []),
+  ]);
+  const result = {
+    success: true,
+    source: "db.query.subjectRef",
+    readOnly: true,
+    target,
+    ...(excludeDialogIds.length ? { excludedDialogIds: excludeDialogIds } : {}),
+    strict: verifyNoloDialogSubjectRefQuery(dialogs, target, { excludeDialogIds }),
+    total: 0,
+    dialogs: filterNoloDialogSubjectRefEvidence({
+      dialogs,
+      target,
+      limit: outputLimit,
+      status,
+      checkpointStatus,
+      hasArtifacts,
+      excludeDialogIds,
+    }),
+  };
+  result.total = result.dialogs.length;
+  return {
+    rawData: result,
+    displayData: jsonPreview(result),
+  };
+}
 
 export async function readDialogFunc(args: any, thunkApi: any): Promise<ToolResult> {
   const runtime = getRuntime(thunkApi);
@@ -205,6 +328,120 @@ export async function readDialogFunc(args: any, thunkApi: any): Promise<ToolResu
       messageCount: messages.length,
       messages,
     }),
+  };
+}
+
+const formatDeleteDialogsPreview = (preview: ReturnType<typeof buildDeleteDialogsPreview>) => {
+  if (preview.deletable.length === 0 && preview.skipped.length === 0) {
+    return "没有找到匹配的对话。";
+  }
+  const lines = [
+    `找到 ${preview.deletable.length} 个可删除对话，${preview.skipped.length} 个跳过。`,
+    "",
+  ];
+  if (preview.deletable.length > 0) {
+    lines.push("是否删除这些对话？");
+    for (const item of preview.deletable) {
+      lines.push(`- ${item.title} (${item.dialogId})`);
+    }
+    lines.push("");
+    lines.push("需要确认后才会删除。");
+  }
+  if (preview.skipped.length > 0) {
+    lines.push("跳过：");
+    for (const item of preview.skipped) {
+      lines.push(`- ${item.title || item.dialogId || item.dbKey}：${item.reason}`);
+    }
+  }
+  return lines.join("\n");
+};
+
+const loadDeleteDialogsPreview = async (args: any, thunkApi: any) => {
+  const runtime = getRuntime(thunkApi);
+  const userId = runtime?.currentUserId;
+  if (!userId) throw new Error("deleteDialogs requires a signed-in user.");
+  const query = typeof args?.query === "string" ? args.query.trim() : "";
+  if (!query) throw new Error("deleteDialogs requires query.");
+  const records = await queryRemoteUserRecords({
+    serverBase: runtime?.currentServer,
+    token: runtime?.currentToken,
+    userId,
+    type: DataType.DIALOG,
+    limit: 500,
+  });
+  const candidates = filterDialogDeletionCandidates(records, {
+    query,
+    matchMode: args?.matchMode as DeleteDialogsMatchMode | undefined,
+  });
+  const currentDialogId =
+    typeof args?.currentDialogId === "string" && args.currentDialogId.trim()
+      ? args.currentDialogId.trim()
+      : (() => {
+          const currentDialogKey = thunkApi?.getState?.()?.dialog?.currentDialogKey;
+          return typeof currentDialogKey === "string"
+            ? getNoloDialogIdFromKey(currentDialogKey)
+            : null;
+        })();
+  return buildDeleteDialogsPreview({
+    currentUserId: userId,
+    candidates,
+    currentDialogId,
+  });
+};
+
+export async function deleteDialogsPreviewFunc(args: any, thunkApi: any): Promise<ToolResult> {
+  const preview = await loadDeleteDialogsPreview(args, thunkApi);
+  return {
+    rawData: {
+      requiresConfirmation: true,
+      ...preview,
+    },
+    displayData: formatDeleteDialogsPreview(preview),
+  };
+}
+
+export async function deleteDialogsFunc(args: any, thunkApi: any): Promise<ToolResult> {
+  const preview = await loadDeleteDialogsPreview(args, thunkApi);
+  const confirmedIds =
+    Array.isArray(args?.confirmedDialogIds) && args.confirmedDialogIds.length > 0
+      ? args.confirmedDialogIds
+      : [];
+  if (confirmedIds.length === 0) {
+    throw new Error("deleteDialogs requires confirmedDialogIds from the preview confirmation UI.");
+  }
+  const { targets, missingConfirmedDialogIds } =
+    resolveConfirmedDialogDeletionTargets(preview, confirmedIds);
+  const deletedDialogIds: string[] = [];
+  const deletedDialogKeys: string[] = [];
+  const failures: Array<{ dbKey: string; detail: string }> = [];
+  const { deleteDialog } = await import("../../chat/dialog/dialogSlice");
+
+  for (const target of targets) {
+    try {
+      await thunkApi.dispatch(deleteDialog(target.dbKey)).unwrap();
+    } catch (error: any) {
+      failures.push({
+        dbKey: target.dbKey,
+        detail: error?.message || String(error),
+      });
+      continue;
+    }
+    deletedDialogIds.push(target.dialogId);
+    deletedDialogKeys.push(target.dbKey);
+  }
+
+  return {
+    rawData: {
+      deletedDialogIds,
+      deletedDialogKeys,
+      missingConfirmedDialogIds,
+      skipped: preview.skipped,
+      failures,
+    },
+    displayData:
+      deletedDialogIds.length > 0
+        ? `已删除 ${deletedDialogIds.length} 个对话：${deletedDialogIds.join(", ")}。`
+        : "没有删除任何对话。",
   };
 }
 

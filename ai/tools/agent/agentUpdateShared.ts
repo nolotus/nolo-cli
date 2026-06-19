@@ -28,6 +28,7 @@ export type GreetingConfigArg = {
 export type AgentUpdateArgsShape = {
   __confirmedSelfEvolution?: boolean;
   name?: string;
+  handle?: string;
   model?: string;
   provider?: string;
   prompt?: string;
@@ -53,6 +54,7 @@ export type UpdateSelfToolArgs = AgentUpdateArgsShape;
 
 export const agentUpdateFieldSchemaProperties = {
   name: { type: "string", description: "Agent 的新名称。" },
+  handle: { type: "string", description: "稳定的机器调用名，例如 pm、fullstack、reviewer。" },
   model: { type: "string", description: "模型名称，例如 'gpt-4o-mini'。" },
   provider: { type: "string", description: "模型提供方，例如 'openai'。若不确定可留空。" },
   prompt: { type: "string", description: "系统提示词，描述 Agent 的角色和行为。" },
@@ -156,6 +158,7 @@ export const buildPatch = (args: AgentUpdateArgsShape): AgentPatch => {
   const patch: AgentPatch = {};
   const {
     name,
+    handle,
     model,
     provider,
     prompt,
@@ -174,6 +177,7 @@ export const buildPatch = (args: AgentUpdateArgsShape): AgentPatch => {
   } = args;
 
   if (name !== undefined) patch.name = String(name).trim();
+  if (handle !== undefined) patch.handle = String(handle).trim();
   if (model !== undefined) patch.model = String(model).trim();
   if (provider !== undefined) patch.provider = String(provider).trim();
   if (prompt !== undefined) patch.prompt = prompt;

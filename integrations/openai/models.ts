@@ -258,14 +258,4 @@ export const openAIModels: Model[] = [
     supportsReasoningEffort: true,
     price: { input: 0.25 * 8, output: 2 * 8, inputCacheHit: 0.025 * 8 },
   },
-  {
-    name: "o3-pro",
-    displayName: "O3 Pro",
-    hasVision: false,
-    contextWindow: 200_000,
-    maxOutputTokens: 100_000,
-    supportsReasoningEffort: true,
-    endpointKey: "responses",
-    price: { input: 20 * 7, output: 80 * 7, inputCacheHit: 0 },
-  },
 ];

@@ -231,14 +231,15 @@ export const selectToolRunById = (
 // ===== 通用执行 thunk：基于已有 ToolRun.input 再次执行工具（可作为重试） =====
 export const executeToolRun = createAsyncThunk(
   "toolRun/executeToolRun",
-  async ({ id }: { id: string }, thunkApi) => {
+  async ({ id, inputOverride }: { id: string; inputOverride?: Record<string, unknown> }, thunkApi) => {
     const state = thunkApi.getState() as RootState;
     const run = selectToolRunById(state, id);
 
     if (!run) {
       throw new Error(`ToolRun not found: ${id}`);
     }
-    if (!run.input) {
+    const executionInput = inputOverride ?? run.input;
+    if (!executionInput) {
       throw new Error(`ToolRun ${id} has no input to execute with.`);
     }
 
@@ -255,12 +256,12 @@ export const executeToolRun = createAsyncThunk(
         inputSummary: run.inputSummary,
         startedAt: Date.now(),
         interaction: run.interaction,
-        input: run.input,
+        input: executionInput,
       })
     );
 
     try {
-      const result = await executor(run.input, thunkApi, {
+      const result = await executor(executionInput, thunkApi, {
         parentMessageId: run.messageId,
       });
 

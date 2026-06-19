@@ -1,5 +1,6 @@
 export const AGENT_UPDATE_FIELD_NAMES = [
   "name",
+  "handle",
   "model",
   "provider",
   "prompt",

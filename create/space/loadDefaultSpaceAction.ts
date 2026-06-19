@@ -15,6 +15,10 @@ export const loadDefaultSpaceAction = async (
     return null;
   }
 
+  if (state.space.viewMode === "all") {
+    return null;
+  }
+
   const memberSpaces = state.space.memberSpaces;
 
   try {

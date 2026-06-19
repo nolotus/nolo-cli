@@ -14,7 +14,13 @@ export type SmokeWebSocketOptions = {
 export type LocalCliExecutor = (
   provider: string,
   prompt: string,
-  options: { model?: string; timeout?: number; cwd?: string; yolo?: boolean }
+  options: {
+    model?: string;
+    timeout?: number;
+    cwd?: string;
+    yolo?: boolean;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  }
 ) => Promise<{ text: string; raw?: string; elapsed?: number }>;
 
 export type LocalRuntimeProbeResult = {

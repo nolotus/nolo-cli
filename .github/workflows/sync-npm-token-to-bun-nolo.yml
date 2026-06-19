@@ -12,7 +12,7 @@ jobs:
       - name: Copy NPM_TOKEN to bun-nolo
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
           if [[ -z "${NPM_TOKEN}" ]]; then

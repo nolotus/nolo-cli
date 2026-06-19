@@ -64,7 +64,6 @@ export function renderHelpText() {
     "  nolo space list --json",
     "  nolo agent pull agent-pub-01APPBUILDER00000001YAII3I",
   "  nolo agent read agent-pub-01APPBUILDER00000001YAII3I",
-    "  nolo agent usage qoder",
   '  nolo agent run frontend-implementer --msg "polish notifications"',
     "  nolo agent bind-current agent-user-1-agent-1",
     "  nolo agent runtime-doctor agent-user-1-agent-1",

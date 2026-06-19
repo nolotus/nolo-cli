@@ -152,7 +152,7 @@ export function renderTuiHelp() {
     "  /customize            Describe how you want to tune nolo",
     "  /login                Show login/profile hint",
     "  /profile              Show active profile",
-    "  /update               Update the global nolo install",
+    "  /update               Update the nolo CLI install",
     "  /version              Show version/update hint",
     "  /exit                 Leave the workspace",
     "",

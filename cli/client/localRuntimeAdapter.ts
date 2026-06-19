@@ -65,7 +65,12 @@ import {
   filterNoloWorkspaceToolNames,
   parseNoloWorkspaceToolArguments,
 } from "../../agent-runtime/noloWorkspaceTools";
-import { executeCli as defaultExecuteCli, type CliExecuteResult, type CliImageInput } from "../../ai/agent/cliExecutor";
+import {
+  executeCli as defaultExecuteCli,
+  type CliExecuteResult,
+  type CliImageInput,
+  CliProviderQuotaError,
+} from "../../ai/agent/cliExecutor";
 import { buildCliPrompt } from "../../ai/agent/cliPrompt";
 import {
   readXhsProfileFunc,
@@ -1307,6 +1312,10 @@ export function createCliLocalRuntimeAdapter(
                 raw: result.raw,
               };
             } catch (error) {
+              // 保留配额限额错误，让上层（派发者 / supervisor / PM fallback）能快速识别并换另一个 agent 重派
+              if (error instanceof CliProviderQuotaError) {
+                throw error;
+              }
               const message = error instanceof Error ? error.message : String(error);
               throw new Error(
                 `Local CLI provider "${provider}" is unavailable or failed: ${message}`

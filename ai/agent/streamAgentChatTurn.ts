@@ -250,6 +250,31 @@ const shouldUseDesktopLocalRuntime = (
     return agentConfig?.apiSource !== "cli";
 };
 
+const readCurrentDesktopMachineId = () => {
+    const fromProcess =
+        typeof process !== "undefined"
+            ? (process.env?.NOLO_CURRENT_MACHINE_ID || process.env?.NOLO_MACHINE_ID || "").trim()
+            : "";
+    if (fromProcess) return fromProcess;
+    const w =
+        typeof globalThis !== "undefined" && (globalThis as any).window
+            ? (globalThis as any).window
+            : null;
+    const fromWindow =
+        typeof w?.__NOLO_CURRENT_MACHINE_ID__ === "string"
+            ? w.__NOLO_CURRENT_MACHINE_ID__.trim()
+            : typeof w?.__NOLO_MACHINE_ID__ === "string"
+              ? w.__NOLO_MACHINE_ID__.trim()
+              : "";
+    return fromWindow;
+};
+
+const resolveRemoteBoundMachineId = (machineId: string) => {
+    if (!machineId || !getIsDesktopApp()) return machineId;
+    const currentMachineId = readCurrentDesktopMachineId();
+    return currentMachineId && currentMachineId === machineId ? "" : machineId;
+};
+
 const resolveWebAgentRuntimeToolSurface = (
     agentConfig: Agent,
     state: RootState,
@@ -727,10 +752,11 @@ export const streamAgentChatTurnHandler = async (
             source: cachedAgentConfig === rawAgentConfig ? "cache" : "read",
         });
 
-        const boundMachineId =
+        const configuredBoundMachineId =
             typeof (agentConfig as any).runtimeBinding?.machineId === "string"
                 ? (agentConfig as any).runtimeBinding.machineId.trim()
                 : "";
+        const boundMachineId = resolveRemoteBoundMachineId(configuredBoundMachineId);
 
         // ── Remote runtime route ─────────────────────────────────────────────
         // runtimeBinding selects the bound machine. Without it, custom provider

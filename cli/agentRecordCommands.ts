@@ -76,7 +76,7 @@ export async function runAgentUpdateCommand(
   }
   if (!parsed) {
     output.write(
-      "Usage: nolo agent update <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--usage-probe qoder-local-quota-log] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--field key=value]\n"
+      "Usage: nolo agent update <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--field key=value]\n"
         .replace("[--field key=value]", "[--handle <name>] [--field key=value]")
     );
     return args[0] ? 0 : 1;
@@ -159,7 +159,7 @@ export async function runAgentCreateCommand(
   }
   if (!parsed) {
     output.write(
-      "Usage: nolo agent create <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--usage-probe qoder-local-quota-log] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--name <name>] [--custom-provider-url <url>] [--provider-api-key <key>] [--field key=value]\n"
+      "Usage: nolo agent create <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--name <name>] [--custom-provider-url <url>] [--provider-api-key <key>] [--field key=value]\n"
         .replace("[--field key=value]", "[--handle <name>] [--field key=value]")
     );
     return args[0] ? 0 : 1;

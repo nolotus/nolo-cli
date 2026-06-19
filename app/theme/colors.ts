@@ -1,5 +1,5 @@
 // app/theme/colors.ts
-// 8 个主题，每个都有完整 surface 覆盖，切换主题"气质全变"。
+// 9 个主题，每个都有完整 surface 覆盖，切换主题"气质全变"。
 
 // ─── 公共语义色 ─────────────────────────────────────────────────────────────
 const semantic = {
@@ -18,6 +18,7 @@ const mkLight = (bg: string, bg2: string, bg3: string, textPrimary: string, text
   border, borderLight: borderL, borderHover: textTer,
   messageBackground: bg2, codeBackground: bg3,
   shadowLight:  `rgba(0,0,0,0.04)`, shadowMedium: `rgba(0,0,0,0.08)`, shadowHeavy: `rgba(0,0,0,0.14)`,
+  textOnPrimary: "#FFFFFF",
 });
 
 const mkDark = (bg: string, bg2: string, bg3: string, textPrimary: string, textSec: string, textTer: string, border: string, borderL: string, shadowBase = "0,0,0") => ({
@@ -30,6 +31,7 @@ const mkDark = (bg: string, bg2: string, bg3: string, textPrimary: string, textS
   border, borderLight: borderL, borderHover: textTer,
   messageBackground: bg2, codeBackground: bg2,
   shadowLight:  `rgba(${shadowBase},0.18)`, shadowMedium: `rgba(${shadowBase},0.30)`, shadowHeavy: `rgba(${shadowBase},0.44)`,
+  textOnPrimary: "#FFFFFF",
 });
 
 // ─── 1. Neutral — zinc，无主张 ──────────────────────────────────────────────
@@ -37,11 +39,16 @@ export const neutral = {
   light: { primary: "#71717A", primaryLight: "#A1A1AA", primaryDark: "#52525B",
     primaryGradient: "linear-gradient(135deg, #71717A, #A1A1AA)",
     primaryGhost: "rgba(113,113,122,0.08)", primaryHover: "rgba(113,113,122,0.10)",
-    borderAccent: "#D4D4D8", ...semantic.light },
+    borderAccent: "#D4D4D8", ...semantic.light,
+    ...mkLight("#FFFFFF", "#F4F4F5", "#E4E4E7", "#18181B", "#52525B", "#71717A", "#E4E4E7", "#F4F4F5"),
+  },
   dark: { primary: "#A1A1AA", primaryLight: "#D4D4D8", primaryDark: "#71717A",
     primaryGradient: "linear-gradient(135deg, #A1A1AA, #D4D4D8)",
     primaryGhost: "rgba(161,161,170,0.10)", primaryHover: "rgba(161,161,170,0.12)",
-    borderAccent: "#52525B", ...semantic.dark },
+    borderAccent: "#52525B", ...semantic.dark,
+    ...mkDark("#18181B", "#27272A", "#3F3F46", "#FAFAFA", "#D4D4D8", "#A1A1AA", "#3F3F46", "#27272A", "24,24,27"),
+    textOnPrimary: "#18181B",
+  },
 };
 
 // ─── 2. Ocean — GitHub 风格深蓝，干净可信 ─────────────────────────────────
@@ -60,6 +67,7 @@ export const ocean = {
     borderAccent: "#1F6FEB", ...semantic.dark,
     ...mkDark("#0D1117", "#161B22", "#21262D", "#E6EDF3", "#8B949E", "#6E7681", "#30363D", "#161B22", "13,17,23"),
     textHeading: "#E6EDF3",
+    textOnPrimary: "#0D1117",
   },
 };
 
@@ -79,6 +87,7 @@ export const iris = {
     borderAccent: "#4A55C0", ...semantic.dark,
     ...mkDark("#0F0E17", "#16141F", "#1E1B2E", "#E8E5F7", "#A8A4C8", "#7B7698", "#272435", "#16141F", "15,14,23"),
     textHeading: "#E8E5F7",
+    textOnPrimary: "#0F0E17",
   },
 };
 
@@ -98,11 +107,13 @@ export const forest = {
     borderAccent: "#059669", ...semantic.dark,
     ...mkDark("#0C1209", "#121A0E", "#1A2416", "#E4F0E2", "#87A882", "#5E7A5A", "#1A2416", "#121A0E", "12,18,9"),
     success: "#4ADE80", textHeading: "#C8EEC4",
+    textOnPrimary: "#0C1209",
   },
 };
 
 // ─── 4b. Trail — 户外品牌默认：冲浪(海蓝) + 滑雪(雪白灰) + 爬山(天云绿) ─
 export const trail = {
+  meta: { radiusBoost: 1, motionEase: "cubic-bezier(0.22, 1, 0.36, 1)" },
   light: {
     primary: "#2E7DB5",
     primaryLight: "#6BB5E0",
@@ -140,6 +151,7 @@ export const trail = {
     shadowMedium:        "rgba(28, 36, 48, 0.09)",
     shadowHeavy:         "rgba(28, 36, 48, 0.14)",
     textHeading:         "#1C2430",
+    textOnPrimary:       "#FFFFFF",
   },
   dark: {
     primary: "#5BA3D9",
@@ -178,6 +190,7 @@ export const trail = {
     shadowMedium:        "rgba(4, 8, 12, 0.34)",
     shadowHeavy:         "rgba(4, 8, 12, 0.46)",
     textHeading:         "#E8F4FC",
+    textOnPrimary:       "#0B1218",
   },
 };
 
@@ -217,6 +230,7 @@ export const wave = {
     shadowLight:         "rgba(26, 26, 34, 0.05)",
     shadowMedium:        "rgba(26, 26, 34, 0.09)",
     shadowHeavy:         "rgba(26, 26, 34, 0.14)",
+    textOnPrimary:       "#FFFFFF",
   },
   dark: {
     // Kanagawa Wave — crystalBlue accent（#7E9CD8 是函数名颜色，最标志性的 Kanagawa 蓝）
@@ -253,6 +267,7 @@ export const wave = {
     shadowMedium:        "rgba(13, 12, 12, 0.28)",
     shadowHeavy:         "rgba(13, 12, 12, 0.38)",
     textHeading:         "#DCD7BA",   // fujiWhite — 暖色标题
+    textOnPrimary:       "#1F1F28",
   },
 };
 
@@ -291,6 +306,7 @@ export const rose = {
     shadowLight:         "rgba(87, 82, 121, 0.05)",
     shadowMedium:        "rgba(87, 82, 121, 0.09)",
     shadowHeavy:         "rgba(87, 82, 121, 0.14)",
+    textOnPrimary:       "#FFFFFF",
   },
   dark: {
     // Rosé Pine main
@@ -326,6 +342,7 @@ export const rose = {
     shadowMedium:        "rgba(12, 10, 20, 0.30)",
     shadowHeavy:         "rgba(12, 10, 20, 0.44)",
     textHeading:         "#E0DEF4",
+    textOnPrimary:       "#191724",
   },
 };
 
@@ -345,6 +362,43 @@ export const ember = {
     borderAccent: "#92400E", ...semantic.dark,
     ...mkDark("#1A1207", "#221809", "#2E220C", "#F0E2C0", "#C4A056", "#8A7040", "#3A2A10", "#221809", "26,18,7"),
     textHeading: "#FCD34D",
+    textOnPrimary: "#1A1207",
+  },
+};
+
+// ─── 8. Catppuccin — 莫卡(Mocha)与拿铁(Latte)，经典粉彩主题 ─────────────────
+export const catppuccin = {
+  light: {
+    // Catppuccin Latte
+    primary: "#1e66f5",       // Blue
+    primaryLight: "#89b4fa",  // Blue Light
+    primaryDark: "#4c4f69",   // Text
+    primaryGradient: "linear-gradient(135deg, #1e66f5, #89b4fa)",
+    primaryGhost: "rgba(30, 102, 245, 0.08)",
+    primaryHover: "rgba(30, 102, 245, 0.10)",
+    borderAccent: "#ccd0da",
+    success: "#40a02b",
+    warning: "#df8e1d",
+    info: "#1e66f5",
+    error: "#d20f39",
+    ...mkLight("#eff1f5", "#e6e9ef", "#dce0e8", "#4c4f69", "#5c5f77", "#6c6f85", "#ccd0da", "#e6e9ef"),
+  },
+  dark: {
+    // Catppuccin Mocha
+    primary: "#89b4fa",       // Blue
+    primaryLight: "#b4befe",  // Lavender
+    primaryDark: "#1e66f5",
+    primaryGradient: "linear-gradient(135deg, #89b4fa, #b4befe)",
+    primaryGhost: "rgba(137, 180, 250, 0.10)",
+    primaryHover: "rgba(137, 180, 250, 0.14)",
+    borderAccent: "#313244",
+    success: "#a6e3a1",
+    warning: "#f9e2af",
+    info: "#89b4fa",
+    error: "#f38ba8",
+    ...mkDark("#1e1e2e", "#181825", "#11111b", "#cdd6f4", "#bac2de", "#a6adc8", "#313244", "#181825", "30,30,46"),
+    textHeading: "#f5e0dc",
+    textOnPrimary: "#11111b",
   },
 };
 
@@ -353,7 +407,7 @@ export const blue     = ocean;
 export const purple   = iris;
 export const green    = forest;
 export const graphite = neutral;
-export const mocha    = rose;    // 近似，rosé pine 取代 catppuccin
+export const mocha    = catppuccin;
 export const pink     = rose;
 export const red      = ember;
 export const orange   = ember;

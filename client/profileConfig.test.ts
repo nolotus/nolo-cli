@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
   buildCliRuntimeEnv,
   buildEnvFromProfile,
+  clearProfileAuthToken,
   loadProfileConfig,
   normalizeProfileServerUrl,
   saveDefaultProfile,
@@ -20,9 +21,11 @@ describe("cli profile config", () => {
       saveDefaultProfile(path, {
         serverUrl: "https://nolo.chat",
         authToken: "token-123",
-        agentKey: "agent-pub-abc",
-        agentName: "app-builder",
       });
+      const seeded = loadProfileConfig(path)!;
+      seeded.profiles.default.agentKey = "agent-pub-abc";
+      seeded.profiles.default.agentName = "app-builder";
+      writeFileSync(path, `${JSON.stringify(seeded, null, 2)}\n`, "utf8");
 
       const config = loadProfileConfig(path);
       expect(config.currentProfile).toBe("default");
@@ -81,6 +84,73 @@ describe("cli profile config", () => {
 
     expect(runtimeEnv.AUTH_TOKEN).toBe("profile-token");
     expect(runtimeEnv.NOLO_SERVER).toBe("https://nolo.chat");
+  });
+
+  test("saveDefaultProfile merges login into an existing default profile", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-merge-"));
+    try {
+      const path = join(dir, "config.json");
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-initial",
+      });
+      const withAgentPrefs = loadProfileConfig(path)!;
+      withAgentPrefs.profiles.default.agentKey = "agent-pub-abc";
+      withAgentPrefs.profiles.default.agentName = "app-builder";
+      writeFileSync(path, `${JSON.stringify(withAgentPrefs, null, 2)}\n`, "utf8");
+
+      saveDefaultProfile(path, {
+        serverUrl: "https://us.nolo.chat",
+        authToken: "token-next",
+      });
+
+      expect(loadProfileConfig(path)).toEqual({
+        currentProfile: "default",
+        profiles: {
+          default: {
+            serverUrl: "https://us.nolo.chat",
+            authToken: "token-next",
+            agentKey: "agent-pub-abc",
+            agentName: "app-builder",
+          },
+        },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("clearProfileAuthToken removes only the saved auth token", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-clear-"));
+    try {
+      const path = join(dir, "config.json");
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+      });
+      const seeded = loadProfileConfig(path)!;
+      seeded.profiles.default.agentKey = "agent-pub-abc";
+      writeFileSync(path, `${JSON.stringify(seeded, null, 2)}\n`, "utf8");
+
+      expect(clearProfileAuthToken(path)).toBe(true);
+      expect(loadProfileConfig(path)).toEqual({
+        currentProfile: "default",
+        profiles: {
+          default: {
+            serverUrl: "https://nolo.chat",
+            agentKey: "agent-pub-abc",
+          },
+        },
+      });
+      expect(buildEnvFromProfile(loadProfileConfig(path))).toEqual({
+        NOLO_PROFILE: "default",
+        NOLO_SERVER: "https://nolo.chat",
+        NOLO_AGENT: "agent-pub-abc",
+      });
+      expect(clearProfileAuthToken(path)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("runtime env still honors an explicit server override", () => {

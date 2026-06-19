@@ -24,7 +24,6 @@ import {
   DEFAULT_THEME_NAME,
   SPACE,
   THEME_COLORS,
-  MODE_COLORS,
 } from "../theme/theme.config";
 import {
   normalizeThemeName,
@@ -1088,10 +1087,9 @@ export const selectTheme = createSelector(
       : DEFAULT_THEME_NAME;
     const validFontPreset =
       normalizeFontPreset(fontPreset) ?? DEFAULT_FONT_PRESET;
-    const baseColors = MODE_COLORS[mode];
-    const themeColors = THEME_COLORS[validThemeName][mode];
-    // 主题 surface 字段覆盖中性底色，实现完整主题体验
-    const c = { ...baseColors, ...themeColors } as typeof baseColors & typeof themeColors & { textHeading?: string };
+    const themeData = THEME_COLORS[validThemeName];
+    const c = themeData[mode] as (typeof themeData)[typeof mode] & { textHeading?: string };
+    const meta = (themeData as any).meta as { radiusBoost?: number; motionEase?: string } | undefined;
     const compact = density === "compact";
     return {
       sidebarWidth: `${sidebarWidth}px`,
@@ -1134,22 +1132,13 @@ export const selectTheme = createSelector(
       // Border radius scale — xs/sm/md map to control/surface/overlay tiers.
       // lg/xl remain as aliases for gradual migration of legacy CSS.
       radius: (() => {
-        const trail = validThemeName === "trail";
+        const boost = meta?.radiusBoost ?? 0;
         const xs = compact ? "10px" : "12px";
-        const sm = trail
-          ? compact
-            ? "15px"
-            : "17px"
-          : compact
-            ? "14px"
-            : "16px";
+        const sm = compact ? `${14 + boost}px` : `${16 + boost}px`;
         const md = compact ? "20px" : "24px";
         return { xs, sm, md, lg: sm, xl: md };
       })(),
-      motionEase:
-        validThemeName === "trail"
-          ? "cubic-bezier(0.22, 1, 0.36, 1)"
-          : "cubic-bezier(0.33, 0, 0.2, 1)",
+      motionEase: meta?.motionEase ?? "cubic-bezier(0.33, 0, 0.2, 1)",
       motionEaseTide: "cubic-bezier(0.22, 1, 0.36, 1)",
       motionEaseBreath: "cubic-bezier(0.4, 0, 0.6, 1)",
       motionDuration: "0.32s",

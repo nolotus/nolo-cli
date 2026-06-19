@@ -58,6 +58,7 @@ type RunAgentTurnOptions = {
   eventsMode?: "jsonl";
   taskEvidence?: TaskEvidenceInput;
   fetchImpl?: typeof fetch;
+  currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
 };
 
 export type RunAgentTurnResult = {
@@ -198,6 +199,32 @@ function isCliProviderAgentConfig(agentConfig: any) {
   return Boolean(cliProvider) || provider === "agy" || provider === "codex" || provider === "claude";
 }
 
+function resolveBoundMachineId(agentConfig: any) {
+  return agentConfig?.runtimeBinding && typeof agentConfig.runtimeBinding === "object"
+    ? String(agentConfig.runtimeBinding.machineId ?? "").trim()
+    : "";
+}
+
+async function detectCurrentMachineId(env: EnvLike): Promise<string | undefined> {
+  const fromEnv = (env.NOLO_CURRENT_MACHINE_ID || env.NOLO_MACHINE_ID || "").trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const { detectMachineInfo } = await import("../../connector-experimental/machineInfo");
+    const machine = await detectMachineInfo({ probeLaunchable: true });
+    return typeof machine?.machineId === "string" && machine.machineId.trim()
+      ? machine.machineId.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveCurrentMachineId(options: RunAgentTurnOptions) {
+  return options.currentMachineIdResolver
+    ? options.currentMachineIdResolver(options.env)
+    : detectCurrentMachineId(options.env);
+}
+
 function resolveAuthToken(env: EnvLike) {
   return env.AUTH_TOKEN || env.AUTH || env.BENCHMARK_AUTH_TOKEN || "";
 }
@@ -251,7 +278,18 @@ async function shouldSkipAutoLocalForServerPlatformTools(options: RunAgentTurnOp
     }
     return false;
   }
-  if (isCliProviderAgentConfig(agentConfig)) return false;
+  if (isCliProviderAgentConfig(agentConfig)) {
+    const boundMachineId = resolveBoundMachineId(agentConfig);
+    if (!boundMachineId) return false;
+    const currentMachineId = (await resolveCurrentMachineId(options))?.trim() || "";
+    if (currentMachineId && currentMachineId === boundMachineId) return false;
+    options.output.write(
+      `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is bound to ${boundMachineId}` +
+        (currentMachineId ? ` and this machine is ${currentMachineId}.` : ".") +
+        " Use --local explicitly to force the current machine.\n"
+    );
+    return true;
+  }
   if (knownServerPlatformAgent) {
     options.output.write(
       `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is a known platform agent. ` +
@@ -381,6 +419,13 @@ function shouldAttemptAutoLocal(options: RunAgentTurnOptions) {
     options.env.NOLO_DISABLE_CLI_WORKSPACE_TOOLS !== "1" &&
     isBuiltinNoloAgentRef(options.agentKey) &&
     resolveAuthToken(options.env)
+  ) {
+    return true;
+  }
+  if (
+    options.env.NOLO_DISABLE_CLI_WORKSPACE_TOOLS !== "1" &&
+    resolveAuthToken(options.env) &&
+    !isKnownServerPlatformAgent(options)
   ) {
     return true;
   }

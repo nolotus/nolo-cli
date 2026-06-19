@@ -157,11 +157,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           if (exitCode === 0) {
             output.write("Update finished. Restart nolo to use the new version.\n");
           } else {
-            output.write("Update failed. Fix the npm error above, then run /update again or use nolo update.\n");
+            output.write("Update failed. Check the error above, then run /update again or use nolo update.\n");
           }
         } catch (error) {
           output.write(`${error instanceof Error ? error.message : String(error)}\n`);
-          output.write("Update failed. Fix the npm error above, then run /update again or use nolo update.\n");
+          output.write("Update failed. Check the error above, then run /update again or use nolo update.\n");
         }
       }
 

@@ -1,16 +1,66 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 import {
   buildCliRuntimeEnv,
+  clearProfileAuthToken,
   getCurrentProfile,
   getDefaultProfileConfigPath,
   loadProfileConfig,
   saveDefaultProfile,
 } from "./client/profileConfig";
+import { resolveAuthTokenFromEnv } from "./cliEnvHelpers";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
+
+export const LOGIN_HELP_TEXT = `Log in to Nolo and save a local profile.
+
+Usage:
+  nolo login [--server <url>] [--no-browser] [--token <jwt>] [--manual]
+
+Options:
+  --server <url>   Nolo server URL (default: ${DEFAULT_NOLO_SERVER_URL})
+  --no-browser     Print the authorization URL instead of opening a browser
+  --token <jwt>    Save a token directly without browser authorization
+  --manual         Prompt to paste a token interactively
+
+By default, opens the Nolo website and polls until authorization completes.
+In SSH sessions, use --no-browser and open the printed URL on a machine with a browser
+where you are already logged into Nolo.
+`;
+
+export const LOGOUT_HELP_TEXT = `Log out of Nolo by clearing the saved auth token.
+
+Usage:
+  nolo logout
+
+Keeps other profile settings such as server URL and default agent preferences.
+Does not unset AUTH_TOKEN or other auth-related environment variables.
+`;
+
+export const WHOAMI_HELP_TEXT = `Show the current login state.
+
+Usage:
+  nolo whoami
+`;
+
+function wantsHelp(args: string[]) {
+  return args.includes("--help") || args.includes("-h");
+}
+
+function formatDuration(ms: number) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function formatTokenPreview(token: string) {
+  const trimmed = token.trim();
+  if (!trimmed) return "";
+  return `${trimmed.slice(0, 8)}...`;
+}
 
 function getArg(args: string[], flag: string) {
   const index = args.indexOf(flag);
@@ -122,6 +172,12 @@ async function runWebLogin(args: {
   const intervalMs = Math.max(1, Number(start.interval) || 2) * 1000;
   const timeoutMs = Math.max(1, Number(start.expiresIn) || 600) * 1000;
   const deadline = args.now() + timeoutMs;
+  const statusLogIntervalMs = 15_000;
+  let lastStatusLogAt = 0;
+
+  args.output.log(
+    `[nolo] Waiting for browser authorization (${formatDuration(timeoutMs)} remaining)...`
+  );
 
   while (args.now() <= deadline) {
     const pollResponse = await postJson(
@@ -132,6 +188,19 @@ async function runWebLogin(args: {
     const poll = await pollResponse.json().catch(() => ({} as any));
 
     if (pollResponse.status === 202) {
+      const currentTime = args.now();
+      if (
+        lastStatusLogAt > 0 &&
+        currentTime - lastStatusLogAt >= statusLogIntervalMs
+      ) {
+        const remainingMs = Math.max(0, deadline - currentTime);
+        args.output.log(
+          `[nolo] Still waiting... (${formatDuration(remainingMs)} remaining)`
+        );
+        lastStatusLogAt = currentTime;
+      } else if (lastStatusLogAt === 0) {
+        lastStatusLogAt = currentTime;
+      }
       await args.sleep(intervalMs);
       continue;
     }
@@ -161,12 +230,17 @@ async function runWebLogin(args: {
 }
 
 export async function runLoginCommand(args: string[], deps: LoginCommandDeps = {}) {
+  const outputTarget = deps.output ?? console;
+  const errorTarget = deps.error ?? console;
+  if (wantsHelp(args)) {
+    outputTarget.log(LOGIN_HELP_TEXT);
+    return 0;
+  }
+
   const configPath = deps.configPath ?? getDefaultProfileConfigPath();
   const serverArg = getArg(args, "--server");
   const tokenArg = getArg(args, "--token");
   const noBrowser = args.includes("--no-browser");
-  const outputTarget = deps.output ?? console;
-  const errorTarget = deps.error ?? console;
   const serverUrl = (serverArg || DEFAULT_NOLO_SERVER_URL).replace(/\/+$/, "");
 
   if (tokenArg) {
@@ -209,30 +283,87 @@ export async function runLoginCommand(args: string[], deps: LoginCommandDeps = {
   });
 }
 
-export function runWhoamiCommand(deps: { configPath?: string; env?: NodeJS.ProcessEnv; output?: Pick<Console, "log"> } = {}) {
-  const env = deps.env ?? process.env;
+export function runWhoamiCommand(
+  deps: {
+    configPath?: string;
+    env?: NodeJS.ProcessEnv;
+    output?: Pick<Console, "log">;
+    args?: string[];
+  } = {}
+) {
   const output = deps.output ?? console;
+  if (wantsHelp(deps.args ?? [])) {
+    output.log(WHOAMI_HELP_TEXT);
+    return 0;
+  }
+
+  const env = deps.env ?? process.env;
   const config = loadProfileConfig(deps.configPath);
   const profile = getCurrentProfile(config);
-  if (!config || !profile) {
+  const profileToken = profile?.authToken?.trim() ?? "";
+  const envToken = resolveAuthTokenFromEnv(env);
+
+  if (!profileToken && !envToken) {
     output.log("Not logged in. Run: nolo login");
     return 1;
   }
+
   const runtimeEnv = buildCliRuntimeEnv(env, config);
-  const effectiveServer = runtimeEnv.NOLO_SERVER ?? profile.serverUrl;
   const explicitServer = env.NOLO_SERVER || env.NOLO_SERVER_URL || env.BASE_URL;
 
-  output.log(`profile: ${config.currentProfile}`);
-  output.log(`profile server: ${profile.serverUrl}`);
+  if (!profileToken && envToken) {
+    output.log("profile: not logged in (no saved token)");
+    if (profile?.serverUrl) {
+      output.log(`profile server: ${profile.serverUrl}`);
+    }
+    output.log(`effective server: ${runtimeEnv.NOLO_SERVER ?? resolveServerUrlFallback(profile)}`);
+    output.log(`server source: ${explicitServer ? "env" : profile?.serverUrl ? "profile" : "default"}`);
+    output.log(`env token: ${formatTokenPreview(envToken)} (source: environment)`);
+    return 0;
+  }
+
+  const effectiveServer = runtimeEnv.NOLO_SERVER ?? profile!.serverUrl;
+
+  output.log(`profile: ${config!.currentProfile}`);
+  output.log(`profile server: ${profile!.serverUrl}`);
   output.log(`effective server: ${effectiveServer}`);
   output.log(`server source: ${explicitServer ? "env" : "profile"}`);
-  output.log(`token: ${profile.authToken.slice(0, 8)}...`);
+  output.log(`token: ${formatTokenPreview(profileToken)} (source: profile)`);
+  if (envToken && envToken !== profileToken) {
+    output.log(`env token: ${formatTokenPreview(envToken)} (source: environment, unused while profile token is set)`);
+  }
   return 0;
 }
 
-export function runLogoutCommand() {
-  const configPath = getDefaultProfileConfigPath();
-  rmSync(configPath, { force: true });
-  console.log("Logged out.");
+function resolveServerUrlFallback(profile: { serverUrl?: string } | null) {
+  return profile?.serverUrl ?? DEFAULT_NOLO_SERVER_URL;
+}
+
+export function runLogoutCommand(
+  deps: {
+    configPath?: string;
+    env?: NodeJS.ProcessEnv;
+    output?: Pick<Console, "log">;
+    args?: string[];
+  } = {}
+) {
+  const output = deps.output ?? console;
+  if (wantsHelp(deps.args ?? [])) {
+    output.log(LOGOUT_HELP_TEXT);
+    return 0;
+  }
+
+  const env = deps.env ?? process.env;
+  const configPath = deps.configPath ?? getDefaultProfileConfigPath();
+  if (!clearProfileAuthToken(configPath)) {
+    output.log("Not logged in.");
+    return 0;
+  }
+  output.log("Logged out.");
+  if (resolveAuthTokenFromEnv(env)) {
+    output.log(
+      "Note: AUTH_TOKEN in the environment is unchanged and may still authenticate commands."
+    );
+  }
   return 0;
 }

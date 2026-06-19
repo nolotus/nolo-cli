@@ -1216,6 +1216,155 @@ describe("cli agent run client", () => {
     expect(output.text()).not.toContain("win-qwen -> working locally");
   });
 
+  test("auto mode runs a bound CLI agent locally when it is bound to the current machine", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+    let providerCalled = false;
+
+    const result = await runAgentTurn({
+      agentName: "mac-agy",
+      agentKey: "agent-mac-agy",
+      serverUrl: "https://us.nolo.chat",
+      message: "run on this mac",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Mac AGY",
+          prompt: "Use AGY on this Mac.",
+          apiSource: "cli",
+          cliProvider: "agy",
+          runtimeBinding: { machineId: "machine-mac", ownerUserId: "user-1" },
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local-mac-agy" }),
+        resolveProvider: async () => ({
+          model: "agy",
+          complete: async () => {
+            providerCalled = true;
+            return { content: "local agy ok", model: "agy" };
+          },
+        }),
+        executeTool: async () => ({ content: "[]" }),
+      },
+      currentMachineIdResolver: async () => "machine-mac",
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server should not run" });
+      },
+    });
+
+    expect(providerCalled).toBe(true);
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-local-mac-agy" });
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).toContain("mac-agy -> working locally");
+  });
+
+  test("auto mode refreshes and runs an authenticated bound CLI agent locally without local env keys", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+    let loadAgentConfigCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "agent-real-agy",
+      agentKey: "agent-real-agy",
+      serverUrl: "https://us.nolo.chat",
+      message: "run local after refresh",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "leveldb-persistence"],
+        loadAgentConfig: async (agentRef) => {
+          loadAgentConfigCalls += 1;
+          if (loadAgentConfigCalls === 1) return null;
+          return {
+            key: agentRef,
+            name: "Real AGY",
+            prompt: "Use AGY on this machine.",
+            apiSource: "cli",
+            cliProvider: "agy",
+            runtimeBinding: { machineId: "machine-mac", ownerUserId: "user-1" },
+          };
+        },
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-refreshed-local" }),
+        resolveProvider: async () => ({
+          model: "agy",
+          complete: async () => ({ content: "refreshed local agy ok", model: "agy" }),
+        }),
+        executeTool: async () => ({ content: "[]" }),
+      },
+      currentMachineIdResolver: async () => "machine-mac",
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server should not run" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-refreshed-local" });
+    expect(loadAgentConfigCalls).toBeGreaterThanOrEqual(2);
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).toContain("agent-real-agy -> working locally");
+  });
+
+  test("auto mode sends a bound CLI agent to the server when it is bound to another machine", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: Array<{ url: string; body: any }> = [];
+
+    const result = await runAgentTurn({
+      agentName: "studio-agy",
+      agentKey: "agent-studio-agy",
+      serverUrl: "https://us.nolo.chat",
+      message: "run on the studio",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Studio AGY",
+          prompt: "Use AGY on the Studio.",
+          apiSource: "cli",
+          cliProvider: "agy",
+          runtimeBinding: { machineId: "machine-studio", ownerUserId: "user-1" },
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => {
+          throw new Error("local runtime should be skipped");
+        },
+        resolveProvider: async () => {
+          throw new Error("local provider should be skipped");
+        },
+        executeTool: async () => {
+          throw new Error("local tools should be skipped");
+        },
+      },
+      currentMachineIdResolver: async () => "machine-mac",
+      fetchImpl: async (url, init) => {
+        httpCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "server connector ok", dialogId: "dialog-studio" });
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-studio" });
+    expect(httpCalls).toHaveLength(1);
+    expect(httpCalls[0]?.url).toBe("https://us.nolo.chat/api/agent/run");
+    expect(httpCalls[0]?.body.agentKey).toBe("agent-studio-agy");
+    expect(output.text()).toContain("bound to machine-studio");
+    expect(output.text()).not.toContain("studio-agy -> working locally");
+  });
+
   test("auto mode keeps builtin nolo on local runtime so CLI workspace tools are available", async () => {
     const output = new CaptureOutput();
     const httpCalls: string[] = [];

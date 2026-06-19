@@ -115,18 +115,6 @@ function parseIsoTimestampOption(raw: string | undefined, flag: string) {
   return new Date(time).toISOString();
 }
 
-function buildUsageProbeConfig(kind: string | undefined) {
-  if (!kind) return undefined;
-  if (kind !== "qoder-local-quota-log") {
-    throw new Error("--usage-probe currently supports qoder-local-quota-log.");
-  }
-  return {
-    kind,
-    command: "nolo agent usage qoder",
-    capability: "qoder-usage",
-  };
-}
-
 async function curlFetch(url: string, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? "GET";
   const headers = new Headers(init?.headers ?? {});
@@ -480,7 +468,6 @@ export function parseAgentUpdateArgs(args: string[]) {
     "--max-concurrent",
   );
   const expiresAt = parseIsoTimestampOption(readOption(args, "--expires-at"), "--expires-at");
-  const usageProbe = buildUsageProbeConfig(readOption(args, "--usage-probe"));
   const handle = readOption(args, "--handle")?.trim();
 
   const promptSources = [prompt, promptFile, promptDoc].filter(Boolean);
@@ -499,11 +486,8 @@ export function parseAgentUpdateArgs(args: string[]) {
   if (customProviderUrl) updates.customProviderUrl = customProviderUrl;
   if (apiKey) updates.apiKey = apiKey;
   if (maxConcurrent != null) updates.admission = { maxConcurrent };
-  if (expiresAt || usageProbe) {
-    updates.scheduling = {
-      ...(expiresAt ? { expiresAt } : {}),
-      ...(usageProbe ? { usageProbe } : {}),
-    };
+  if (expiresAt) {
+    updates.scheduling = { expiresAt };
   }
   if (handle) updates.handle = handle;
 

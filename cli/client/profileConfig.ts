@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 
 export type NoloProfile = {
   serverUrl: string;
-  authToken: string;
+  authToken?: string;
   agentKey?: string;
   agentName?: string;
 };
@@ -45,19 +45,34 @@ export function loadProfileConfig(path = getDefaultProfileConfigPath()): NoloPro
   return parsed;
 }
 
+export function clearProfileAuthToken(path = getDefaultProfileConfigPath()): boolean {
+  const config = loadProfileConfig(path);
+  if (!config) return false;
+  const profile = config.profiles[config.currentProfile];
+  if (!profile?.authToken?.trim()) return false;
+  delete profile.authToken;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  return true;
+}
+
 export function saveDefaultProfile(
   path: string,
-  profile: NoloProfile
+  profile: { serverUrl: string; authToken: string }
 ): NoloProfileConfig {
+  const existing = loadProfileConfig(path);
+  const mergedDefault: NoloProfile = {
+    ...(existing?.profiles?.default ?? {}),
+    serverUrl: normalizeProfileServerUrl(profile.serverUrl),
+    authToken: profile.authToken.trim(),
+  };
   const config: NoloProfileConfig = {
     currentProfile: "default",
     profiles: {
-      default: profile,
+      ...(existing?.profiles ?? {}),
+      default: mergedDefault,
     },
   };
-  config.profiles.default.serverUrl = normalizeProfileServerUrl(
-    config.profiles.default.serverUrl
-  );
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   return config;
@@ -70,7 +85,7 @@ export function buildEnvFromProfile(config: NoloProfileConfig | null) {
   return {
     NOLO_PROFILE: config.currentProfile,
     NOLO_SERVER: profile.serverUrl,
-    AUTH_TOKEN: profile.authToken,
+    ...(profile.authToken?.trim() ? { AUTH_TOKEN: profile.authToken.trim() } : {}),
     ...(profile.agentKey ? { NOLO_AGENT: profile.agentKey } : {}),
     ...(profile.agentName ? { NOLO_AGENT_NAME: profile.agentName } : {}),
   };

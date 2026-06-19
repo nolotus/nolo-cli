@@ -2,6 +2,10 @@
 
 Local-first agent automation for open-source maintainers.
 
+> npm releases are published only from the private `bun-nolo` monorepo.
+> This public repository is an automated source mirror for issues, docs, and
+> transparency. Do not run `npm publish` from here.
+
 [![npm version](https://img.shields.io/npm/v/nolo-cli.svg)](https://www.npmjs.com/package/nolo-cli)
 [![npm downloads](https://img.shields.io/npm/dm/nolo-cli.svg)](https://www.npmjs.com/package/nolo-cli)
 [![test](https://github.com/nolotus/nolo-cli/actions/workflows/test.yml/badge.svg)](https://github.com/nolotus/nolo-cli/actions/workflows/test.yml)

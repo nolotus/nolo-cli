@@ -7,7 +7,9 @@ export {
 } from "./agentConfigOptions";
 export {
   buildOpenAiCompatibleChatCompletionRequest,
+  executeOpenAiCompatibleChatCompletion,
   parseOpenAiCompatibleChatCompletionResponse,
+  readOpenAiCompatibleSseCompletion,
 } from "./openAiCompatibleProvider";
 export { resolveOpenAiCompatibleProviderConfig } from "./openAiCompatibleProviderConfig";
 export {

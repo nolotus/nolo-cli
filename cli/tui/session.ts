@@ -1,28 +1,31 @@
 import { DEFAULT_NOLO_SERVER_URL } from "../defaultServer";
 import type { AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
+import {
+  normalizeRenderDisplayMode,
+  type RenderDisplayMode,
+} from "../client/assistantOutput";
+import {
+  normalizeThinkingDisplayMode,
+  type ThinkingDisplayMode,
+} from "../client/thinkingOutput";
+import {
+  dimCliText,
+  resolveCliColorEnabled,
+  styleCliText,
+} from "../client/terminalStyles";
+import {
+  renderTokenStatus,
+  type TurnTokenUsage,
+} from "../client/tokenUsage";
+import {
+  normalizeToolDisplayMode,
+  type ToolDisplayMode,
+} from "../client/toolOutput";
+import { DEFAULT_TUI_AGENT_KEY, PLATFORM_AGENTS } from "./agentCatalog";
+import { resolveAgentSwitchTarget } from "./agentPicker";
 
-export const DEFAULT_TUI_AGENT_KEY = "agent-pub-01NOLOAPPBLD000000019KCKT0";
+export { DEFAULT_TUI_AGENT_KEY };
 export const DEFAULT_TUI_SERVER_URL = DEFAULT_NOLO_SERVER_URL;
-
-const KNOWN_AGENTS: Array<{
-  name: string;
-  key: string;
-  description: string;
-}> = [
-  {
-    name: "nolo",
-    key: "agent-pub-01NOLOAPPBLD000000019KCKT0",
-    description: "one assistant that routes work across your agents and data",
-  },
-  {
-    name: "app-builder",
-    key: "agent-pub-01APPBUILDER00000001YAII3I",
-    description: "builds web apps, tools, charts, and product prototypes",
-  },
-];
-
-const KNOWN_AGENT_ALIASES: Record<string, { name: string; key: string }> =
-  Object.fromEntries(KNOWN_AGENTS.map((agent) => [agent.name, agent]));
 
 function shortenDialogId(dialogId: string) {
   return dialogId.length > 12
@@ -46,6 +49,10 @@ export type TuiState = {
   cliVersion?: string;
   attachedDocs: string[];
   runtimeMode: AgentRuntimeRequestedMode;
+  thinkingDisplay: ThinkingDisplayMode;
+  toolDisplay: ToolDisplayMode;
+  renderDisplay: RenderDisplayMode;
+  turnTokens?: TurnTokenUsage;
 };
 
 export type TuiAction =
@@ -66,6 +73,12 @@ export type TuiAction =
   | {
       type: "cli-command";
       args: string[];
+    }
+  | {
+      type: "pick-agent";
+    }
+  | {
+      type: "list-agents";
     }
   | {
       type: "exit";
@@ -98,32 +111,30 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
     runtimeMode: env.NOLO_RUNTIME_MODE === "local" || env.NOLO_RUNTIME_MODE === "server"
       ? env.NOLO_RUNTIME_MODE
       : "auto",
+    thinkingDisplay: normalizeThinkingDisplayMode(
+      env.NOLO_CLI_THINKING ?? env.NOLO_THINKING,
+      "hide"
+    ),
+    toolDisplay: normalizeToolDisplayMode(env.NOLO_CLI_TOOLS ?? env.NOLO_TOOLS, "compact"),
+    renderDisplay: normalizeRenderDisplayMode(env.NOLO_CLI_RENDER ?? env.NOLO_RENDER, "rich"),
   };
 }
 
 export function renderStatusLine(state: TuiState) {
-  const docs =
-    state.attachedDocs.length > 0
-      ? String(state.attachedDocs.length)
-      : "0";
-
-  return [
-    `agent ${state.agentName}`,
-    `dialog ${resolveDialogLabel(state)}`,
-    `docs ${docs}`,
-    `runtime ${state.runtimeMode}`,
-    `profile ${state.profileName}`,
-  ].join(" | ");
+  const colorEnabled = resolveCliColorEnabled();
+  const agent = styleCliText(state.agentName, "cyan", colorEnabled);
+  const tokens = dimCliText(renderTokenStatus(state.turnTokens), colorEnabled);
+  const profile = dimCliText(`profile ${state.profileName}`, colorEnabled);
+  return [`agent ${agent}`, tokens, profile].join(
+    dimCliText(" | ", colorEnabled)
+  );
 }
 
 export function renderWelcome(state: TuiState) {
-  const docs = state.attachedDocs.length > 0
-    ? `${state.attachedDocs.length} attached`
-    : "none";
   return [
     "",
     `Nolo workspace${state.cliVersion ? `  nolo ${state.cliVersion}` : ""}`,
-    `agent ${state.agentName} | dialog ${resolveDialogLabel(state)} | docs ${docs} | profile ${state.profileName}`,
+    `agent ${state.agentName} | ${renderTokenStatus(state.turnTokens)} | profile ${state.profileName}`,
     `server ${state.serverUrl}`,
     "",
     "Tell nolo what you want. Use /help for commands. Use /version if this install feels stale.",
@@ -143,9 +154,14 @@ export function renderTuiHelp() {
     "  /compact              Compact current dialog and fork a new one",
     "  /context              Show workspace context and next actions",
     "  /runtime <mode>       Use auto, local, or server runtime",
-    "  /agent                Show the current agent",
-    "  /agents               List built-in agent shortcuts",
-    "  /switch <agent>       Switch the current agent",
+    "  /tools <mode>         Control tool trace: hide, compact, verbose",
+    "  /thinking <mode>      Control thinking output: hide, marker, show",
+    "  /render <mode>        Control assistant output: plain, rich",
+    "  /agent                Pick an agent interactively (↑↓, Enter)",
+    "  /agent list           List agents as text",
+    "  /agent <name>         Switch directly by name, alias, or key",
+    "  /agents               List platform agent shortcuts",
+    "  /switch <agent>       Switch the current agent (alias of /agent <name>)",
     "  /dialog               Show the current dialog",
     "  /doc                  List attached docs",
     "  /doc attach <doc>     Attach a doc to this workspace",
@@ -167,12 +183,16 @@ export function renderContextPanel(state: TuiState) {
   return [
     "Workspace context",
     "-----------------",
-    `agent   ${state.agentName}`,
-    `dialog  ${resolveDialogLabel(state)}`,
-    `docs    ${docs}`,
-    `profile ${state.profileName}`,
-    `runtime ${state.runtimeMode}`,
-    `server  ${state.serverUrl}`,
+    `agent    ${state.agentName}`,
+    `tokens   ${renderTokenStatus(state.turnTokens)}`,
+    `dialog   ${resolveDialogLabel(state)}`,
+    `docs     ${docs}`,
+    `profile  ${state.profileName}`,
+    `runtime  ${state.runtimeMode}`,
+    `tools    ${state.toolDisplay}`,
+    `thinking ${state.thinkingDisplay}`,
+    `render   ${state.renderDisplay}`,
+    `server   ${state.serverUrl}`,
     "",
     "Next:",
     "  /agents              see specialist shortcuts",
@@ -184,27 +204,26 @@ export function renderContextPanel(state: TuiState) {
 export function renderKnownAgents() {
   return [
     "Agents:",
-    ...KNOWN_AGENTS.map(
+    ...PLATFORM_AGENTS.map(
       (agent, index) =>
-        `  ${index + 1}  ${agent.name.padEnd(11)} ${agent.description}`
+        `  ${index + 1}  ${agent.name.padEnd(11)} ${agent.description ?? ""}`
     ),
     "",
-    "Tip: stay on nolo for the one-assistant feel; switch only when you want a specialist directly.",
+    "Tip: run /agent for the full picker, or /agent list for your private agents too.",
   ].join("\n");
 }
 
-function resolveSwitchTarget(rawTarget: string) {
-  const target = rawTarget.trim();
-  if (/^\d+$/.test(target)) {
-    const agent = KNOWN_AGENTS[Number(target) - 1];
-    return agent ? { name: agent.name, key: agent.key } : null;
-  }
-  const alias = KNOWN_AGENT_ALIASES[target.toLowerCase()];
-  if (alias) return alias;
-  if (target.startsWith("agent-") || target.startsWith("agent-pub-")) {
-    return { name: target, key: target };
-  }
-  return null;
+function applyAgentSwitch(state: TuiState, target: { name: string; key: string }) {
+  return {
+    nextState: {
+      ...state,
+      agentName: target.name,
+      agentKey: target.key,
+    },
+    output: `Switched to ${target.name}. ${
+      state.dialogId ? `Dialog kept: ${state.dialogId}` : "Dialog kept: new"
+    }`,
+  };
 }
 
 const DIALOG_ID_PATTERN = /[0-9A-HJKMNP-TV-Z]{26}/i;
@@ -419,6 +438,66 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         output: `Runtime: ${argText}`,
       };
     }
+    case "/tools": {
+      if (!argText) {
+        return {
+          nextState: state,
+          output: `Tool display: ${state.toolDisplay} (hide | compact | verbose)`,
+        };
+      }
+      const normalizedArg = argText.trim().toLowerCase();
+      if (!["hide", "compact", "verbose", "on", "off"].includes(normalizedArg)) {
+        return {
+          nextState: state,
+          output: "Usage: /tools <hide|compact|verbose>",
+        };
+      }
+      const nextMode = normalizeToolDisplayMode(normalizedArg, state.toolDisplay);
+      return {
+        nextState: { ...state, toolDisplay: nextMode },
+        output: `Tool display: ${nextMode}`,
+      };
+    }
+    case "/thinking": {
+      if (!argText) {
+        return {
+          nextState: state,
+          output: `Thinking display: ${state.thinkingDisplay} (hide | marker | show)`,
+        };
+      }
+      const normalizedArg = argText.trim().toLowerCase();
+      if (!["hide", "marker", "show", "on", "off"].includes(normalizedArg)) {
+        return {
+          nextState: state,
+          output: "Usage: /thinking <hide|marker|show>",
+        };
+      }
+      const nextMode = normalizeThinkingDisplayMode(normalizedArg, state.thinkingDisplay);
+      return {
+        nextState: { ...state, thinkingDisplay: nextMode },
+        output: `Thinking display: ${nextMode}`,
+      };
+    }
+    case "/render": {
+      if (!argText) {
+        return {
+          nextState: state,
+          output: `Render display: ${state.renderDisplay} (plain | rich)`,
+        };
+      }
+      const normalizedArg = argText.trim().toLowerCase();
+      if (!["plain", "rich", "on", "off"].includes(normalizedArg)) {
+        return {
+          nextState: state,
+          output: "Usage: /render <plain|rich>",
+        };
+      }
+      const nextMode = normalizeRenderDisplayMode(normalizedArg, state.renderDisplay);
+      return {
+        nextState: { ...state, renderDisplay: nextMode },
+        output: `Render display: ${nextMode}`,
+      };
+    }
     case "/exit":
     case "/quit":
       return { nextState: state, output: "Bye.", action: { type: "exit" } };
@@ -429,6 +508,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           dialogId: undefined,
           dialogLabel: "new",
           attachedDocs: [],
+          turnTokens: undefined,
         },
         output: "Started a fresh dialog.",
       };
@@ -450,11 +530,38 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         output: "Compacting current dialog...",
         action: { type: "compact", dialogId: state.dialogId },
       };
-    case "/agent":
-      return {
-        nextState: state,
-        output: `Current agent: ${state.agentName} (${state.agentKey})`,
-      };
+    case "/agent": {
+      if (!argText) {
+        return {
+          nextState: state,
+          output: "",
+          action: { type: "pick-agent" },
+        };
+      }
+      if (argText === "list") {
+        return {
+          nextState: state,
+          output: "",
+          action: { type: "list-agents" },
+        };
+      }
+      if (argText === "current" || argText === "show") {
+        return {
+          nextState: state,
+          output: `Current agent: ${state.agentName} (${state.agentKey})`,
+        };
+      }
+      const resolvedTarget = resolveAgentSwitchTarget(argText, PLATFORM_AGENTS);
+      if (!resolvedTarget) {
+        return {
+          nextState: state,
+          output:
+            `I don't know agent "${argText}" yet.\n` +
+            "Use /agent, /agent list, /agent minimax-m3, or a full agent key.",
+        };
+      }
+      return applyAgentSwitch(state, resolvedTarget);
+    }
     case "/agents":
       return {
         nextState: state,
@@ -464,26 +571,19 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       if (!argText) {
         return {
           nextState: state,
-          output: "Usage: /switch <agent-key|alias>",
+          output: "Usage: /switch <agent-key|alias>  (or run /agent)",
         };
       }
-      const resolvedTarget = resolveSwitchTarget(argText);
+      const resolvedTarget = resolveAgentSwitchTarget(argText, PLATFORM_AGENTS);
       if (!resolvedTarget) {
         return {
           nextState: state,
           output:
             `I don't know agent shortcut "${argText}" yet.\n` +
-            "Use /switch nolo, /switch app-builder, or a full agent key like agent-pub-...",
+            "Use /agent, /switch nolo, /switch minimax-m3, or a full agent key.",
         };
       }
-      return {
-        nextState: {
-          ...state,
-          agentName: resolvedTarget.name,
-          agentKey: resolvedTarget.key,
-        },
-        output: `Switched to ${resolvedTarget.name}.`,
-      };
+      return applyAgentSwitch(state, resolvedTarget);
     }
     case "/dialog":
       return {

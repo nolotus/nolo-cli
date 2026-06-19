@@ -9,6 +9,24 @@ import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
 import { createStreamingTextWriter } from "./streamingOutput";
+import {
+  formatAssistantDisplay,
+  resolveRenderDisplayMode,
+} from "./assistantOutput";
+import {
+  createThinkingAwareStreamFilter,
+  formatAssistantTextForCli,
+  resolveThinkingDisplayMode,
+} from "./thinkingOutput";
+import {
+  buildTurnTokenUsage,
+  type TurnTokenUsage,
+} from "./tokenUsage";
+import {
+  createToolEventFormatter,
+  resolveToolDisplayMode,
+  shouldEmitToolEvents,
+} from "./toolOutput";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -66,6 +84,7 @@ export type RunAgentTurnResult = {
   dialogId?: string;
   streamInterrupted?: boolean;
   localError?: unknown;
+  turnTokens?: TurnTokenUsage;
 };
 
 class Spinner {
@@ -362,10 +381,13 @@ function buildSubjectRefs(options: RunAgentTurnOptions) {
   return refs.length ? refs : undefined;
 }
 
-function shouldTraceLocalTools(options: RunAgentTurnOptions) {
-  const setting = (options.env.NOLO_TRACE_TOOLS ?? "").trim().toLowerCase();
-  if (setting === "0" || setting === "false" || setting === "off") return false;
-  return true;
+function formatAssistantResponseForCli(text: string, options: RunAgentTurnOptions) {
+  const thinkingMode = resolveThinkingDisplayMode(options.env);
+  const renderMode = resolveRenderDisplayMode(options.env);
+  return formatAssistantDisplay(
+    formatAssistantTextForCli(text, thinkingMode),
+    renderMode
+  );
 }
 
 function resolveAgentEventMode(options: RunAgentTurnOptions): "text" | "jsonl" {
@@ -381,21 +403,6 @@ function isMissingLocalAgentConfigError(error: unknown, agentRef: string) {
       (error as { code?: string; agentRef?: string }).code === LOCAL_AGENT_CONFIG_MISSING_CODE &&
       (error as { code?: string; agentRef?: string }).agentRef === agentRef
   );
-}
-
-function formatToolTraceEvent(event: LocalAgentToolEvent) {
-  const round = event.round + 1;
-  const detail = event.argumentsPreview ? ` ${event.argumentsPreview}` : "";
-  if (event.type === "tool-call") {
-    return `[nolo:tool] #${round} -> ${event.toolName}${detail}\n`;
-  }
-  if (event.type === "tool-error") {
-    const elapsed = typeof event.elapsedMs === "number" ? ` ${event.elapsedMs}ms` : "";
-    return `[nolo:tool] #${round} !! ${event.toolName}${elapsed}: ${event.message ?? "failed"}\n`;
-  }
-  const elapsed = typeof event.elapsedMs === "number" ? ` ${event.elapsedMs}ms` : "";
-  const summary = event.summary ? ` ${event.summary}` : "";
-  return `[nolo:tool] #${round} <- ${event.toolName}${elapsed}${summary}\n`;
 }
 
 function formatToolJsonEvent(event: LocalAgentToolEvent) {
@@ -627,7 +634,10 @@ async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string)
     return dialogIdText ? { exitCode: 1, dialogId: dialogIdText } : { exitCode: 1 };
   }
 
-  const content = String(data?.content ?? data?.message ?? "").trim();
+  const content = formatAssistantResponseForCli(
+    String(data?.content ?? data?.message ?? ""),
+    options
+  );
   if (content) {
     options.output.write(`\n${options.agentName} > ${content}\n`);
   } else {
@@ -636,13 +646,16 @@ async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string)
 
   const usage = formatUsage(data?.usage, data?.dialogId);
   if (usage && shouldShowUsage(options.env)) options.output.write(`${usage}\n`);
-  const result = {
+  return {
     exitCode: 0,
     ...(typeof data?.dialogId === "string" && data.dialogId
       ? { dialogId: data.dialogId }
       : {}),
+    turnTokens: buildTurnTokenUsage(
+      data?.usage,
+      typeof data?.model === "string" ? data.model : options.agentKey
+    ),
   };
-  return result;
 }
 
 async function runInjectedLocalAgentTurn(options: RunAgentTurnOptions) {
@@ -669,8 +682,18 @@ async function runLocalAgentTurnForCli(
   const spinner = new Spinner(options.output, `${options.agentName} -> working locally`);
   spinner.start();
   try {
-    const traceLocalTools = shouldTraceLocalTools(options);
+    const toolDisplayMode = resolveToolDisplayMode(options.env);
+    const traceLocalTools = shouldEmitToolEvents(toolDisplayMode);
+    const formatToolEvent = createToolEventFormatter(toolDisplayMode);
     const eventMode = resolveAgentEventMode(options);
+    let wroteToolTrace = false;
+    let streamedAssistantText = false;
+    let printedAssistantLabel = false;
+    const thinkingMode = resolveThinkingDisplayMode(options.env);
+    const thinkingFilter = createThinkingAwareStreamFilter(
+      (chunk) => options.output.write(chunk),
+      thinkingMode
+    );
     const subjectRefs = buildSubjectRefs(options);
     const allowedChildAgentKeys = options.allowedChildAgentKeys?.filter((key) => key.trim());
     const allowedToolNames = options.allowedToolNames?.filter((name) => name.trim());
@@ -702,26 +725,49 @@ async function runLocalAgentTurnForCli(
       ...(traceLocalTools
         ? {
             onToolEvent: (event) => {
-              if (traceLocalTools) {
-                spinner.stop();
-                options.output.write(
-                  eventMode === "jsonl"
-                    ? formatToolJsonEvent(event)
-                    : formatToolTraceEvent(event)
-                );
+              spinner.stop();
+              const chunk =
+                eventMode === "jsonl"
+                  ? formatToolJsonEvent(event)
+                  : formatToolEvent(event);
+              if (chunk) {
+                wroteToolTrace = true;
+                options.output.write(chunk);
               }
+            },
+          }
+        : {}),
+      ...(!options.noStream
+        ? {
+            onTextDelta: (chunk) => {
+              spinner.stop();
+              if (!printedAssistantLabel) {
+                options.output.write(`\n${options.agentName} > `);
+                printedAssistantLabel = true;
+              }
+              streamedAssistantText = true;
+              thinkingFilter.push(chunk);
             },
           }
         : {}),
     });
     spinner.stop();
-    const content = result.content.trim();
-    if (content) {
-      options.output.write(`\n${options.agentName} > ${content}\n`);
+    if (streamedAssistantText) {
+      thinkingFilter.flush();
+      options.output.write("\n");
     } else {
-      options.output.write(`\n${options.agentName} > (no text response)\n`);
+      const content = formatAssistantResponseForCli(result.content.trim(), options);
+      if (content) {
+        options.output.write(`\n${options.agentName} > ${content}\n`);
+      } else {
+        options.output.write(`\n${options.agentName} > (no text response)\n`);
+      }
     }
-    return { exitCode: 0, dialogId: result.dialogId };
+    return {
+      exitCode: 0,
+      dialogId: result.dialogId,
+      turnTokens: buildTurnTokenUsage(result.usage, result.model),
+    };
   } catch (error) {
     spinner.stop();
     if (settings.reportFailure) {
@@ -746,9 +792,14 @@ async function readStreamingAgentRun(
   }
 
   const decoder = new TextDecoder();
+  const thinkingMode = resolveThinkingDisplayMode(options.env);
   const writer = createStreamingTextWriter({
     write: (chunk) => options.output.write(chunk),
   });
+  const thinkingFilter = createThinkingAwareStreamFilter(
+    (chunk) => writer.push(chunk),
+    thinkingMode
+  );
   let buffer = "";
   let content = "";
   let dialogId: string | undefined;
@@ -786,7 +837,7 @@ async function readStreamingAgentRun(
 
     printLabel();
     content += chunk;
-    writer.push(chunk);
+    thinkingFilter.push(chunk);
   };
 
   try {
@@ -830,6 +881,7 @@ async function readStreamingAgentRun(
     return { exitCode: 1 };
   } finally {
     writer.flushAll();
+    thinkingFilter.flush();
   }
 
   if (!content) {
@@ -843,6 +895,7 @@ async function readStreamingAgentRun(
   return {
     exitCode: 0,
     ...(dialogId ? { dialogId } : {}),
+    turnTokens: buildTurnTokenUsage(usage, options.agentKey),
   };
 }
 
@@ -858,10 +911,16 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
     const skipLocal = await shouldSkipAutoLocalForServerPlatformTools(options);
     if (!skipLocal) {
       const localResult = await runLocalAgentTurnForCli(options, { reportFailure: false });
+      if (localResult.exitCode !== 0 && localResult.localError) {
+        options.output.write(
+          `[nolo] auto runtime: local run unavailable (${localResult.localError instanceof Error ? localResult.localError.message : String(localResult.localError)}); falling back to server.\n`
+        );
+      }
       if (localResult.exitCode === 0) {
         return {
           exitCode: localResult.exitCode,
           ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
+          ...(localResult.turnTokens ? { turnTokens: localResult.turnTokens } : {}),
         };
       }
       if (isMissingLocalAgentConfigError(localResult.localError, options.agentKey)) {
@@ -878,6 +937,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
               return {
                 exitCode: retriedLocalResult.exitCode,
                 ...(retriedLocalResult.dialogId ? { dialogId: retriedLocalResult.dialogId } : {}),
+                ...(retriedLocalResult.turnTokens ? { turnTokens: retriedLocalResult.turnTokens } : {}),
               };
             }
           }

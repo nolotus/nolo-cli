@@ -12,6 +12,8 @@ import {
   buildLocalWorkspaceToolset,
   buildLocalWorkspaceOpenAiTools,
   buildOpenAiCompatibleChatCompletionRequest,
+  executeOpenAiCompatibleChatCompletion,
+  readOpenAiCompatibleSseCompletion,
   buildPlatformChatCompletionRequest,
   createLocalWorkspaceToolExecutors,
   parseOpenAiCompatibleChatCompletionResponse,
@@ -1356,12 +1358,15 @@ export function createCliLocalRuntimeAdapter(
               toolNames: requestedToolNames,
               env: deps.env,
             });
+            const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
+            const usesResponsesApi = providerConfig.endpoint.includes("/responses");
+            const stream = Boolean(options?.onTextDelta) && !usesResponsesApi;
             const request = buildPlatformChatCompletionRequest({
               providerConfig,
               messages,
               tools,
+              stream,
             });
-            const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
             logLocalRuntimeDiagnostic("provider.request.start", {
               agentKey: agentConfig.key,
               transport: "platform-proxy",
@@ -1373,31 +1378,61 @@ export function createCliLocalRuntimeAdapter(
               requestedToolNames,
               openAiToolNames: summarizeOpenAiToolNames(tools),
               timeoutMs: options?.timeoutMs ?? null,
+              stream,
             });
-            const res = await fetchWithTransientRetry(fetchImpl, request.url, {
-              ...request.init,
-              ...(timeoutSignal ? { signal: timeoutSignal.signal } : {}),
-            }, {
-              sleep: deps.sleep,
-              loopbackRequest,
-            }).finally(() => timeoutSignal?.clear());
-            const raw = await res.text().catch(() => "");
-            logLocalRuntimeDiagnostic("provider.request.result", {
-              agentKey: agentConfig.key,
-              transport: "platform-proxy",
-              status: res.status,
-              ok: res.ok,
-              responseBytes: raw.length,
-            });
-            const data = parsePlatformChatCompletionData(raw);
-            if (!res.ok) {
-              throw new Error(`platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
+            try {
+              const res = await fetchWithTransientRetry(fetchImpl, request.url, {
+                ...request.init,
+                ...(timeoutSignal ? { signal: timeoutSignal.signal } : {}),
+              }, {
+                sleep: deps.sleep,
+                loopbackRequest,
+              });
+              if (!res.ok) {
+                const raw = await res.text().catch(() => "");
+                const data = parsePlatformChatCompletionData(raw);
+                throw new Error(`platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
+              }
+              if (stream && options?.onTextDelta) {
+                const streamed = await readOpenAiCompatibleSseCompletion({
+                  response: res,
+                  onTextDelta: options.onTextDelta,
+                });
+                logLocalRuntimeDiagnostic("provider.request.result", {
+                  agentKey: agentConfig.key,
+                  transport: "platform-proxy",
+                  ok: true,
+                  stream: true,
+                  contentChars: streamed.content.length,
+                  toolCallCount: streamed.tool_calls?.length ?? 0,
+                });
+                return {
+                  content: streamed.content,
+                  model: providerConfig.model,
+                  provider: providerConfig.provider,
+                  ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
+                  ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
+                  ...(streamed.usage ? { usage: streamed.usage } : {}),
+                  trace: messages,
+                };
+              }
+              const raw = await res.text().catch(() => "");
+              logLocalRuntimeDiagnostic("provider.request.result", {
+                agentKey: agentConfig.key,
+                transport: "platform-proxy",
+                status: res.status,
+                ok: res.ok,
+                responseBytes: raw.length,
+              });
+              const data = parsePlatformChatCompletionData(raw);
+              return parsePlatformChatCompletionResponse({
+                providerConfig,
+                data,
+                trace: messages,
+              });
+            } finally {
+              timeoutSignal?.clear();
             }
-            return parsePlatformChatCompletionResponse({
-              providerConfig,
-              data,
-              trace: messages,
-            });
           },
         };
       }
@@ -1430,47 +1465,46 @@ export function createCliLocalRuntimeAdapter(
             toolNames: requestedToolNames,
             env: deps.env,
           });
-          const request = buildOpenAiCompatibleChatCompletionRequest({
-            providerConfig,
-            messages,
-            tools,
-          });
           const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
+          const stream = Boolean(options?.onTextDelta);
           logLocalRuntimeDiagnostic("provider.request.start", {
             agentKey: agentConfig.key,
             transport: "direct-openai-compatible",
-            requestUrl: summarizeEndpoint(request.url) ?? null,
+            requestUrl: summarizeEndpoint(providerConfig.endpoint) ?? null,
             model: providerConfig.model,
             messageCount: messages.length,
             toolCount: tools.length,
             requestedToolNames,
             openAiToolNames: summarizeOpenAiToolNames(tools),
             timeoutMs: options?.timeoutMs ?? null,
+            stream,
           });
-          const res = await fetchWithTransientRetry(fetchImpl, request.url, {
-            ...request.init,
-            ...(timeoutSignal ? { signal: timeoutSignal.signal } : {}),
-          }, {
-            sleep: deps.sleep,
-            loopbackRequest,
-          }).finally(() => timeoutSignal?.clear());
-          const raw = await res.text().catch(() => "");
-          logLocalRuntimeDiagnostic("provider.request.result", {
-            agentKey: agentConfig.key,
-            transport: "direct-openai-compatible",
-            status: res.status,
-            ok: res.ok,
-            responseBytes: raw.length,
-          });
-          const data = parseJsonObject(raw);
-          if (!res.ok) {
-            throw new Error(`local provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
+          try {
+            const result = await executeOpenAiCompatibleChatCompletion({
+              providerConfig,
+              messages,
+              tools,
+              fetchImpl: (url, init) =>
+                fetchWithTransientRetry(fetchImpl, url, init, {
+                  sleep: deps.sleep,
+                  loopbackRequest,
+                }),
+              stream,
+              onTextDelta: options?.onTextDelta,
+              signal: timeoutSignal?.signal,
+            });
+            logLocalRuntimeDiagnostic("provider.request.result", {
+              agentKey: agentConfig.key,
+              transport: "direct-openai-compatible",
+              ok: true,
+              stream,
+              contentChars: result.content.length,
+              toolCallCount: result.tool_calls?.length ?? 0,
+            });
+            return result;
+          } finally {
+            timeoutSignal?.clear();
           }
-          return parseOpenAiCompatibleChatCompletionResponse({
-            providerConfig,
-            data,
-            trace: messages,
-          });
         },
       };
     },

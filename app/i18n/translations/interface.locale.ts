@@ -84,6 +84,33 @@ export default {
           stop: "Stop",
           refresh: "Refresh",
         },
+        productivity: {
+          title: "Productivity",
+          default_space: {
+            title: "Default startup space",
+            description:
+              "Choose the workspace you land in after signing in to get into flow faster.",
+            all: "All (no fixed default space)",
+          },
+          shortcuts: {
+            title: "Keyboard shortcuts",
+            description:
+              "View and customize shortcuts for common actions to keep your workflow smooth.",
+            sendMessage: "Send message",
+            newChat: "New chat",
+            deleteDialog: "Delete current conversation",
+            clickToRecord: "Click to change shortcut",
+            updated: "Shortcut updated",
+            pressKeys: "Press shortcut keys...",
+            none: "Disabled",
+            cleared: "Shortcut disabled",
+            clearError: "Failed to disable shortcut",
+            clear: "Disable shortcut",
+            resetSuccess: "Shortcut reset",
+            resetError: "Failed to reset shortcut",
+            reset: "Reset to default",
+          },
+        },
         appearance: {
           title: "Appearance",
           theme: {
@@ -813,6 +840,31 @@ export default {
           productivity: "效率",
           secrets: "密钥",
         },
+        productivity: {
+          title: "效率设置",
+          default_space: {
+            title: "默认启动空间",
+            description: "选择你登录后默认进入的工作空间。这能帮助你快速进入工作状态。",
+            all: "全部（不固定默认空间）",
+          },
+          shortcuts: {
+            title: "键盘快捷键",
+            description: "查看并管理常用操作的快捷键配置，让你的工作流更加顺畅。",
+            sendMessage: "发送消息",
+            newChat: "新建对话",
+            deleteDialog: "删除当前会话",
+            clickToRecord: "点击修改快捷键",
+            updated: "快捷键已更新",
+            pressKeys: "按下快捷键...",
+            none: "已禁用",
+            cleared: "快捷键已禁用",
+            clearError: "禁用失败",
+            clear: "禁用快捷键",
+            resetSuccess: "快捷键已重置",
+            resetError: "重置失败",
+            reset: "重置为默认",
+          },
+        },
         appearance: {
           title: "外观",
           theme: {
@@ -1534,6 +1586,31 @@ export default {
           chat: "對話",
           productivity: "效率",
           secrets: "密鑰",
+        },
+        productivity: {
+          title: "效率設定",
+          default_space: {
+            title: "預設啟動空間",
+            description: "選擇你登入後預設進入的工作空間，幫助你更快進入工作狀態。",
+            all: "全部（不固定預設空間）",
+          },
+          shortcuts: {
+            title: "鍵盤快捷鍵",
+            description: "查看並管理常用操作的快捷鍵設定，讓你的工作流更加順暢。",
+            sendMessage: "傳送訊息",
+            newChat: "新建對話",
+            deleteDialog: "刪除目前會話",
+            clickToRecord: "點擊修改快捷鍵",
+            updated: "快捷鍵已更新",
+            pressKeys: "按下快捷鍵...",
+            none: "已停用",
+            cleared: "快捷鍵已停用",
+            clearError: "停用失敗",
+            clear: "停用快捷鍵",
+            resetSuccess: "快捷鍵已重設",
+            resetError: "重設失敗",
+            reset: "重設為預設",
+          },
         },
         appearance: {
           title: "外觀",
@@ -2258,6 +2335,33 @@ export default {
           chat: "会話",
           productivity: "効率",
           secrets: "シークレット",
+        },
+        productivity: {
+          title: "効率設定",
+          default_space: {
+            title: "既定の起動スペース",
+            description:
+              "ログイン後に最初に開くワークスペースを選び、すぐ作業に入れるようにします。",
+            all: "すべて（既定スペースを固定しない）",
+          },
+          shortcuts: {
+            title: "キーボードショートカット",
+            description:
+              "よく使う操作のショートカットを確認・変更して、作業の流れをスムーズにします。",
+            sendMessage: "メッセージを送信",
+            newChat: "新しいチャット",
+            deleteDialog: "現在の会話を削除",
+            clickToRecord: "クリックしてショートカットを変更",
+            updated: "ショートカットを更新しました",
+            pressKeys: "ショートカットキーを押してください...",
+            none: "無効",
+            cleared: "ショートカットを無効にしました",
+            clearError: "無効化に失敗しました",
+            clear: "ショートカットを無効化",
+            resetSuccess: "ショートカットをリセットしました",
+            resetError: "リセットに失敗しました",
+            reset: "既定に戻す",
+          },
         },
         appearance: {
           title: "外観",

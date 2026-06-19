@@ -31,11 +31,16 @@ export type AgentRuntimeAgentConfig = {
   rawRecord?: Record<string, unknown>;
 };
 
+export type AgentRuntimeCompleteOptions = {
+  timeoutMs?: number;
+  onTextDelta?: (chunk: string) => void;
+};
+
 export type AgentRuntimeProvider = {
   model: string;
   complete(
     messages: AgentRuntimeChatMessage[],
-    options?: { timeoutMs?: number }
+    options?: AgentRuntimeCompleteOptions
   ): Promise<AgentRuntimeResult>;
 };
 

@@ -69,6 +69,8 @@ const AGENT_ALIAS_TO_KEY: Record<string, string> = {
   "grok-agent": LOCAL_GROK_AGENT_KEY,
   "grok cli": LOCAL_GROK_AGENT_KEY,
   "grok-cli": LOCAL_GROK_AGENT_KEY,
+  "minimax-m3": "agent-0e95801d90-minimax-m3",
+  minimax: "agent-0e95801d90-minimax-m3",
 };
 
 function parseAgentKeyFromInput(raw: string): string {

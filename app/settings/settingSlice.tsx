@@ -144,6 +144,7 @@ interface SettingState {
   showScrollToBottomButton: boolean;
   createMenuOpenCount: number;
   desktopChromeConnectorEnabled: boolean;
+  deleteShortcut: string;
 
   [key: string]: any;
 }
@@ -207,6 +208,9 @@ const initialState: SettingState = {
   showScrollToBottomButton: false,
   createMenuOpenCount: 0,
   desktopChromeConnectorEnabled: false,
+  deleteShortcut: (typeof window !== "undefined" && typeof window.navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(window.navigator.platform))
+    ? "meta+backspace"
+    : "ctrl+backspace",
 };
 
 // --- Slice 创建 ---
@@ -1064,6 +1068,8 @@ export const selectEditorWordCountEnabled = (state: RootState): boolean =>
   state.settings.editorWordCountEnabled;
 export const selectEditorShortcuts = (state: RootState) =>
   state.settings.editorShortcuts;
+export const selectDeleteShortcut = (state: RootState): string =>
+  state.settings.deleteShortcut;
 export const selectEditorFontSize = (state: RootState): number =>
   state.settings.editorFontSize;
 export const selectEditorAutoSave = (state: RootState): boolean =>

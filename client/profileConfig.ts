@@ -114,3 +114,18 @@ export function getCurrentProfile(config: NoloProfileConfig | null) {
   if (!config) return null;
   return config.profiles[config.currentProfile] ?? null;
 }
+
+export function saveProfileAgentSelection(
+  selection: { agentKey: string; agentName: string },
+  path = getDefaultProfileConfigPath()
+): NoloProfileConfig | null {
+  const config = loadProfileConfig(path);
+  if (!config) return null;
+  const profile = config.profiles[config.currentProfile];
+  if (!profile) return null;
+  profile.agentKey = selection.agentKey.trim();
+  profile.agentName = selection.agentName.trim();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  return config;
+}

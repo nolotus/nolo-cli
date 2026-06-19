@@ -1,5 +1,7 @@
 export {
   buildOpenAiCompatibleChatCompletionRequest,
+  executeOpenAiCompatibleChatCompletion,
+  readOpenAiCompatibleSseCompletion,
   buildPlatformChatCompletionRequest,
   canUsePlatformChatProvider,
   hasDirectOpenAiCompatibleProvider,

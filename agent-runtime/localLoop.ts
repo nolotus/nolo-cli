@@ -19,6 +19,7 @@ export type LocalAgentTurnInput = {
   runtimeContext?: Record<string, any> | null;
   timeoutMs?: number;
   onToolEvent?: (event: LocalAgentToolEvent) => void;
+  onTextDelta?: (chunk: string) => void;
 };
 
 export type LocalAgentTurnResult = AgentRuntimeResult & {
@@ -210,6 +211,23 @@ function buildMessages(args: {
   ];
 }
 
+function mergeTurnUsage(
+  current: Record<string, unknown> | undefined,
+  next: Record<string, unknown> | undefined
+) {
+  if (!next) return current;
+  const read = (usage: Record<string, unknown>) => ({
+    input: Number(usage.input_tokens ?? usage.prompt_tokens ?? 0),
+    output: Number(usage.output_tokens ?? usage.completion_tokens ?? 0),
+  });
+  const right = read(next);
+  const left = current ? read(current) : { input: 0, output: 0 };
+  return {
+    input_tokens: right.input || left.input,
+    output_tokens: left.output + right.output,
+  };
+}
+
 function extractUserInputText(content: AgentRuntimeMessageContent): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -247,11 +265,14 @@ export async function runLocalAgentTurn(
   const userInputText = extractUserInputText(input.input);
   let toolCallCount = 0;
   let result: AgentRuntimeResult;
+  let turnUsage: Record<string, unknown> | undefined;
   let round = 0;
   while (true) {
     result = await provider.complete(messages, {
       ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
+      ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
     });
+    turnUsage = mergeTurnUsage(turnUsage, result.usage);
     const toolCalls = result.tool_calls ?? [];
     if (toolCalls.length === 0) break;
     toolCallCount += toolCalls.length;
@@ -353,6 +374,7 @@ export async function runLocalAgentTurn(
 
   return {
     ...result,
+    ...(turnUsage ? { usage: turnUsage } : {}),
     ...(toolCallCount > 0 ? { toolCallCount } : {}),
     ...((agentConfig as any).toolSurface ? { runtimeToolSurface: (agentConfig as any).toolSurface } : {}),
     dialogId: saved.dialogId,

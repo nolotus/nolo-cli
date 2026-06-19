@@ -89,7 +89,11 @@ describe("cli agent run client", () => {
         },
       },
     ]);
-    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-1" });
+    expect(result).toEqual({
+      exitCode: 0,
+      dialogId: "dialog-1",
+      turnTokens: { input: 2, output: 3 },
+    });
     expect(output.text()).toContain("nolo -> working");
     expect(output.text()).toContain("nolo > hi");
     expect(output.text()).not.toContain("tokens=");
@@ -597,9 +601,61 @@ describe("cli agent run client", () => {
     });
 
     expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local" });
+    expect(output.text()).toContain("▸ readFile README.md");
+    expect(output.text()).toContain("✓");
+    expect(output.text()).not.toContain("[nolo:tool]");
+  });
+
+  test("prints verbose local tool trace when requested", async () => {
+    const output = new CaptureOutput();
+    let completeCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "inspect repo",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_TOOLS: "verbose" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["readFile"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local-verbose" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-read",
+                  type: "function",
+                  function: { name: "readFile", arguments: JSON.stringify({ path: "README.md" }) },
+                }],
+              };
+            }
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({ content: "clean" }),
+      },
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local-verbose" });
     expect(output.text()).toContain("[nolo:tool] #1 -> readFile README.md");
     expect(output.text()).toContain("[nolo:tool] #1 <- readFile");
-    expect(output.text()).toContain("1 line");
   });
 
   test("does not print local tool trace when disabled by env", async () => {

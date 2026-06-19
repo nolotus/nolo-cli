@@ -117,6 +117,7 @@ export function buildPlatformChatCompletionRequest(args: {
   providerConfig: PlatformChatProviderConfig;
   messages: AgentRuntimeChatMessage[];
   tools?: PlatformChatTool[];
+  stream?: boolean;
 }) {
   const usesResponsesApi = isResponsesEndpoint(args.providerConfig.endpoint);
   const requestOptions = usesResponsesApi
@@ -127,7 +128,8 @@ export function buildPlatformChatCompletionRequest(args: {
     ...(usesResponsesApi
       ? { input: convertMessagesToResponsesInput(args.messages as any) }
       : { messages: toOpenAiCompatibleMessages(args.messages) }),
-    stream: false,
+    stream: args.stream ?? false,
+    ...(args.stream ? { stream_options: { include_usage: true } } : {}),
     ...requestOptions,
     ...(args.tools && args.tools.length > 0
       ? {

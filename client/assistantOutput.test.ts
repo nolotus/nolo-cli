@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   convertMarkdownTablesForTerminal,
+  createRenderAwareStreamWriter,
   formatAssistantDisplay,
   normalizeRenderDisplayMode,
   polishAssistantStructure,
@@ -37,5 +38,21 @@ describe("assistantOutput", () => {
     expect(formatAssistantDisplay("## Title\nplain body", "plain")).toBe(
       "## Title\nplain body"
     );
+  });
+
+  test("render-aware stream writer applies rich formatting while streaming", () => {
+    const chunks: string[] = [];
+    const writer = createRenderAwareStreamWriter({
+      write: (chunk) => chunks.push(chunk),
+      renderMode: "rich",
+    });
+
+    writer.push("## Title\n");
+    writer.push("这是 **Nolo**");
+    writer.flush();
+
+    const output = chunks.join("");
+    expect(output).toContain("\x1b[1mTitle\x1b[0m");
+    expect(output).toContain("\x1b[1mNolo\x1b[0m");
   });
 });

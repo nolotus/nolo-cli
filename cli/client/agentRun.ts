@@ -10,6 +10,7 @@ import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode } from "../agen
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
 import { createStreamingTextWriter } from "./streamingOutput";
 import {
+  createRenderAwareStreamWriter,
   formatAssistantDisplay,
   resolveRenderDisplayMode,
 } from "./assistantOutput";
@@ -686,12 +687,16 @@ async function runLocalAgentTurnForCli(
     const traceLocalTools = shouldEmitToolEvents(toolDisplayMode);
     const formatToolEvent = createToolEventFormatter(toolDisplayMode);
     const eventMode = resolveAgentEventMode(options);
-    let wroteToolTrace = false;
     let streamedAssistantText = false;
     let printedAssistantLabel = false;
     const thinkingMode = resolveThinkingDisplayMode(options.env);
+    const renderMode = resolveRenderDisplayMode(options.env);
+    const renderWriter = createRenderAwareStreamWriter({
+      write: (chunk) => options.output.write(chunk),
+      renderMode,
+    });
     const thinkingFilter = createThinkingAwareStreamFilter(
-      (chunk) => options.output.write(chunk),
+      (chunk) => renderWriter.push(chunk),
       thinkingMode
     );
     const subjectRefs = buildSubjectRefs(options);
@@ -731,7 +736,6 @@ async function runLocalAgentTurnForCli(
                   ? formatToolJsonEvent(event)
                   : formatToolEvent(event);
               if (chunk) {
-                wroteToolTrace = true;
                 options.output.write(chunk);
               }
             },
@@ -754,6 +758,7 @@ async function runLocalAgentTurnForCli(
     spinner.stop();
     if (streamedAssistantText) {
       thinkingFilter.flush();
+      renderWriter.flush();
       options.output.write("\n");
     } else {
       const content = formatAssistantResponseForCli(result.content.trim(), options);
@@ -793,8 +798,13 @@ async function readStreamingAgentRun(
 
   const decoder = new TextDecoder();
   const thinkingMode = resolveThinkingDisplayMode(options.env);
-  const writer = createStreamingTextWriter({
+  const renderMode = resolveRenderDisplayMode(options.env);
+  const renderWriter = createRenderAwareStreamWriter({
     write: (chunk) => options.output.write(chunk),
+    renderMode,
+  });
+  const writer = createStreamingTextWriter({
+    write: (chunk) => renderWriter.push(chunk),
   });
   const thinkingFilter = createThinkingAwareStreamFilter(
     (chunk) => writer.push(chunk),
@@ -882,6 +892,7 @@ async function readStreamingAgentRun(
   } finally {
     writer.flushAll();
     thinkingFilter.flush();
+    renderWriter.flush();
   }
 
   if (!content) {

@@ -1393,7 +1393,11 @@ export function createCliLocalRuntimeAdapter(
                 const data = parsePlatformChatCompletionData(raw);
                 throw new Error(`platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
               }
-              if (stream && options?.onTextDelta) {
+              const contentType = res.headers.get("content-type") ?? "";
+              const shouldStream =
+                Boolean(stream && options?.onTextDelta) &&
+                contentType.includes("text/event-stream");
+              if (shouldStream && options?.onTextDelta) {
                 const streamed = await readOpenAiCompatibleSseCompletion({
                   response: res,
                   onTextDelta: options.onTextDelta,

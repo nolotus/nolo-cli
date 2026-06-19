@@ -111,3 +111,81 @@ export function formatAssistantDisplay(text: string, mode: RenderDisplayMode = "
     .map((line) => styleRichMarkdownLine(line))
     .join("\n");
 }
+
+function emitFormattedAssistantBlock(
+  write: (chunk: string) => void,
+  text: string,
+  renderMode: RenderDisplayMode,
+  trailingNewline = false
+) {
+  if (!text) return;
+  write(formatAssistantDisplay(text, renderMode));
+  if (trailingNewline) write("\n");
+}
+
+export function createRenderAwareStreamWriter(args: {
+  write: (chunk: string) => void;
+  renderMode: RenderDisplayMode;
+}) {
+  let buffer = "";
+
+  const flushCompleteBlocks = () => {
+    if (args.renderMode === "plain") {
+      if (!buffer) return;
+      args.write(buffer);
+      buffer = "";
+      return;
+    }
+
+    while (buffer.includes("\n")) {
+      const lines = buffer.split("\n");
+      if (lines.length < 2) break;
+
+      if (isTableRow(lines[0] ?? "") && isTableSeparator(lines[1] ?? "")) {
+        let end = 2;
+        while (
+          end < lines.length &&
+          isTableRow(lines[end] ?? "") &&
+          !isTableSeparator(lines[end] ?? "")
+        ) {
+          end += 1;
+        }
+        const tableComplete = end < lines.length || buffer.endsWith("\n");
+        if (!tableComplete) break;
+
+        emitFormattedAssistantBlock(
+          args.write,
+          lines.slice(0, end).join("\n"),
+          args.renderMode,
+          true
+        );
+        buffer = lines.slice(end).join("\n");
+        continue;
+      }
+
+      emitFormattedAssistantBlock(args.write, lines[0] ?? "", args.renderMode, true);
+      buffer = lines.slice(1).join("\n");
+    }
+  };
+
+  return {
+    push(chunk: string) {
+      if (!chunk) return;
+      if (args.renderMode === "plain") {
+        args.write(chunk);
+        return;
+      }
+      buffer += chunk;
+      flushCompleteBlocks();
+    },
+    flush() {
+      if (!buffer) return;
+      if (args.renderMode === "plain") {
+        args.write(buffer);
+      } else {
+        emitFormattedAssistantBlock(args.write, buffer, args.renderMode);
+      }
+      buffer = "";
+    },
+  };
+}

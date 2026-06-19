@@ -116,6 +116,56 @@ function finalizeAccumulatedToolCalls(accumulated: Record<number, AccumulatedToo
     .filter((call) => call?.function?.name);
 }
 
+function processOpenAiCompatibleSseEvent(
+  event: string,
+  state: {
+    content: string;
+    reasoning: string;
+    usage?: Record<string, unknown>;
+    accumulatedToolCalls: Record<number, AccumulatedToolCall>;
+    onTextDelta?: (chunk: string) => void;
+  }
+) {
+  for (const line of event.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      continue;
+    }
+
+    if (parsed?.usage && typeof parsed.usage === "object") {
+      state.usage = parsed.usage;
+    }
+
+    const delta = parsed?.choices?.[0]?.delta;
+    if (!delta || typeof delta !== "object") continue;
+
+    const reasoningChunk =
+      typeof delta.reasoning_content === "string"
+        ? delta.reasoning_content
+        : typeof delta.reasoning === "string"
+          ? delta.reasoning
+          : "";
+    if (reasoningChunk) state.reasoning += reasoningChunk;
+
+    if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
+      accumulateToolCallDelta(state.accumulatedToolCalls, delta.tool_calls);
+    }
+
+    const textChunk = typeof delta.content === "string" ? delta.content : "";
+    if (textChunk) {
+      state.content += textChunk;
+      state.onTextDelta?.(textChunk);
+    }
+  }
+}
+
 export async function readOpenAiCompatibleSseCompletion(args: {
   response: Response;
   onTextDelta?: (chunk: string) => void;
@@ -127,10 +177,13 @@ export async function readOpenAiCompatibleSseCompletion(args: {
 
   const decoder = new TextDecoder();
   let buffer = "";
-  let content = "";
-  let reasoning = "";
-  let usage: Record<string, unknown> | undefined;
-  const accumulatedToolCalls: Record<number, AccumulatedToolCall> = {};
+  const state = {
+    content: "",
+    reasoning: "",
+    usage: undefined as Record<string, unknown> | undefined,
+    accumulatedToolCalls: {} as Record<number, AccumulatedToolCall>,
+    onTextDelta: args.onTextDelta,
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -142,54 +195,21 @@ export async function readOpenAiCompatibleSseCompletion(args: {
       if (boundary === -1) break;
       const event = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
-
-      for (const line of event.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const payload = trimmed.slice(5).trim();
-        if (!payload || payload === "[DONE]") continue;
-
-        let parsed: any;
-        try {
-          parsed = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-
-        if (parsed?.usage && typeof parsed.usage === "object") {
-          usage = parsed.usage;
-        }
-
-        const delta = parsed?.choices?.[0]?.delta;
-        if (!delta || typeof delta !== "object") continue;
-
-        const reasoningChunk =
-          typeof delta.reasoning_content === "string"
-            ? delta.reasoning_content
-            : typeof delta.reasoning === "string"
-              ? delta.reasoning
-              : "";
-        if (reasoningChunk) reasoning += reasoningChunk;
-
-        if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
-          accumulateToolCallDelta(accumulatedToolCalls, delta.tool_calls);
-        }
-
-        const textChunk = typeof delta.content === "string" ? delta.content : "";
-        if (textChunk) {
-          content += textChunk;
-          args.onTextDelta?.(textChunk);
-        }
-      }
+      processOpenAiCompatibleSseEvent(event, state);
     }
   }
 
-  const tool_calls = finalizeAccumulatedToolCalls(accumulatedToolCalls);
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    processOpenAiCompatibleSseEvent(buffer, state);
+  }
+
+  const tool_calls = finalizeAccumulatedToolCalls(state.accumulatedToolCalls);
   return {
-    content,
-    ...(reasoning ? { reasoning_content: reasoning } : {}),
+    content: state.content,
+    ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
     ...(tool_calls.length > 0 ? { tool_calls } : {}),
-    ...(usage ? { usage } : {}),
+    ...(state.usage ? { usage: state.usage } : {}),
   };
 }
 

@@ -15,6 +15,8 @@ type LocalWorkspaceToolArgs = {
   commandPrefix?: string[];
 };
 
+const EXEC_SHELL_TIMEOUT_ENV = "NOLO_EXEC_SHELL_TIMEOUT_MS";
+
 export type ActivityRef =
   | { type: "file"; path: string }
   | { type: "terminal"; id?: string; label?: string }
@@ -150,6 +152,87 @@ function readTrimmedString(value: unknown): string | undefined {
 
 function readFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function resolveExecShellTimeoutMs(override: number | undefined) {
+  if (typeof override === "number" && Number.isFinite(override) && override > 0) {
+    return override;
+  }
+  const raw = process.env[EXEC_SHELL_TIMEOUT_ENV];
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function tokenizeShellPrefix(command: string) {
+  const tokens: string[] = [];
+  const pattern = /"([^"]*)"|'([^']*)'|([^\s"'|;&<>]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(command))) {
+    tokens.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+  return tokens;
+}
+
+function extractInteractiveGhAuthCommand(command: string): string | null {
+  const tokens = tokenizeShellPrefix(command);
+  if (tokens[0] !== "gh" || tokens[1] !== "auth") return null;
+  const subcommand = tokens[2];
+  if (subcommand !== "login" && subcommand !== "refresh") return null;
+  if (tokens.includes("--help")) return null;
+
+  const result = ["gh", "auth", subcommand];
+  for (let index = 3; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token) continue;
+    if (token === "-h" || token === "--hostname" || token === "-s" || token === "--scopes" || token === "--remove-scopes" || token === "-r") {
+      const value = tokens[index + 1];
+      if (value) {
+        result.push(token, value);
+        index += 1;
+      }
+      continue;
+    }
+    if (token === "--clipboard" || token === "-c" || token === "--insecure-storage" || token === "--reset-scopes") {
+      result.push(token);
+      continue;
+    }
+    if (token.startsWith("--hostname=") || token.startsWith("--scopes=") || token.startsWith("--remove-scopes=")) {
+      result.push(token);
+      continue;
+    }
+  }
+  return result.join(" ");
+}
+
+function splitShellWords(command: string): string[] {
+  return tokenizeShellPrefix(command);
+}
+
+function buildInteractiveCommandBlockedResult(command: string): AgentRuntimeToolResult {
+  const argv = splitShellWords(command);
+  return {
+    content: [
+      "requires_user_action: terminal_command",
+      `command: ${command}`,
+      "Run this in the current TUI terminal, then resume the agent turn.",
+      "exitCode: 130",
+    ].join("\n"),
+    metadata: {
+      exitCode: 130,
+      timedOut: false,
+      requiresUserAction: {
+        type: "terminal_command",
+        argv,
+        displayCommand: command,
+        reason: "This command requires an interactive terminal.",
+        resumeHint: "Continue after the terminal command exits.",
+      },
+      reason: "interactive-command-requires-terminal",
+    },
+  };
 }
 
 function extractActivityRefs(rawRefs: unknown): ActivityRef[] | undefined {
@@ -2154,6 +2237,18 @@ async function execShellTool(args: {
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const command = requireShellCommand(parsed, args.call.name);
+  const interactiveAuthCommand = extractInteractiveGhAuthCommand(command);
+  if (interactiveAuthCommand) {
+    const activity = extractActivity(parsed);
+    const blocked = buildInteractiveCommandBlockedResult(interactiveAuthCommand);
+    return {
+      ...blocked,
+      metadata: {
+        ...blocked.metadata,
+        ...(activity ? { activity } : {}),
+      },
+    };
+  }
   const result = await runWorkspaceCommand({
     workspaceRoot: args.workspaceRoot,
     command: buildWorkspaceShellCommand({
@@ -2161,7 +2256,7 @@ async function execShellTool(args: {
       command,
       shell: parsed.shell,
     }),
-    timeoutMs: args.commandTimeoutMs,
+    timeoutMs: resolveExecShellTimeoutMs(args.commandTimeoutMs),
     outputLimit: args.commandOutputLimit,
     commandPrefix: args.commandPrefix,
   });

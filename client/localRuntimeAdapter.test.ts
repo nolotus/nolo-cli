@@ -2627,6 +2627,76 @@ describe("CLI local runtime adapter", () => {
     expect(requests[1]?.body.messages.at(-1)?.content).toContain(import.meta.dir);
   });
 
+  test("pauses for manual terminal action and resumes the same local turn", async () => {
+    const requests: Array<{ body: any }> = [];
+    const userActions: any[] = [];
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+      },
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-shell-manual-action",
+          prompt: "Use shell when needed.",
+          model: "qwen-coder",
+          toolNames: ["execShell"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      cwd: import.meta.dir,
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        if (requests.length === 1) {
+          return Response.json({
+            choices: [{
+              message: {
+                content: "",
+                tool_calls: [{
+                  id: "call-auth",
+                  type: "function",
+                  function: {
+                    name: "execShell",
+                    arguments: JSON.stringify({ command: "gh auth refresh -h github.com -s delete_repo" }),
+                  },
+                }],
+              },
+            }],
+          });
+        }
+        const lastToolMessage = requests[1]?.body.messages.at(-1);
+        expect(lastToolMessage?.role).toBe("tool");
+        expect(String(lastToolMessage?.content)).toContain("user action completed");
+        return Response.json({
+          choices: [{ message: { content: "continuing after auth" } }],
+        });
+      },
+    });
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "shell-manual-action",
+      input: "delete repo",
+      onUserAction: async (action) => {
+        userActions.push(action);
+        return {
+          content: `user action completed: ${action.displayCommand}`,
+          metadata: { exitCode: 0, userActionCompleted: true },
+        };
+      },
+    });
+
+    expect(result.content).toBe("continuing after auth");
+    expect(userActions).toHaveLength(1);
+    expect(userActions[0]).toMatchObject({
+      type: "terminal_command",
+      argv: ["gh", "auth", "refresh", "-h", "github.com", "-s", "delete_repo"],
+      displayCommand: "gh auth refresh -h github.com -s delete_repo",
+      toolName: "execShell",
+    });
+  });
+
   test("blocks destructive local execShell calls unless the user explicitly asked to delete", async () => {
     let executorCalls = 0;
     const adapter = createCliLocalRuntimeAdapter({

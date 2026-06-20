@@ -41,6 +41,7 @@ export type {
   AgentRuntimeHostAdapter,
   AgentRuntimeRequestedMode,
   AgentRuntimeSaveTurnInput,
+  AgentRuntimeToolResult,
   HybridRecordKvDb,
   HybridRecordStore,
   LocalToolPolicyDecision,

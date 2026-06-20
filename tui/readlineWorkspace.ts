@@ -3,6 +3,8 @@ import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
+import type { LocalAgentUserAction } from "../agent-runtime/localLoop";
+import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
 import { saveProfileAgentSelection } from "../client/profileConfig";
 import { readPipeText, spawnProcess } from "../processSpawn";
@@ -35,6 +37,7 @@ type WorkspaceOptions = {
     dialogId: string;
   }) => Promise<CompactDialogResult>;
   selfUpdater?: SelfUpdater;
+  spawnRunner?: typeof spawnProcess;
 };
 
 type CliCommandRunner = (
@@ -47,13 +50,19 @@ type CliCommandRunner = (
   }
 ) => Promise<number>;
 
+type RawModeInput = NodeJS.ReadableStream & {
+  isRaw?: boolean;
+  setRawMode?: (mode: boolean) => unknown;
+};
+
 async function runAgentChat(
   scriptDir: string,
   state: TuiState,
   message: string,
   env: NodeJS.ProcessEnv,
   output: NodeJS.WritableStream,
-  agentRunner: typeof runAgentTurn = runAgentTurn
+  agentRunner: typeof runAgentTurn = runAgentTurn,
+  userActionHandler?: (action: LocalAgentUserAction) => Promise<AgentRuntimeToolResult | void>
 ) {
   const result: RunAgentTurnResult = await agentRunner({
     agentName: state.agentName,
@@ -71,8 +80,57 @@ async function runAgentChat(
       NOLO_CLI_RENDER: state.renderDisplay,
     },
     output,
+    ...(userActionHandler ? { userActionHandler } : {}),
   });
   return result;
+}
+
+function waitForManualUserAction(
+  rl: ReturnType<typeof createInterface>,
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+  action: LocalAgentUserAction,
+  spawnRunner: typeof spawnProcess,
+): Promise<AgentRuntimeToolResult> {
+  const displayCommand = action.displayCommand ?? action.argv.join(" ");
+  output.write("\n[nolo] Action needed in your terminal\n");
+  if (action.reason) output.write(`[nolo] ${action.reason}\n`);
+  output.write(`  ${displayCommand}\n`);
+  output.write("[nolo] Press Enter to run it now. Follow any prompts below, or Ctrl+C to cancel.\n");
+  return new Promise((resolve) => {
+    rl.question("", async () => {
+      const rawInput = input as RawModeInput;
+      const restoreRawMode = Boolean(rawInput.isRaw);
+      rl.pause();
+      rawInput.setRawMode?.(false);
+      let exitCode = 1;
+      try {
+        const proc = spawnRunner({
+          cmd: action.argv,
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        exitCode = await proc.exited;
+      } finally {
+        if (restoreRawMode) rawInput.setRawMode?.(true);
+        rl.resume();
+      }
+      resolve({
+        content: exitCode === 0
+          ? `user action completed: ${displayCommand}`
+          : `user action failed with exit code ${exitCode}: ${displayCommand}`,
+        metadata: {
+          exitCode,
+          userActionCompleted: exitCode === 0,
+          userActionFailed: exitCode !== 0,
+          requiresUserActionCompleted: true,
+          argv: action.argv,
+          displayCommand,
+        },
+      });
+    });
+  });
 }
 
 async function pipeReadableToOutput(
@@ -134,6 +192,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   const cliEntrypointPath =
     options.cliEntrypointPath ?? resolveDefaultCliEntrypoint(options.scriptDir);
   const cliCommandRunner = options.cliCommandRunner ?? runCliCommandInChildProcess;
+  const spawnRunner = options.spawnRunner ?? spawnProcess;
   const selfUpdater: SelfUpdater =
     options.selfUpdater ?? ((target) => runSelfUpdate({ output: target }));
   const rl = createInterface({ input, output });
@@ -282,7 +341,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           result.action.message,
           options.env ?? process.env,
           output,
-          options.agentRunner
+          options.agentRunner,
+          (action) => waitForManualUserAction(rl, input, output, action, spawnRunner)
         );
         if (runResult.dialogId || runResult.turnTokens) {
           state = {

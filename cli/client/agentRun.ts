@@ -6,7 +6,8 @@ import {
   WIN_CODEX_AGENT_KEY,
 } from "../agentAliases";
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
-import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
+import type { LocalAgentUserAction } from "../../agent-runtime/localLoop";
+import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode, AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
 import { createStreamingTextWriter } from "./streamingOutput";
 import {
@@ -78,6 +79,7 @@ type RunAgentTurnOptions = {
   taskEvidence?: TaskEvidenceInput;
   fetchImpl?: typeof fetch;
   currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
+  userActionHandler?: (action: LocalAgentUserAction) => Promise<AgentRuntimeToolResult | void>;
 };
 
 export type RunAgentTurnResult = {
@@ -727,6 +729,7 @@ async function runLocalAgentTurnForCli(
           }
         : {}),
       ...(typeof options.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.userActionHandler ? { onUserAction: options.userActionHandler } : {}),
       ...(traceLocalTools
         ? {
             onToolEvent: (event) => {

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 
 export type SpawnStdio = "inherit" | "pipe" | "ignore";
 
@@ -14,6 +14,7 @@ export type SpawnProcessOptions = {
 
 export type SpawnedProcess = {
   exited: Promise<number>;
+  stdin: Writable | null;
   stdout: Readable | null;
   stderr: Readable | null;
 };
@@ -36,6 +37,7 @@ export function spawnProcess(options: SpawnProcessOptions): SpawnedProcess {
   } catch {
     return {
       exited: Promise.resolve(127),
+      stdin: null,
       stdout: null,
       stderr: null,
     };
@@ -48,6 +50,7 @@ export function spawnProcess(options: SpawnProcessOptions): SpawnedProcess {
 
   return {
     exited,
+    stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
   };

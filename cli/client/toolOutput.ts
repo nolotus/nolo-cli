@@ -45,8 +45,25 @@ function clip(value: string, max = 72) {
   return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
 }
 
-function compactResultHint(summary: string | undefined, toolName: string) {
+function compactResultHint(event: LocalAgentToolEvent, toolName: string) {
+  const rawAction = event.metadata?.requiresUserAction;
+  if (rawAction && typeof rawAction === "object" && !Array.isArray(rawAction)) {
+    const action = rawAction as Record<string, unknown>;
+    const command = typeof action.displayCommand === "string"
+      ? action.displayCommand
+      : Array.isArray(action.argv)
+        ? action.argv.filter((item): item is string => typeof item === "string").join(" ")
+        : "";
+    return command.trim()
+      ? `needs terminal: ${clip(command, 120)}`
+      : "needs terminal";
+  }
+  if (event.metadata?.timedOut) return "timed out";
+
+  const summary = event.summary;
   if (!summary) return "";
+  const exitMatch = summary.match(/exit=(\d+)/);
+  if (exitMatch && exitMatch[1] !== "0") return `exit ${exitMatch[1]}`;
   const linesMatch = summary.match(/(\d+)\s+lines?/);
   if (linesMatch) {
     if (toolName === "readFile" || toolName === "listFiles" || toolName === "globFiles") {
@@ -56,9 +73,13 @@ function compactResultHint(summary: string | undefined, toolName: string) {
       return `${linesMatch[1]} lines`;
     }
   }
-  const exitMatch = summary.match(/exit=(\d+)/);
-  if (exitMatch && exitMatch[1] !== "0") return `exit ${exitMatch[1]}`;
   return "";
+}
+
+function isFailedToolResult(event: LocalAgentToolEvent) {
+  const exitCode = event.metadata?.exitCode;
+  if (typeof exitCode === "number" && exitCode !== 0) return true;
+  return Boolean(event.metadata?.timedOut || event.metadata?.requiresUserAction);
 }
 
 function formatToolTraceLine(text: string, colorEnabled: boolean, accent: "none" | "error" = "none") {
@@ -107,10 +128,12 @@ function formatCompactToolLine(
     return formatToolTraceLine(`  ▸ ${label}  ✗ ${message}${timing}`, colorEnabled, "error");
   }
 
-  const hint = compactResultHint(event.summary, toolName);
+  const hint = compactResultHint(event, toolName);
   const timing = ms ? ` ${ms}` : "";
   const suffix = hint ? ` · ${hint}` : "";
-  return formatToolTraceLine(`  ▸ ${label}  ✓${timing}${suffix}`, colorEnabled);
+  const marker = isFailedToolResult(event) ? "✗" : "✓";
+  const accent = isFailedToolResult(event) ? "error" : "none";
+  return formatToolTraceLine(`  ▸ ${label}  ${marker}${timing}${suffix}`, colorEnabled, accent);
 }
 
 export function formatToolEventForCli(

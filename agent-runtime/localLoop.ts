@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeHostAdapter,
+  AgentRuntimeToolResult,
 } from "./hostAdapter";
 import type {
   AgentRuntimeChatMessage,
@@ -19,6 +20,7 @@ export type LocalAgentTurnInput = {
   runtimeContext?: Record<string, any> | null;
   timeoutMs?: number;
   onToolEvent?: (event: LocalAgentToolEvent) => void;
+  onUserAction?: (action: LocalAgentUserAction) => Promise<AgentRuntimeToolResult | void>;
   onTextDelta?: (chunk: string) => void;
 };
 
@@ -37,6 +39,17 @@ export type LocalAgentToolEvent = {
   summary?: string;
   message?: string;
   metadata?: Record<string, unknown>;
+};
+
+export type LocalAgentUserAction = {
+  type: "terminal_command";
+  toolName: string;
+  toolCallId: string;
+  argv: string[];
+  displayCommand?: string;
+  reason?: string;
+  resumeHint?: string;
+  message?: string;
 };
 
 export const LOCAL_AGENT_CONFIG_MISSING_CODE = "LOCAL_AGENT_CONFIG_MISSING";
@@ -167,6 +180,31 @@ function formatToolMessageContent(args: {
     return args.content;
   }
   return `${args.content}\n\n[tool metadata]\n${JSON.stringify(args.metadata)}`;
+}
+
+function buildUserAction(args: {
+  toolName: string;
+  toolCallId: string;
+  metadata?: Record<string, unknown>;
+}): LocalAgentUserAction | null {
+  const rawAction = args.metadata?.requiresUserAction;
+  if (!rawAction || typeof rawAction !== "object" || Array.isArray(rawAction)) return null;
+  const action = rawAction as Record<string, unknown>;
+  if (action.type !== "terminal_command") return null;
+  if (!Array.isArray(action.argv)) return null;
+  const argv = action.argv.flatMap((item) =>
+    typeof item === "string" && item.trim() ? [item.trim()] : []
+  );
+  if (argv.length === 0) return null;
+  return {
+    type: "terminal_command",
+    toolName: args.toolName,
+    toolCallId: args.toolCallId,
+    argv,
+    ...(typeof action.displayCommand === "string" ? { displayCommand: action.displayCommand } : {}),
+    ...(typeof action.reason === "string" ? { reason: action.reason, message: action.reason } : {}),
+    ...(typeof action.resumeHint === "string" ? { resumeHint: action.resumeHint } : {}),
+  };
 }
 
 const MAX_HISTORICAL_TOOL_CONTENT_CHARS = 2400;
@@ -300,6 +338,17 @@ export async function runLocalAgentTurn(
           arguments: toolCall.function.arguments,
           ...(userInputText ? { userInput: userInputText } : {}),
         });
+        const userAction = buildUserAction({
+          toolName,
+          toolCallId: toolCall.id,
+          metadata: toolResult.metadata,
+        });
+        if (userAction && input.onUserAction) {
+          const replacement = await input.onUserAction(userAction);
+          if (replacement) {
+            toolResult = replacement;
+          }
+        }
         emitToolEvent(input, {
           type: "tool-result",
           round,

@@ -27,6 +27,13 @@ export type StandaloneBundleManifest = {
   bunVersion?: string;
   entrypoint?: string;
   bin?: Record<string, string>;
+  buildHost?: {
+    platform: string;
+    arch: string;
+    bunVersion?: string;
+    builtAt?: string;
+  };
+  nativeDeps?: Record<string, unknown>;
 };
 
 export type StandaloneBundleInstall = {
@@ -46,7 +53,16 @@ export type PublishedStandaloneBundleManifest = {
   size: number;
   sha256: string;
   publishedAt: string;
+  buildHost?: {
+    platform: string;
+    arch: string;
+    bunVersion?: string;
+    builtAt?: string;
+  };
+  nativeDeps?: Record<string, unknown>;
 };
+
+const SUPPORTED_BUNDLE_SCHEMA_VERSIONS = [1, 2] as const;
 
 const CLI_DOWNLOADS_SUBPATH = "cli";
 
@@ -120,7 +136,12 @@ export function detectStandaloneBundleInstall(
     const manifest = JSON.parse(
       readFileSync(manifestPath, "utf8"),
     ) as StandaloneBundleManifest;
-    if (manifest?.name !== "nolo-cli" || manifest?.schemaVersion !== 1) {
+    if (
+      manifest?.name !== "nolo-cli" ||
+      !(SUPPORTED_BUNDLE_SCHEMA_VERSIONS as readonly number[]).includes(
+        manifest?.schemaVersion,
+      )
+    ) {
       return null;
     }
     const entrypoint = join(cliDir, "index.js");
@@ -131,6 +152,28 @@ export function detectStandaloneBundleInstall(
   } catch {
     return null;
   }
+}
+
+/**
+ * Returns true if the manifest's recorded buildHost (where the bundle was
+ * packed) is compatible with the current host's process.platform / process.arch.
+ * Manifests without a buildHost (schemaVersion 1) are treated as compatible
+ * to keep backward compatibility with bundles published before the v2
+ * schema was introduced. New bundles (schemaVersion 2) MUST include
+ * buildHost and the host MUST match the current runtime, otherwise the
+ * download is refused because the native bindings in node_modules/ would
+ * be for the wrong platform.
+ */
+export function isBundleHostCompatible(manifest: {
+  schemaVersion?: number;
+  buildHost?: { platform?: string; arch?: string };
+}): boolean {
+  if (manifest?.schemaVersion !== 2 || !manifest.buildHost) {
+    return true;
+  }
+  const { platform, arch } = manifest.buildHost;
+  if (!platform || !arch) return true;
+  return platform === process.platform && arch === process.arch;
 }
 
 export function buildBundleManifestUrl(args: {
@@ -151,7 +194,11 @@ export function validatePublishedBundleManifest(args: {
   expectedChannel: CliReleaseChannel;
   expectedPlatform: CliBundlePlatform;
 }) {
-  if (args.published.schemaVersion !== 1) {
+  if (
+    !(SUPPORTED_BUNDLE_SCHEMA_VERSIONS as readonly number[]).includes(
+      args.published.schemaVersion,
+    )
+  ) {
     throw new Error(
       `Unsupported standalone bundle manifest schema: ${args.published.schemaVersion}`,
     );
@@ -389,6 +436,15 @@ export async function runStandaloneBundleUpdate(args: {
     expectedChannel: channel,
     expectedPlatform: platform,
   });
+
+  if (!isBundleHostCompatible(published)) {
+    const host = published.buildHost;
+    throw new Error(
+      `Standalone bundle was built for ${host?.platform}/${host?.arch} but the current host is ${process.platform}/${process.arch}. ` +
+        `Refusing to install: the native bindings in node_modules/ would be for the wrong platform. ` +
+        `Re-run the install script on a ${host?.platform}/${host?.arch} host instead.`
+    );
+  }
 
   const currentVersion = args.install.manifest.version;
   if (published.version === currentVersion) {

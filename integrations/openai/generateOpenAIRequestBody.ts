@@ -11,7 +11,6 @@ import {
 } from "../../ai/llm/kimi";
 import { Contexts } from "../../ai/types";
 import { generatePrompt } from "../../ai/agent/generatePrompt";
-import { resolveOpenAIRequestTarget } from "./flexTier";
 import { normalizeChatCompletionsBodyForProvider } from "./providerBodyCompatibility";
 
 // model 理论上不应为空（schema 已强制必填），但防御性处理 undefined
@@ -162,12 +161,8 @@ const buildRequestBody = (options: BuildRequestBodyOptions): any => {
     sanitizeChatCompletionsMessage(message as Message & Record<string, any>)
   );
 
-  const requestTarget = resolveOpenAIRequestTarget({
-    providerName,
-    model,
-  });
   const bodyData: any = {
-    model: requestTarget.model ?? model,
+    model,
     messages: cleanedMessages,
     stream: true,
   };
@@ -179,10 +174,6 @@ const buildRequestBody = (options: BuildRequestBodyOptions): any => {
   // 推理强度（仅部分模型支持）
   if (reasoning_effort && isModelSupportReasoningEffort(model)) {
     bodyData.reasoning_effort = reasoning_effort;
-  }
-
-  if (requestTarget.serviceTier) {
-    bodyData.service_tier = requestTarget.serviceTier;
   }
 
   if (typeof temperature === "number") bodyData.temperature = temperature;

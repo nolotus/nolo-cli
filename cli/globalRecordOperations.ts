@@ -41,7 +41,7 @@ export async function listUserRecordsFromServers(args: {
   const remoteResults: Array<{ data: { data: any[] } }> = [];
   const failures: GlobalRecordFailure[] = [];
 
-  for (const serverUrl of args.serverUrls) {
+  const promises = args.serverUrls.map(async (serverUrl) => {
     try {
       const records = await queryUserRecords({
         authToken: args.authToken,
@@ -54,21 +54,35 @@ export async function listUserRecordsFromServers(args: {
         type: args.type,
         userId: args.userId,
       });
+      return { ok: true, serverUrl, records };
+    } catch (error) {
+      return {
+        ok: false,
+        serverUrl,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+
+  const results = await Promise.all(promises);
+
+  for (const res of results) {
+    if (res.ok) {
       remoteResults.push({
         data: {
-          data: records.map((record: any) => ({
+          data: res.records!.map((record: any) => ({
             ...record,
             serverOrigin:
               typeof record?.serverOrigin === "string" && record.serverOrigin.trim()
                 ? record.serverOrigin
-                : serverUrl,
+                : res.serverUrl,
           })),
         },
       });
-    } catch (error) {
+    } else {
       failures.push({
-        serverUrl,
-        error: error instanceof Error ? error.message : String(error),
+        serverUrl: res.serverUrl,
+        error: res.error!,
       });
     }
   }
@@ -135,7 +149,8 @@ export async function readDbRecordVersionsFromServers(args: {
 }) {
   const records: any[] = [];
   const failures: GlobalRecordFailure[] = [];
-  for (const serverUrl of args.serverUrls) {
+
+  const promises = args.serverUrls.map(async (serverUrl) => {
     try {
       const record = await readDbRecord({
         authToken: args.authToken,
@@ -145,6 +160,21 @@ export async function readDbRecordVersionsFromServers(args: {
         includeDeleted: true,
         serverUrl,
       });
+      return { ok: true, serverUrl, record };
+    } catch (error) {
+      return {
+        ok: false,
+        serverUrl,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+
+  const results = await Promise.all(promises);
+
+  for (const res of results) {
+    if (res.ok) {
+      const record = res.record;
       records.push({
         ...record,
         dbKey: typeof record?.dbKey === "string" && record.dbKey.trim()
@@ -153,12 +183,12 @@ export async function readDbRecordVersionsFromServers(args: {
         serverOrigin:
           typeof record?.serverOrigin === "string" && record.serverOrigin.trim()
             ? record.serverOrigin
-            : serverUrl,
+            : res.serverUrl,
       });
-    } catch (error) {
+    } else {
       failures.push({
-        serverUrl,
-        error: error instanceof Error ? error.message : String(error),
+        serverUrl: res.serverUrl,
+        error: res.error!,
       });
     }
   }
@@ -234,8 +264,7 @@ export async function deleteDbRecordOnTargets(args: {
   fetchImpl: typeof fetch;
   targets: GlobalRecordTarget[];
 }): Promise<GlobalDeleteResult[]> {
-  const results: GlobalDeleteResult[] = [];
-  for (const target of args.targets) {
+  const promises = args.targets.map(async (target) => {
     try {
       const result = await deleteDbRecord({
         authToken: target.authToken ?? args.authToken,
@@ -245,14 +274,15 @@ export async function deleteDbRecordOnTargets(args: {
         fetchImpl: args.fetchImpl,
         serverUrl: target.serverUrl,
       });
-      results.push({ serverUrl: target.serverUrl, ok: true, result });
+      return { serverUrl: target.serverUrl, ok: true, result };
     } catch (error) {
-      results.push({
+      return {
         serverUrl: target.serverUrl,
         ok: false,
         error: error instanceof Error ? error.message : String(error),
-      });
+      };
     }
-  }
-  return results;
+  });
+
+  return Promise.all(promises);
 }

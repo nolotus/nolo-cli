@@ -232,6 +232,14 @@ export default {
       spaceAgents: "Space Agents",
       no_content_desc: "Upload files or create new content to get started.",
       no_category_content: "No content in this category.",
+      spaceData: "Space Data",
+      spaceAgentSection: "Space Agents",
+      viewMore: "More",
+      noAgentInSpace: "No agents in this space yet",
+      noAgentInSpaceTitle: "No agents in this space yet",
+      noAgentInSpaceDesc: "Add a few agents so this space can draft notes, answer questions, or be referenced from any dialog. The first three will show up here.",
+      createAgent: "Create AI",
+      createAgentHint: "The first three will be highlighted here.",
 
       // CategoryHeader 新增的翻译键
       categoryNamePlaceholder: "Enter category name",
@@ -504,6 +512,14 @@ export default {
       spaceAgents: "Space AI",
       no_content_desc: "上传文件或创建新内容以开始使用",
       no_category_content: "该分类下暂无内容",
+      spaceData: "空间的数据",
+      spaceAgentSection: "空间的智能体",
+      viewMore: "更多",
+      noAgentInSpace: "该空间下还没有 Agent",
+      noAgentInSpaceTitle: "该空间下还没有 Agent",
+      noAgentInSpaceDesc: "给空间添加几个 Agent，它就能在空间里起草文档、回答问题、或者被任意对话引用。最新的 3 个会显示在这里。",
+      createAgent: "创建 AI",
+      createAgentHint: "创建后前 3 个会显示在这里。",
 
       // CategoryHeader 新增的翻译键
       categoryNamePlaceholder: "输入分类名称",
@@ -768,6 +784,14 @@ export default {
       spaceAgents: "Space 智能體",
       no_content_desc: "上傳檔案或建立新內容以開始使用",
       no_category_content: "該分類下暫無內容",
+      spaceData: "空間的資料",
+      spaceAgentSection: "空間的智能體",
+      viewMore: "更多",
+      noAgentInSpace: "該空間下還沒有 Agent",
+      noAgentInSpaceTitle: "該空間下還沒有 Agent",
+      noAgentInSpaceDesc: "給空間添加幾個 Agent，它就能在空間裡起草文件、回答問題、或者被任意對話引用。最新 3 個會顯示在這裡。",
+      createAgent: "創建 AI",
+      createAgentHint: "建立後前 3 個會顯示在這裡。",
 
       // CategoryHeader 新增的翻譯鍵
       categoryNamePlaceholder: "輸入分類名稱",
@@ -1041,6 +1065,14 @@ export default {
       spaceAgents: "スペースエージェント",
       no_content_desc: "ファイルをアップロードするか、新しいコンテンツを作成して開始します。",
       no_category_content: "このカテゴリにはコンテンツがありません。",
+      spaceData: "スペースのデータ",
+      spaceAgentSection: "スペースのエージェント",
+      viewMore: "もっと見る",
+      noAgentInSpace: "このスペースにはまだ Agent がありません",
+      noAgentInSpaceTitle: "このスペースにはまだ Agent がありません",
+      noAgentInSpaceDesc: "スペースに Agent を追加すると、ドキュメントの下書き、質問への回答、または任意のダイアログからの参照が可能になります。最新の 3 つがここに表示されます。",
+      createAgent: "AI を作成",
+      createAgentHint: "作成後、最初から 3 つがここに表示されます。",
 
       // CategoryHeader 新增的翻译键
       categoryNamePlaceholder: "カテゴリ名を入力",

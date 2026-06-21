@@ -215,7 +215,7 @@ function buildInteractiveCommandBlockedResult(command: string): AgentRuntimeTool
   const argv = splitShellWords(command);
   return {
     content: [
-      "requires_user_action: terminal_command",
+      "action_gate: handoff",
       `command: ${command}`,
       "Run this in the current TUI terminal, then resume the agent turn.",
       "exitCode: 130",
@@ -223,12 +223,15 @@ function buildInteractiveCommandBlockedResult(command: string): AgentRuntimeTool
     metadata: {
       exitCode: 130,
       timedOut: false,
-      requiresUserAction: {
-        type: "terminal_command",
-        argv,
-        displayCommand: command,
-        reason: "This command requires an interactive terminal.",
-        resumeHint: "Continue after the terminal command exits.",
+      actionGate: {
+        id: `gate-${Date.now().toString(36)}-terminal-handoff`,
+        kind: "handoff",
+        title: "This command requires an interactive terminal.",
+        body: "Complete it in the terminal, then nolo will continue.",
+        payload: {
+          command: argv,
+          displayCommand: command,
+        },
       },
       reason: "interactive-command-requires-terminal",
     },

@@ -166,9 +166,11 @@ export async function executeLocalToolWithPolicy(args: {
       const error = new Error(shellPolicy.reason) as Error & {
         code?: string;
         policy?: Record<string, unknown>;
+        permissionRequest?: Record<string, unknown>;
       };
       error.code = shellPolicy.code;
       error.policy = shellPolicy.policy;
+      error.permissionRequest = shellPolicy.permissionRequest;
       throw error;
     }
   }

@@ -102,9 +102,17 @@ export function createCliAuthorityBrokerSocketInvoker(options: {
       let responseBuffer = "";
       let settled = false;
 
+      const timeout = setTimeout(() => {
+        finish(() => {
+          socket.destroy();
+          reject(new Error(`CLI authority broker request at ${options.endpoint} timed out after 5000ms`));
+        });
+      }, 5000);
+
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timeout);
         fn();
       };
 

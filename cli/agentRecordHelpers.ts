@@ -118,7 +118,7 @@ function parseIsoTimestampOption(raw: string | undefined, flag: string) {
 async function curlFetch(url: string, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? "GET";
   const headers = new Headers(init?.headers ?? {});
-  const command = ["curl", "-sS", "-L", "-X", method];
+  const command = ["curl", "-sS", "-L", "-X", method, "--max-time", "10"];
 
   headers.forEach((value, key) => {
     command.push("-H", `${key}: ${value}`);
@@ -151,8 +151,11 @@ async function curlFetch(url: string, init?: RequestInit): Promise<Response> {
 }
 
 function shouldUseCurlTransportFallback(error: unknown) {
+  const name = error instanceof Error ? error.name : "";
+  if (name === "TimeoutError" || name === "AbortError") return false;
   const message = error instanceof Error ? error.message : String(error);
-  return /Unable to connect|ConnectionRefused|ECONNREFUSED|Failed to connect|Was there a typo|timed out|Timeout|handshake|certificate|ECONNRESET|socket|network/i.test(message);
+  if (/timed out|Timeout/i.test(message)) return false;
+  return /Unable to connect|ConnectionRefused|ECONNREFUSED|Failed to connect|Was there a typo|handshake|certificate|ECONNRESET|socket|network/i.test(message);
 }
 
 async function fetchWithTransportFallback(
@@ -160,15 +163,17 @@ async function fetchWithTransportFallback(
   init: RequestInit,
   options: { fallbackFetchImpl?: typeof fetch; fetchImpl: typeof fetch }
 ): Promise<Response> {
+  const signal = init.signal ?? AbortSignal.timeout(10000);
+  const nextInit = { ...init, signal };
   try {
-    return await options.fetchImpl(url, init);
+    return await options.fetchImpl(url, nextInit);
   } catch (error) {
     if (!shouldUseCurlTransportFallback(error)) throw error;
     if (options.fallbackFetchImpl) {
-      return options.fallbackFetchImpl(url, init);
+      return options.fallbackFetchImpl(url, nextInit);
     }
     if (options.fetchImpl !== fetch) throw error;
-    return curlFetch(url, init);
+    return curlFetch(url, nextInit);
   }
 }
 

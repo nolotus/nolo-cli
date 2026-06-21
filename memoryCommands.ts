@@ -202,8 +202,7 @@ export async function runMemoryDeleteCommand(
       return 0;
     }
 
-    const deleteResults = [];
-    for (const target of serverUrls) {
+    const promises = serverUrls.map(async (target) => {
       try {
         const result = await postMemoryDelete({
           authToken,
@@ -211,15 +210,16 @@ export async function runMemoryDeleteCommand(
           fetchImpl,
           serverUrl: target,
         });
-        deleteResults.push({ serverUrl: target, ok: true, result });
+        return { serverUrl: target, ok: true, result };
       } catch (error) {
-        deleteResults.push({
+        return {
           serverUrl: target,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
-        });
+        };
       }
-    }
+    });
+    const deleteResults = await Promise.all(promises);
 
     const deletedCount = deleteResults.reduce(
       (sum, item) => sum + (item.ok ? Number(item.result?.deletedCount ?? 0) : 0),

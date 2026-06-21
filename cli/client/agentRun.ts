@@ -5,8 +5,7 @@ import {
   NOLO_PROJECT_MANAGER_AGENT_KEY,
   WIN_CODEX_AGENT_KEY,
 } from "../agentAliases";
-import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
-import type { LocalAgentUserAction } from "../../agent-runtime/localLoop";
+import type { LocalAgentActionGate, LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode, AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
 import { createStreamingTextWriter } from "./streamingOutput";
@@ -79,7 +78,7 @@ type RunAgentTurnOptions = {
   taskEvidence?: TaskEvidenceInput;
   fetchImpl?: typeof fetch;
   currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
-  userActionHandler?: (action: LocalAgentUserAction) => Promise<AgentRuntimeToolResult | void>;
+  actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
 };
 
 export type RunAgentTurnResult = {
@@ -92,6 +91,7 @@ export type RunAgentTurnResult = {
 
 class Spinner {
   private timer: any = null;
+  private startTime = 0;
   private frameIndex = 0;
   private frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   private isTTY: boolean;
@@ -105,16 +105,26 @@ class Spinner {
 
   start() {
     if (!this.isTTY) {
-      this.output.write(`\n${this.text}...\n`);
+      this.output.write(`\n${this.text}\n`);
       return;
     }
 
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+
     this.frameIndex = 0;
-    this.output.write(`\x1b[36m${this.frames[0]}\x1b[39m ${this.text}...`);
+    this.startTime = Date.now();
+    // Take over the cursor role: the spinner becomes the only "alive"
+    // indicator while the agent turn is in flight, so a static terminal
+    // cursor can no longer be mistaken for a frozen process.
+    this.output.write("\x1b[?25l");
+    this.output.write(this.renderLine(this.frames[0]));
 
     this.timer = setInterval(() => {
       this.frameIndex = (this.frameIndex + 1) % this.frames.length;
-      this.output.write(`\r\x1b[36m${this.frames[this.frameIndex]}\x1b[39m ${this.text}...`);
+      this.output.write(`\r${this.renderLine(this.frames[this.frameIndex])}`);
     }, 80);
   }
 
@@ -126,17 +136,39 @@ class Spinner {
 
     if (this.isTTY) {
       this.output.write("\r\x1b[K");
+      this.output.write("\x1b[?25h");
     }
+  }
+
+  private renderLine(frame: string): string {
+    const elapsedSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - this.startTime) / 1000)
+    );
+    return `\x1b[36m${frame}\x1b[39m ${this.text} (${formatElapsed(elapsedSeconds)})`;
   }
 }
 
+function formatElapsed(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins}m`;
+}
 
+
+// Table mutations and parallel server orchestration require the server runtime.
+// Read-only queryTableRows is intentionally excluded: local CLI executes it via
+// noloWorkspaceTools, so auto mode should not skip local just because it appears
+// in the private workspace tool surface.
 const SERVER_PLATFORM_TOOL_NAMES = new Set([
   "addTableRow",
   "addTableRows",
   "deleteTableRow",
   "deleteTableRows",
-  "queryTableRows",
   "streamParallelAgents",
   "updateTableRow",
   "updateTableRows",
@@ -168,6 +200,17 @@ const KNOWN_SERVER_PLATFORM_AGENT_ALIASES = new Set([
   "project-manager",
   "review",
   "reviewer",
+]);
+
+const CLI_PROVIDER_NAMES = new Set([
+  "agy",
+  "claude",
+  "codex",
+  "copilot",
+  "gemini",
+  "grok",
+  "opencode",
+  "qoder",
 ]);
 
 export function findServerPlatformTools(toolNames?: string[]) {
@@ -213,12 +256,12 @@ function isMachineBoundLocalhostCustomProvider(agentConfig: any) {
 
 function isCliProviderAgentConfig(agentConfig: any) {
   const cliProvider = typeof agentConfig?.cliProvider === "string"
-    ? agentConfig.cliProvider.trim()
+    ? agentConfig.cliProvider.trim().toLowerCase()
     : "";
   const provider = typeof agentConfig?.provider === "string"
-    ? agentConfig.provider.trim()
+    ? agentConfig.provider.trim().toLowerCase()
     : "";
-  return Boolean(cliProvider) || provider === "agy" || provider === "codex" || provider === "claude";
+  return Boolean(cliProvider) || CLI_PROVIDER_NAMES.has(provider);
 }
 
 function resolveBoundMachineId(agentConfig: any) {
@@ -729,7 +772,7 @@ async function runLocalAgentTurnForCli(
           }
         : {}),
       ...(typeof options.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.userActionHandler ? { onUserAction: options.userActionHandler } : {}),
+      ...(options.actionGateHandler ? { onActionGate: options.actionGateHandler } : {}),
       ...(traceLocalTools
         ? {
             onToolEvent: (event) => {

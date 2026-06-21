@@ -1,20 +1,6 @@
 // integrations/openai/models.ts
 import type { Model, ModelPrice } from "../../ai/llm/types";
 
-const scalePrice = (price: ModelPrice, multiplier: number): ModelPrice => ({
-  input: price.input * multiplier,
-  output: price.output * multiplier,
-  ...(typeof price.cachingWrite === "number"
-    ? { cachingWrite: price.cachingWrite * multiplier }
-    : {}),
-  ...(typeof price.cachingRead === "number"
-    ? { cachingRead: price.cachingRead * multiplier }
-    : {}),
-  ...(typeof price.inputCacheHit === "number"
-    ? { inputCacheHit: price.inputCacheHit * multiplier }
-    : {}),
-});
-
 const GPT_5_4_STANDARD_PRICE: ModelPrice = {
   input: 2.5 * 8,
   output: 15 * 8,
@@ -72,25 +58,6 @@ export const openAIModels: Model[] = [
     },
   },
   {
-    name: "gpt-5.5-flex",
-    displayName: "GPT-5.5 Flex",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 1_047_576,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: scalePrice(GPT_5_5_STANDARD_PRICE, 0.5),
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 272_001,
-          price: scalePrice(GPT_5_5_LONG_CONTEXT_PRICE, 0.5),
-        },
-      ],
-    },
-  },
-  {
     name: "gpt-5.5-pro",
     displayName: "GPT-5.5 Pro",
     endpointKey: "responses",
@@ -110,25 +77,6 @@ export const openAIModels: Model[] = [
     },
   },
   {
-    name: "gpt-5.5-pro-flex",
-    displayName: "GPT-5.5 Pro Flex",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 1_047_576,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: scalePrice(GPT_5_4_PRO_STANDARD_PRICE, 0.5),
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 272_001,
-          price: scalePrice(GPT_5_4_PRO_LONG_CONTEXT_PRICE, 0.5),
-        },
-      ],
-    },
-  },
-  {
     name: "gpt-image-2",
     displayName: "GPT Image 2",
     endpointKey: "responses",
@@ -138,9 +86,6 @@ export const openAIModels: Model[] = [
     supportsTool: false,
     contextWindow: 128_000,
     maxOutputTokens: 32_768,
-    // OpenAI's current public pricing page does not list GPT Image 2 separately.
-    // Reuse GPT Image 1.5 pricing as a conservative placeholder until official
-    // GPT Image 2 pricing is published.
     price: { input: 5 * 8, output: 10 * 8, inputCacheHit: 1.25 * 8 },
     pricePerImage: 0.04 * 8,
   },
@@ -159,25 +104,6 @@ export const openAIModels: Model[] = [
         {
           minContext: 272_001,
           price: GPT_5_4_LONG_CONTEXT_PRICE,
-        },
-      ],
-    },
-  },
-  {
-    name: "gpt-5.4-flex",
-    displayName: "GPT-5.4 Flex",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 1_047_576,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: scalePrice(GPT_5_4_STANDARD_PRICE, 0.5),
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 272_001,
-          price: scalePrice(GPT_5_4_LONG_CONTEXT_PRICE, 0.5),
         },
       ],
     },
@@ -217,25 +143,6 @@ export const openAIModels: Model[] = [
         {
           minContext: 272_001,
           price: GPT_5_4_PRO_LONG_CONTEXT_PRICE,
-        },
-      ],
-    },
-  },
-  {
-    name: "gpt-5.4-pro-flex",
-    displayName: "GPT-5.4 Pro Flex",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 1_047_576,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: scalePrice(GPT_5_4_PRO_STANDARD_PRICE, 0.5),
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 272_001,
-          price: scalePrice(GPT_5_4_PRO_LONG_CONTEXT_PRICE, 0.5),
         },
       ],
     },

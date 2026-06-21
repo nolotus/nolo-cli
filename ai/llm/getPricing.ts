@@ -1,9 +1,5 @@
 import type { Agent } from "../../app/types";
 import { getModelConfig } from "../llm/providers";
-import {
-  isOpenAIFlexPricedModel,
-  resolveOpenAIServiceTier,
-} from "../../integrations/openai/flexTier";
 import { getPublicImageAgentDefaultProfile } from "../agent/utils/publicImageAgentMode";
 import { getApproxPricePerImage } from "./imagePricing";
 
@@ -25,7 +21,7 @@ const MAX_OUTPUT_TOKENS = 8192; // 单次返回最大 token 数
 export const getModelPricing = (
   provider: string,
   modelName: string,
-  requestedServiceTier?: string
+  _requestedServiceTier?: string
 ): ModelPricing | null => {
   let model;
   try {
@@ -36,37 +32,23 @@ export const getModelPricing = (
 
   if (!model?.price) return null;
 
-  return getModelPricingForModel(provider, modelName, model, requestedServiceTier);
+  return getModelPricingForModel(provider, modelName, model);
 };
 
 export const getModelPricingForModel = (
   provider: string,
   modelName: string,
-  model: { price?: { input: number; inputCacheHit?: number; output: number } | null },
-  requestedServiceTier?: string
+  model: { price?: { input: number; inputCacheHit?: number; output: number } | null }
 ): ModelPricing | null => {
   if (!model.price) return null;
-  const normalizedRequestedServiceTier =
-    requestedServiceTier === "flex" || requestedServiceTier === "default"
-      ? requestedServiceTier
-      : undefined;
-  const shouldApplyFlexDiscount =
-    provider === "openai" &&
-    (normalizedRequestedServiceTier === "flex" ||
-      resolveOpenAIServiceTier({
-        providerName: provider,
-        model: modelName,
-      }) === "flex") &&
-    !isOpenAIFlexPricedModel(modelName);
-  const priceMultiplier = shouldApplyFlexDiscount ? 0.5 : 1;
 
   return {
-    inputPrice: model.price.input * priceMultiplier,
+    inputPrice: model.price.input,
     inputCacheHitPrice:
       typeof model.price.inputCacheHit === "number"
-        ? model.price.inputCacheHit * priceMultiplier
+        ? model.price.inputCacheHit
         : 0,
-    outputPrice: model.price.output * priceMultiplier,
+    outputPrice: model.price.output,
   };
 };
 

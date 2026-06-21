@@ -48,7 +48,7 @@ async function detectLaunchableMachineInfo() {
 
 function requiredCapabilityForAgent(agent: any) {
   if (agent?.apiSource !== "cli") return "";
-  const cliProvider = String(agent?.cliProvider || "").trim();
+  const cliProvider = String(agent?.cliProvider || agent?.provider || "").trim().toLowerCase();
   const capabilityByProvider: Record<string, string> = {
     codex: "codex-cli",
     claude: "claude-code",
@@ -61,6 +61,10 @@ function requiredCapabilityForAgent(agent: any) {
     grok: "grok-cli",
   };
   return capabilityByProvider[cliProvider] ?? "";
+}
+
+function resolveAgentCliProvider(agent: any) {
+  return String(agent?.cliProvider || agent?.provider || "").trim().toLowerCase();
 }
 
 function classifyAgentRuntime(agent: any) {
@@ -412,7 +416,7 @@ export async function runAgentRuntimeDoctorCommand(
     output.write(`Agent key: ${agentKey}\n`);
     output.write(`Runtime class: ${runtimeClass}\n`);
     output.write(`API source: ${agent?.apiSource ?? "unknown"}\n`);
-    output.write(`CLI provider: ${agent?.cliProvider ?? "none"}\n`);
+    output.write(`CLI provider: ${resolveAgentCliProvider(agent) || "none"}\n`);
     output.write(`Required capability: ${requiredCapability || "none"}\n`);
     output.write(`Current machine: ${machine.name} (${machine.machineId})\n`);
     output.write(`Current machine capabilities: ${machine.capabilities.length ? machine.capabilities.join(", ") : "none"}\n`);

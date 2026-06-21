@@ -37,9 +37,9 @@ describe("cli agent run client", () => {
 
   test("identifies server platform tools that local runtime cannot provide", () => {
     expect(findServerPlatformTools(["readFile", "queryTableRows", "updateTableRow"])).toEqual([
-      "queryTableRows",
       "updateTableRow",
     ]);
+    expect(findServerPlatformTools(["readFile", "queryTableRows"])).toEqual([]);
     expect(findServerPlatformTools(["readFile", "execShell"])).toEqual([]);
   });
 
@@ -55,6 +55,7 @@ describe("cli agent run client", () => {
       continueDialogId: "dialog-existing",
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
       output,
       fetchImpl: async (url, init) => {
         requests.push({
@@ -109,6 +110,7 @@ describe("cli agent run client", () => {
       message: "restart connector",
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
       output,
       fetchImpl: async () =>
         Response.json({
@@ -1109,9 +1111,60 @@ describe("cli agent run client", () => {
     expect(httpCalls).toHaveLength(1);
     expect(httpCalls[0]?.body.agentKey).toBe("agent-custom-platform-tools");
     expect(output.text()).toContain("auto runtime: skipping local runtime");
-    expect(output.text()).toContain("queryTableRows, addTableRow, updateTableRow");
+    expect(output.text()).toContain("addTableRow, updateTableRow");
+    expect(output.text()).not.toContain("queryTableRows");
     expect(output.text()).toContain("pm -> working");
     expect(output.text()).toContain("pm > server ok");
+  });
+
+  test("auto mode keeps local runtime when only queryTableRows is declared", async () => {
+    const output = new CaptureOutput();
+    const httpCalls: string[] = [];
+    let providerCalled = false;
+
+    const result = await runAgentTurn({
+      agentName: "minimax-m3",
+      agentKey: "agent-minimax-m3",
+      serverUrl: "https://nolo.chat",
+      message: "query task rows",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "MiniMax M3",
+          prompt: "Query task rows locally when needed.",
+          provider: "custom",
+          model: "MiniMax-M3",
+          customProviderUrl: "https://api.minimaxi.com/v1",
+          toolNames: ["queryTableRows"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-minimax-local" }),
+        resolveProvider: async () => ({
+          model: "MiniMax-M3",
+          complete: async () => {
+            providerCalled = true;
+            return { content: "local minimax ok", model: "MiniMax-M3" };
+          },
+        }),
+        executeTool: async () => ({ content: "[]" }),
+      },
+      fetchImpl: async (url) => {
+        httpCalls.push(String(url));
+        return Response.json({ content: "server" });
+      },
+    });
+
+    expect(providerCalled).toBe(true);
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-minimax-local" });
+    expect(httpCalls).toEqual([]);
+    expect(output.text()).not.toContain("skipping local runtime");
+    expect(output.text()).toContain("minimax-m3 -> working locally");
   });
 
   test("auto mode keeps local runtime for CLI provider agents even when they declare platform tools", async () => {
@@ -1421,6 +1474,58 @@ describe("cli agent run client", () => {
     expect(output.text()).not.toContain("studio-agy -> working locally");
   });
 
+  test.each(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok"])(
+    "auto mode treats provider-only %s CLI records as machine-bound CLI agents",
+    async (provider) => {
+      const output = new CaptureOutput();
+      const httpCalls: Array<{ url: string; body: any }> = [];
+
+      const result = await runAgentTurn({
+        agentName: `${provider}-agent`,
+        agentKey: `agent-${provider}`,
+        serverUrl: "https://us.nolo.chat",
+        message: `run ${provider} on the bound machine`,
+        scriptDir: "C:/missing/scripts",
+        env: { AUTH_TOKEN: "token-123" },
+        output,
+        runtimeMode: "auto",
+        localRuntimeAdapter: {
+          host: "cli",
+          capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
+          loadAgentConfig: async (agentRef) => ({
+            key: agentRef,
+            name: `${provider} agent`,
+            prompt: `Use ${provider} on the bound machine.`,
+            provider,
+            runtimeBinding: { machineId: "machine-studio", ownerUserId: "user-1" },
+          }),
+          loadDialogHistory: async () => [],
+          saveTurn: async () => {
+            throw new Error("local runtime should be skipped");
+          },
+          resolveProvider: async () => {
+            throw new Error("local provider should be skipped");
+          },
+          executeTool: async () => {
+            throw new Error("local tools should be skipped");
+          },
+        },
+        currentMachineIdResolver: async () => "machine-mac",
+        fetchImpl: async (url, init) => {
+          httpCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+          return Response.json({ content: "server connector ok", dialogId: `dialog-${provider}` });
+        },
+      });
+
+      expect(result).toEqual({ exitCode: 0, dialogId: `dialog-${provider}` });
+      expect(httpCalls).toHaveLength(1);
+      expect(httpCalls[0]?.url).toBe("https://us.nolo.chat/api/agent/run");
+      expect(httpCalls[0]?.body.agentKey).toBe(`agent-${provider}`);
+      expect(output.text()).toContain("bound to machine-studio");
+      expect(output.text()).not.toContain(`${provider}-agent -> working locally`);
+    }
+  );
+
   test("auto mode keeps builtin nolo on local runtime so CLI workspace tools are available", async () => {
     const output = new CaptureOutput();
     const httpCalls: string[] = [];
@@ -1517,7 +1622,8 @@ describe("cli agent run client", () => {
     expect(httpCalls).toHaveLength(1);
     expect(httpCalls[0]?.body.agentKey).toBe("agent-policy-platform-tools");
     expect(output.text()).toContain("auto runtime: skipping local runtime");
-    expect(output.text()).toContain("queryTableRows, streamParallelAgents");
+    expect(output.text()).toContain("streamParallelAgents");
+    expect(output.text()).not.toContain("queryTableRows");
   });
 
   test("auto mode skips known platform agents when local config cannot be read", async () => {
@@ -1615,6 +1721,7 @@ describe("cli agent run client", () => {
       message: "hello",
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
       output,
       fetchImpl: async () =>
         new Response(
@@ -1648,6 +1755,7 @@ describe("cli agent run client", () => {
       message: "hello",
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
       output,
       fetchImpl: async () => {
         let sent = false;
@@ -1704,6 +1812,7 @@ describe("cli agent run client", () => {
       scriptDir: "C:/missing/scripts",
       env: {},
       output,
+      runtimeMode: "server",
       fetchImpl: async () => {
         throw new Error("fetch should not be called");
       },
@@ -1724,6 +1833,7 @@ describe("cli agent run client", () => {
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
       output,
+      runtimeMode: "server",
       fetchImpl: async () => {
         throw new Error("ConnectionRefused");
       },
@@ -1732,5 +1842,61 @@ describe("cli agent run client", () => {
     expect(result).toEqual({ exitCode: 1 });
     expect(output.text()).toContain("Could not reach http://127.0.0.1:38123/api/agent/run");
     expect(output.text()).toContain("set NOLO_SERVER");
+  });
+
+  test("server turn spinner takes over the terminal cursor in TTY mode and shows elapsed time", async () => {
+    const output = new CaptureOutput();
+    (output as any).isTTY = true;
+
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      output,
+      fetchImpl: async () =>
+        Response.json({
+          content: "hi",
+          dialogId: "dialog-1",
+          usage: { input_tokens: 2, output_tokens: 3 },
+        }),
+    });
+
+    const text = output.text();
+    expect(text).toContain("\x1b[?25l");
+    expect(text).toContain("\x1b[?25h");
+    expect(text).toContain("nolo -> working (0s)");
+    expect(text).not.toContain("nolo -> working...");
+  });
+
+  test("non-TTY server turn does not emit cursor control sequences", async () => {
+    const output = new CaptureOutput();
+    (output as any).isTTY = false;
+
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      output,
+      fetchImpl: async () =>
+        Response.json({
+          content: "hi",
+          dialogId: "dialog-1",
+          usage: { input_tokens: 2, output_tokens: 3 },
+        }),
+    });
+
+    const text = output.text();
+    expect(text).not.toContain("\x1b[?25l");
+    expect(text).not.toContain("\x1b[?25h");
+    expect(text).toContain("nolo -> working");
+    expect(text).not.toContain("nolo -> working...");
   });
 });

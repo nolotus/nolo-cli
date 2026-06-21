@@ -519,7 +519,7 @@ export async function handleConnectorRunMessage(
       );
       assertMachineRunAllowed(userInput, effectivePermissionPolicy);
       baseSha = await readConnectorGitHead(artifactCwd);
-      const provider = String(agentConfig.cliProvider || "copilot");
+      const provider = String(agentConfig.cliProvider || agentConfig.provider || "copilot").trim() || "copilot";
       const builtPrompt = buildConnectorCliPrompt(agentConfig, userInput, {
         agentKey: String(parsed.payload?.agentKey ?? ""),
         runtimeContext: parsed.payload?.runtimeContext,

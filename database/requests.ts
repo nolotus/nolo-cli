@@ -395,23 +395,22 @@ export const noloDeleteRequest = async (
   server: string,
   dbKey: string,
   options: {
-    // 原来: type?: "messages" | "single";
-    // 现在增加 "table"，给删整张表用
     type?: "messages" | "single" | "table";
+    force?: boolean;
   },
   state: any,
   signal?: AbortSignal
 ): Promise<boolean> => {
-  const { type = "single" } = options; // 默认为 'single'
+  const { type = "single", force = false } = options;
 
   try {
-    // 根据类型构建 URL
-    const url =
-      type === "messages"
-        ? `${API_ENDPOINTS.DATABASE}/delete/${dbKey}?type=messages`
-        : type === "table"
-          ? `${API_ENDPOINTS.DATABASE}/delete/${dbKey}?type=table`
-          : `${API_ENDPOINTS.DATABASE}/delete/${dbKey}`;
+    // ponytail: force=true 给回收站物理擦除 tombstone 用；其它 type 行为不变。
+    const queryParts: string[] = [];
+    if (type === "messages") queryParts.push("type=messages");
+    else if (type === "table") queryParts.push("type=table");
+    if (force) queryParts.push("force=true");
+    const query = queryParts.length ? `?${queryParts.join("&")}` : "";
+    const url = `${API_ENDPOINTS.DATABASE}/delete/${dbKey}${query}`;
 
     const response = await noloRequest(
       server,

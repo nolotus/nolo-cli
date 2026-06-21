@@ -16,6 +16,12 @@ export type DialogRuntimeController =
 
 export type DialogRuntimeProfile = "autonomous";
 
+export interface DialogNotificationPolicy {
+  notifyOnDone?: boolean;
+  notifyOnFailed?: boolean;
+  channels?: Array<"ui" | "email">;
+}
+
 export interface DialogRuntimeBinding {
   version: 1;
   /** 当前 product runtime 的 tenant 边界；本地模型 watchdog 不属于这里。 */
@@ -117,6 +123,7 @@ export interface DialogConfig {
   policyState?: DialogPolicyState;
   runtimeBinding?: DialogRuntimeBinding;
   goal?: DialogGoalState;
+  notificationPolicy?: DialogNotificationPolicy;
 }
 
 export interface ScheduledTaskConfig {

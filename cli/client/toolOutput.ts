@@ -1,4 +1,5 @@
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
+import { readActionGate, readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 
 export type ToolDisplayMode = "hide" | "compact" | "verbose";
@@ -46,17 +47,13 @@ function clip(value: string, max = 72) {
 }
 
 function compactResultHint(event: LocalAgentToolEvent, toolName: string) {
-  const rawAction = event.metadata?.requiresUserAction;
-  if (rawAction && typeof rawAction === "object" && !Array.isArray(rawAction)) {
-    const action = rawAction as Record<string, unknown>;
-    const command = typeof action.displayCommand === "string"
-      ? action.displayCommand
-      : Array.isArray(action.argv)
-        ? action.argv.filter((item): item is string => typeof item === "string").join(" ")
-        : "";
+  const gate = readActionGate(event.metadata?.actionGate);
+  if (gate) {
+    const commandPayload = gate.kind === "handoff" ? readCommandActionGatePayload(gate.payload) : null;
+    const command = commandPayload?.displayCommand ?? commandPayload?.command.join(" ") ?? "";
     return command.trim()
-      ? `needs terminal: ${clip(command, 120)}`
-      : "needs terminal";
+      ? `needs action: ${clip(command, 120)}`
+      : `needs action: ${clip(gate.title, 120)}`;
   }
   if (event.metadata?.timedOut) return "timed out";
 
@@ -78,8 +75,13 @@ function compactResultHint(event: LocalAgentToolEvent, toolName: string) {
 
 function isFailedToolResult(event: LocalAgentToolEvent) {
   const exitCode = event.metadata?.exitCode;
+  if (event.metadata?.actionGate) return false;
   if (typeof exitCode === "number" && exitCode !== 0) return true;
-  return Boolean(event.metadata?.timedOut || event.metadata?.requiresUserAction);
+  return Boolean(event.metadata?.timedOut);
+}
+
+function isNeedsActionToolResult(event: LocalAgentToolEvent) {
+  return Boolean(event.metadata?.actionGate);
 }
 
 function formatToolTraceLine(text: string, colorEnabled: boolean, accent: "none" | "error" = "none") {
@@ -131,8 +133,9 @@ function formatCompactToolLine(
   const hint = compactResultHint(event, toolName);
   const timing = ms ? ` ${ms}` : "";
   const suffix = hint ? ` · ${hint}` : "";
-  const marker = isFailedToolResult(event) ? "✗" : "✓";
-  const accent = isFailedToolResult(event) ? "error" : "none";
+  const failed = isFailedToolResult(event);
+  const marker = failed ? "✗" : isNeedsActionToolResult(event) ? "!" : "✓";
+  const accent = failed ? "error" : "none";
   return formatToolTraceLine(`  ▸ ${label}  ${marker}${timing}${suffix}`, colorEnabled, accent);
 }
 

@@ -23,6 +23,8 @@ import {
 } from "../client/toolOutput";
 import { DEFAULT_TUI_AGENT_KEY, PLATFORM_AGENTS } from "./agentCatalog";
 import { resolveAgentSwitchTarget } from "./agentPicker";
+import type { AttachedImage } from "./pasteImage";
+import { detectImagePaths, summarizeAttachment } from "./pasteImage";
 
 export { DEFAULT_TUI_AGENT_KEY };
 export const DEFAULT_TUI_SERVER_URL = DEFAULT_NOLO_SERVER_URL;
@@ -47,7 +49,18 @@ export type TuiState = {
   profileName: string;
   serverUrl: string;
   cliVersion?: string;
+  /**
+   * 用于解析 paste 行里的相对路径。workspace 启动时从 process.cwd() 取。
+   * 保留在 state 里是为了让 handleTuiInput 这种纯函数也能做路径解析。
+   */
+  cwd: string;
   attachedDocs: string[];
+  /**
+   * 暂存 / paste 行解析到的图片附件。
+   * 提交 chat 时会消费这些,转成 imageUrls 一起送出去。
+   * /new 时清空,跟 attachedDocs 同语义。
+   */
+  attachedImages: AttachedImage[];
   runtimeMode: AgentRuntimeRequestedMode;
   thinkingDisplay: ThinkingDisplayMode;
   toolDisplay: ToolDisplayMode;
@@ -62,6 +75,12 @@ export type TuiAction =
       agentKey: string;
       runtimeMode: AgentRuntimeRequestedMode;
       continueDialogId?: string;
+      /**
+       * 行内或 /attach 命令解析到的图片绝对路径。
+       * 这里只携带路径,workspace loop 会异步读成 data URL 后拼 imageUrls。
+       * 失败(ENOENT/超过大小/不是图片)的会被丢弃,留在 message 里给用户文本。
+       */
+      imagePaths?: string[];
     }
   | {
       type: "compact";
@@ -81,6 +100,14 @@ export type TuiAction =
       type: "list-agents";
     }
   | {
+      type: "attach-images";
+      /**
+       * 来自 /attach <path...> 命令,workspace 会异步读成 AttachedImage
+       * 然后 merge 进 state.attachedImages。
+       */
+      paths: string[];
+    }
+  | {
       type: "exit";
     };
 
@@ -95,6 +122,7 @@ type EnvLike = Record<string, string | undefined>;
 export function createInitialTuiState(env: EnvLike = process.env): TuiState {
   const agentKey = env.NOLO_AGENT?.trim() || DEFAULT_TUI_AGENT_KEY;
   const agentName = env.NOLO_AGENT_NAME?.trim() || "nolo";
+  const cwd = (env.NOLO_CWD?.trim() || process.cwd()).replace(/\/+$/, "");
 
   return {
     agentKey,
@@ -107,7 +135,9 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
       ""
     ),
     cliVersion: env.NOLO_CLI_VERSION?.trim() || undefined,
+    cwd,
     attachedDocs: [],
+    attachedImages: [],
     runtimeMode: env.NOLO_RUNTIME_MODE === "local" || env.NOLO_RUNTIME_MODE === "server"
       ? env.NOLO_RUNTIME_MODE
       : "auto",
@@ -124,21 +154,17 @@ export function renderStatusLine(state: TuiState) {
   const colorEnabled = resolveCliColorEnabled();
   const agent = styleCliText(state.agentName, "cyan", colorEnabled);
   const tokens = dimCliText(renderTokenStatus(state.turnTokens), colorEnabled);
-  const profile = dimCliText(`profile ${state.profileName}`, colorEnabled);
+  const profile = dimCliText(`配置: ${state.profileName}`, colorEnabled);
   return [`agent ${agent}`, tokens, profile].join(
     dimCliText(" | ", colorEnabled)
   );
 }
 
 export function renderWelcome(state: TuiState) {
+  const versionStr = state.cliVersion ? ` (nolo ${state.cliVersion})` : "";
   return [
-    "",
-    `Nolo workspace${state.cliVersion ? `  nolo ${state.cliVersion}` : ""}`,
-    `agent ${state.agentName} | ${renderTokenStatus(state.turnTokens)} | profile ${state.profileName}`,
-    `server ${state.serverUrl}`,
-    "",
+    `Nolo workspace${versionStr} | agent ${state.agentName} | server ${state.serverUrl} | 配置: ${state.profileName}`,
     "Tell nolo what you want. Use /help for commands. Use /version if this install feels stale.",
-    "",
   ].join("\n");
 }
 
@@ -167,7 +193,7 @@ export function renderTuiHelp() {
     "  /doc attach <doc>     Attach a doc to this workspace",
     "  /customize            Describe how you want to tune nolo",
     "  /login                Show login/profile hint",
-    "  /profile              Show active profile",
+    "  /profile              Show active profile (显示当前配置环境)",
     "  /update               Update the nolo CLI install",
     "  /version              Show version/update hint",
     "  /exit                 Leave the workspace",
@@ -187,7 +213,7 @@ export function renderContextPanel(state: TuiState) {
     `tokens   ${renderTokenStatus(state.turnTokens)}`,
     `dialog   ${resolveDialogLabel(state)}`,
     `docs     ${docs}`,
-    `profile  ${state.profileName}`,
+    `配置     ${state.profileName}`,
     `runtime  ${state.runtimeMode}`,
     `tools    ${state.toolDisplay}`,
     `thinking ${state.thinkingDisplay}`,
@@ -226,163 +252,49 @@ function applyAgentSwitch(state: TuiState, target: { name: string; key: string }
   };
 }
 
-const DIALOG_ID_PATTERN = /[0-9A-HJKMNP-TV-Z]{26}/i;
-const DIALOG_KEY_PATTERN = /dialog-[^\s"'<>]+-[0-9A-HJKMNP-TV-Z]{26}/i;
-const DIALOG_URL_PATTERN = /https?:\/\/[^\s"'<>]+\/(?:space\/[^/\s"'<>]+\/)?dialog-[^\s"'<>]+-[0-9A-HJKMNP-TV-Z]{26}\/?/i;
-const GENERIC_TOKEN_PATTERN = /(?:agent-pub-|agent-|space-|page-|meta-)?[A-Za-z0-9][A-Za-z0-9._:/-]{2,}/;
+// Removed natural language TUI routing helper functions and patterns as natural language inputs are now directly handled by the AI agent.
 
-function parseChineseSmallNumber(value: string) {
-  const normalized = value.trim();
-  const direct: Record<string, number> = {
-    一: 1,
-    二: 2,
-    两: 2,
-    三: 3,
-    四: 4,
-    五: 5,
-    六: 6,
-    七: 7,
-    八: 8,
-    九: 9,
-    十: 10,
-  };
-  if (direct[normalized]) return direct[normalized];
-  const teen = normalized.match(/^十([一二两三四五六七八九])$/);
-  if (teen) return 10 + direct[teen[1]];
-  const tens = normalized.match(/^([一二两三四五六七八九])十([一二两三四五六七八九])?$/);
-  if (tens) return direct[tens[1]] * 10 + (tens[2] ? direct[tens[2]] : 0);
-  return null;
+/**
+ * 判断一行 input 是不是 slash 命令。
+ *
+ * 关键陷阱:Unix 绝对路径都以 `/` 开头(`/Users/foo`),而 slash 命令也是
+ * `/foo`。直接 `startsWith("/")` 会把 paste 进来的文件路径当成 unknown slash
+ * command。
+ *
+ * 判别规则:
+ * - 必须以 `/` 开头
+ * - 第一个 token(到首个空白前)必须 match `/[a-zA-Z_][a-zA-Z0-9._:-]*`
+ *   这同时排除两个情况:
+ *   1. 路径(`/Users/foo`,因为 token 含第二个 `/`,regex 不匹配)
+ *   2. 数字开头(`/123abc` 不是合法命令名)
+ *
+ * 这样 `/help`、`/agent list`、`/attach /tmp/x.png` 都正确判为 slash,
+ * `/Users/x.png 看图`、`/etc/hosts` 都正确判为 chat。
+ */
+export function isLikelySlashCommand(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("/")) return false;
+  const spaceIdx = trimmed.search(/\s/);
+  const firstToken = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
+  return /^\/[a-zA-Z_][a-zA-Z0-9._:-]*$/.test(firstToken);
 }
 
-function resolveDialogListLimit(input: string) {
-  const digitMatch =
-    input.match(/(?:最近|前|latest|last)?\s*(\d{1,3})\s*(?:个|条|篇)?\s*(?:对话|dialogs?)/i) ??
-    input.match(/(?:对话|dialogs?).*?(?:最近|前|latest|last)?\s*(\d{1,3})\s*(?:个|条|篇)?/i);
-  if (digitMatch) {
-    const parsed = Number(digitMatch[1]);
-    if (Number.isInteger(parsed) && parsed > 0) return String(parsed);
+/**
+ * 把 hints 对应的 raw token 从 message 里 strip 掉。
+ * 用于"看图 /Users/foo/a.png 怎么样"这种:路径不应该作为文本发给 LLM。
+ *
+ * - strip 后空了就保留原 message(避免空 message,workspace 仍然发图片)
+ * - 失败的 hint 不会出现在这里(只有 sync 阶段确认的路径才会传进来)
+ */
+export function stripImageTokens(input: string, hints: { raw: string }[]): string {
+  if (hints.length === 0) return input;
+  let out = input;
+  for (const hint of hints) {
+    if (!hint.raw) continue;
+    const escaped = hint.raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(escaped, "g"), "");
   }
-
-  const chineseMatch =
-    input.match(/(?:最近|前)?\s*([一二两三四五六七八九十]{1,3})\s*(?:个|条|篇)?\s*对话/) ??
-    input.match(/对话.*?(?:最近|前)?\s*([一二两三四五六七八九十]{1,3})\s*(?:个|条|篇)?/);
-  if (chineseMatch) {
-    const parsed = parseChineseSmallNumber(chineseMatch[1]);
-    if (parsed && parsed > 0) return String(parsed);
-  }
-
-  return undefined;
-}
-
-function extractDialogRef(input: string) {
-  return (
-    input.match(DIALOG_URL_PATTERN)?.[0] ??
-    input.match(DIALOG_KEY_PATTERN)?.[0] ??
-    input.match(DIALOG_ID_PATTERN)?.[0] ??
-    null
-  );
-}
-
-function extractTokenAfterKeywords(input: string, keywords: string[]) {
-  for (const keyword of keywords) {
-    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const match = input.match(new RegExp(`${escaped}\\s+(${GENERIC_TOKEN_PATTERN.source})`, "i"));
-    if (match?.[1]) return match[1];
-  }
-  return null;
-}
-
-function formatCliCommand(args: string[]) {
-  return `nolo ${args.join(" ")}`;
-}
-
-function wantsList(input: string) {
-  return /(列出|列表|有哪些|所有|我的|list|show all)/i.test(input);
-}
-
-function wantsRead(input: string) {
-  return /(读|读取|查看|打开|查询|read|show|open)/i.test(input);
-}
-
-function wantsAnalysisOrComposition(input: string) {
-  return /(总结|汇总|分析|归纳|对比|解释|整理|summary|summari[sz]e|analy[sz]e|compare)/i.test(input);
-}
-
-function resolveSystemCliCommand(input: string) {
-  if (/(我.*登录.*谁|当前.*登录|whoami|who am i)/i.test(input)) {
-    return ["whoami"];
-  }
-  if (/(版本|version)/i.test(input) && /(?:nolo|cli|版本|version)/i.test(input)) {
-    return ["version"];
-  }
-  if (/(诊断|doctor|健康检查|health)/i.test(input) && /(?:nolo|cli|诊断|doctor)/i.test(input)) {
-    return ["doctor"];
-  }
-  return null;
-}
-
-function resolveResourceCliCommand(input: string) {
-  if (/(agent|代理|智能体)/i.test(input)) {
-    if (wantsList(input)) return ["agent", "list"];
-    if (wantsRead(input)) {
-      const agentRef = extractTokenAfterKeywords(input, ["agent", "代理", "智能体"]);
-      if (agentRef) return ["agent", "read", agentRef];
-    }
-  }
-
-  if (/(space|空间)/i.test(input)) {
-    if (wantsList(input)) return ["space", "list"];
-    if (wantsRead(input)) {
-      const spaceRef = extractTokenAfterKeywords(input, ["space", "空间"]);
-      if (spaceRef) return ["space", "read", spaceRef];
-    }
-  }
-
-  if (/(skill-doc|skill doc|技能文档|技能)/i.test(input)) {
-    if (wantsRead(input)) {
-      const docRef = extractTokenAfterKeywords(input, ["skill-doc", "skill doc", "技能文档", "技能"]);
-      if (docRef) return ["skill-doc", "read", docRef];
-    }
-  }
-
-  if (/(doc|文档|page)/i.test(input)) {
-    if (wantsRead(input)) {
-      const docRef = extractTokenAfterKeywords(input, ["doc", "文档", "page"]);
-      if (docRef) return ["doc", "read", docRef];
-    }
-  }
-
-  if (/(table|表格|表|任务表)/i.test(input) && /(查询|查看|读取|query|read|show)/i.test(input)) {
-    const tableRef = extractTokenAfterKeywords(input, ["table", "表格", "表", "任务表"]);
-    if (tableRef) return ["table", "query", "--table", tableRef];
-  }
-
-  return null;
-}
-
-export function resolveNaturalLanguageCliCommand(input: string): string[] | null {
-  const normalized = input.trim();
-  if (!normalized) return null;
-
-  const systemCommand = resolveSystemCliCommand(normalized);
-  if (systemCommand) return systemCommand;
-
-  if (/(对话|dialog)/i.test(normalized)) {
-    const dialogRef = extractDialogRef(normalized);
-    if (dialogRef && wantsRead(normalized)) {
-      return ["dialog", "read", dialogRef];
-    }
-
-    const shouldList = /(查|查询|查看|列出|找|最近|list|show|latest|recent)/i.test(normalized);
-    if (shouldList && !dialogRef && !wantsAnalysisOrComposition(normalized)) {
-      const args = ["dialog", "list"];
-      const limit = resolveDialogListLimit(normalized);
-      if (limit) args.push("--limit", limit);
-      return args;
-    }
-  }
-
-  return resolveResourceCliCommand(normalized);
+  return out.replace(/\s+/g, " ").trim();
 }
 
 export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
@@ -391,28 +303,26 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
     return { nextState: state, output: "" };
   }
 
-  if (!trimmed.startsWith("/")) {
-    const cliArgs = resolveNaturalLanguageCliCommand(trimmed);
-    if (cliArgs) {
-      return {
-        nextState: state,
-        output: `[nolo] ${formatCliCommand(cliArgs)}`,
-        action: {
-          type: "cli-command",
-          args: cliArgs,
-        },
-      };
-    }
+  if (!isLikelySlashCommand(trimmed)) {
+    const hints = detectImagePaths(trimmed, state.cwd);
+    const stripped = stripImageTokens(trimmed, hints);
+    const finalMessage = stripped.length > 0 ? stripped : trimmed;
+    const imagePaths = hints.map((hint) => hint.resolvedPath);
+    const preview =
+      hints.length > 0
+        ? hints.map((hint) => `found image: ${hint.resolvedPath}`).join("\n")
+        : "";
 
     return {
       nextState: state,
-      output: "",
+      output: preview,
       action: {
         type: "chat",
-        message: trimmed,
+        message: finalMessage,
         agentKey: state.agentKey,
         runtimeMode: state.runtimeMode,
         ...(state.dialogId ? { continueDialogId: state.dialogId } : {}),
+        ...(imagePaths.length > 0 ? { imagePaths } : {}),
       },
     };
   }
@@ -508,6 +418,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           dialogId: undefined,
           dialogLabel: "new",
           attachedDocs: [],
+          attachedImages: [],
           turnTokens: undefined,
         },
         output: "Started a fresh dialog.",
@@ -629,7 +540,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
     case "/profile":
       return {
         nextState: state,
-        output: `Profile: ${state.profileName}`,
+        output: `当前配置环境 (Profile): ${state.profileName}`,
       };
     case "/update":
       return {

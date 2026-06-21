@@ -14,6 +14,7 @@ import { readAction } from "./actions/read";
 import { readAndWaitAction } from "./actions/readAndWait";
 import { writeAction } from "./actions/write";
 import { patchAction } from "./actions/patch";
+import { purgeAction } from "./actions/purge";
 import { upsertAction } from "./actions/upsert";
 import { uploadFileAction } from "./actions/upload";
 import { readFileContentAction } from "./actions/fileContent";
@@ -62,6 +63,12 @@ const dbSlice = createSliceWithThunks({
       },
     }),
     remove: create.asyncThunk(removeAction, {
+      fulfilled: (state, action) => {
+        const { dbKey } = action.payload;
+        if (dbKey) dbAdapter.removeOne(state, dbKey);
+      },
+    }),
+    purge: create.asyncThunk(purgeAction, {
       fulfilled: (state, action) => {
         const { dbKey } = action.payload;
         if (dbKey) dbAdapter.removeOne(state, dbKey);
@@ -134,6 +141,7 @@ const dbSlice = createSliceWithThunks({
 // Export actions
 export const {
   remove,
+  purge,
   read,
   readAndWait,
   write,

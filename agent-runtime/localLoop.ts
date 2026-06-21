@@ -2,6 +2,8 @@ import type {
   AgentRuntimeHostAdapter,
   AgentRuntimeToolResult,
 } from "./hostAdapter";
+import type { ActionGate } from "./actionGate";
+import { readActionGate, readCommandActionGatePayload } from "./actionGate";
 import type {
   AgentRuntimeChatMessage,
   AgentRuntimeMessageContent,
@@ -20,7 +22,7 @@ export type LocalAgentTurnInput = {
   runtimeContext?: Record<string, any> | null;
   timeoutMs?: number;
   onToolEvent?: (event: LocalAgentToolEvent) => void;
-  onUserAction?: (action: LocalAgentUserAction) => Promise<AgentRuntimeToolResult | void>;
+  onActionGate?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   onTextDelta?: (chunk: string) => void;
 };
 
@@ -41,15 +43,9 @@ export type LocalAgentToolEvent = {
   metadata?: Record<string, unknown>;
 };
 
-export type LocalAgentUserAction = {
-  type: "terminal_command";
+export type LocalAgentActionGate = ActionGate & {
   toolName: string;
   toolCallId: string;
-  argv: string[];
-  displayCommand?: string;
-  reason?: string;
-  resumeHint?: string;
-  message?: string;
 };
 
 export const LOCAL_AGENT_CONFIG_MISSING_CODE = "LOCAL_AGENT_CONFIG_MISSING";
@@ -71,6 +67,7 @@ function formatStructuredToolExecutionError(args: {
     code?: unknown;
     message?: unknown;
     policy?: unknown;
+    permissionRequest?: unknown;
   };
   if (typeof error.code !== "string") return null;
   return JSON.stringify({
@@ -81,6 +78,9 @@ function formatStructuredToolExecutionError(args: {
         : formatToolExecutionError(args),
     ...(error.policy && typeof error.policy === "object"
       ? { policy: error.policy }
+      : {}),
+    ...(error.permissionRequest && typeof error.permissionRequest === "object"
+      ? { permissionRequest: error.permissionRequest }
       : {}),
   });
 }
@@ -182,46 +182,67 @@ function formatToolMessageContent(args: {
   return `${args.content}\n\n[tool metadata]\n${JSON.stringify(args.metadata)}`;
 }
 
-function buildUserAction(args: {
+function buildActionGate(args: {
   toolName: string;
   toolCallId: string;
   metadata?: Record<string, unknown>;
-}): LocalAgentUserAction | null {
-  const rawAction = args.metadata?.requiresUserAction;
-  if (!rawAction || typeof rawAction !== "object" || Array.isArray(rawAction)) return null;
-  const action = rawAction as Record<string, unknown>;
-  if (action.type !== "terminal_command") return null;
-  if (!Array.isArray(action.argv)) return null;
-  const argv = action.argv.flatMap((item) =>
-    typeof item === "string" && item.trim() ? [item.trim()] : []
-  );
-  if (argv.length === 0) return null;
+}): LocalAgentActionGate | null {
+  const gate = readActionGate(args.metadata?.actionGate);
+  if (!gate) return null;
+  if (gate.kind === "handoff" && !readCommandActionGatePayload(gate.payload)) return null;
   return {
-    type: "terminal_command",
+    ...gate,
     toolName: args.toolName,
     toolCallId: args.toolCallId,
-    argv,
-    ...(typeof action.displayCommand === "string" ? { displayCommand: action.displayCommand } : {}),
-    ...(typeof action.reason === "string" ? { reason: action.reason, message: action.reason } : {}),
-    ...(typeof action.resumeHint === "string" ? { resumeHint: action.resumeHint } : {}),
   };
 }
 
 const MAX_HISTORICAL_TOOL_CONTENT_CHARS = 2400;
+// Aligns with server read_file upstream compaction so multi-round tool loops do
+// not resend huge tool payloads on every LLM call within the same turn.
+const MAX_IN_TURN_TOOL_CONTENT_CHARS = 6000;
 
-function summarizeHistoricalToolContent(content: AgentRuntimeMessageContent): AgentRuntimeMessageContent {
+function summarizeToolContentForProvider(
+  content: AgentRuntimeMessageContent,
+  maxChars: number,
+  label: string,
+): AgentRuntimeMessageContent {
   if (typeof content !== "string") return content;
-  if (content.length <= MAX_HISTORICAL_TOOL_CONTENT_CHARS) return content;
+  if (content.length <= maxChars) return content;
 
   const compact = compactWhitespace(content);
-  const clipped = compact.length > MAX_HISTORICAL_TOOL_CONTENT_CHARS
-    ? compact.slice(0, MAX_HISTORICAL_TOOL_CONTENT_CHARS - 160)
+  const clipped = compact.length > maxChars
+    ? compact.slice(0, maxChars - 160)
     : compact;
   return [
-    "[historical tool result truncated for the next turn]",
+    `[${label}]`,
     `originalChars=${content.length}`,
     clipped,
   ].join("\n");
+}
+
+function summarizeHistoricalToolContent(content: AgentRuntimeMessageContent): AgentRuntimeMessageContent {
+  return summarizeToolContentForProvider(
+    content,
+    MAX_HISTORICAL_TOOL_CONTENT_CHARS,
+    "historical tool result truncated for the next turn",
+  );
+}
+
+function prepareMessagesForProviderCall(
+  messages: AgentRuntimeChatMessage[],
+): AgentRuntimeChatMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "tool") return message;
+    return {
+      ...message,
+      content: summarizeToolContentForProvider(
+        message.content,
+        MAX_IN_TURN_TOOL_CONTENT_CHARS,
+        "in-turn tool result truncated before next provider call",
+      ),
+    };
+  });
 }
 
 function prepareHistoryForNextTurn(history: AgentRuntimeChatMessage[]): AgentRuntimeChatMessage[] {
@@ -306,7 +327,7 @@ export async function runLocalAgentTurn(
   let turnUsage: Record<string, unknown> | undefined;
   let round = 0;
   while (true) {
-    result = await provider.complete(messages, {
+    result = await provider.complete(prepareMessagesForProviderCall(messages), {
       ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
       ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
     });
@@ -338,13 +359,13 @@ export async function runLocalAgentTurn(
           arguments: toolCall.function.arguments,
           ...(userInputText ? { userInput: userInputText } : {}),
         });
-        const userAction = buildUserAction({
+        const actionGate = buildActionGate({
           toolName,
           toolCallId: toolCall.id,
           metadata: toolResult.metadata,
         });
-        if (userAction && input.onUserAction) {
-          const replacement = await input.onUserAction(userAction);
+        if (actionGate && input.onActionGate) {
+          const replacement = await input.onActionGate(actionGate);
           if (replacement) {
             toolResult = replacement;
           }

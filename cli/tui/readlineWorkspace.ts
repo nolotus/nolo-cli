@@ -3,13 +3,15 @@ import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
-import type { LocalAgentUserAction } from "../../agent-runtime/localLoop";
+import type { LocalAgentActionGate } from "../../agent-runtime/localLoop";
+import { readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
 import { saveProfileAgentSelection } from "../client/profileConfig";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runSelfUpdate } from "../updateCommands";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
+import { mergeAttachedImages, readImagePaths, resolveImageSource, summarizeAttachment } from "./pasteImage";
 import {
   createInitialTuiState,
   handleTuiInput,
@@ -62,7 +64,10 @@ async function runAgentChat(
   env: NodeJS.ProcessEnv,
   output: NodeJS.WritableStream,
   agentRunner: typeof runAgentTurn = runAgentTurn,
-  userActionHandler?: (action: LocalAgentUserAction) => Promise<AgentRuntimeToolResult | void>
+  options: {
+    imageUrls?: string[];
+    actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
+  } = {}
 ) {
   const result: RunAgentTurnResult = await agentRunner({
     agentName: state.agentName,
@@ -80,52 +85,97 @@ async function runAgentChat(
       NOLO_CLI_RENDER: state.renderDisplay,
     },
     output,
-    ...(userActionHandler ? { userActionHandler } : {}),
+    ...(options.imageUrls && options.imageUrls.length > 0
+      ? { imageUrls: options.imageUrls }
+      : {}),
+    ...(options.actionGateHandler ? { actionGateHandler: options.actionGateHandler } : {}),
   });
   return result;
 }
 
-function waitForManualUserAction(
+function waitForActionGate(
   rl: ReturnType<typeof createInterface>,
   input: NodeJS.ReadableStream,
   output: NodeJS.WritableStream,
-  action: LocalAgentUserAction,
+  gate: LocalAgentActionGate,
   spawnRunner: typeof spawnProcess,
 ): Promise<AgentRuntimeToolResult> {
-  const displayCommand = action.displayCommand ?? action.argv.join(" ");
+  const commandPayload = gate.kind === "handoff"
+    ? readCommandActionGatePayload(gate.payload)
+    : null;
+  const displayCommand = commandPayload?.displayCommand ?? commandPayload?.command.join(" ") ?? gate.title;
   output.write("\n[nolo] Action needed in your terminal\n");
-  if (action.reason) output.write(`[nolo] ${action.reason}\n`);
+  output.write(`[nolo] ${gate.title}\n`);
+  if (gate.body) output.write(`[nolo] ${gate.body}\n`);
   output.write(`  ${displayCommand}\n`);
   output.write("[nolo] Press Enter to run it now. Follow any prompts below, or Ctrl+C to cancel.\n");
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: AgentRuntimeToolResult) => {
+      if (settled) return;
+      settled = true;
+      rl.off("close", onClose);
+      rl.off("SIGINT", onSigint);
+      resolve(result);
+    };
+    const cancelResult = (reason: string): AgentRuntimeToolResult => ({
+      content: `action gate cancelled: ${gate.title}`,
+      metadata: {
+        exitCode: 130,
+        actionGateResult: { gateId: gate.id, status: "cancelled", output: reason },
+      },
+    });
+    const failResult = (message: string): AgentRuntimeToolResult => ({
+      content: `action gate failed: ${gate.title}`,
+      metadata: {
+        exitCode: 1,
+        actionGateResult: { gateId: gate.id, status: "failed", output: message },
+      },
+    });
+    const onClose = () => finish(cancelResult("readline closed"));
+    const onSigint = () => finish(cancelResult("interrupted"));
+    rl.once("close", onClose);
+    rl.once("SIGINT", onSigint);
     rl.question("", async () => {
+      if (settled) return;
+      if (!commandPayload) {
+        finish(failResult("unsupported gate payload"));
+        return;
+      }
       const rawInput = input as RawModeInput;
       const restoreRawMode = Boolean(rawInput.isRaw);
       rl.pause();
       rawInput.setRawMode?.(false);
       let exitCode = 1;
+      let errorMessage = "";
       try {
         const proc = spawnRunner({
-          cmd: action.argv,
+          cmd: commandPayload.command,
           stdin: "inherit",
           stdout: "inherit",
           stderr: "inherit",
         });
         exitCode = await proc.exited;
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : String(error);
       } finally {
         if (restoreRawMode) rawInput.setRawMode?.(true);
         rl.resume();
       }
-      resolve({
-        content: exitCode === 0
-          ? `user action completed: ${displayCommand}`
-          : `user action failed with exit code ${exitCode}: ${displayCommand}`,
+      finish({
+        content: exitCode === 0 && !errorMessage
+          ? `action gate completed: ${displayCommand}`
+          : errorMessage
+            ? `action gate failed: ${errorMessage}`
+            : `action gate failed with exit code ${exitCode}: ${displayCommand}`,
         metadata: {
           exitCode,
-          userActionCompleted: exitCode === 0,
-          userActionFailed: exitCode !== 0,
-          requiresUserActionCompleted: true,
-          argv: action.argv,
+          actionGateResult: {
+            gateId: gate.id,
+            status: exitCode === 0 && !errorMessage ? "completed" : "failed",
+            output: errorMessage || displayCommand,
+          },
+          argv: commandPayload.command,
           displayCommand,
         },
       });
@@ -335,6 +385,25 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
 
       if (result.action?.type === "chat") {
+        const pathsToRead = [
+          ...(result.action.imagePaths ?? []),
+          ...state.attachedImages.map((img) => img.sourcePath),
+        ];
+        let imageUrls: string[] = [];
+        if (pathsToRead.length > 0) {
+          const readResult = await readImagePaths(pathsToRead, {
+            onFailure: (_path, err) =>
+              output.write(`[nolo] image skipped: ${err.message}\n`),
+          });
+          imageUrls = readResult.images.map((img) => img.dataUrl);
+          if (readResult.images.length > 0) {
+            state = {
+              ...state,
+              attachedImages: mergeAttachedImages(state.attachedImages, readResult.images),
+            };
+          }
+        }
+
         const runResult = await runAgentChat(
           options.scriptDir,
           state,
@@ -342,7 +411,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           options.env ?? process.env,
           output,
           options.agentRunner,
-          (action) => waitForManualUserAction(rl, input, output, action, spawnRunner)
+          {
+            ...(imageUrls.length > 0 ? { imageUrls } : {}),
+            actionGateHandler: (gate) =>
+              waitForActionGate(rl, input, output, gate, spawnRunner),
+          }
         );
         if (runResult.dialogId || runResult.turnTokens) {
           state = {
@@ -354,6 +427,21 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                 }
               : {}),
             ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
+          };
+        }
+      }
+
+      if (result.action?.type === "attach-images") {
+        const readResult = await readImagePaths(result.action.paths, {
+          resolve: (raw) => resolveImageSource(raw, state.cwd),
+          onSuccess: (img) => output.write(`${summarizeAttachment(img)}\n`),
+          onFailure: (_path, err) =>
+            output.write(`[nolo] image skipped: ${err.message}\n`),
+        });
+        if (readResult.images.length > 0) {
+          state = {
+            ...state,
+            attachedImages: mergeAttachedImages(state.attachedImages, readResult.images),
           };
         }
       }

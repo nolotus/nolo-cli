@@ -105,23 +105,42 @@ export const updateContentTitleAction = async (
   // (loaded via useUserData from individual records) pick up the new title
   // after a page refresh.  Without this, only the space's contents map is
   // updated while the standalone record retains the stale title.
+  //
+  // Some content types (e.g. table meta records, ephemeral rows) may not have
+  // a standalone record. Detect that with a read first and skip the patch
+  // cleanly; for any other failure we throw so the caller (and the user, via
+  // the rejected toast in contentThunks) sees that the two data paths
+  // diverged instead of silently keeping a stale individual record.
+  let hasIndividualRecord = false;
   try {
-    await dispatch(
-      patch({
+    const existing = await dispatch(
+      read({
         dbKey: contentKey,
-        changes: buildContentRecordTitleChanges(content, trimmedTitle, now),
         preferredServerOrigin: sourceServerOrigin,
       })
     ).unwrap();
-    notifyUserDataUpdated();
-  } catch (contentPatchError) {
-    // Non-fatal: the space data is already updated; the individual record
-    // may not exist for some content types or the patch may fail due to
-    // permission issues. Log but don't block the title update.
-    console.warn(
-      "[updateContentTitle] Failed to sync title to individual content record:",
-      contentPatchError
-    );
+    hasIndividualRecord = Boolean(existing);
+  } catch {
+    hasIndividualRecord = false;
+  }
+
+  if (hasIndividualRecord) {
+    try {
+      await dispatch(
+        patch({
+          dbKey: contentKey,
+          changes: buildContentRecordTitleChanges(content, trimmedTitle, now),
+          preferredServerOrigin: sourceServerOrigin,
+        })
+      ).unwrap();
+      notifyUserDataUpdated();
+    } catch (contentPatchError: any) {
+      throw new Error(
+        `标题已写入空间，但同步独立记录失败: ${
+          contentPatchError?.message || "未知错误"
+        }`
+      );
+    }
   }
 
   // If it's a table, also sync with TableMeta

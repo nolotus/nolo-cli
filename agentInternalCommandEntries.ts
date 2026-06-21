@@ -11,6 +11,7 @@ import {
   runAgentCreateCommand,
 } from "./agentRecordCommands";
 import { runAgentRunCommand } from "./agentRunCommand";
+import { runAgentDeleteCommand } from "./agentDeleteCommand";
 import {
   createEnvCommand,
   createEnvScriptDirCommand,
@@ -34,6 +35,7 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
     createAgentRunCommand(["agent", "run"], "Run an agent"),
     createEnvCommand(["agent", "setup-offline-marxists"], "Create or update the Marxists.org offline book agent", runSetupOfflineMarxistsAgentCommand),
     createEnvCommand(["agent", "update"], "Update agent fields", runAgentUpdateCommand),
+    createEnvCommand(["agent", "delete"], "Hard-delete an agent's private and public records", runAgentDeleteCommand),
     createEnvCommand(["agent", "bind-current"], "Bind an agent to this machine", runAgentBindCurrentCommand),
     createEnvCommand(["agent", "smoke-current"], "Smoke test a bound agent through this machine", runAgentSmokeCurrentCommand),
     createEnvCommand(["agent", "runtime-doctor"], "Diagnose current machine runtime compatibility", runAgentRuntimeDoctorCommand),

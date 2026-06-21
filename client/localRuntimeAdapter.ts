@@ -100,7 +100,7 @@ type LocalCliExecutor = (
     imageInputs?: CliImageInput[];
   }
 ) => Promise<CliExecuteResult>;
-const TRANSIENT_FETCH_MAX_ATTEMPTS = 8;
+const TRANSIENT_FETCH_MAX_ATTEMPTS = 3;
 const TRANSIENT_FETCH_RETRY_BASE_DELAY_MS = 250;
 export const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
 export const BUILTIN_NOLO_AGENT_KEY = NOLO_DEFAULT_AGENT_KEY;
@@ -114,6 +114,33 @@ const LOCAL_SERVER_TABLE_TOOL_NAMES = [
   "updateTableRows",
 ] as const;
 const LOCAL_SERVER_TABLE_TOOL_NAME_SET = new Set<string>(LOCAL_SERVER_TABLE_TOOL_NAMES);
+
+type PreparedAgentRuntime = {
+  agentConfig: AgentRuntimeAgentConfig;
+  activeAgentToolNames: string[];
+  runtimeToolExecutionLimits: ReturnType<typeof resolveLocalWorkspaceExecutorOptionsFromPolicy>;
+  localToolExecutors: ReturnType<typeof buildLocalToolExecutors>;
+};
+
+const preparedAgentRuntimeCache = new Map<string, PreparedAgentRuntime>();
+const hybridStoreCache = new Map<string, Promise<HybridRecordStore>>();
+
+function normalizeRuntimeCacheCwd(cwd?: string) {
+  return (cwd?.trim() || process.cwd()).replace(/\/+$/, "") || ".";
+}
+
+function buildPreparedAgentCacheKey(args: {
+  userId: string;
+  agentRef: string;
+  cwd: string;
+}) {
+  return `${args.userId}\0${args.agentRef}\0${args.cwd}`;
+}
+
+export function clearCliLocalRuntimePreparedAgentCache() {
+  preparedAgentRuntimeCache.clear();
+  hybridStoreCache.clear();
+}
 
 export type CliLocalRuntimeDb = CliKvDb;
 
@@ -132,6 +159,7 @@ export type CliLocalRuntimeAdapterDeps = {
   executeCli?: LocalCliExecutor;
   sleep?: (ms: number) => Promise<void>;
   loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
+  buildProviderOpenAiTools?: typeof buildOpenAiTools;
 };
 
 async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
@@ -527,6 +555,23 @@ function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: 
     ...(exposePlatformTools ? buildServerPlatformOpenAiTools({ toolNames: args.toolNames }) : []),
     ...(exposePlatformTools ? buildNoloWorkspaceOpenAiTools({ toolNames: args.toolNames }) : []),
   ];
+}
+
+function resolveProviderOpenAiToolBundle(
+  agentConfig: AgentRuntimeAgentConfig,
+  env: EnvLike,
+  buildTools: typeof buildOpenAiTools = buildOpenAiTools,
+) {
+  const requestedToolNames = addDefaultLightWebToolsForConfiguredAgents(
+    resolveRequestedRuntimeToolNames({ agentConfig }),
+    agentConfig,
+  );
+  const tools = buildTools({
+    agentKey: agentConfig.key,
+    toolNames: requestedToolNames,
+    env,
+  });
+  return { requestedToolNames, tools };
 }
 
 function buildLocalWorkspaceToolsetForEnv(args: { toolNames?: string[]; env: EnvLike }) {
@@ -1101,6 +1146,17 @@ async function resolveStore(deps: CliLocalRuntimeAdapterDeps) {
   });
 }
 
+async function getOrCreateSharedStore(deps: CliLocalRuntimeAdapterDeps) {
+  if (deps.store) return deps.store;
+  const cacheKey = normalizeRuntimeCacheCwd(deps.cwd);
+  let storePromise = hybridStoreCache.get(cacheKey);
+  if (!storePromise) {
+    storePromise = resolveStore(deps);
+    hybridStoreCache.set(cacheKey, storePromise);
+  }
+  return storePromise;
+}
+
 async function readAgentFromStore(args: {
   store: HybridRecordStore;
   agentRef: string;
@@ -1208,6 +1264,7 @@ export function createCliLocalRuntimeAdapter(
   const userId = resolveLocalUserId(deps.env);
   const localToolBudgets = parseLocalToolBudgets(deps.env);
   const localToolUsage = new Map<string, number>();
+  const buildProviderOpenAiTools = deps.buildProviderOpenAiTools ?? buildOpenAiTools;
   let activeAgentToolNames: string[] = [];
   const workspaceRoot = deps.cwd ?? process.cwd();
   let runtimeToolExecutionLimits: ReturnType<typeof resolveLocalWorkspaceExecutorOptionsFromPolicy> = {};
@@ -1225,9 +1282,22 @@ export function createCliLocalRuntimeAdapter(
     host: "cli",
     capabilities: ["leveldb-agent-config", "local-provider", "leveldb-persistence", "local-tools"],
     loadAgentConfig: async (agentRef) => {
+      const cacheKey = buildPreparedAgentCacheKey({
+        userId,
+        agentRef,
+        cwd: normalizeRuntimeCacheCwd(workspaceRoot),
+      });
+      const cached = preparedAgentRuntimeCache.get(cacheKey);
+      if (cached) {
+        activeAgentToolNames = cached.activeAgentToolNames;
+        runtimeToolExecutionLimits = cached.runtimeToolExecutionLimits;
+        localToolExecutors = cached.localToolExecutors;
+        return cached.agentConfig;
+      }
+
       const storedAgentConfig = await readAgentFromStore({
         agentRef,
-        store: await resolveStore(deps),
+        store: await getOrCreateSharedStore(deps),
         userId,
       });
       const fallbackLocalCliAgentConfig =
@@ -1258,14 +1328,22 @@ export function createCliLocalRuntimeAdapter(
         readXhsProfile: deps.readXhsProfile,
         ...runtimeToolExecutionLimits,
       });
+      if (agentConfig) {
+        preparedAgentRuntimeCache.set(cacheKey, {
+          agentConfig,
+          activeAgentToolNames,
+          runtimeToolExecutionLimits,
+          localToolExecutors,
+        });
+      }
       return agentConfig;
     },
     loadDialogHistory: async (dialogId) => readDialogMessages({
       dialogId,
-      store: await resolveStore(deps),
+      store: await getOrCreateSharedStore(deps),
     }),
     saveTurn: async (input) => writeDialog({
-      store: await resolveStore(deps),
+      store: await getOrCreateSharedStore(deps),
       input,
       userId,
       now,
@@ -1346,18 +1424,14 @@ export function createCliLocalRuntimeAdapter(
           useServerProxy: agentConfig.useServerProxy ?? null,
           customProviderEndpoint: summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
         });
+        const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
+          agentConfig,
+          deps.env,
+          buildProviderOpenAiTools,
+        );
         return {
           model: providerConfig.model,
           complete: async (messages, options) => {
-            const requestedToolNames = addDefaultLightWebToolsForConfiguredAgents(
-              resolveRequestedRuntimeToolNames({ agentConfig }),
-              agentConfig,
-            );
-            const tools = buildOpenAiTools({
-              agentKey: agentConfig.key,
-              toolNames: requestedToolNames,
-              env: deps.env,
-            });
             const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
             const usesResponsesApi = providerConfig.endpoint.includes("/responses");
             const stream = Boolean(options?.onTextDelta) && !usesResponsesApi;
@@ -1457,18 +1531,14 @@ export function createCliLocalRuntimeAdapter(
         useServerProxy: agentConfig.useServerProxy ?? null,
         customProviderEndpoint: summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
       });
+      const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
+        agentConfig,
+        deps.env,
+        buildProviderOpenAiTools,
+      );
       return {
         model: providerConfig.model,
         complete: async (messages, options) => {
-          const requestedToolNames = addDefaultLightWebToolsForConfiguredAgents(
-            resolveRequestedRuntimeToolNames({ agentConfig }),
-            agentConfig,
-          );
-          const tools = buildOpenAiTools({
-            agentKey: agentConfig.key,
-            toolNames: requestedToolNames,
-            env: deps.env,
-          });
           const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
           const stream = Boolean(options?.onTextDelta);
           logLocalRuntimeDiagnostic("provider.request.start", {

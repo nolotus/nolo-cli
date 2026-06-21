@@ -1068,8 +1068,14 @@ export const selectEditorWordCountEnabled = (state: RootState): boolean =>
   state.settings.editorWordCountEnabled;
 export const selectEditorShortcuts = (state: RootState) =>
   state.settings.editorShortcuts;
-export const selectDeleteShortcut = (state: RootState): string =>
-  state.settings.deleteShortcut;
+export const selectDeleteShortcut = (state: RootState): string => {
+  const shortcut = state.settings.deleteShortcut;
+  if (shortcut === undefined || shortcut === null) {
+    const isMac = typeof window !== "undefined" && typeof window.navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(window.navigator.platform);
+    return isMac ? "meta+backspace" : "ctrl+backspace";
+  }
+  return shortcut;
+};
 export const selectEditorFontSize = (state: RootState): number =>
   state.settings.editorFontSize;
 export const selectEditorAutoSave = (state: RootState): boolean =>

@@ -1,9 +1,10 @@
 import type { Agent } from "../../app/types";
 import type { AgentRuntimeOptions } from "../../ai/agent/types";
-import { VULTR_KIMI_MODEL } from "../../ai/llm/kimi";
 import { DataType } from "../../create/types";
 import { createAgentKey } from "../../database/keys";
 import { APP_BUILDER_PUBLIC_AGENT_KEY } from "../../app/constants/appEditor";
+
+const FIREWORKS_GLM_5_2_MODEL = "accounts/fireworks/models/glm-5p2";
 
 export type ObjectAssistantKind = "page" | "table" | "app" | "image" | "file";
 export type BuiltinObjectAssistantKind = Exclude<ObjectAssistantKind, "app">;
@@ -116,12 +117,12 @@ export const buildBuiltinObjectAssistantAgent = (
     type: DataType.AGENT,
     userId,
     isPublic: false,
-    provider: "vultr",
-    model: VULTR_KIMI_MODEL,
+    provider: "fireworks",
+    model: FIREWORKS_GLM_5_2_MODEL,
     apiSource: "platform" as const,
     useServerProxy: true,
-    inputPrice: 0.3 * 8,
-    outputPrice: 1.2 * 8,
+    inputPrice: 1.4 * 8,
+    outputPrice: 4.4 * 8,
     createdAt: now,
     updatedAt: now,
     dialogCount: 0,

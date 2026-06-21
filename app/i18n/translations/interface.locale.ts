@@ -154,6 +154,24 @@ export default {
       "Go to Home": "Go to Home",
       "Go Back": "Go Back",
       deleteSuccess: "Delete successful",
+      deleteMovedToTrash: '"{{title}}" moved to Recycle Bin',
+      recycleBin: {
+        title: "Recycle Bin",
+        subtitle:
+          "Deleted conversations, pages, tables, apps, images, and attachments are kept here. Restore or permanently delete them anytime.",
+        empty: "Recycle Bin is empty",
+        emptyHint:
+          "Deleted content lands here automatically and can be restored until you clear it.",
+        restore: "Restore",
+        purge: "Delete forever",
+        purgeConfirm: "This will permanently delete the item. Continue?",
+        restored: "Restored",
+        restoreFailed: "Restore failed",
+        purged: "Permanently deleted",
+        purgeFailed: "Permanent delete failed",
+        dialogMessageLoss:
+          "Only the conversation config will be restored — message history cannot be recovered.",
+      },
       accountDeletion: {
         sectionTitle: "Danger Zone",
         title: "Delete account",
@@ -472,6 +490,13 @@ export default {
         createDialogFailed: "Failed to create conversation",
         initDialogFailed: "Failed to initialize conversation",
         sendMessageFailed: "Failed to send first message",
+        agentSelector: {
+          triggerLabel: "Choose default agent for the quick chat",
+          popoverLabel: "Favorite agents",
+          hint: "Pick the default agent used by the home quick chat.",
+          systemDefault: "System default",
+          empty: "No favorite agents yet. Browse and favorite one to get started.",
+        },
       },
       chat: {
         title: "Chat Settings",
@@ -906,6 +931,22 @@ export default {
       "Go to Home": "返回首页",
       "Go Back": "返回",
       deleteSuccess: "删除成功",
+      deleteMovedToTrash: '"{{title}}" 已移至回收站',
+      recycleBin: {
+        title: "回收站",
+        subtitle:
+          "已删除的对话、文档、表格、应用、图片和附件会暂存这里，可以随时恢复或永久删除。",
+        empty: "回收站是空的",
+        emptyHint: "删除的内容会自动进入回收站，清理之前都可以恢复。",
+        restore: "恢复",
+        purge: "永久删除",
+        purgeConfirm: "永久删除后将无法恢复，确定继续？",
+        restored: "已恢复",
+        restoreFailed: "恢复失败",
+        purged: "已永久删除",
+        purgeFailed: "永久删除失败",
+        dialogMessageLoss: "恢复后只保留对话配置，消息记录无法找回。",
+      },
       accountDeletion: {
         sectionTitle: "危险操作",
         title: "删除账户",
@@ -1220,6 +1261,13 @@ export default {
         createDialogFailed: "创建对话失败",
         initDialogFailed: "初始化对话失败",
         sendMessageFailed: "发送首条消息失败",
+        agentSelector: {
+          triggerLabel: "选择首页默认智能体",
+          popoverLabel: "收藏的智能体",
+          hint: "选择首页快捷对话默认使用的智能体。",
+          systemDefault: "系统默认",
+          empty: "还没有收藏的智能体，去逛逛收藏一个吧。",
+        },
       },
       chat: {
         title: "对话设置",
@@ -1653,6 +1701,22 @@ export default {
       "Go to Home": "返回首頁",
       "Go Back": "返回",
       deleteSuccess: "刪除成功",
+      deleteMovedToTrash: '"{{title}}" 已移至回收站',
+      recycleBin: {
+        title: "回收站",
+        subtitle:
+          "已刪除的對話、文件、表格、應用、圖片與附件會暫存在此，可隨時還原或永久刪除。",
+        empty: "回收站是空的",
+        emptyHint: "刪除的內容會自動進入回收站，清理前都可以還原。",
+        restore: "還原",
+        purge: "永久刪除",
+        purgeConfirm: "永久刪除後將無法還原，確定繼續？",
+        restored: "已還原",
+        restoreFailed: "還原失敗",
+        purged: "已永久刪除",
+        purgeFailed: "永久刪除失敗",
+        dialogMessageLoss: "還原後只保留對話設定，訊息紀錄無法找回。",
+      },
       accountDeletion: {
         sectionTitle: "危險操作",
         title: "刪除帳戶",
@@ -1960,13 +2024,20 @@ export default {
         },
       },
       // === End Welcome Section ===
-      quickChat: {
+quickChat: {
         placeholder: "我是 {{name}}。想跟我聊聊吗？你也可以在设置里切换 AI 或定制你的专属 AI",
-        uploadImage: "上传圖片",
+        uploadImage: "上傳圖片",
         failedToStart: "啟動失敗",
         createDialogFailed: "建立對話失敗",
         initDialogFailed: "初始化對話失敗",
         sendMessageFailed: "發送首條訊息失敗",
+        agentSelector: {
+          triggerLabel: "選擇首頁預設智慧體",
+          popoverLabel: "收藏的智慧體",
+          hint: "選擇首頁快捷對話預設使用的智慧體。",
+          systemDefault: "系統預設",
+          empty: "還沒有收藏的智慧體，去逛逛收藏一個吧。",
+        },
       },
       chat: {
         title: "對話設定",
@@ -2407,6 +2478,24 @@ export default {
       "Go to Home": "ホームに戻る",
       "Go Back": "戻る",
       deleteSuccess: "削除成功",
+      deleteMovedToTrash: '"{{title}}" をゴミ箱に移動しました',
+      recycleBin: {
+        title: "ゴミ箱",
+        subtitle:
+          "削除された会話、ドキュメント、表、アプリ、画像、添付ファイルはここに保管されます。復元または完全削除できます。",
+        empty: "ゴミ箱は空です",
+        emptyHint:
+          "削除したコンテンツは自動的にここに移動され、完全に削除するまで復元できます。",
+        restore: "復元",
+        purge: "完全に削除",
+        purgeConfirm: "完全削除すると復元できません。続行しますか？",
+        restored: "復元しました",
+        restoreFailed: "復元に失敗しました",
+        purged: "完全に削除しました",
+        purgeFailed: "完全削除に失敗しました",
+        dialogMessageLoss:
+          "復元されるのは会話の設定のみです。メッセージ履歴は復元できません。",
+      },
       accountDeletion: {
         sectionTitle: "危険操作",
         title: "アカウントを削除",
@@ -2725,6 +2814,13 @@ export default {
         createDialogFailed: "会話の作成に失敗しました",
         initDialogFailed: "会話の初期化に失敗しました",
         sendMessageFailed: "最初のメッセージ送信に失敗しました",
+        agentSelector: {
+          triggerLabel: "ホームのクイックチャットのデフォルトエージェントを選択",
+          popoverLabel: "お気に入りエージェント",
+          hint: "ホームのクイックチャットで使うデフォルトのエージェントを選択します。",
+          systemDefault: "システム既定",
+          empty: "まだお気に入りのエージェントがありません。",
+        },
       },
       chat: {
         title: "チャット設定",

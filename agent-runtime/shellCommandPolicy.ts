@@ -1,13 +1,18 @@
+import type { PermissionDecision, PermissionRequest } from "./actionGate";
+
 export type ShellCommandPolicyVerdict = "allowed" | "forbidden";
 
 export type ShellCommandPolicyResult =
   | {
       verdict: "allowed";
+      permissionDecision: Extract<PermissionDecision, "allow">;
     }
   | {
       verdict: "forbidden";
+      permissionDecision: Extract<PermissionDecision, "ask">;
       code: "destructive_action_requires_confirmation";
       reason: string;
+      permissionRequest: PermissionRequest;
       policy: {
         capability: "destructive_action";
         target: "shell_command";
@@ -105,9 +110,21 @@ export function evaluateShellCommandPolicy(args: {
   ) {
     return {
       verdict: "forbidden",
+      permissionDecision: "ask",
       code: "destructive_action_requires_confirmation",
       reason:
         "当前运行默认禁止自动执行可能删除用户内容的 shell 命令。只有当用户在当前请求里明确要求删除/清理时，才能继续；否则请停止并先说明限制。",
+      permissionRequest: {
+        id: "permission-shell-destructive-action",
+        tool: "execShell",
+        action: "destructive_shell_command",
+        title: "确认执行破坏性 shell 命令",
+        body: "该命令可能删除或重置用户内容，需要用户明确确认后才能执行。",
+        suggestedRule: {
+          scope: "once",
+          pattern: { capability: "destructive_action", target: "shell_command" },
+        },
+      },
       policy: {
         capability: "destructive_action",
         target: "shell_command",
@@ -116,5 +133,5 @@ export function evaluateShellCommandPolicy(args: {
     };
   }
 
-  return { verdict: "allowed" };
+  return { verdict: "allowed", permissionDecision: "allow" };
 }

@@ -4,11 +4,6 @@ import { nolotusId } from "../../core/init";
 import { Model, ModelPrice } from "../llm/types";
 import { findModelConfig, getModelConfig } from "../llm/providers";
 import { getApproxPricePerImage } from "../llm/imagePricing";
-import {
-  isOpenAIFlexPricedModel,
-  type OpenAIServiceTier,
-  resolveOpenAIServiceTier,
-} from "../../integrations/openai/flexTier";
 
 // ==================== 接口定义 ====================
 
@@ -185,19 +180,6 @@ const resolveEffectiveModelPrice = ({
   if (provider === "google") {
     return resolveGoogleServiceTierPrice(model, resolvedPrice, billingServiceTier);
   }
-  const effectiveOpenAIServiceTier = resolveOpenAIServiceTier({
-    providerName: provider,
-    model: model.name,
-    requestedServiceTier: billingServiceTier as OpenAIServiceTier | undefined,
-  });
-
-  if (provider === "openai" && effectiveOpenAIServiceTier === "flex") {
-    if (isOpenAIFlexPricedModel(model.name)) {
-      return resolvedPrice;
-    }
-    return scaleModelPrice(resolvedPrice, 0.5);
-  }
-
   return resolvedPrice;
 };
 
@@ -425,7 +407,7 @@ const calculateBasicCost = (
   usage: Usage,
   provider: string,
   externalPrice?: ExternalPrice,
-  billingServiceTier?: OpenAIServiceTier
+  billingServiceTier?: string
 ): CostBreakdown => {
   if (!usage || typeof usage.input_tokens !== "number") {
     throw new Error("Invalid usage data");

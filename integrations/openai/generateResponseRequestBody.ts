@@ -3,7 +3,6 @@ import { Agent, Message } from "../../app/types";
 import { generatePrompt } from "../../ai/agent/generatePrompt";
 import { getUsageRequestOptions } from "../../ai/llm/usageRequestOptions";
 import { Contexts } from "../../ai/types";
-import { resolveOpenAIRequestTarget } from "./flexTier";
 import { convertMessagesToResponsesInput } from "./responsesHelpers";
 
 /**
@@ -25,12 +24,8 @@ export function generateResponseRequestBody(
       ? navigator.language
       : "zh-CN";
   const input = convertMessagesToResponsesInput(msgs);
-  const requestTarget = resolveOpenAIRequestTarget({
-    providerName: agentConfig.provider,
-    model: agentConfig.model,
-  });
   const body: Record<string, any> = {
-    model: requestTarget.model ?? agentConfig.model,
+    model: agentConfig.model,
     input,
     stream: true,
     ...getUsageRequestOptions(agentConfig.provider, { api: "responses" }),
@@ -43,10 +38,6 @@ export function generateResponseRequestBody(
       contexts,
     });
     body.instructions = promptContent;
-  }
-
-  if (requestTarget.serviceTier) {
-    body.service_tier = requestTarget.serviceTier;
   }
 
   // 3. 按需添加可选字段

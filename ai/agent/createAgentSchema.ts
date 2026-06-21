@@ -80,17 +80,17 @@ export const getCreateAgentSchema = (t: TFunction) =>
        * Stable machine-callable name for agent routing. Unlike name, this is
        * not a display label and should stay unique within the user's agent set.
        */
-      handle: z.string().trim().optional().or(z.string().length(0)),
+      handle: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       /**
        * provider 不再必填：只是一个可选的标识字段
        */
-      provider: z.string().trim().optional().or(z.string().length(0)),
+      provider: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       /**
        * 模型：所有模式下必须选择（通过 refine 条件校验）
        */
-      model: z.string().trim().optional().or(z.string().length(0)),
+      model: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       /**
        * 模型是否支持图像（来自模型元数据，方便持久化 / 服务端快速判断）
@@ -110,15 +110,19 @@ export const getCreateAgentSchema = (t: TFunction) =>
       /**
        * 语音配置：例如预设音色
        */
-      voiceConfig: z.object({
-        voiceId: z.string().optional()
-      }).optional(),
+      voiceConfig: z
+        .object({
+          voiceId: z.string().optional(),
+        })
+        .nullable()
+        .optional(),
 
       /**
        * CLI provider（apiSource=cli 时有效）：支持 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok"
        */
       cliProvider: z
         .enum(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok"])
+        .nullable()
         .optional()
         .or(z.literal("")),
 
@@ -126,11 +130,12 @@ export const getCreateAgentSchema = (t: TFunction) =>
        * Optional machine binding for CLI agents. Empty means use the server/local
        * CLI runtime; a value means dispatch the CLI run to a connected machine.
        */
-      machineId: z.string().trim().optional().or(z.string().length(0)),
+      machineId: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       customProviderUrl: z
         .string()
         .trim()
+        .nullable()
         .optional()
         .or(z.string().length(0))
         .refine((val) => !val || z.string().url().safeParse(val).success, {
@@ -140,11 +145,11 @@ export const getCreateAgentSchema = (t: TFunction) =>
       /**
        * API Key：完全可选（本地 / 无鉴权的自定义接口不需要）
        */
-      apiKey: z.string().trim().optional().or(z.string().length(0)),
+      apiKey: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       useServerProxy: z.boolean().default(true),
 
-      prompt: z.string().trim().optional().or(z.string().length(0)),
+      prompt: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       tools: z.array(z.string()).default([]),
 
@@ -154,20 +159,20 @@ export const getCreateAgentSchema = (t: TFunction) =>
 
       greeting: z
         .union([z.string(), greetingConfigSchema])
+        .nullable()
         .optional(),
 
-
-      introduction: z.string().trim().optional().or(z.string().length(0)),
+      introduction: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       inputPrice: z.number().min(0, t("validation.priceMin")).default(0),
 
       outputPrice: z.number().min(0, t("validation.priceMin")).default(0),
 
-      sharingLevel: z.enum(["default", "split", "full"]).optional(),
+      sharingLevel: z.enum(["default", "split", "full"]).nullable().optional(),
 
-      avatarFileId: z.string().optional().or(z.string().length(0)),
+      avatarFileId: z.string().nullable().optional().or(z.string().length(0)),
 
-      tags: z.string().trim().optional().or(z.string().length(0)),
+      tags: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       references: z
         .array(referenceItemSchema)
@@ -185,38 +190,44 @@ export const getCreateAgentSchema = (t: TFunction) =>
         .number()
         .min(0, t("validation.temperatureRange"))
         .max(2, t("validation.temperatureRange"))
+        .nullable()
         .optional(),
 
       top_p: z
         .number()
         .min(0, t("validation.topPRange"))
         .max(1, t("validation.topPRange"))
+        .nullable()
         .optional(),
 
       frequency_penalty: z
         .number()
         .min(-2, t("validation.frequencyPenaltyRange"))
         .max(2, t("validation.frequencyPenaltyRange"))
+        .nullable()
         .optional(),
 
       presence_penalty: z
         .number()
         .min(-2, t("validation.presencePenaltyRange"))
         .max(2, t("validation.presencePenaltyRange"))
+        .nullable()
         .optional(),
 
       max_tokens: z
         .number()
         .min(1, t("validation.maxTokensMin"))
         .max(500000, t("validation.maxTokensMax"))
+        .nullable()
         .optional(),
 
       reasoning_effort: z
         .enum(REASONING_EFFORT_OPTIONS, {
           errorMap: () => ({ message: t("validation.reasoningEffortInvalid") }),
         })
-        .default(DEFAULT_REASONING_EFFORT)
-        .optional(),
+        .nullable()
+        .optional()
+        .transform((v) => v ?? DEFAULT_REASONING_EFFORT),
 
       /**
        * enableThinking：是否开启模型思考模式
@@ -234,6 +245,7 @@ export const getCreateAgentSchema = (t: TFunction) =>
         .number()
         .min(1024, t("validation.thinkingBudgetMin"))
         .max(32000, t("validation.thinkingBudgetMax"))
+        .nullable()
         .optional(),
 
       /**

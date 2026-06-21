@@ -9,6 +9,7 @@ import {
   writeAgentRecord,
 } from "./agentRecordHelpers";
 import { parseUserIdFromAuthToken, resolveAuthToken } from "./cliEnvHelpers";
+import { clearCliLocalRuntimePreparedAgentCache } from "./client/localRuntimeAdapter";
 
 export async function runAgentReadCommand(
   args: string[],
@@ -124,6 +125,7 @@ export async function runAgentUpdateCommand(
       key: built.nextRecord?.key || built.agentKey,
       serverOrigin: built.serverUrl,
     });
+    clearCliLocalRuntimePreparedAgentCache();
 
     output.write(JSON.stringify({
       ok: true,
@@ -207,6 +209,7 @@ export async function runAgentCreateCommand(
       key: built.nextRecord?.key || built.agentKey,
       serverOrigin: built.serverUrl,
     });
+    clearCliLocalRuntimePreparedAgentCache();
 
     output.write(JSON.stringify({
       ok: true,

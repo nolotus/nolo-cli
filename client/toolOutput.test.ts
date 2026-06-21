@@ -90,17 +90,21 @@ describe("toolOutput", () => {
           summary: "exit=130 5 lines 200 chars",
           metadata: {
             exitCode: 130,
-            requiresUserAction: {
-              type: "terminal_command",
-              argv: ["gh", "auth", "refresh", "-h", "github.com", "-s", "delete_repo"],
-              displayCommand: "gh auth refresh -h github.com -s delete_repo",
+            actionGate: {
+              id: "gate-test",
+              kind: "handoff",
+              title: "This command requires an interactive terminal.",
+              payload: {
+                command: ["gh", "auth", "refresh", "-h", "github.com", "-s", "delete_repo"],
+                displayCommand: "gh auth refresh -h github.com -s delete_repo",
+              },
             },
           },
         }),
         "compact",
         false
       )
-    ).toContain("✗ 2ms · needs terminal: gh auth refresh -h github.com -s delete_repo");
+    ).toContain("! 2ms · needs action: gh auth refresh -h github.com -s delete_repo");
   });
 
   test("verbose mode keeps legacy trace format", () => {

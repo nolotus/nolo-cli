@@ -1,5 +1,17 @@
 export const AGENT_RUNTIME_PACKAGE_ID = "agent-runtime";
 
+export type {
+  ActionGate,
+  ActionGateKind,
+  ActionGateResult,
+  CommandActionGatePayload,
+  PermissionDecision,
+  PermissionRequest,
+} from "./actionGate";
+export {
+  readActionGate,
+  readCommandActionGatePayload,
+} from "./actionGate";
 export { createRuntimeHostDescriptor } from "./hostAdapter";
 export { runLocalAgentTurn } from "./localLoop";
 export {

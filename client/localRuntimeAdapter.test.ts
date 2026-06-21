@@ -1,13 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
 import { LOCAL_CODEX_AGENT_KEY, LOCAL_GROK_AGENT_KEY, LOCAL_OPENCODE_AGENT_KEY, LOCAL_QODER_AGENT_KEY, MIMO_MONTH_AGENT_KEY } from "../agentAliases";
-import { createCliLocalRuntimeAdapter } from "./localRuntimeAdapter";
+import {
+  clearCliLocalRuntimePreparedAgentCache,
+  createCliLocalRuntimeAdapter,
+} from "./localRuntimeAdapter";
 
 describe("CLI local runtime adapter", () => {
+  beforeEach(() => {
+    clearCliLocalRuntimePreparedAgentCache();
+  });
+
   const DEFAULT_LOCAL_CODING_TOOL_NAMES = [
     "listFiles",
     "readFile",
@@ -64,6 +71,40 @@ describe("CLI local runtime adapter", () => {
       "sig",
     ].join(".");
   }
+
+  test("reuses prepared agent runtime for repeated loadAgentConfig calls", async () => {
+    clearCliLocalRuntimePreparedAgentCache();
+    let storeReads = 0;
+    const adapter = createCliLocalRuntimeAdapter({
+      env: { NOLO_LOCAL_USER_ID: "user-1" },
+      cwd: "/tmp/nolo-cache-test",
+      db: {
+        get: async (key) => {
+          storeReads += 1;
+          if (key !== "agent-user-1-test") throw new Error(`not found: ${key}`);
+          return {
+            dbKey: "agent-user-1-test",
+            id: "test",
+            name: "Cached Agent",
+            prompt: "cached",
+            provider: "custom",
+            model: "MiniMax-M3",
+            customProviderUrl: "https://api.minimaxi.com/v1",
+            tools: ["readFile"],
+          };
+        },
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async () => new Response("not found", { status: 404 }),
+    } as any);
+
+    await adapter.loadAgentConfig("agent-user-1-test");
+    await adapter.loadAgentConfig("agent-user-1-test");
+
+    expect(storeReads).toBe(1);
+  });
 
   test("loads stored local CLI agent records before falling back to built-ins", async () => {
     const adapter = createCliLocalRuntimeAdapter({
@@ -1404,7 +1445,7 @@ describe("CLI local runtime adapter", () => {
       },
       fetchImpl: async () => {
         attempts += 1;
-        if (attempts <= 5) {
+        if (attempts <= 3) {
           throw new Error("unknown certificate verification error");
         }
         return Response.json({
@@ -1423,8 +1464,8 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(result.content).toBe("platform longer retry ok");
-    expect(attempts).toBe(6);
-    expect(retryDelays.length).toBeGreaterThanOrEqual(3);
+    expect(attempts).toBe(4);
+    expect(retryDelays.length).toBe(1);
     expect(retryDelays[0]).toBeGreaterThan(0);
   });
 
@@ -1536,6 +1577,104 @@ describe("CLI local runtime adapter", () => {
       role: "assistant",
       content: "done",
     });
+  });
+
+  test("builds provider OpenAI tools once per resolveProvider across tool rounds", async () => {
+    let buildOpenAiToolsCalls = 0;
+    const store = new Map<string, any>([
+      ["agent-user-1-shell", {
+        dbKey: "agent-user-1-shell",
+        id: "shell",
+        prompt: "Use shell.",
+        model: "gpt-4.1-mini",
+      }],
+    ]);
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      cwd: import.meta.dir,
+      now: () => 1710000000000,
+      createId: () => "01TOOLCACHE",
+      buildProviderOpenAiTools: (args) => {
+        buildOpenAiToolsCalls += 1;
+        return [
+          {
+            type: "function",
+            function: {
+              name: "execShell",
+              description: "Run shell",
+              parameters: {
+                type: "object",
+                properties: {
+                  cmd: { type: "string" },
+                },
+                required: ["cmd"],
+              },
+            },
+          },
+        ];
+      },
+      localToolExecutors: {
+        execShell: async () => ({
+          content: "stdout:\ncached-tools-ok\n\nexitCode: 0",
+          metadata: { exitCode: 0, timedOut: false },
+        }),
+      },
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        const hasToolResult = body.messages.some((message: any) => message.role === "tool");
+        if (!hasToolResult) {
+          return Response.json({
+            choices: [{
+              message: {
+                content: "",
+                tool_calls: [{
+                  id: "call-shell-cache",
+                  type: "function",
+                  function: {
+                    name: "execShell",
+                    arguments: JSON.stringify({
+                      cmd: process.platform === "win32"
+                        ? "Write-Output cached-tools-ok"
+                        : "printf cached-tools-ok",
+                    }),
+                  },
+                }],
+              },
+            }],
+          });
+        }
+        return Response.json({
+          choices: [{ message: { content: "cached tools done" } }],
+        });
+      },
+    });
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "shell",
+      input: "inspect",
+    });
+
+    expect(result.content).toBe("cached tools done");
+    expect(buildOpenAiToolsCalls).toBe(1);
   });
 
   test("returns tool budget errors to the local loop", async () => {
@@ -2667,7 +2806,7 @@ describe("CLI local runtime adapter", () => {
         }
         const lastToolMessage = requests[1]?.body.messages.at(-1);
         expect(lastToolMessage?.role).toBe("tool");
-        expect(String(lastToolMessage?.content)).toContain("user action completed");
+        expect(String(lastToolMessage?.content)).toContain("action gate completed");
         return Response.json({
           choices: [{ message: { content: "continuing after auth" } }],
         });
@@ -2678,11 +2817,14 @@ describe("CLI local runtime adapter", () => {
       adapter,
       agentRef: "shell-manual-action",
       input: "delete repo",
-      onUserAction: async (action) => {
-        userActions.push(action);
+      onActionGate: async (gate) => {
+        userActions.push(gate);
         return {
-          content: `user action completed: ${action.displayCommand}`,
-          metadata: { exitCode: 0, userActionCompleted: true },
+          content: "action gate completed: gh auth refresh -h github.com -s delete_repo",
+          metadata: {
+            exitCode: 0,
+            actionGateResult: { gateId: gate.id, status: "completed" },
+          },
         };
       },
     });
@@ -2690,9 +2832,11 @@ describe("CLI local runtime adapter", () => {
     expect(result.content).toBe("continuing after auth");
     expect(userActions).toHaveLength(1);
     expect(userActions[0]).toMatchObject({
-      type: "terminal_command",
-      argv: ["gh", "auth", "refresh", "-h", "github.com", "-s", "delete_repo"],
-      displayCommand: "gh auth refresh -h github.com -s delete_repo",
+      kind: "handoff",
+      payload: {
+        command: ["gh", "auth", "refresh", "-h", "github.com", "-s", "delete_repo"],
+        displayCommand: "gh auth refresh -h github.com -s delete_repo",
+      },
       toolName: "execShell",
     });
   });

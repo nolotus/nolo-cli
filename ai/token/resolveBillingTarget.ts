@@ -1,4 +1,3 @@
-import { resolveOpenAIServiceTier } from "../../integrations/openai/flexTier";
 import type { NormalizedUsage, RawUsage } from "./types";
 
 type BillingUsage = Pick<
@@ -34,15 +33,7 @@ export const resolveBillingTarget = ({
   const provider =
     normalizeString(usage?.billing_provider) ?? normalizeString(fallbackProvider);
   const model = resolveBillingModel(usage?.billing_model, fallbackModel);
-  const requestedServiceTier = normalizeString(usage?.billing_service_tier);
-  const serviceTier =
-    provider === "google"
-      ? requestedServiceTier
-      : resolveOpenAIServiceTier({
-          providerName: provider,
-          model,
-          requestedServiceTier,
-        });
+  const serviceTier = normalizeString(usage?.billing_service_tier);
 
   return {
     provider,

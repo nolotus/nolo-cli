@@ -169,10 +169,6 @@ export interface Message {
   toolPayload?: ToolPayload;
   parentMessageId?: string;
   toolRunId?: string;
-  parallelSessionId?: string;
-  parallelBranchId?: string;
-  parallelLabel?: string;
-  parallelIndex?: number;
 
   // tool_call_id：关联 assistant message 的 tool_calls[].id
   toolCallId?: string;

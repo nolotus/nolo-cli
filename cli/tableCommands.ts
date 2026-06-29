@@ -1,3 +1,10 @@
+import { getAllServers } from "../database/actions/common";
+import { NOLO_CLUSTER_SERVERS } from "../database/config";
+import {
+  getCurrentProfile,
+  getDefaultProfileConfigPath,
+  loadProfileConfig,
+} from "./client/profileConfig";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { includeTableActivityColumns } from "../render/table/activityColumns";
 
@@ -11,6 +18,13 @@ type TableCommandDeps = {
 };
 
 type OutputMode = "full" | "raw" | "items" | "jsonl";
+
+type TableQueryRow = Record<string, unknown> & { dbKey?: string; updatedAt?: string | number; updated_at?: string | number; createdAt?: string | number; created?: string | number; deletedAt?: unknown };
+
+// Multi-server query fetches a large page from each server and applies
+// limit/offset after client-side merge. This caps per-server fetch size.
+const MULTI_SERVER_FETCH_LIMIT = 10000;
+const DELETE_ROWS_QUERY_PAGE_SIZE = 200;
 
 function readOption(args: string[], flag: string): string {
   for (let i = 0; i < args.length; i++) {
@@ -109,6 +123,74 @@ function resolveServerUrl(args: string[], env: EnvLike): string {
   ).replace(/\/+$/, "");
 }
 
+function resolveQueryServerUrls(args: string[], env: EnvLike): string[] {
+  const baseServer = resolveServerUrl(args, env);
+  if (!hasFlag(args, "--multi-server")) return [baseServer];
+
+  let syncServers: string[] | undefined;
+  try {
+    const configPath = readOption(args, "--profile-config") || getDefaultProfileConfigPath();
+    const config = loadProfileConfig(configPath);
+    const profile = getCurrentProfile(config);
+    if (profile && "syncServers" in profile && Array.isArray(profile.syncServers)) {
+      syncServers = profile.syncServers.filter((s): s is string => typeof s === "string");
+    }
+  } catch {
+    // ignore profile read errors; fall back to cluster defaults
+  }
+
+  if (!syncServers || syncServers.length === 0) {
+    syncServers = NOLO_CLUSTER_SERVERS;
+  }
+
+  return getAllServers(baseServer, syncServers);
+}
+
+async function fetchTableRowsFromServer(
+  serverUrl: string,
+  requestBody: Record<string, unknown>,
+  authToken: string,
+  fetchImpl: typeof fetch
+): Promise<{ serverUrl: string; ok: boolean; payload?: Record<string, unknown>; error?: string }> {
+  try {
+    const response = await fetchImpl(`${serverUrl}/api/table/query-rows`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+    const text = await response.text();
+    let payload: any;
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      return { serverUrl, ok: response.ok, error: text || response.statusText };
+    }
+    if (!response.ok || payload?.error) {
+      return { serverUrl, ok: false, error: payload?.error ?? response.statusText };
+    }
+    return { serverUrl, ok: true, payload };
+  } catch (error) {
+    return {
+      serverUrl,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function readTableCommandError(response: Response): Promise<string> {
+  const text = await response.text();
+  if (!text) return response.statusText;
+  try {
+    const payload = JSON.parse(text);
+    if (payload && typeof payload.error === "string") return payload.error;
+  } catch {}
+  return text;
+}
+
 function resolveAuthToken(args: string[], env: EnvLike): string {
   return (
     readOption(args, "--machine-key") ||
@@ -194,6 +276,14 @@ function usage(): string {
   ].join("\n");
 }
 
+function deleteRowsUsage(): string {
+  return [
+    "Usage:",
+    "  nolo table delete-rows --table <tableId|metaKey> (--row-ids <json-array> | --row-dbkeys <json-array> | --filters <json-object>)",
+    "",
+  ].join("\n");
+}
+
 function listUsage(): string {
   return [
     "Usage:",
@@ -206,11 +296,42 @@ function tableHasPurpose(table: any, purpose: string): boolean {
   return typeof table?.purpose === "string" && table.purpose.toLowerCase() === purpose.toLowerCase();
 }
 
-function getComparableUpdatedAt(record: any): number {
+function getComparableUpdatedAt(record: TableQueryRow): number {
   const raw = record?.updatedAt ?? record?.updated_at ?? record?.createdAt ?? record?.created;
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
   if (typeof raw === "string") return Date.parse(raw) || 0;
   return 0;
+}
+
+function shouldReplaceTableRecord(next: TableQueryRow, current: TableQueryRow): boolean {
+  const nextTs = getComparableUpdatedAt(next);
+  const currentTs = getComparableUpdatedAt(current);
+  if (nextTs !== currentTs) return nextTs > currentTs;
+  return Boolean(next?.deletedAt) && !Boolean(current?.deletedAt);
+}
+
+function getTableQueryRawData(payload: any): any {
+  return payload?.rawData ?? payload;
+}
+
+function getTableQueryItems(payload: any): TableQueryRow[] {
+  const rawData = getTableQueryRawData(payload);
+  if (rawData?.tableMeta?.deletedAt) return [];
+  const liveItems = Array.isArray(rawData?.items) ? rawData.items : [];
+  const deletedItems = Array.isArray(rawData?.deletedItems) ? rawData.deletedItems : [];
+  return [...liveItems, ...deletedItems].filter((item) => item && typeof item === "object");
+}
+
+function isLatestTableMetaDeleted(payloads: any[]): boolean {
+  let latestMeta: TableQueryRow | null = null;
+  for (const payload of payloads) {
+    const tableMeta = getTableQueryRawData(payload)?.tableMeta;
+    if (!tableMeta || typeof tableMeta !== "object") continue;
+    if (!latestMeta || shouldReplaceTableRecord(tableMeta, latestMeta)) {
+      latestMeta = tableMeta;
+    }
+  }
+  return Boolean(latestMeta?.deletedAt);
 }
 
 function formatTableListOutput(args: {
@@ -408,46 +529,277 @@ export async function runTableQueryCommand(args: string[], deps: TableCommandDep
     return 1;
   }
 
-  const serverUrl = resolveServerUrl(args, env);
-  let response: Response;
+  const serverUrls = resolveQueryServerUrls(args, env);
+  const isMultiServer = serverUrls.length > 1;
+  const requestedLimit = Number(readOption(args, "--limit") || (hasSingleRowShortcut ? 1 : 20));
+  const requestedOffset = Number(readOption(args, "--offset") || 0);
+  const sortBy = readOption(args, "--sort-by") || "updatedAt";
+  const sortOrder = readOption(args, "--sort-order") === "asc" ? "asc" : "desc";
+
+  const requestBody: Record<string, unknown> = {
+    tenantId,
+    tableId,
+    filters: filters ?? {},
+    columns: resolveQueryColumns(columns, hasFlag(args, "--include-activity")),
+    includeBaseFields: !hasFlag(args, "--no-base-fields"),
+    sortBy,
+    sortOrder,
+    includeDeleted: true,
+    envelope: "table-sync-v1",
+  };
+
+  if (isMultiServer) {
+    // Avoid server-side truncation before merge; apply limit/offset after merging.
+    requestBody.limit = MULTI_SERVER_FETCH_LIMIT;
+  } else {
+    requestBody.limit = requestedLimit;
+    requestBody.offset = requestedOffset;
+  }
+
+  const results = await Promise.all(
+    serverUrls.map((serverUrl) =>
+      fetchTableRowsFromServer(serverUrl, requestBody, authToken, fetchImpl)
+    )
+  );
+
+  const multiServerWarnings: string[] = [];
+  const failedServers = results.filter((r) => !r.ok);
+  if (failedServers.length === results.length) {
+    const errors = failedServers.map((r) => `${r.serverUrl}: ${r.error}`).join("; ");
+    output.write(`[nolo] table query failed: ${errors}\n`);
+    return 1;
+  }
+  if (failedServers.length > 0) {
+    const errors = failedServers.map((r) => `${r.serverUrl}: ${r.error}`).join("; ");
+    multiServerWarnings.push(`partial server failures: ${errors}`);
+  }
+
+  let mergedItems: TableQueryRow[] = [];
+  if (isMultiServer) {
+    const itemMap = new Map<string, TableQueryRow>();
+    const tableDeleted = isLatestTableMetaDeleted(
+      results.filter((result) => result.ok && result.payload).map((result) => result.payload)
+    );
+    for (const result of results) {
+      if (!result.ok || !result.payload) continue;
+      const items = tableDeleted ? [] : getTableQueryItems(result.payload);
+      for (const item of items) {
+        if (!item || typeof item.dbKey !== "string") continue;
+        const existing = itemMap.get(item.dbKey);
+        if (!existing || shouldReplaceTableRecord(item, existing)) {
+          itemMap.set(item.dbKey, { ...item, _serverOrigin: result.serverUrl });
+        }
+      }
+    }
+    mergedItems = Array.from(itemMap.values()).filter((item) => !item.deletedAt);
+    mergedItems.sort((a, b) => {
+      const diff = getComparableUpdatedAt(b) - getComparableUpdatedAt(a);
+      return sortOrder === "asc" ? -diff : diff;
+    });
+    mergedItems = mergedItems.slice(requestedOffset, requestedOffset + requestedLimit);
+  } else {
+    const result = results[0];
+    if (!result || !result.ok || !result.payload) {
+      output.write(`[nolo] table query failed: ${result?.error ?? "unknown error"}\n`);
+      return 1;
+    }
+    mergedItems = getTableQueryItems(result.payload).filter((item) => !item.deletedAt);
+  }
+
+  const singleRawData = !isMultiServer ? getTableQueryRawData(results[0].payload) : null;
+  const rawData = isMultiServer
+    ? { items: mergedItems }
+    : singleRawData && typeof singleRawData === "object"
+      ? { ...singleRawData, items: mergedItems }
+      : { items: mergedItems };
+  const envelope = isMultiServer ? { rawData: { items: mergedItems }, _multiServerOrigins: serverUrls, _multiServerWarnings: multiServerWarnings } : results[0].payload;
+  output.write(`${formatOutput({ envelope, rawData, mode: outputMode })}\n`);
+  return 0;
+}
+export async function runTableDeleteRowsCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  const fetchImpl = deps.fetchImpl ?? fetch;
+
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    output.write(deleteRowsUsage());
+    return 0;
+  }
+
+  const tableArg = parseTableArg(readOption(args, "--table"));
+  const authToken = resolveAuthToken(args, env);
+  const tenantId = readOption(args, "--tenant-id") || tableArg.tenantId || resolveUserId(args, env, authToken);
+  const tableId = tableArg.tableId;
+  if (!tenantId || !tableId) {
+    output.write(deleteRowsUsage());
+    return 1;
+  }
+  if (!authToken) {
+    output.write("[nolo] table delete-rows failed: AUTH_TOKEN is required.\n");
+    return 1;
+  }
+
+  const deletionSources = [
+    hasFlag(args, "--row-ids") ? "--row-ids" : undefined,
+    hasFlag(args, "--row-dbkeys") ? "--row-dbkeys" : undefined,
+    hasFlag(args, "--filters") || hasFlag(args, "--filter") ? "--filters" : undefined,
+  ].filter(Boolean) as string[];
+  if (deletionSources.length > 1) {
+    output.write(`[nolo] table delete-rows failed: only one deletion source allowed; got ${deletionSources.join(", ")}.\n`);
+    return 1;
+  }
+
+  let deletionSpec: Array<{ dbKey: string; source: string }> | undefined;
   try {
-    response = await fetchImpl(`${serverUrl}/api/table/query-rows`, {
+    const rowIds = parseJsonOption<string[]>(args, "--row-ids");
+    if (rowIds !== undefined) {
+      if (!Array.isArray(rowIds) || rowIds.length === 0 || !rowIds.every((id) => typeof id === "string")) {
+        throw new Error("--row-ids must be a non-empty JSON array of strings.");
+      }
+      deletionSpec = rowIds.map((rowId) => ({
+        dbKey: `row-${tenantId}-${tableId}-${rowId}`,
+        source: `--row-ids:${rowId}`,
+      }));
+    }
+  } catch (error) {
+    output.write(`[nolo] table delete-rows failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  if (!deletionSpec) {
+    try {
+      const rowDbKeys = parseJsonOption<string[]>(args, "--row-dbkeys");
+      if (rowDbKeys !== undefined) {
+        if (!Array.isArray(rowDbKeys) || rowDbKeys.length === 0 || !rowDbKeys.every((k) => typeof k === "string")) {
+          throw new Error("--row-dbkeys must be a non-empty JSON array of strings.");
+        }
+        deletionSpec = rowDbKeys.map((dbKey) => ({ dbKey, source: "--row-dbkeys" }));
+      }
+    } catch (error) {
+      output.write(`[nolo] table delete-rows failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+  }
+
+  const serverUrl = resolveServerUrl(args, env);
+
+  if (!deletionSpec) {
+    const filtersRaw = parseJsonOptionAlias<Record<string, unknown>>(args, "--filters", "--filter");
+    if (filtersRaw !== undefined) {
+      const queryLimit = DELETE_ROWS_QUERY_PAGE_SIZE;
+      const matchedRows: TableQueryRow[] = [];
+      let offset = 0;
+      let total = Number.POSITIVE_INFINITY;
+
+      while (offset < total) {
+        const response = await fetchImpl(`${serverUrl}/api/table/query-rows`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            tenantId,
+            tableId,
+            filters: filtersRaw,
+            limit: queryLimit,
+            offset,
+            includeDeleted: true,
+            envelope: "table-sync-v1",
+          }),
+        });
+        if (!response.ok) {
+          output.write(`[nolo] table delete-rows failed: query rows failed: ${response.statusText}\n`);
+          return 1;
+        }
+        const payload = await response.json();
+        if (payload && typeof payload === "object" && "error" in payload) {
+          output.write(`[nolo] table delete-rows failed: query rows failed: ${(payload as { error?: string }).error ?? "unknown error"}\n`);
+          return 1;
+        }
+        const rawData = getTableQueryRawData(payload);
+        const items = getTableQueryItems(payload).filter((item) => !item.deletedAt);
+        matchedRows.push(...items);
+        const nextTotal = Number(rawData?.total);
+        total = Number.isFinite(nextTotal) && nextTotal >= 0
+          ? nextTotal
+          : offset + items.length;
+        if (items.length === 0) break;
+        offset += items.length;
+      }
+
+      deletionSpec = matchedRows
+        .filter((item: { dbKey?: unknown }) => typeof item?.dbKey === "string")
+        .map((item: { dbKey: string }) => ({ dbKey: item.dbKey, source: "--filters" }));
+      if (deletionSpec.length === 0) {
+        output.write(`${JSON.stringify({ ok: true, deleted: 0, results: [] })}\n`);
+        return 0;
+      }
+      if (!hasFlag(args, "--yes")) {
+        output.write(`${JSON.stringify({ ok: true, dryRun: true, wouldDelete: deletionSpec.length, dbKeys: deletionSpec.map((s) => s.dbKey) })}\n`);
+        output.write("Dry-run only. Re-run with --yes to delete these rows.\n");
+        return 0;
+      }
+    }
+  }
+
+  if (!deletionSpec || deletionSpec.length === 0) {
+    output.write(`[nolo] table delete-rows failed: nothing to delete; provide --row-ids, --row-dbkeys, or --filters.\n`);
+    output.write(deleteRowsUsage());
+    return 1;
+  }
+
+  const results: Array<{ dbKey: string; ok: boolean; source: string; error?: string }> = [];
+  try {
+    const response = await fetchImpl(`${serverUrl}/api/table/delete-rows`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({
         tenantId,
         tableId,
-        filters: filters ?? {},
-        columns: resolveQueryColumns(columns, hasFlag(args, "--include-activity")),
-        includeBaseFields: !hasFlag(args, "--no-base-fields"),
-        limit: Number(readOption(args, "--limit") || (hasSingleRowShortcut ? 1 : 20)),
-        offset: Number(readOption(args, "--offset") || 0),
-        sortBy: readOption(args, "--sort-by") || "updatedAt",
-        sortOrder: readOption(args, "--sort-order") === "asc" ? "asc" : "desc",
+        dbKeys: deletionSpec.map((item) => item.dbKey),
       }),
     });
+    if (response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const responseResults = Array.isArray(payload?.rawData?.results)
+        ? payload.rawData.results
+        : Array.isArray(payload?.results)
+          ? payload.results
+          : [];
+      if (responseResults.length > 0) {
+        const resultByKey = new Map(
+          responseResults
+            .filter((item: any) => typeof item?.dbKey === "string")
+            .map((item: any) => [item.dbKey, item])
+        );
+        results.push(
+          ...deletionSpec.map(({ dbKey, source }) => {
+            const result = resultByKey.get(dbKey) as any;
+            if (!result) return { dbKey, source, ok: false, error: "missing delete result" };
+            return {
+              dbKey,
+              source,
+              ok: result.ok === true,
+              ...(result.ok === true ? {} : { error: String(result.error ?? "delete failed") }),
+            };
+          })
+        );
+      } else {
+        results.push(...deletionSpec.map(({ dbKey, source }) => ({ dbKey, source, ok: true })));
+      }
+    } else {
+      const error = await readTableCommandError(response);
+      results.push(...deletionSpec.map(({ dbKey, source }) => ({ dbKey, source, ok: false, error })));
+    }
   } catch (error) {
-    output.write(`[nolo] table query failed: ${error instanceof Error ? error.message : String(error)}\n`);
-    return 1;
+    const message = error instanceof Error ? error.message : String(error);
+    results.push(...deletionSpec.map(({ dbKey, source }) => ({ dbKey, source, ok: false, error: message })));
   }
 
-  const text = await response.text();
-  let payload: any;
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch {
-    output.write(text ? `${text}\n` : "");
-    return response.ok ? 0 : 1;
-  }
-  if (!response.ok || payload?.error) {
-    output.write(`[nolo] table query failed: ${payload?.error ?? response.statusText}\n`);
-    return 1;
-  }
-
-  const rawData = payload.rawData ?? payload;
-  output.write(`${formatOutput({ envelope: payload, rawData, mode: outputMode })}\n`);
-  return 0;
+  output.write(`${JSON.stringify({ ok: true, deleted: results.filter((r) => r.ok).length, results })}\n`);
+  return results.every((r) => r.ok) ? 0 : 1;
 }

@@ -151,7 +151,7 @@ export const fetchAgentByDbKey = async (
 
 export const extractAgentId = (dbKey: string): string => {
   const parts = dbKey.trim().split("-");
-  return parts.length >= 3 ? parts[parts.length - 1] : dbKey.trim();
+  return parts.length >= 3 ? parts.slice(2).join("-") : dbKey.trim();
 };
 
 export const buildPatch = (args: AgentUpdateArgsShape): AgentPatch => {

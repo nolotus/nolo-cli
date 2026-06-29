@@ -21,6 +21,8 @@ export type LocalAgentTurnInput = {
   parentDialogId?: string;
   runtimeContext?: Record<string, any> | null;
   timeoutMs?: number;
+  background?: boolean;
+  noStream?: boolean;
   onToolEvent?: (event: LocalAgentToolEvent) => void;
   onActionGate?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   onTextDelta?: (chunk: string) => void;
@@ -325,101 +327,130 @@ export async function runLocalAgentTurn(
   let toolCallCount = 0;
   let result: AgentRuntimeResult;
   let turnUsage: Record<string, unknown> | undefined;
+  let loopError: unknown;
   let round = 0;
-  while (true) {
-    result = await provider.complete(prepareMessagesForProviderCall(messages), {
-      ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
-      ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
-    });
-    turnUsage = mergeTurnUsage(turnUsage, result.usage);
-    const toolCalls = result.tool_calls ?? [];
-    if (toolCalls.length === 0) break;
-    toolCallCount += toolCalls.length;
-    messages.push({
-      role: "assistant",
-      content: result.content || null,
-      ...(result.reasoning_content ? { reasoning_content: result.reasoning_content } : {}),
-      tool_calls: toolCalls,
-    });
-    for (const toolCall of toolCalls) {
-      const toolName = toolCall.function.name;
-      let toolResult;
-      const startedAt = Date.now();
-      emitToolEvent(input, {
-        type: "tool-call",
-        round,
-        toolCallId: toolCall.id,
-        toolName,
-        argumentsPreview: summarizeToolArguments(toolName, toolCall.function.arguments),
+  try {
+    while (true) {
+      result = await provider.complete(prepareMessagesForProviderCall(messages), {
+        ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
+        ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
       });
-      try {
-        toolResult = await input.adapter.executeTool({
-          id: toolCall.id,
-          name: toolName,
-          arguments: toolCall.function.arguments,
-          ...(userInputText ? { userInput: userInputText } : {}),
-        });
-        const actionGate = buildActionGate({
-          toolName,
-          toolCallId: toolCall.id,
-          metadata: toolResult.metadata,
-        });
-        if (actionGate && input.onActionGate) {
-          const replacement = await input.onActionGate(actionGate);
-          if (replacement) {
-            toolResult = replacement;
-          }
-        }
-        emitToolEvent(input, {
-          type: "tool-result",
-          round,
-          toolCallId: toolCall.id,
-          toolName,
-          elapsedMs: Math.max(0, Date.now() - startedAt),
-          summary: summarizeToolResult(toolResult.content, toolResult.metadata),
-          metadata: toolResult.metadata,
-        });
-      } catch (error) {
-        if (!shouldReturnToolExecutionErrors(input.adapter)) throw error;
-        emitToolEvent(input, {
-          type: "tool-error",
-          round,
-          toolCallId: toolCall.id,
-          toolName,
-          elapsedMs: Math.max(0, Date.now() - startedAt),
-          message: error instanceof Error ? error.message : String(error),
-        });
-        toolResult = {
-          content:
-            formatStructuredToolExecutionError({ toolName, error }) ??
-            formatToolExecutionError({ toolName, error }),
-          metadata: {
-            error: true,
-            toolName,
-            message: error instanceof Error ? error.message : String(error),
-            ...(
-              error &&
-              typeof error === "object" &&
-              typeof (error as { code?: unknown }).code === "string"
-                ? { code: (error as { code: string }).code }
-                : {}
-            ),
-          },
-        };
-      }
+      turnUsage = mergeTurnUsage(turnUsage, result.usage);
+      const toolCalls = result.tool_calls ?? [];
+      if (toolCalls.length === 0) break;
+      toolCallCount += toolCalls.length;
       messages.push({
-        role: "tool",
-        content: formatToolMessageContent({
-          toolName,
-          content: toolResult.content,
-          metadata: toolResult.metadata,
-        }),
-        tool_call_id: toolCall.id,
-        ...(toolResult.metadata ? { tool_result_metadata: toolResult.metadata } : {}),
+        role: "assistant",
+        content: result.content || null,
+        ...(result.reasoning_content ? { reasoning_content: result.reasoning_content } : {}),
+        tool_calls: toolCalls,
       });
+      for (const toolCall of toolCalls) {
+        const toolName = toolCall.function.name;
+        let toolResult;
+        const startedAt = Date.now();
+        emitToolEvent(input, {
+          type: "tool-call",
+          round,
+          toolCallId: toolCall.id,
+          toolName,
+          argumentsPreview: summarizeToolArguments(toolName, toolCall.function.arguments),
+        });
+        try {
+          toolResult = await input.adapter.executeTool({
+            id: toolCall.id,
+            name: toolName,
+            arguments: toolCall.function.arguments,
+            ...(userInputText ? { userInput: userInputText } : {}),
+          });
+          const actionGate = buildActionGate({
+            toolName,
+            toolCallId: toolCall.id,
+            metadata: toolResult.metadata,
+          });
+          if (actionGate && input.onActionGate) {
+            const replacement = await input.onActionGate(actionGate);
+            if (replacement) {
+              toolResult = replacement;
+            }
+          }
+          emitToolEvent(input, {
+            type: "tool-result",
+            round,
+            toolCallId: toolCall.id,
+            toolName,
+            elapsedMs: Math.max(0, Date.now() - startedAt),
+            summary: summarizeToolResult(toolResult.content, toolResult.metadata),
+            metadata: toolResult.metadata,
+          });
+        } catch (error) {
+          if (!shouldReturnToolExecutionErrors(input.adapter)) throw error;
+          emitToolEvent(input, {
+            type: "tool-error",
+            round,
+            toolCallId: toolCall.id,
+            toolName,
+            elapsedMs: Math.max(0, Date.now() - startedAt),
+            message: error instanceof Error ? error.message : String(error),
+          });
+          toolResult = {
+            content:
+              formatStructuredToolExecutionError({ toolName, error }) ??
+              formatToolExecutionError({ toolName, error }),
+            metadata: {
+              error: true,
+              toolName,
+              message: error instanceof Error ? error.message : String(error),
+              ...(
+                error &&
+                typeof error === "object" &&
+                typeof (error as { code?: unknown }).code === "string"
+                  ? { code: (error as { code: string }).code }
+                  : {}
+              ),
+            },
+          };
+        }
+        messages.push({
+          role: "tool",
+          content: formatToolMessageContent({
+            toolName,
+            content: toolResult.content,
+            metadata: toolResult.metadata,
+          }),
+          tool_call_id: toolCall.id,
+          ...(toolResult.metadata ? { tool_result_metadata: toolResult.metadata } : {}),
+        });
+      }
+      round += 1;
     }
-    round += 1;
+  } catch (error) {
+    loopError = error;
   }
+
+  // 即使 provider 循环失败（超时等），也保存 dialog 以便复盘
+  if (loopError) {
+    const errorMessage = loopError instanceof Error ? loopError.message : String(loopError);
+    const turnMessages = messages.slice(turnStartIndex);
+    await input.adapter.saveTurn({
+      agentKey: agentConfig.key,
+      messages: turnMessages,
+      result: {
+        content: `[nolo] Agent run failed: ${errorMessage}`,
+        toolCallCount,
+        error: true,
+        errorMessage,
+      },
+      ...(input.runtimeContext ? { runtimeContext: input.runtimeContext } : {}),
+      ...(input.continueDialogId ? { continueDialogId: input.continueDialogId } : {}),
+      ...(input.spaceId ? { spaceId: input.spaceId } : {}),
+      ...(input.category ? { category: input.category } : {}),
+      ...(input.inheritedFromDialogKey ? { inheritedFromDialogKey: input.inheritedFromDialogKey } : {}),
+      ...(input.parentDialogId ? { parentDialogId: input.parentDialogId } : {}),
+    });
+    throw loopError;
+  }
+
   result = result!;
   messages.push({
     role: "assistant",

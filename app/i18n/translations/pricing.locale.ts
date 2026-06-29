@@ -1,11 +1,15 @@
 import { Language } from "../types";
+import {
+  ADVANCED_FEATURE_MIN_BALANCE,
+  GPT_PRO_REQUIRED_RECHARGE_AMOUNT,
+} from "../../../auth/gptProTier";
 
 export default {
   [Language.EN]: {
     translation: {
       pricing: {
         title: "Pay-As-You-Go",
-        subtitle: "Billed by actual token usage. Points never expire.\nPro unlocks at 19 points. No subscription lock-in.",
+        subtitle: `Billed by actual token usage. Points never expire.\nPro unlocks at ${ADVANCED_FEATURE_MIN_BALANCE} points. No subscription lock-in.`,
         free: "Free",
         points: "{{num}} Points",
         tiers: {
@@ -22,8 +26,8 @@ export default {
           },
           pro: {
             name: "Pro",
-            meta: "Balance at 19 Points",
-            price: "Unlock at 19 Points",
+            meta: `Balance at ${ADVANCED_FEATURE_MIN_BALANCE} Points`,
+            price: `Unlock at ${ADVANCED_FEATURE_MIN_BALANCE} Points`,
             features: [
               "Batch file analysis",
               "Real-time web search",
@@ -33,8 +37,8 @@ export default {
           },
           advanced: {
             name: "Advanced",
-            meta: "Balance ≥ 199 / 999 Points",
-            price: "Unlock with ≥ 199 / 999 Points",
+            meta: `Single recharge ≥ ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT} Points`,
+            price: `Unlock with a ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT}-Point recharge`,
             features: [
               "Advanced reasoning models",
               "Claude Opus access",
@@ -47,7 +51,7 @@ export default {
         cta: {
           titleLoggedIn: "Flexible Recharge",
           titleLoggedOut: "Try Free",
-          descLoggedIn: "Points are credited instantly. Pro unlocks at 19 points, Advanced at 199 / 999 points.",
+          descLoggedIn: `Points are credited instantly. Pro unlocks at ${ADVANCED_FEATURE_MIN_BALANCE} points; Advanced unlocks with a ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT}-point recharge.`,
           descLoggedOut: "Sign up and start with the free tier before recharging.",
           btnRecharge: "Recharge Points",
           btnFreeStart: "Start Free",
@@ -95,7 +99,7 @@ export default {
     translation: {
       pricing: {
         title: "按量付费",
-        subtitle: "按实际消耗的 Token 扣费，积分永久有效。\n余额达到 19 自动解锁专业版，无订阅绑定，随时降档。",
+        subtitle: `按实际消耗的 Token 扣费，积分永久有效。\n余额达到 ${ADVANCED_FEATURE_MIN_BALANCE} 自动解锁专业版，无订阅绑定，随时降档。`,
         free: "免费",
         points: "{{num}} 积分",
         tiers: {
@@ -112,8 +116,8 @@ export default {
           },
           pro: {
             name: "专业版",
-            meta: "余额达到 19 积分",
-            price: "余额满 19 积分解锁",
+            meta: `余额达到 ${ADVANCED_FEATURE_MIN_BALANCE} 积分`,
+            price: `余额满 ${ADVANCED_FEATURE_MIN_BALANCE} 积分解锁`,
             features: [
               "批量文件分析",
               "实时联网搜索",
@@ -123,8 +127,8 @@ export default {
           },
           advanced: {
             name: "高阶版",
-            meta: "余额保持 ≥ 199 / 999 积分",
-            price: "余额 ≥ 199 / 999 积分解锁",
+            meta: `单笔充值 ≥ ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT} 积分`,
+            price: `充值 ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT} 积分解锁`,
             features: [
               "GPT Pro 系列模型",
               "Claude Opus 模型",
@@ -137,7 +141,7 @@ export default {
         cta: {
           titleLoggedIn: "灵活充值",
           titleLoggedOut: "免费体验",
-          descLoggedIn: "充值积分即时到账。余额达到 19 解锁专业版，达到 199 / 999 解锁高阶版。",
+          descLoggedIn: `充值积分即时到账。余额达到 ${ADVANCED_FEATURE_MIN_BALANCE} 解锁专业版，单笔充值 ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT} 解锁高阶版。`,
           descLoggedOut: "注册即可体验免费额度，先试再决定是否充值。",
           btnRecharge: "充值积分",
           btnFreeStart: "免费开始",
@@ -186,7 +190,7 @@ export default {
     translation: {
       pricing: {
         title: "按量付費",
-        subtitle: "按實際消耗的 Token 扣費，積分永久有效。\n餘額達到 19 自動解鎖專業版，無訂閱綁定，隨時降檔。",
+        subtitle: `按實際消耗的 Token 扣費，積分永久有效。\n餘額達到 ${ADVANCED_FEATURE_MIN_BALANCE} 自動解鎖專業版，無訂閱綁定，隨時降檔。`,
         free: "免費",
         points: "{{num}} 積分",
         tiers: {
@@ -203,8 +207,8 @@ export default {
           },
           pro: {
             name: "專業版",
-            meta: "餘額達到 19 積分",
-            price: "餘額滿 19 積分解鎖",
+            meta: `餘額達到 ${ADVANCED_FEATURE_MIN_BALANCE} 積分`,
+            price: `餘額滿 ${ADVANCED_FEATURE_MIN_BALANCE} 積分解鎖`,
             features: [
               "批次檔案分析",
               "即時聯網搜尋",
@@ -214,8 +218,8 @@ export default {
           },
           advanced: {
             name: "高階版",
-            meta: "餘額保持 ≥ 199 / 999 積分",
-            price: "餘額 ≥ 199 / 999 積分解鎖",
+            meta: `單筆充值 ≥ ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT} 積分`,
+            price: `充值 ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT} 積分解鎖`,
             features: [
               "GPT Pro 系列模型",
               "Claude Opus 模型",
@@ -228,7 +232,7 @@ export default {
         cta: {
           titleLoggedIn: "靈活充值",
           titleLoggedOut: "免費體驗",
-          descLoggedIn: "充值積分即時到帳。餘額達到 19 解鎖專業版，達到 199 / 999 解鎖高階版。",
+          descLoggedIn: `充值積分即時到帳。餘額達到 ${ADVANCED_FEATURE_MIN_BALANCE} 解鎖專業版，單筆充值 ${GPT_PRO_REQUIRED_RECHARGE_AMOUNT} 解鎖高階版。`,
           descLoggedOut: "註冊即可體驗免費額度，先試再決定是否充值。",
           btnRecharge: "充值積分",
           btnFreeStart: "免費開始",
@@ -276,7 +280,7 @@ export default {
     translation: {
       pricing: {
         title: "従量課金制",
-        subtitle: "実際のトークン消費量に基づいてポイントを減算。ポイントの有効期限はありません。\n残高が19ポイントに達すると自動的にプロ版がアンロックされます。いつでもダウングレード可能で、定期購入の縛りはありません。",
+        subtitle: `実際のトークン消費量に基づいてポイントを減算。ポイントの有効期限はありません。\n残高が${ADVANCED_FEATURE_MIN_BALANCE}ポイントに達すると自動的にプロ版がアンロックされます。いつでもダウングレード可能で、定期購入の縛りはありません。`,
         free: "無料",
         points: "{{num}} ポイント",
         tiers: {
@@ -293,8 +297,8 @@ export default {
           },
           pro: {
             name: "プロ",
-            meta: "残高19ポイント到達",
-            price: "19ポイントでアンロック",
+            meta: `残高${ADVANCED_FEATURE_MIN_BALANCE}ポイント到達`,
+            price: `${ADVANCED_FEATURE_MIN_BALANCE}ポイントでアンロック`,
             features: [
               "複数ファイル分析",
               "リアルタイムWeb検索",
@@ -304,8 +308,8 @@ export default {
           },
           advanced: {
             name: "アドバンスド",
-            meta: "残高199 / 999ポイント以上を維持",
-            price: "199 / 999ポイントでアンロック",
+            meta: `1回のチャージが${GPT_PRO_REQUIRED_RECHARGE_AMOUNT}ポイント以上`,
+            price: `${GPT_PRO_REQUIRED_RECHARGE_AMOUNT}ポイントのチャージでアンロック`,
             features: [
               "GPT Pro 系列モデル",
               "Claude Opus へのアクセス",
@@ -318,7 +322,7 @@ export default {
         cta: {
           titleLoggedIn: "フレキシブルなチャージ",
           titleLoggedOut: "無料体験",
-          descLoggedIn: "チャージ後、ポイントは即座に反映されます。19ポイントでプロ版、199 / 999ポイントでアドバンスドがアンロックされます。",
+          descLoggedIn: `チャージ後、ポイントは即座に反映されます。${ADVANCED_FEATURE_MIN_BALANCE}ポイントでプロ版、${GPT_PRO_REQUIRED_RECHARGE_AMOUNT}ポイントのチャージでアドバンスドがアンロックされます。`,
           descLoggedOut: "登録後すぐに無料枠を体験できます。",
           btnRecharge: "ポイントをチャージ",
           btnFreeStart: "無料で開始",

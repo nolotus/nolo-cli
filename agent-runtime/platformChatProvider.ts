@@ -17,6 +17,7 @@ import {
   resolvePlatformAuthToken,
   resolvePlatformServerUrl,
   resolveProviderTransportDecision,
+  type ApiKeyRefResolver,
 } from "./providerResolution";
 
 type EnvLike = Record<string, string | undefined>;
@@ -73,14 +74,16 @@ function toResponsesRequestOptions(options: Record<string, number | string>) {
   return next;
 }
 
-export function resolvePlatformChatProviderConfig(args: {
+export async function resolvePlatformChatProviderConfig(args: {
   agentConfig: AgentRuntimeAgentConfig;
   env: EnvLike;
-}): PlatformChatProviderConfig {
-  const plan = buildProviderExecutionPlan({
+  apiKeyRefResolver?: ApiKeyRefResolver;
+}): Promise<PlatformChatProviderConfig> {
+  const plan = await buildProviderExecutionPlan({
     agentConfig: args.agentConfig,
     env: args.env,
     runtimeKind: "local",
+    ...(args.apiKeyRefResolver ? { apiKeyRefResolver: args.apiKeyRefResolver } : {}),
   });
   if (plan.mode === "cli") {
     throw new Error("Platform chat provider does not support cli agents.");

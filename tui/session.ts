@@ -11,9 +11,11 @@ import {
 import {
   dimCliText,
   resolveCliColorEnabled,
+  styleCliSegment,
   styleCliText,
 } from "../client/terminalStyles";
 import {
+  formatTokenCount,
   renderTokenStatus,
   type TurnTokenUsage,
 } from "../client/tokenUsage";
@@ -25,6 +27,8 @@ import { DEFAULT_TUI_AGENT_KEY, PLATFORM_AGENTS } from "./agentCatalog";
 import { resolveAgentSwitchTarget } from "./agentPicker";
 import type { AttachedImage } from "./pasteImage";
 import { detectImagePaths, summarizeAttachment } from "./pasteImage";
+import { t } from "./i18n";
+import { detectGitStatus, type GitStatus } from "./gitStatus";
 
 export { DEFAULT_TUI_AGENT_KEY };
 export const DEFAULT_TUI_SERVER_URL = DEFAULT_NOLO_SERVER_URL;
@@ -62,6 +66,12 @@ export type TuiState = {
    */
   attachedImages: AttachedImage[];
   runtimeMode: AgentRuntimeRequestedMode;
+  /**
+   * 显示在状态栏里的模式标签,默认等于 runtimeMode。
+   * 可通过 NOLO_CLI_STATUS_MODE 覆盖,例如设置为 high。
+   */
+  modeLabel: string;
+  gitStatus?: GitStatus;
   thinkingDisplay: ThinkingDisplayMode;
   toolDisplay: ToolDisplayMode;
   renderDisplay: RenderDisplayMode;
@@ -123,6 +133,10 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
   const agentKey = env.NOLO_AGENT?.trim() || DEFAULT_TUI_AGENT_KEY;
   const agentName = env.NOLO_AGENT_NAME?.trim() || "nolo";
   const cwd = (env.NOLO_CWD?.trim() || process.cwd()).replace(/\/+$/, "");
+  const runtimeMode =
+    env.NOLO_RUNTIME_MODE === "local" || env.NOLO_RUNTIME_MODE === "server"
+      ? env.NOLO_RUNTIME_MODE
+      : "auto";
 
   return {
     agentKey,
@@ -138,9 +152,10 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
     cwd,
     attachedDocs: [],
     attachedImages: [],
-    runtimeMode: env.NOLO_RUNTIME_MODE === "local" || env.NOLO_RUNTIME_MODE === "server"
-      ? env.NOLO_RUNTIME_MODE
-      : "auto",
+    runtimeMode,
+    modeLabel: env.NOLO_CLI_STATUS_MODE?.trim() || runtimeMode,
+    gitStatus:
+      env.NOLO_CLI_GIT_STATUS === "0" ? undefined : detectGitStatus(cwd),
     thinkingDisplay: normalizeThinkingDisplayMode(
       env.NOLO_CLI_THINKING ?? env.NOLO_THINKING,
       "hide"
@@ -150,26 +165,144 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
   };
 }
 
+function formatCwd(cwd: string) {
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (home && cwd.startsWith(home)) {
+    return `~${cwd.slice(home.length)}`;
+  }
+  return cwd;
+}
+
+function renderPowerlineTokenStatus(tokens?: TurnTokenUsage) {
+  if (!tokens || !tokens.contextWindow) {
+    return "◫ —";
+  }
+  const used = tokens.input + tokens.output;
+  const pct = Math.min(100, (used / tokens.contextWindow) * 100);
+  const pctText = pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
+  return `◫ ${pctText}%/${formatTokenCount(tokens.contextWindow)}`;
+}
+
 export function renderStatusLine(state: TuiState) {
   const colorEnabled = resolveCliColorEnabled();
-  const agent = styleCliText(state.agentName, "cyan", colorEnabled);
-  const tokens = dimCliText(renderTokenStatus(state.turnTokens), colorEnabled);
-  const profile = dimCliText(`配置: ${state.profileName}`, colorEnabled);
-  return [`agent ${agent}`, tokens, profile].join(
-    dimCliText(" | ", colorEnabled)
+  const sep = dimCliText("  > ", colorEnabled);
+
+  const logoSegment = styleCliSegment("nolo", { fg: "cyan" }, colorEnabled);
+
+  const agentLabel = `⬢ ${state.agentName}${state.modeLabel ? ` · ${state.modeLabel}` : ""}`;
+  const agentSegment = styleCliSegment(agentLabel, { fg: "white", bg: "bgMagenta" }, colorEnabled);
+
+  const cwdSegment = styleCliSegment(`📁 ${formatCwd(state.cwd)}`, { fg: "white", bg: "bgBlue" }, colorEnabled);
+
+  const parts: string[] = [logoSegment, agentSegment, cwdSegment];
+
+  if (state.gitStatus) {
+    const { branch, modified, untracked } = state.gitStatus;
+    const statusMarkers = [
+      modified > 0 ? `*${modified}` : "",
+      untracked > 0 ? `?${untracked}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const gitText = statusMarkers ? `⑂ ${branch} ${statusMarkers}` : `⑂ ${branch}`;
+    parts.push(styleCliSegment(gitText, { fg: "black", bg: "bgYellow" }, colorEnabled));
+  }
+
+  const tokenSegment = styleCliSegment(
+    renderPowerlineTokenStatus(state.turnTokens),
+    { fg: "white", bg: "bgGreen" },
+    colorEnabled
   );
+  parts.push(tokenSegment);
+
+  return parts.join(sep);
 }
 
 export function renderWelcome(state: TuiState) {
-  const versionStr = state.cliVersion ? ` (nolo ${state.cliVersion})` : "";
+  const versionStr = state.cliVersion ? `nolo ${state.cliVersion}` : "nolo";
   return [
-    `Nolo workspace${versionStr} | agent ${state.agentName} | server ${state.serverUrl} | 配置: ${state.profileName}`,
-    "Tell nolo what you want. Use /help for commands. Use /version if this install feels stale.",
+    `${versionStr} | server ${state.serverUrl}`,
+    t("welcomeHint"),
   ].join("\n");
 }
 
 export function renderPrompt(_state: TuiState) {
-  return "you > ";
+  return t("promptLabel");
+}
+
+export type TuiKeyInfo = {
+  name?: string;
+  ctrl?: boolean;
+  shift?: boolean;
+  meta?: boolean;
+};
+
+export type TuiInputKeyResult = {
+  buffer: string;
+  submit?: string;
+  abort?: boolean;
+};
+
+export function applyTuiInputKey(
+  buffer: string,
+  sequence: string | undefined,
+  key: TuiKeyInfo = {}
+): TuiInputKeyResult {
+  const seq = sequence ?? "";
+  if (seq === "\u0003" || (key.ctrl && key.name === "c")) {
+    return { buffer, abort: true };
+  }
+  if (
+    seq === "\x1b[13;2~" ||
+    seq === "\x1b[27;2;13~" ||
+    seq === "\x1b\r" ||
+    (key.shift && (key.name === "enter" || key.name === "return")) ||
+    seq === "\n" ||
+    (key.ctrl && key.name === "j")
+  ) {
+    return { buffer: `${buffer}\n` };
+  }
+  if (key.name === "enter" || key.name === "return" || seq === "\r") {
+    return { buffer: "", submit: buffer };
+  }
+  if (key.name === "backspace" || key.name === "delete" || seq === "\b" || seq === "\x7f") {
+    return { buffer: buffer.slice(0, -1) };
+  }
+  if (!seq || key.ctrl || key.meta || seq.startsWith("\x1b")) {
+    return { buffer };
+  }
+  return { buffer: `${buffer}${seq}` };
+}
+
+export const SLASH_COMMANDS = [
+  "/help",
+  "/new",
+  "/compact",
+  "/context",
+  "/ctx",
+  "/runtime",
+  "/tools",
+  "/thinking",
+  "/render",
+  "/agent",
+  "/agents",
+  "/switch",
+  "/dialog",
+  "/doc",
+  "/customize",
+  "/login",
+  "/profile",
+  "/update",
+  "/version",
+  "/exit",
+  "/quit",
+] as const;
+
+export function completeSlashCommand(buffer: string): string[] {
+  if (!buffer.startsWith("/")) return [];
+  const trimmed = buffer.trim();
+  if (trimmed.includes(" ")) return [];
+  return SLASH_COMMANDS.filter((cmd) => cmd.startsWith(trimmed) && cmd !== trimmed);
 }
 
 export function renderTuiHelp() {
@@ -410,18 +543,18 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
     }
     case "/exit":
     case "/quit":
-      return { nextState: state, output: "Bye.", action: { type: "exit" } };
+      return { nextState: state, output: t("bye"), action: { type: "exit" } };
     case "/new":
       return {
         nextState: {
           ...state,
           dialogId: undefined,
-          dialogLabel: "new",
+          dialogLabel: t("newDialog"),
           attachedDocs: [],
           attachedImages: [],
           turnTokens: undefined,
         },
-        output: "Started a fresh dialog.",
+        output: t("startedFreshDialog"),
       };
     case "/compact":
       if (argText) {

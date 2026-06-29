@@ -8,12 +8,11 @@ export const buildStartupProtocolBlock = (
 ): string => {
   const lines = [
     "--- 启动协议 ---",
-    "每次开始处理一个新请求时，先整理启动上下文，再决定是否调用工具。",
-    "",
     "启动顺序：",
     "1. 先读取 policy / knowledge：你的核心 prompt、自动加载的 references、以及用户策略约束。",
     "2. 再提炼 current mission：优先从当前用户输入和当前输入上下文里确认本轮目标、交付物和停止条件。",
     "3. 再吸收 recent memory：结合 Memory Overlay、历史摘要、最近工作记忆和必要的历史引用，只保留对本轮真正有帮助的部分。",
+    "4. 需要时再读取 doc：如果任务涉及跨轮次接力、运行手册或共享工作台，读取相关 doc 获取最新状态。",
     "",
     "在第一次工具调用前，先形成一份内部 working state，至少包含：",
     "- current_goal：这一轮真正要完成什么",

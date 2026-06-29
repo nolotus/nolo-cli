@@ -13,7 +13,7 @@ export function renderTableHelpText() {
     "  nolo table update-row --table <tableId|metaKey> --row <rowId|rowDbKey> --changes <json-object>",
     "  nolo table update-rows --table <tableId|metaKey> --updates <json-array>",
     "  nolo table delete-row --table <tableId|metaKey> --row <rowId|rowDbKey>",
-    "  nolo table delete-rows --table <tableId|metaKey> --row-ids <json-array> | --row-dbkeys <json-array>",
+  "  nolo table delete-rows --table <tableId|metaKey> (--row-ids <json-array> | --row-dbkeys <json-array> | --filters <json-object>)",
     "",
     "Examples:",
     '  nolo table query --table meta-0e95801d90-NOLOTASKBOARD --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
@@ -36,6 +36,11 @@ export function getTableInternalCommandEntries(): CommandEntry[] {
       }
       console.log(renderTableHelpText());
       return 0;
+    }),
+    createArgsCommand(["table", "delete-rows"], "Delete table rows", async (args) => {
+      // Dynamic import keeps a broken command module from crashing the whole CLI at startup.
+      const { runTableDeleteRowsCommand } = await import("./tableCommands");
+      return runTableDeleteRowsCommand(args);
     }),
   ];
 }

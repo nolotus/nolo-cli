@@ -13,6 +13,7 @@ export type GlobalRecordFailure = {
 
 export type GlobalDeleteResult = {
   serverUrl: string;
+  dbKey?: string;
   ok: boolean;
   result?: any;
   error?: string;

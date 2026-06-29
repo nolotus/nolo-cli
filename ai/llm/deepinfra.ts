@@ -16,18 +16,6 @@ export const deepinfraModels = [
     supportsTool: true,
   },
   {
-    name: "zai-org/GLM-5.1",
-    displayName: "Z.AI: GLM 5.1 (DeepInfra)",
-    hasVision: false,
-    price: {
-      input: 1.26 * 7,
-      output: 3.96 * 7,
-      inputCacheHit: 0.26 * 7,
-    },
-    contextWindow: 202752,
-    supportsTool: true,
-  },
-  {
     name: "zai-org/GLM-5.2",
     displayName: "Z.AI: GLM 5.2 (DeepInfra)",
     hasVision: false,

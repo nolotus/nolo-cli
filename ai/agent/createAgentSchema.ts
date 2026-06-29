@@ -118,10 +118,10 @@ export const getCreateAgentSchema = (t: TFunction) =>
         .optional(),
 
       /**
-       * CLI provider（apiSource=cli 时有效）：支持 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok"
+       * CLI provider（apiSource=cli 时有效）：支持 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok" | "kimi"
        */
       cliProvider: z
-        .enum(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok"])
+        .enum(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok", "kimi"])
         .nullable()
         .optional()
         .or(z.literal("")),
@@ -147,8 +147,20 @@ export const getCreateAgentSchema = (t: TFunction) =>
        */
       apiKey: z.string().trim().nullable().optional().or(z.string().length(0)),
 
-      useServerProxy: z.boolean().default(true),
+      /**
+       * apiKeyRef：指向 OAuth 凭据库的 provider 名称（例如 "chatgpt"）。
+       * 设置后由 provider 解析层加载对应 OAuth token 作为 Bearer 鉴权，
+       * 与静态 apiKey 互斥优先使用 apiKeyRef。
+       */
+      apiKeyRef: z.string().trim().nullable().optional().or(z.string().length(0)),
 
+      /**
+       * apiKeyHeader：自定义鉴权 header 名（例如 "x-api-key"）。
+       * 不传时按 endpoint 自动推断，通常为 "Authorization"。
+       */
+      apiKeyHeader: z.string().trim().nullable().optional().or(z.string().length(0)),
+
+      useServerProxy: z.boolean().default(true),
       prompt: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       tools: z.array(z.string()).default([]),

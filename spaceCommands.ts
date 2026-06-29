@@ -1,4 +1,4 @@
-import { MemberRole, SpaceVisibility } from "./app/types";
+import { MemberRole, SpaceVisibility, ContentType } from "./app/types";
 import { authRoutes } from "./auth/routes";
 import { DataType } from "./create/types";
 import { createSpaceKey, normalizeSpaceId } from "./create/space/spaceKeys";
@@ -7,9 +7,14 @@ import {
   readOption,
   resolveAuthToken,
   resolveServerUrl,
+  resolveServerCandidates,
 } from "./cliEnvHelpers";
 import { readDbRecord, writeAgentRecord } from "./agentRecordHelpers";
+import { readLiveDbRecordAfterTombstoneMerge } from "./globalRecordOperations";
 import { ulid } from "ulid";
+import { readFileSync } from "node:fs";
+import { basename, extname } from "node:path";
+import { resolveFileCategory } from "./app/utils/fileUtils";
 
 type SpaceCommandDeps = {
   env: NodeJS.ProcessEnv;
@@ -85,6 +90,20 @@ Options:
   --invite <inviteToken>       Space invite token from the email link.
   --space-invite <inviteToken> Alias for --invite.
   --json                       Print machine-readable JSON.
+`);
+}
+
+function printUploadUsage(output: { write(chunk: string): unknown }) {
+  output.write(`Usage:
+  nolo space upload --space <spaceId> --file <path>
+
+Options:
+  --server <url>               Default API target.
+  --token <jwt>                Auth token. Required for writes.
+  --json                       Print machine-readable JSON.
+
+Note:
+  Currently only YAML files (.yaml, .yml) are supported.
 `);
 }
 
@@ -322,5 +341,118 @@ export async function runSpaceAcceptInviteCommand(
   } else {
     writeOutput(deps, `Accepted invite for space ${data?.spaceId ?? ""}\n`);
   }
+  return 0;
+}
+
+export async function runSpaceUploadCommand(
+  args: string[],
+  deps: SpaceCommandDeps,
+): Promise<number> {
+  if (hasHelpArg(args)) {
+    printUploadUsage(deps.output ?? process.stdout);
+    return 0;
+  }
+
+  const spaceIdRaw = readOption(args, "--space") ?? readOption(args, "--space-id");
+  const filePath = readOption(args, "--file");
+  if (!spaceIdRaw?.trim()) throw new Error("space upload requires --space <spaceId>.");
+  if (!filePath?.trim()) throw new Error("space upload requires --file <path>.");
+
+  const ext = extname(filePath).toLowerCase();
+  if (ext !== ".yaml" && ext !== ".yml") {
+    throw new Error("Only YAML files (.yaml, .yml) are supported for space upload.");
+  }
+
+  const { authToken, userId } = requireTokenUser(args, deps.env);
+  const serverUrl = resolveServerUrl(args, deps.env);
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const spaceId = normalizeSpaceId(spaceIdRaw);
+
+  const fileContent = readFileSync(filePath);
+  const spaceKey = createSpaceKey.space(spaceId);
+  const uploadName = basename(filePath);
+  const mimeType = "application/yaml";
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+
+  const { record: spaceRecord } = await readLiveDbRecordAfterTombstoneMerge({
+    dbKey: spaceKey,
+    authToken,
+    fetchImpl,
+    serverUrls: resolveServerCandidates(args, deps.env, serverUrl),
+  });
+
+  const formData = new FormData();
+  formData.append("file", new Blob([fileContent], { type: mimeType }), uploadName);
+  
+  const fileId = ulid();
+  const fileDbKey = `file-${userId}-${fileId}`;
+  formData.append("metadata", JSON.stringify({
+    id: fileId,
+    title: uploadName,
+    originalName: uploadName,
+    fileName: `${fileId}${ext}`,
+    filePath: "",
+    size: fileContent.length,
+    mimeType,
+    type: DataType.FILE,
+    fileCategory: resolveFileCategory({
+      mimeType,
+      fileName: uploadName,
+    }),
+    dbKey: fileDbKey,
+    userId,
+    ownerType: "space",
+    ownerId: spaceId,
+    ownerDbKey: spaceKey,
+    source: "cli-space-upload",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  }));
+  formData.append("customKey", fileDbKey);
+  formData.append("userId", userId);
+  formData.append("ownerType", "space");
+  formData.append("ownerId", spaceId);
+
+  const uploadRes = await fetchImpl(`${serverUrl}/api/v1/db/upload`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: formData,
+  });
+
+  const uploadData = await uploadRes.json().catch(() => ({}));
+  if (!uploadRes.ok) {
+    throw new Error(
+      uploadData?.error?.message || uploadData?.error || `space upload failed: HTTP ${uploadRes.status}`
+    );
+  }
+
+  const contents = spaceRecord.contents || {};
+  contents[fileDbKey] = {
+    ...(contents[fileDbKey] ?? {}),
+    title: uploadName,
+    type: ContentType.FILE,
+    contentKey: fileDbKey,
+    createdAt: contents[fileDbKey]?.createdAt ?? now,
+    updatedAt: now,
+  };
+
+  await writeDbRecord({
+    authToken,
+    dbKey: spaceKey,
+    fetchImpl,
+    record: { ...spaceRecord, contents, updatedAt: now },
+    serverUrl,
+    userId,
+  });
+
+  if (hasFlag(args, "--json")) {
+    writeOutput(deps, `${JSON.stringify({ ...uploadData, spaceId, spaceKey }, null, 2)}\n`);
+  } else {
+    writeOutput(deps, `Uploaded ${uploadName} to space ${spaceId} (fileId: ${fileId})\n`);
+  }
+
   return 0;
 }

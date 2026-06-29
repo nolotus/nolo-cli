@@ -220,7 +220,7 @@ export interface Agent {
   /** 执行来源：platform=平台API  custom=自定义API/本地  cli=命令行工具 */
   apiSource?: "platform" | "custom" | "cli";
   /** cli 时指定使用哪个 CLI 工具。CLI 可复用 prompt/model/最近文本历史，但不走本地 tool 协议。 */
-  cliProvider?: "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok";
+  cliProvider?: "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok" | "kimi";
   prompt?: string;
   name?: string;
   /** Stable machine-callable name for routing, e.g. "pm", "fullstack", "reviewer". */
@@ -230,8 +230,9 @@ export interface Agent {
   userId: string;
   useServerProxy: boolean;
   apiKey?: string;
+  apiKeyRef?: string;
+  apiKeyHeader?: string;
   apiKeyFromAgentKey?: string;
-  customProviderUrl?: string;
   temperature?: number;
   top_p?: number;
   frequency_penalty?: number;
@@ -326,6 +327,7 @@ export interface SpaceData {
   members: string[]; // userId 列表
   categories: Categories;
   contents: Contents;
+  boundFolder?: string;
   createdAt: number;
   updatedAt: number;
 }

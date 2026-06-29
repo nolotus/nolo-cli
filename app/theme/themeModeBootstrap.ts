@@ -89,9 +89,7 @@ export function readStoredThemeName(
 
     if (isExplicitSelection) return value;
 
-    return value === DEFAULT_THEME_NAME || value !== "neutral"
-      ? value
-      : undefined;
+    return value;
   } catch {
     return undefined;
   }

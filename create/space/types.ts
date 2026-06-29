@@ -4,7 +4,13 @@ export type SpaceId = string;
 
 export type SpaceViewMode = "all" | "categories";
 
-export interface CreateSpaceRequest { }
+export interface CreateSpaceRequest {
+  name: string;
+  description?: string;
+  visibility?: string;
+  /** 空间绑定的本地文件夹路径（桌面端专用） */
+  boundFolder?: string;
+}
 
 export interface SpaceState {
     currentSpaceId: string | null;

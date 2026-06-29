@@ -37,8 +37,8 @@ async function forwardConnectorRunMessage(
   env: EnvLike,
   fetchImpl: typeof fetch
 ) {
-  const { handleConnectorRunMessage } = await import("./machineCommands");
-  return handleConnectorRunMessage(machine, message, pushMessage, executeCli, env, fetchImpl);
+  const { handleConnectorRunMessage } = await import("./machineWsRunDispatch");
+  return handleConnectorRunMessage(message, pushMessage, executeCli, env, fetchImpl);
 }
 
 async function detectLaunchableMachineInfo() {

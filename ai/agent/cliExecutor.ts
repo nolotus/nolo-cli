@@ -25,7 +25,7 @@ import { buildCliPrompt } from "./cliPrompt";
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
 
 /** 已支持的 CLI 工具。新增时在此联合类型追加，并在 EXECUTORS 里注册实现 */
-export type CliProvider = "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok";
+export type CliProvider = "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok" | "kimi";
 
 /**
  * CLI provider 图片输入。
@@ -144,6 +144,7 @@ const BUFFERED_STREAMING_PROVIDERS = new Set<CliProvider>([
   "qoder",
   "opencode",
   "grok",
+  "kimi",
 ]);
 
 export function isBufferedCliStreamingProvider(provider: CliProvider): boolean {
@@ -291,6 +292,8 @@ function getCliProviderLabel(provider: CliProvider): string {
       return "OpenCode CLI";
     case "grok":
       return "Grok CLI";
+    case "kimi":
+      return "Kimi Code CLI";
   }
 }
 
@@ -1405,6 +1408,110 @@ function executeGrok(
   });
 }
 
+function parseKimiStreamJson(stdout: string): string {
+  const parts: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const event = JSON.parse(trimmed);
+      if (event.role === "assistant" && typeof event.content === "string" && event.content.length > 0) {
+        parts.push(event.content);
+      }
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return parts.join("");
+}
+
+function executeKimi(
+  prompt: string,
+  options: CliExecuteOptions
+): Promise<CliExecuteResult> {
+  const {
+    model,
+    timeout = 120_000,
+    cwd = process.cwd(),
+  } = options;
+
+  return new Promise((resolve, reject) => {
+    // kimi CLI prompt mode is non-interactive; tools are available automatically.
+    // --yolo/--auto cannot be combined with --prompt.
+    const args = ["-p", prompt, "--output-format", "stream-json"];
+    if (model) {
+      args.push("-m", model);
+    }
+
+    const start = Date.now();
+    const proc = spawn("kimi", args, {
+      cwd,
+      env: buildCliProcessEnv(options.env),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = createUtf8Collector();
+    const stderr = createUtf8Collector();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (timeout > 0) {
+      timer = setTimeout(() => {
+        const partial = stdout.end() + "\n" + stderr.end();
+        const q = detectCliProviderQuotaLimit("kimi", "", partial, null);
+        if (q.limited) {
+          proc.kill("SIGTERM");
+          reject(new CliProviderQuotaError("kimi", q.message || "Kimi quota signal seen before timeout"));
+          return;
+        }
+        proc.kill("SIGTERM");
+        reject(new Error(`Kimi CLI timed out after ${timeout}ms`));
+      }, timeout);
+    }
+
+    proc.stdout.on("data", (data: Buffer) => {
+      stdout.write(data);
+    });
+
+    proc.stderr.on("data", (data: Buffer) => {
+      stderr.write(data);
+      const currentStderr = stderr.text;
+      if (detectCliProviderQuotaLimit("kimi", "", currentStderr, null).limited) {
+        if (timer) clearTimeout(timer);
+        proc.kill("SIGTERM");
+        reject(new CliProviderQuotaError("kimi", "quota signal detected incrementally in stderr"));
+        return;
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      const stdoutText = stdout.end();
+      const stderrText = stderr.end();
+      const quota = detectCliProviderQuotaLimit("kimi", stdoutText, stderrText, code);
+      const hasRealErrorSignal = code !== 0 || /error|fail|quota|limit|429|rate limit|exceeded/i.test(stderrText);
+      if (quota.limited && hasRealErrorSignal) {
+        reject(new CliProviderQuotaError("kimi", quota.message || "Kimi reported quota/limit"));
+        return;
+      }
+      if (code !== 0 && code !== null) {
+        console.error("[cliExecutor] kimi process exited with non-zero code:", code, "stderr:", stderrText);
+        reject(new Error(`Kimi CLI exited with code ${code}\nstderr: ${stderrText}`));
+        return;
+      }
+
+      resolve({
+        text: parseKimiStreamJson(stdoutText).trim(),
+        raw: stdoutText,
+        elapsed: Date.now() - start,
+      });
+    });
+
+    proc.on("error", (err) => {
+      if (timer) clearTimeout(timer);
+      console.error("[cliExecutor] kimi process error event:", err);
+      reject(err);
+    });
+  });
+}
 // ── 注册表（新增 CLI 工具时在这里加） ────────────────────────────────────────
 
 const EXECUTORS: Record<
@@ -1419,6 +1526,7 @@ const EXECUTORS: Record<
   qoder: executeQoder,
   opencode: executeOpenCode,
   grok: executeGrok,
+  kimi: executeKimi,
 };
 
 function formatCliSessionTask(messages: CliSessionMessage[]): string {
@@ -1641,7 +1749,7 @@ export function executeCliStreaming(
       })
     );
   }
-  if (provider === "agy" || provider === "qoder" || provider === "opencode" || provider === "grok") {
+  if (provider === "agy" || provider === "qoder" || provider === "opencode" || provider === "grok" || provider === "kimi") {
     return withCleanup(
       executor(resolved.prompt, resolved.options).then((result) => {
         const merged = { ...result, warnings: [...resolved.warnings, ...(result.warnings ?? [])] };

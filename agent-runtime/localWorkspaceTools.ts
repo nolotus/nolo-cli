@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
-import { spawn as spawnChildProcess } from "node:child_process";
+import { spawnSync, spawn as spawnChildProcess } from "node:child_process";
 
 import type {
   AgentRuntimeToolCallInput,
@@ -13,9 +13,11 @@ type LocalWorkspaceToolArgs = {
   commandTimeoutMs?: number;
   commandOutputLimit?: number;
   commandPrefix?: string[];
+  restrictShellToWorkspace?: boolean;
 };
 
 const EXEC_SHELL_TIMEOUT_ENV = "NOLO_EXEC_SHELL_TIMEOUT_MS";
+const DEFAULT_LOCAL_API_ORIGIN = "http://127.0.0.1:38123";
 
 export type ActivityRef =
   | { type: "file"; path: string }
@@ -116,10 +118,6 @@ const WORKSPACE_TOOL_NAMES = [
   "editFile",
   "globFiles",
   "searchFiles",
-  "startPreview",
-  "getPreviewStatus",
-  "stopPreview",
-  "releasePreview",
   "captureVisualState",
   "execShell",
 ] as const;
@@ -725,23 +723,6 @@ function buildGlobWorkspaceFilesTool(args?: {
   };
 }
 
-function buildPreviewLifecycleTool(toolName: string): OpenAiCompatibleTool {
-  const descriptions: Record<string, string> = {
-    startPreview: "Start the local preview stack for the current workspace.",
-    getPreviewStatus: "Read local preview status, including localApiOrigin and process state.",
-    stopPreview: "Stop the local preview stack for the current workspace.",
-    releasePreview: "Release the local preview slot for the current workspace after stopping preview.",
-  };
-  return {
-    type: "function",
-    function: {
-      name: toolName,
-      description: descriptions[toolName] ?? "Run a local preview lifecycle action.",
-      parameters: { type: "object", properties: {} },
-    },
-  };
-}
-
 function buildCaptureVisualStateTool(): OpenAiCompatibleTool {
   return {
     type: "function",
@@ -753,7 +734,7 @@ function buildCaptureVisualStateTool(): OpenAiCompatibleTool {
         properties: {
           baseUrl: {
             type: "string",
-            description: "Optional local preview base URL. When omitted, the tool reads preview:status.",
+            description: "Optional local app base URL. Defaults to http://127.0.0.1:38123.",
           },
           path: {
             type: "string",
@@ -861,6 +842,53 @@ function buildWorkspaceShellCommand(args: {
     : buildBashCommand(args.command);
 }
 
+function findWorkspaceShellEscapeToken(command: string): string | null {
+  const tokens = tokenizeShellPrefix(command);
+  for (const token of tokens) {
+    if (
+      token === ".." ||
+      token.startsWith("../") ||
+      token.startsWith("..\\") ||
+      token.includes("/../") ||
+      token.includes("\\..\\")
+    ) {
+      return token;
+    }
+    if (token === "~" || token.startsWith("~/") || token.startsWith("~\\")) {
+      return token;
+    }
+    if (
+      token === "/" ||
+      token.startsWith("/") ||
+      /^[A-Za-z]:[\\/]/.test(token) ||
+      token.startsWith("\\\\")
+    ) {
+      return token;
+    }
+  }
+  return null;
+}
+
+function buildWorkspaceShellEscapeBlockedResult(args: {
+  command: string;
+  token: string;
+}): AgentRuntimeToolResult {
+  return {
+    content: [
+      "workspace_shell_escape_blocked",
+      `blockedToken: ${args.token}`,
+      `command: ${args.command}`,
+      "Use paths relative to the authorized folder only.",
+      "exitCode: 126",
+    ].join("\n"),
+    metadata: {
+      exitCode: 126,
+      workspaceShellEscapeBlocked: true,
+      blockedToken: args.token,
+    },
+  };
+}
+
 function buildWorkspaceToolDefinition(toolName: string, args?: {
   listFilesDescriptionVariant?: ListFilesDescriptionVariant;
   listFilesParameterVariant?: ListFilesParameterVariant;
@@ -900,9 +928,6 @@ function buildWorkspaceToolDefinition(toolName: string, args?: {
       descriptionVariant: args?.searchFilesDescriptionVariant,
       parameterVariant: args?.searchFilesParameterVariant,
     });
-  }
-  if (toolName === "startPreview" || toolName === "getPreviewStatus" || toolName === "stopPreview" || toolName === "releasePreview") {
-    return buildPreviewLifecycleTool(toolName);
   }
   if (toolName === "captureVisualState") return buildCaptureVisualStateTool();
   if (toolName === "execShell") return buildExecShellTool(toolName);
@@ -1599,11 +1624,6 @@ async function writeFileTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
 }): Promise<AgentRuntimeToolResult> {
-  // TODO: Explore cheaply including diff stat/EOL warning after writeFile.
-  // If implementation is larger than a small safe change, defer it.
-  // Exact boundaries: writeFileTool function in localWorkspaceTools.ts.
-  // Consider adding a post-write hook that runs `git diff --stat` and checks line endings.
-  // Keep it optional and non-blocking.
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const requestedPath = requireWorkspaceToolPath(parsed);
   const content = requireWorkspaceFileContent(parsed);
@@ -1618,11 +1638,32 @@ async function writeFileTool(args: {
     targetPath: absolutePath,
   });
   const activity = extractActivity(parsed);
+
+  // Optional: run git diff --stat for a quick summary of what changed.
+  let diffStat: string | undefined;
+  try {
+    const stats: string[] = [];
+  for (const ref of ["", "--cached"]) {
+    const result = spawnSync("git", ["diff", ref, "--stat", "--", relativePath], {
+      cwd: args.workspaceRoot,
+      timeout: 3000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const out = (result.stdout ?? "").trim();
+    if (out) stats.push(out);
+  }
+    if (stats.length > 0) diffStat = stats.join("; ");
+  } catch (err: unknown) {
+    diffStat = `[git diff unavailable: ${err instanceof Error ? err.message : 'unknown error'}]`;
+  }
+
   return {
     content: `wrote ${relativePath}`,
     metadata: {
       path: relativePath,
       bytes: Buffer.byteLength(content),
+      ...(diffStat ? { diffStat } : {}),
       ...(activity ? { activity } : {}),
     },
   };
@@ -2097,7 +2138,7 @@ async function globFilesTool(args: {
       exclude,
     });
   }
-  const commandLimitedByMaxResults = result.limitedByMaxResults === true;
+  const commandLimitedByMaxResults = false;
   const totalCount = commandLimitedByMaxResults ? undefined : files.length;
   const limitedFiles = maxResults ? files.slice(0, maxResults) : files;
   const limitedByMaxResults = commandLimitedByMaxResults || limitedFiles.length < (totalCount ?? limitedFiles.length);
@@ -2123,23 +2164,10 @@ async function globFilesTool(args: {
 }
 
 async function resolveVisualStateBaseUrl(args: {
-  workspaceRoot: string;
   explicitBaseUrl?: string;
-  commandTimeoutMs?: number;
 }) {
   if (args.explicitBaseUrl) return args.explicitBaseUrl;
-  const statusResult = await runWorkspaceCommand({
-    workspaceRoot: args.workspaceRoot,
-    command: ["bun", "run", "preview:status"],
-    timeoutMs: args.commandTimeoutMs,
-  });
-  if (statusResult.exitCode !== 0) throw new Error(statusResult.content);
-  const status = parseLastJsonObject(statusResult.stdout);
-  const localApiOrigin = typeof status?.localApiOrigin === "string" ? status.localApiOrigin : "";
-  if (!localApiOrigin) {
-    throw new Error("captureVisualState could not read localApiOrigin from preview:status.");
-  }
-  return localApiOrigin;
+  return DEFAULT_LOCAL_API_ORIGIN;
 }
 
 async function captureVisualStateTool(args: {
@@ -2150,9 +2178,7 @@ async function captureVisualStateTool(args: {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const captureArgs = readVisualStateCaptureArgs(parsed);
   const baseUrl = await resolveVisualStateBaseUrl({
-    workspaceRoot: args.workspaceRoot,
     explicitBaseUrl: captureArgs.baseUrl,
-    commandTimeoutMs: args.commandTimeoutMs,
   });
   const extraArgs = [
     "--base",
@@ -2204,42 +2230,23 @@ async function captureVisualStateTool(args: {
   };
 }
 
-async function previewLifecycleTool(args: {
-  call: AgentRuntimeToolCallInput;
-  workspaceRoot: string;
-  commandTimeoutMs?: number;
-  script: "preview:start" | "preview:status" | "preview:stop" | "preview:release";
-}): Promise<AgentRuntimeToolResult> {
-  const result = await runWorkspacePackageScript({
-    workspaceRoot: args.workspaceRoot,
-    script: args.script,
-    commandTimeoutMs: args.commandTimeoutMs,
-  });
-  const summary = parseLastJsonObject(String(result.metadata?.stdoutTail ?? result.content)) ?? {};
-  return {
-    content: [
-      typeof summary.previewUrl === "string" ? `previewUrl: ${summary.previewUrl}` : "",
-      typeof summary.localApiOrigin === "string" ? `localApiOrigin: ${summary.localApiOrigin}` : "",
-      typeof summary.serverDbPath === "string" ? `serverDbPath: ${summary.serverDbPath}` : "",
-      "",
-      result.content,
-    ].filter((line, index, lines) => line || (index > 0 && lines[index - 1])).join("\n").trim(),
-    metadata: {
-      ...result.metadata,
-      script: args.script,
-      ...(summary ?? {}),
-    },
-  };
-}
-
 async function execShellTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
   commandTimeoutMs?: number;
+  commandOutputLimit?: number;
   commandPrefix?: string[];
+  restrictToWorkspace?: boolean;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const command = requireShellCommand(parsed, args.call.name);
+  if (args.restrictToWorkspace) {
+    // ponytail: lexical guard for desktop folder execShell; replace with OS sandbox if users need arbitrary shell syntax.
+    const escapeToken = findWorkspaceShellEscapeToken(command);
+    if (escapeToken) {
+      return buildWorkspaceShellEscapeBlockedResult({ command, token: escapeToken });
+    }
+  }
   const interactiveAuthCommand = extractInteractiveGhAuthCommand(command);
   if (interactiveAuthCommand) {
     const activity = extractActivity(parsed);
@@ -2300,30 +2307,6 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       call,
       workspaceRoot: args.workspaceRoot,
     }),
-    startPreview: (call: AgentRuntimeToolCallInput) => previewLifecycleTool({
-      call,
-      workspaceRoot: args.workspaceRoot,
-      commandTimeoutMs: args.commandTimeoutMs,
-      script: "preview:start",
-    }),
-    getPreviewStatus: (call: AgentRuntimeToolCallInput) => previewLifecycleTool({
-      call,
-      workspaceRoot: args.workspaceRoot,
-      commandTimeoutMs: args.commandTimeoutMs,
-      script: "preview:status",
-    }),
-    stopPreview: (call: AgentRuntimeToolCallInput) => previewLifecycleTool({
-      call,
-      workspaceRoot: args.workspaceRoot,
-      commandTimeoutMs: args.commandTimeoutMs,
-      script: "preview:stop",
-    }),
-    releasePreview: (call: AgentRuntimeToolCallInput) => previewLifecycleTool({
-      call,
-      workspaceRoot: args.workspaceRoot,
-      commandTimeoutMs: args.commandTimeoutMs,
-      script: "preview:release",
-    }),
     captureVisualState: (call: AgentRuntimeToolCallInput) => captureVisualStateTool({
       call,
       workspaceRoot: args.workspaceRoot,
@@ -2335,6 +2318,7 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       commandTimeoutMs: args.commandTimeoutMs,
       commandOutputLimit: args.commandOutputLimit,
       commandPrefix: args.commandPrefix,
+      restrictToWorkspace: args.restrictShellToWorkspace,
     }),
   };
 }

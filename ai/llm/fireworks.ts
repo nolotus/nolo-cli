@@ -59,17 +59,6 @@ export const fireworksModels = [
         supportsTool: true,
     },
     {
-        name: "accounts/fireworks/models/glm-5p1",
-        displayName: "Z.AI: GLM 5.1",
-        hasVision: true,
-        price: {
-            input: 1.0 * 8,
-            output: 3.2 * 8,
-            cachingRead: 0.2 * 8,
-        },
-        supportsTool: true,
-    },
-    {
         name: "accounts/fireworks/models/glm-5p2",
         displayName: "Z.AI: GLM 5.2",
         hasVision: false,

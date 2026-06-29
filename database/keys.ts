@@ -286,6 +286,15 @@ export const DB_PREFIX = {
   USER: "user:",
 } as const;
 
+/* ---- OAuth Credential ---- */
+export const createOAuthCredentialKey = (userId: string, provider: string) =>
+  createKey("oauth", userId, provider);
+
+export const oauthCredentialUserRange = (userId: string) => ({
+  start: createKey("oauth", userId, ""),
+  end: createKey("oauth", userId, "\uffff"),
+});
+
 /* ---- User ---- */
 // TODO(keys): 目前 user 相关 key 没有统一的前缀（如 "user-settings-"），
 //             将来如果需要按实体类型/租户范围扫描，可以考虑加前缀做一次轻量重构。
@@ -369,8 +378,7 @@ export const memorySubjectKindRange = (
 });
 
 /* ---- Transaction ---- */
-// TODO(keys): tx 相关 key 目前前缀为 "tx"，结构为 tx-{userId}-{txId}，
-//             与表 row/idx/meta 的租户在前原则基本一致，可以后续统一文档说明。
+// 结构为 tx-{userId}-{txId}，与表 key 的租户在前原则一致
 export const createTransactionKey = {
   record: curry((userId: string, txId: string) =>
     createKey("tx", userId, txId)

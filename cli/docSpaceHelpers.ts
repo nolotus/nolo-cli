@@ -44,3 +44,35 @@ export async function ensurePageAttachedToSpace(params: {
     },
   });
 }
+
+export async function removePageFromSpace(params: {
+  baseUrl: string;
+  userId: string;
+  authToken: string;
+  spaceId: string;
+  contentKey: string;
+}) {
+  const { baseUrl, userId, authToken, spaceId, contentKey } = params;
+  const spaceKey = createSpaceKey.space(spaceId);
+  const spaceRecord = await readDbRecord({
+    dbKey: spaceKey,
+    authToken,
+    fetchImpl: fetch,
+    serverUrl: baseUrl,
+  });
+  const nextContents = { ...(spaceRecord.contents ?? {}) } as Record<string, any>;
+  delete nextContents[contentKey];
+
+  await writeAgentRecord({
+    agentKey: spaceKey,
+    authToken,
+    fetchImpl: fetch,
+    serverUrl: baseUrl,
+    userId,
+    record: {
+      ...spaceRecord,
+      contents: nextContents,
+      updatedAt: Date.now(),
+    },
+  });
+}

@@ -33,6 +33,27 @@ const mergeTableRows = (...rowLists: any[][]): any[] => {
   return Array.from(merged.values());
 };
 
+const TABLE_SYNC_ENVELOPE = "table-sync-v1";
+
+interface TableRowsSnapshot {
+  rows: any[];
+  deletedRows: any[];
+  tableMeta: any | null;
+  complete: boolean;
+}
+
+const getLatestTableMeta = (snapshots: TableRowsSnapshot[]): any | null => {
+  let latestMeta: any | null = null;
+  for (const snapshot of snapshots) {
+    const tableMeta = snapshot.tableMeta;
+    if (!tableMeta || typeof tableMeta !== "object") continue;
+    if (!latestMeta || shouldReplaceMergedRow(tableMeta, latestMeta)) {
+      latestMeta = tableMeta;
+    }
+  }
+  return latestMeta;
+};
+
 const loadLocalTableRows = async (
   db: any,
   tenantId: string,
@@ -63,11 +84,16 @@ const fetchTableRowsFromServer = async (
   tenantId: string,
   tableId: string,
   headers: Record<string, string>
-): Promise<any[]> => {
+): Promise<TableRowsSnapshot> => {
   const res = await fetch(`${server}/rpc/listTableRows`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ tenantId, tableId }),
+    body: JSON.stringify({
+      tenantId,
+      tableId,
+      includeDeleted: true,
+      envelope: TABLE_SYNC_ENVELOPE,
+    }),
   });
 
   if (!res.ok) {
@@ -84,10 +110,23 @@ const fetchTableRowsFromServer = async (
   }
 
   const data = await res.json();
-  if (!Array.isArray(data)) {
+  if (Array.isArray(data)) {
+    return {
+      rows: data,
+      deletedRows: [],
+      tableMeta: null,
+      complete: false,
+    };
+  }
+  if (!data || typeof data !== "object" || !Array.isArray(data.rows)) {
     throw new Error("服务器返回格式错误：预期为数组");
   }
-  return data;
+  return {
+    rows: data.rows,
+    deletedRows: Array.isArray(data.deletedRows) ? data.deletedRows : [],
+    tableMeta: data.tableMeta ?? null,
+    complete: data.complete === true,
+  };
 };
 
 export const cacheMergedTableRows = async (db: any, mergedRows: any[]) => {
@@ -125,6 +164,46 @@ export const cacheMergedTableRows = async (db: any, mergedRows: any[]) => {
   );
 };
 
+const clearStaleLocalRows = async (
+  db: any,
+  localRows: any[],
+  authoritativeRows: any[]
+) => {
+  if (!db || typeof db.del !== "function") return;
+
+  const authoritativeKeys = new Set(
+    authoritativeRows
+      .map((row) => row?.dbKey)
+      .filter((dbKey): dbKey is string => typeof dbKey === "string" && dbKey.length > 0)
+  );
+
+  await Promise.all(
+    localRows.map(async (row) => {
+      const dbKey = row?.dbKey;
+      if (typeof dbKey !== "string" || authoritativeKeys.has(dbKey)) return;
+      try {
+        await db.del(dbKey);
+      } catch {
+        // Ignore local cache cleanup errors.
+      }
+    })
+  );
+};
+
+const keepRemoteRowForPartialMerge = (
+  row: any,
+  localRowsByKey: Map<string, any>
+): boolean => {
+  const dbKey = row?.dbKey;
+  if (typeof dbKey !== "string" || !dbKey) return false;
+  const localRow = localRowsByKey.get(dbKey);
+  if (!localRow) return true;
+
+  const remoteDeleted = Boolean(row?.deletedAt);
+  const localDeleted = Boolean(localRow?.deletedAt);
+  return remoteDeleted === localDeleted;
+};
+
 export const fetchAndCacheTableRows = async ({
   db,
   tenantId,
@@ -152,14 +231,14 @@ export const fetchAndCacheTableRows = async ({
     )
   );
 
-  const fulfilledRemoteRows = remoteResults
+  const fulfilledRemoteSnapshots = remoteResults
     .filter(
-      (result): result is PromiseFulfilledResult<any[]> =>
+      (result): result is PromiseFulfilledResult<TableRowsSnapshot> =>
         result.status === "fulfilled"
     )
     .map((result) => result.value);
 
-  if (fulfilledRemoteRows.length === 0 && localRows.length === 0) {
+  if (fulfilledRemoteSnapshots.length === 0 && localRows.length === 0) {
     const firstFailure = remoteResults.find(
       (result): result is PromiseRejectedResult =>
         result.status === "rejected"
@@ -167,8 +246,38 @@ export const fetchAndCacheTableRows = async ({
     throw new Error(firstFailure?.reason?.message || "加载表行失败");
   }
 
-  const mergedRows = mergeTableRows(localRows, ...fulfilledRemoteRows);
+  const allRemoteSnapshotsComplete =
+    remoteServers.length > 0 &&
+    remoteResults.length === remoteServers.length &&
+    fulfilledRemoteSnapshots.length === remoteServers.length &&
+    fulfilledRemoteSnapshots.every((snapshot) => snapshot.complete);
+  const localRowsByKey = new Map(
+    localRows
+      .filter((row) => typeof row?.dbKey === "string" && row.dbKey.length > 0)
+      .map((row) => [row.dbKey, row])
+  );
+  const remoteRowLists = fulfilledRemoteSnapshots.map((snapshot) => {
+    const snapshotRows = [...snapshot.rows, ...snapshot.deletedRows];
+    return allRemoteSnapshotsComplete
+      ? snapshotRows
+      : snapshotRows.filter((row) => keepRemoteRowForPartialMerge(row, localRowsByKey));
+  });
+  const authoritativeRemoteRows = remoteRowLists.flat();
+  const tableDeleted =
+    allRemoteSnapshotsComplete &&
+    Boolean(getLatestTableMeta(fulfilledRemoteSnapshots)?.deletedAt);
+
+  if (allRemoteSnapshotsComplete) {
+    await clearStaleLocalRows(db, localRows, authoritativeRemoteRows);
+  }
+
+  const localRowsForMerge = allRemoteSnapshotsComplete
+    ? localRows.filter((row) =>
+        authoritativeRemoteRows.some((remoteRow) => remoteRow?.dbKey === row?.dbKey)
+      )
+    : localRows;
+  const mergedRows = mergeTableRows(localRowsForMerge, ...remoteRowLists);
   await cacheMergedTableRows(db, mergedRows);
 
-  return mergedRows.filter((row) => !row?.deletedAt);
+  return tableDeleted ? [] : mergedRows.filter((row) => !row?.deletedAt);
 };

@@ -38,10 +38,6 @@ export interface AgentRuntimeChatMessage {
   cybotKey?: string;
   agentKey?: string;
   agentName?: string;
-  parallelSessionId?: string;
-  parallelBranchId?: string;
-  parallelLabel?: string;
-  parallelIndex?: number;
 }
 
 export interface AgentRuntimeResult {

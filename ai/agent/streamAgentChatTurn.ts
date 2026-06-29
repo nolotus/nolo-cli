@@ -15,6 +15,7 @@ import {
     selectPendingUserInputQueue,
     dequeueUserInput,
     clearPendingUserInputQueue,
+    selectActiveControllers,
 } from "../../chat/dialog/dialogSlice";
 import { removeTransientMessage, selectAllMsgs } from "../../chat/messages/messageSlice";
 import {
@@ -63,19 +64,19 @@ import {
     messageStreaming,
     prepareAndPersistUserMessage,
 } from "../../chat/messages/messageSlice";
-import { selectCurrentToken, selectUserId } from "../../auth/authSlice";
+import { selectCurrentToken, selectUserId, selectCurrentUser } from "../../auth/authSlice";
+import { shouldBlockForGptPro } from "../../auth/gptProTier";
 import { persistMessageWithFixedId } from "./persistMessageWithFixedId";
 import { updateTotalUsage } from "../chat/updateTotalUsage";
 import { createSSEParser } from "../chat/parseMultilineSSE";
 import { performServerProxyFetchWithRetry } from "../chat/serverProxyRetry";
 import { normalizeServerOrigin } from "./serverOrigin";
 import { getIsDesktopApp } from "../../app/utils/env";
-import { runDesktopAgentRuntimeTurn } from "../../app/utils/desktopAgentRuntimeTurnClient";
+import { runDesktopAgentRuntimeTurnStream } from "../../app/utils/desktopAgentRuntimeTurnClient";
 import { resolveRuntimeToolSurfaceForAgent } from "../../agent-runtime/runtimeToolSurface";
 
-const buildParallelMessageMetadata = (
-    agentConfig: Pick<Agent, "dbKey" | "name">,
-    runtimeOptions?: AgentRuntimeOptions,
+const buildMessageMetadata = (
+    agentConfig: Agent,
 ) => {
     const rawName =
         typeof agentConfig?.name === "string" ? agentConfig.name.trim() : "";
@@ -83,35 +84,10 @@ const buildParallelMessageMetadata = (
         agentKey: agentConfig.dbKey,
         cybotKey: agentConfig.dbKey,
         ...(rawName ? { agentName: rawName } : {}),
-        ...(runtimeOptions?.parallelSessionId
-            ? { parallelSessionId: runtimeOptions.parallelSessionId }
-            : {}),
-        ...(runtimeOptions?.parallelBranchId
-            ? { parallelBranchId: runtimeOptions.parallelBranchId }
-            : {}),
-        ...(runtimeOptions?.parallelLabel
-            ? { parallelLabel: runtimeOptions.parallelLabel }
-            : {}),
-        ...(runtimeOptions?.parallelIndex !== undefined
-            ? { parallelIndex: runtimeOptions.parallelIndex }
-            : {}),
     };
 };
 
-const filterMessagesForParallelBranch = (
-    messages: any[],
-    runtimeOptions?: AgentRuntimeOptions,
-) => {
-    if (!runtimeOptions?.parallelSessionId) return messages;
 
-    return messages.filter((message: any) => {
-        const sessionId = message?.parallelSessionId;
-        if (sessionId !== runtimeOptions.parallelSessionId) {
-            return true;
-        }
-        return message?.parallelBranchId === runtimeOptions.parallelBranchId;
-    });
-};
 
 const buildDesktopRuntimeToolMessagesForUi = ({
     dialogId,
@@ -639,6 +615,18 @@ const classifyQuickChatAccessError = (accessError: string) => {
     return "unknown";
 };
 
+/** 将 QuickChat mode selector 路由出的 model 标识映射为人类可读名称 */
+const QUICK_CHAT_MODEL_NAMES: Record<string, string> = {
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+    "zai-org/GLM-5.2": "GLM 5.2",
+    "accounts/fireworks/models/glm-5p2": "GLM 5.2",
+    "moonshotai/Kimi-K2.6": "Kimi K2.6",
+};
+
+const resolveQuickChatModelName = (model: string): string =>
+    QUICK_CHAT_MODEL_NAMES[model] ?? model;
+
 const isUsableAgentConfig = (value: unknown): value is Agent =>
     !!value &&
     typeof value === "object" &&
@@ -669,6 +657,41 @@ const hasAgentRunUserInputContent = (userInput: string | any[]) => {
         return userInput.trim().length > 0;
     }
     return Array.isArray(userInput) && userInput.length > 0;
+};
+
+const isLastMessageMatchingUserInput = (visibleMessages: any[], userInput: any): boolean => {
+    if (visibleMessages.length === 0) return false;
+    const lastMsg = visibleMessages[visibleMessages.length - 1];
+    if (lastMsg.role !== "user") return false;
+
+    const content1 = lastMsg.content;
+    const content2 = userInput;
+
+    const normalize = (content: any) => {
+        if (typeof content === "string") {
+            return content.trim();
+        }
+        if (Array.isArray(content)) {
+            if (content.length === 1 && content[0]?.type === "text") {
+                return (content[0].text || "").trim();
+            }
+            return content.map(part => {
+                if (part?.type === "text") return { type: "text", text: part.text?.trim() };
+                if (part?.type === "image_url") return { type: "image_url", url: part.image_url?.url };
+                return part;
+            });
+        }
+        return content;
+    };
+
+    const norm1 = normalize(content1);
+    const norm2 = normalize(content2);
+
+    if (typeof norm1 === "string" && typeof norm2 === "string") {
+        return norm1 === norm2;
+    }
+
+    return JSON.stringify(norm1) === JSON.stringify(norm2);
 };
 
 const setLoopStopReason = (reason: string) => {
@@ -713,6 +736,23 @@ export const streamAgentChatTurnHandler = async (
     let remoteTransientMessageFinalized = false;
     let modelRequestStarted = false;
 
+    // 防止同一 dialog 的并发 streamAgentChatTurn：检查是否已有活跃 loop
+    if (explicitDialogKey) {
+        const dialogId = extractCustomId(explicitDialogKey);
+        const existingLoopKey = `loop:${dialogId}`;
+        const activeControllers = selectActiveControllers(
+            getState() as RootState,
+            explicitDialogKey,
+        );
+        if (activeControllers[existingLoopKey]) {
+            console.warn(
+                "[streamAgentChatTurn] Rejected concurrent turn for dialog",
+                { dialogId, agentKey },
+            );
+            return rejectWithValue("Agent is already responding for this dialog");
+        }
+    }
+
     try {
         let totalTurnUsage: any = null;
         const agentRunUserInput = normalizeAgentRunUserInput(userInput);
@@ -720,15 +760,61 @@ export const streamAgentChatTurnHandler = async (
             agentKey,
             dialogKey: explicitDialogKey ?? null,
         });
-        // 1. 读取 Agent 配置。Quick Chat 会提前预热默认 agent；命中 Redux DB 缓存时避免重复读。
-        const cachedAgentConfig = selectById(getState() as RootState, agentKey);
-        const rawAgentConfig = isUsableAgentConfig(cachedAgentConfig)
-            ? cachedAgentConfig
-            : await readAgentConfigForTurn(
-                dispatch,
-                agentKey,
+        // 1. 读取 Agent 配置。
+        //    Quick Chat mode selector (auto/balanced/quality) 通过 llmConfigOverride
+        //    提供完整的 provider+model 路由，不再依赖 nolo 默认 agent 的 DB 记录。
+        const llmOverride = (runtimeOptions as any)?.llmConfigOverride as
+            | { provider?: string; model?: string }
+            | undefined;
+        const cachedAgentConfig = selectById(
+            getState() as RootState,
+            agentKey,
+        );
+        let rawAgentConfig: Agent | null = null;
+
+        if (
+            quickChatPerfStartedAt &&
+            llmOverride?.provider &&
+            llmOverride?.model
+        ) {
+            // 模式选择器已决定模型 → 不需要读 DB，直接构造最小配置
+            logQuickChatPerfStage(
                 quickChatPerfStartedAt,
+                "stream-agent-config-synthetic",
+                {
+                    agentKey,
+                    provider: llmOverride.provider,
+                    model: llmOverride.model,
+                },
             );
+            rawAgentConfig = {
+                name: resolveQuickChatModelName(llmOverride.model),
+                dbKey: agentKey,
+                id: agentKey.replace(/^agent-pub-/, ""),
+                model: llmOverride.model,
+                provider: llmOverride.provider,
+                apiSource: "platform",
+                useServerProxy: true,
+                prompt: "",
+                tools: [],
+                references: [],
+            } as Agent;
+        } else {
+            // 正常路径：从 DB / 缓存读取 agent 配置
+            rawAgentConfig = isUsableAgentConfig(cachedAgentConfig)
+                ? cachedAgentConfig
+                : await readAgentConfigForTurn(
+                    dispatch,
+                    agentKey,
+                    quickChatPerfStartedAt,
+                );
+            if (!rawAgentConfig) {
+                return rejectWithValue(
+                    `Agent config not found for ID: ${agentKey}`,
+                );
+            }
+        }
+
         if (!rawAgentConfig) {
             return rejectWithValue(`Agent config not found for ID: ${agentKey}`);
         }
@@ -749,8 +835,18 @@ export const streamAgentChatTurnHandler = async (
             model: agentConfig.model,
             provider: agentConfig.provider,
             apiSource: agentConfig.apiSource,
-            source: cachedAgentConfig === rawAgentConfig ? "cache" : "read",
+            source: rawAgentConfig === cachedAgentConfig ? "cache"
+                : quickChatPerfStartedAt && llmOverride?.provider ? "synthetic"
+                : "read",
         });
+
+        const gptProCheck = shouldBlockForGptPro(
+            agentConfig,
+            selectCurrentUser(getState() as RootState)?.gptProAccess?.status,
+        );
+        if (gptProCheck.blocked) {
+            return rejectWithValue(gptProCheck.message);
+        }
 
         const configuredBoundMachineId =
             typeof (agentConfig as any).runtimeBinding?.machineId === "string"
@@ -793,17 +889,11 @@ export const streamAgentChatTurnHandler = async (
             dispatch(addActiveController({ messageId: loopKey, controller: loopController, dialogKey }));
 
             const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
-            const cliMessageMetadata = buildParallelMessageMetadata(
-                agentConfig,
-                runtimeOptions,
-            );
+            const cliMessageMetadata = buildMessageMetadata(agentConfig);
             if (boundMachineId) {
                 const token = selectCurrentToken(currentState);
                 const authHeader = token ? `Bearer ${token}` : "";
-                const rawMessages = filterMessagesForParallelBranch(
-                    selectAllMsgs(currentState, dialogId),
-                    runtimeOptions,
-                );
+                const rawMessages = selectAllMsgs(currentState, dialogId);
                 const visibleMessages = buildAgentViewMessages(
                     rawMessages as any,
                     agentConfig.dbKey,
@@ -1194,59 +1284,147 @@ export const streamAgentChatTurnHandler = async (
         });
 
         if (shouldUseDesktopLocalRuntime(agentConfig)) {
-            const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
-            const desktopMessageMetadata = buildParallelMessageMetadata(
-                agentConfig,
-                runtimeOptions,
-            );
-            remoteTransientMessageId = messageId;
+            const desktopMessageMetadata = buildMessageMetadata(agentConfig);
             loopKey = `loop:${dialogId}`;
             dispatch(addActiveController({ messageId: loopKey, controller: loopController, dialogKey }));
-            dispatch(messageStreaming({
-                id: messageId,
-                dialogId,
-                dbKey: msgKey,
-                content: "",
-                role: "assistant",
-                ...desktopMessageMetadata,
-            }));
 
-            const localResult = await runDesktopAgentRuntimeTurn({
-                agentRef: agentConfig.dbKey || agentKey,
-                input: userInput,
-                continueDialogId: dialogId,
-            });
-            if (!localResult.ok) {
-                dispatch(removeTransientMessage(messageId));
+            let currentContent = "";
+            let assistantMessageKeys: { key: string; messageId: string } | null = null;
+            let streamResult: any = null;
+            let streamError: string | null = null;
+            const activeToolMessages = new Map<string, any>();
+            const ensureAssistantMessageKeys = () => {
+                if (!assistantMessageKeys) {
+                    assistantMessageKeys = createDialogMessageKeyAndId(dialogId);
+                    remoteTransientMessageId = assistantMessageKeys.messageId;
+                }
+                return assistantMessageKeys;
+            };
+            const streamDesktopAssistantText = (text: string) => {
+                currentContent += text;
+                const { key: msgKey, messageId } = ensureAssistantMessageKeys();
+                dispatch(messageStreaming({
+                    id: messageId,
+                    dialogId,
+                    dbKey: msgKey,
+                    content: currentContent,
+                    role: "assistant",
+                    isStreaming: true,
+                    ...desktopMessageMetadata,
+                }));
+            };
+
+            try {
+                const eventStream = runDesktopAgentRuntimeTurnStream({
+                    agentRef: agentConfig.dbKey || agentKey,
+                    input: userInput,
+                    continueDialogId: dialogId,
+                    cwd: runtimeOptions?.cwd,
+                    restrictShellToWorkspace: runtimeOptions?.restrictShellToWorkspace === true,
+                });
+
+                for await (const event of eventStream) {
+                    if (event.type === "delta") {
+                        streamDesktopAssistantText(event.text);
+                    } else if (event.type === "tool") {
+                        const toolEvent = event.event;
+                        const callId = toolEvent.toolCallId;
+                        if (!callId) continue;
+
+                        if (toolEvent.type === "tool-call") {
+                            const { key: dbKey, messageId: toolMsgId } = createDialogMessageKeyAndId(dialogId);
+                            const toolMsg = {
+                                id: toolMsgId,
+                                dialogId,
+                                dbKey,
+                                role: "tool" as const,
+                                content: "",
+                                isStreaming: true,
+                                toolName: toolEvent.toolName,
+                                toolCallId: callId,
+                            };
+                            activeToolMessages.set(callId, toolMsg);
+                            dispatch(messageStreaming(toolMsg));
+                        } else if (toolEvent.type === "tool-result" || toolEvent.type === "tool-error") {
+                            const existing = activeToolMessages.get(callId);
+                            if (existing) {
+                                const isError = toolEvent.type === "tool-error";
+                                const toolResultMsg = {
+                                    ...existing,
+                                    isStreaming: false,
+                                    content: toolEvent.summary || toolEvent.message || "",
+                                    metadata: {
+                                        ...toolEvent.metadata,
+                                        ...(isError ? { error: true, message: toolEvent.message } : {}),
+                                    },
+                                };
+                                activeToolMessages.set(callId, toolResultMsg);
+                                dispatch(messageStreaming(toolResultMsg));
+                            }
+                        }
+                    } else if (event.type === "done") {
+                        streamResult = event.result;
+                    } else if (event.type === "error") {
+                        streamError = event.error;
+                    }
+                }
+            } catch (err: any) {
+                streamError = err?.message || "Local turn read stream error";
+            }
+
+            if (streamError) {
+                if (assistantMessageKeys) {
+                    dispatch(removeTransientMessage(assistantMessageKeys.messageId));
+                }
+                for (const toolMsg of activeToolMessages.values()) {
+                    dispatch(removeTransientMessage(toolMsg.id));
+                }
                 remoteTransientMessageFinalized = true;
                 setLoopStopReason("error");
-                return rejectWithValue(localResult.error);
+                return rejectWithValue(streamError);
             }
 
-            const desktopTurnMessages = (localResult.result as any).turnMessages;
-            for (const toolMessage of buildDesktopRuntimeToolMessagesForUi({
-                dialogId,
-                turnMessages: desktopTurnMessages,
-            })) {
-                dispatch(messageStreaming(toolMessage));
+            if (!streamResult) {
+                if (assistantMessageKeys) {
+                    dispatch(removeTransientMessage(assistantMessageKeys.messageId));
+                }
+                for (const toolMsg of activeToolMessages.values()) {
+                    dispatch(removeTransientMessage(toolMsg.id));
+                }
+                remoteTransientMessageFinalized = true;
+                setLoopStopReason("error");
+                return rejectWithValue("Local turn stream closed unexpectedly without result");
             }
 
+            const desktopTurnMessages = (streamResult as any).turnMessages || [];
+            if (activeToolMessages.size === 0) {
+                for (const toolMessage of buildDesktopRuntimeToolMessagesForUi({
+                    dialogId,
+                    turnMessages: desktopTurnMessages,
+                })) {
+                    dispatch(messageStreaming(toolMessage));
+                }
+            }
+
+            const { key: msgKey, messageId } = ensureAssistantMessageKeys();
             dispatch(messageStreaming({
                 id: messageId,
                 dialogId,
                 dbKey: msgKey,
-                content: localResult.result.content || "",
+                content: streamResult.content || "",
                 role: "assistant",
+                isStreaming: false,
                 ...desktopMessageMetadata,
             }));
+
             await dispatch(messageStreamEnd({
                 finalContentBuffer: [
                     {
                         type: "text",
-                        text: localResult.result.content || "",
+                        text: streamResult.content || "",
                     },
                 ],
-                totalUsage: localResult.result.usage ?? undefined,
+                totalUsage: streamResult.usage ?? undefined,
                 messageId,
                 msgKey,
                 agentConfig,
@@ -1258,7 +1436,7 @@ export const streamAgentChatTurnHandler = async (
             })).unwrap();
             remoteTransientMessageFinalized = true;
             return {
-                usage: localResult.result.usage ?? undefined,
+                usage: streamResult.usage ?? undefined,
             };
         }
 
@@ -1291,10 +1469,7 @@ export const streamAgentChatTurnHandler = async (
             } else {
                 const token = selectCurrentToken(state);
                 const authHeader = token ? `Bearer ${token}` : "";
-                const rawMessages = filterMessagesForParallelBranch(
-                    selectAllMsgs(state, dialogId),
-                    runtimeOptions,
-                );
+                const rawMessages = selectAllMsgs(state, dialogId);
                 const visibleMessages = buildAgentViewMessages(
                     rawMessages as any,
                     agentConfig.dbKey,
@@ -1302,10 +1477,7 @@ export const streamAgentChatTurnHandler = async (
                 const cleanedMessages = filterAndCleanMessages(visibleMessages);
                 const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
                 remoteTransientMessageId = messageId;
-                const remoteMessageMetadata = buildParallelMessageMetadata(
-                    agentConfig,
-                    runtimeOptions,
-                );
+                const remoteMessageMetadata = buildMessageMetadata(agentConfig);
                 let accumulated = "";
                 let totalTurnUsage: any = undefined;
                 const buildRemoteAssistantMessage = () => ({
@@ -1554,14 +1726,22 @@ export const streamAgentChatTurnHandler = async (
         const effectiveAgentConfig = dialogMaxTokens
             ? { ...agentConfigForCall, max_tokens: dialogMaxTokens }
             : agentConfigForCall;
+
+        // 应用 runtimeOptions.llmConfigOverride
+        // 覆盖 provider/model/reasoningEffort，仅本轮生效（CLI/desktop 路径已提前 return）
+        if (runtimeOptions?.llmConfigOverride) {
+            const { provider, model, reasoningEffort } = runtimeOptions.llmConfigOverride;
+            if (provider) effectiveAgentConfig.provider = provider;
+            if (model) effectiveAgentConfig.model = model;
+            if (reasoningEffort) {
+                effectiveAgentConfig.reasoning_effort = reasoningEffort;
+            }
+        }
         const initialImageGenerationState = resolveImageGenerationStreamingState(
             effectiveAgentConfig,
         );
         const streamingMessageMetadata = {
-            ...buildParallelMessageMetadata(
-                agentConfigForCall,
-                runtimeOptions,
-            ),
+            ...buildMessageMetadata(agentConfigForCall),
             ...(initialImageGenerationState
                 ? { imageGenerationState: initialImageGenerationState }
                 : {}),
@@ -1698,16 +1878,17 @@ export const streamAgentChatTurnHandler = async (
                 });
                 const contexts = mergeContexts(staticContexts, dynamicContexts);
 
-                const rawMessages = filterMessagesForParallelBranch(
-                    selectAllMsgs(loopState, dialogId),
-                    runtimeOptions,
-                );
+                const rawMessages = selectAllMsgs(loopState, dialogId);
                 let visibleMessages = buildAgentViewMessages(
                     rawMessages as any,
                     agentConfigForCall.dbKey,
                 );
 
-                if (appendTempUserInput && hasAgentRunUserInputContent(agentRunUserInput)) {
+                if (
+                    appendTempUserInput &&
+                    hasAgentRunUserInputContent(agentRunUserInput) &&
+                    !isLastMessageMatchingUserInput(visibleMessages, agentRunUserInput)
+                ) {
                     visibleMessages = [
                         ...visibleMessages,
                         {
@@ -1976,16 +2157,17 @@ export const streamAgentChatTurnHandler = async (
             // 合并静态和动态上下文
             const contexts = mergeContexts(staticContexts, dynamicContexts);
 
-            const rawMessages = filterMessagesForParallelBranch(
-                selectAllMsgs(loopState, dialogId),
-                runtimeOptions,
-            );
+            const rawMessages = selectAllMsgs(loopState, dialogId);
             let visibleMessages = buildAgentViewMessages(
                 rawMessages as any,
                 agentConfigForCall.dbKey,
             );
 
-            if (appendTempUserInput && hasAgentRunUserInputContent(agentRunUserInput)) {
+            if (
+                appendTempUserInput &&
+                hasAgentRunUserInputContent(agentRunUserInput) &&
+                !isLastMessageMatchingUserInput(visibleMessages, agentRunUserInput)
+            ) {
                 visibleMessages = [
                     ...visibleMessages,
                     {

@@ -7,7 +7,7 @@ export const buildContextLayerContractBlock = (
   options: ContextLayerContractOptions = {}
 ): string => {
   const lines = [
-    "--- 上下文分层约定 ---",
+    "--- 知识存储约定 ---",
     "不要把所有信息都塞进同一层。优先利用已有的 memory / knowledge / doc，而不是把它们混成一段长对话。",
     "",
     "层次边界：",
@@ -20,12 +20,6 @@ export const buildContextLayerContractBlock = (
     "- 稳定行为规则、长期固定约束，优先沉淀到 knowledge layer。",
     "- 用户偏好、最近形成的协作共识、近期反复有用的经验，优先沉淀到 memory layer。",
     "- 需要跨轮次接力的任务状态、运行手册、事故记录、检查点，优先写入 doc layer。",
-    "",
-    "读取原则：",
-    "- 先用 knowledge layer 解决稳定规则问题。",
-    "- 再用 memory layer 补充近期偏好和延续性。",
-    "- 需要真实运行现场、任务状态或可共享工作台时，再读 doc layer。",
-    "- 当前用户输入始终高于 recent memory；recent memory 高于过旧的 doc 推断。",
   ];
 
   if (options.hasRememberMemoryTool) {

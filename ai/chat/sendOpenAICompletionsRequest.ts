@@ -16,6 +16,12 @@ import {
   Message,
   OpenAITextContent,
 } from "../../chat/messages/types";
+import {
+  createThinkParserState,
+  flushThinkParser,
+  processThinkChunk,
+  type ThinkParseState,
+} from "../../agent-runtime/thinkTagParser";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getApiEndpoint } from "../llm/providers";
@@ -140,6 +146,7 @@ type StreamState = {
   totalUsage: any | null;
   accumulatedToolCalls: any[];
   reasoningBuffer: string;
+  thinkState: ThinkParseState;
   assistantToolCalls?: AssistantToolCall[];
   hasHandedOff: boolean;
   hasProcessedToolCalls: boolean;
@@ -238,6 +245,7 @@ function createInitialStreamState(): StreamState {
     totalUsage: null,
     accumulatedToolCalls: [],
     reasoningBuffer: "",
+    thinkState: createThinkParserState(),
     assistantToolCalls: undefined,
     hasHandedOff: false,
     hasProcessedToolCalls: false,
@@ -399,14 +407,21 @@ function applyDelta(
     hasNewVisibleContent = true;
   }
 
-  // 文本增量
+  // 文本增量：模型可能把思考过程直接包在 \u003cthink\u003e 标签里返回（如 MiniMax M3）
   const contentChunk = delta.content || "";
   if (contentChunk) {
-    next = {
-      ...next,
-      contentBuffer: appendTextChunk(next.contentBuffer, contentChunk),
-    };
-    hasNewVisibleContent = true;
+    const parsed = processThinkChunk(contentChunk, next.thinkState);
+    next.thinkState = parsed.state;
+    if (parsed.reasoning) {
+      next.reasoningBuffer = (next.reasoningBuffer || "") + parsed.reasoning;
+    }
+    if (parsed.content) {
+      next = {
+        ...next,
+        contentBuffer: appendTextChunk(next.contentBuffer, parsed.content),
+      };
+      hasNewVisibleContent = true;
+    }
   }
 
   return { state: next, hasNewVisibleContent };
@@ -475,10 +490,6 @@ async function processAccumulatedToolCalls(
         messageId: ctx.messageId,
         dialogId: ctx.dialogId,
         dialogKey: ctx.dialogKey,
-        parallelSessionId: ctx.messageMetadata?.parallelSessionId,
-        parallelBranchId: ctx.messageMetadata?.parallelBranchId,
-        parallelLabel: ctx.messageMetadata?.parallelLabel,
-        parallelIndex: ctx.messageMetadata?.parallelIndex,
       })
     )
     .unwrap();
@@ -535,6 +546,19 @@ async function handleStreamCompletion(
   let hasHandedOff = false;
   let hasPendingInteraction = false;
 
+  // Flush any buffered think-tag bytes so the final message is complete.
+  const flushed = flushThinkParser(state.thinkState);
+  state.thinkState = flushed.state;
+  if (flushed.reasoning) {
+    state.reasoningBuffer = (state.reasoningBuffer || "") + flushed.reasoning;
+  }
+  if (flushed.content) {
+    state = {
+      ...state,
+      contentBuffer: appendTextChunk(state.contentBuffer, flushed.content),
+    };
+  }
+
   if (!state.hasProcessedToolCalls && state.accumulatedToolCalls.length > 0) {
     // Tool 开始前先更新 TopBar token 显示
     if (state.totalUsage) {
@@ -551,7 +575,6 @@ async function handleStreamCompletion(
       dialogId: ctx.dialogId,
       dialogKey: ctx.dialogKey,
       messageId: ctx.messageId,
-      messageMetadata: ctx.messageMetadata,
     });
 
     let next = toolResult.state;

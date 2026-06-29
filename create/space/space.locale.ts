@@ -15,6 +15,7 @@ export default {
       delete: "Delete",
       save: "Save",
       edit: "Edit",
+      clear: "Clear",
 
       // === 表单相关 ===
       name_required: "Space name is required",
@@ -30,7 +31,7 @@ export default {
       create_success: "Space created successfully",
       create_error: "Failed to create space",
       creating: "Creating space...",
-
+      pick_folder_failed: "Failed to select folder",
       // === 空间选择 ===
       default_space: "Default Space",
       select_space: "Select Space",
@@ -300,6 +301,7 @@ export default {
       delete: "删除",
       save: "保存",
       edit: "编辑",
+      clear: "清除",
 
       // === 表单相关 ===
       name_required: "空间名称必填",
@@ -315,7 +317,7 @@ export default {
       create_success: "空间创建成功",
       create_error: "创建空间失败",
       creating: "正在创建空间...",
-
+      pick_folder_failed: "选择文件夹失败",
       // === 空间选择 ===
       default_space: "默认空间",
       select_space: "选择空间",
@@ -579,6 +581,7 @@ export default {
       delete: "刪除",
       save: "儲存",
       edit: "編輯",
+      clear: "清除",
 
       // === 表单相关 ===
       name_required: "空間名稱必填",
@@ -594,8 +597,7 @@ export default {
       create_success: "空間創建成功",
       create_error: "創建空間失敗",
       creating: "正在創建空間...",
-
-      // === 空间选择 ===
+      pick_folder_failed: "選擇資料夾失敗",
       default_space: "預設空間",
       select_space: "選擇空間",
       no_spaces: "暫無空間",

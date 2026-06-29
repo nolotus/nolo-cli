@@ -24,6 +24,7 @@ export interface RunAgentBackgroundResult {
     dialogId: string;
     content?: string;
     usage?: unknown;
+    status?: string;
 }
 
 export interface RunAgentBackgroundArgs {
@@ -39,6 +40,8 @@ export interface RunAgentBackgroundArgs {
     onFailed?: (error: string) => void;
     /** 外部取消信号 */
     signal?: AbortSignal;
+    /** 是否等待 SSE 完成事件；false 时拿到 dialogId 立即返回（用于 callAgent background 模式） */
+    waitForCompletion?: boolean;
 }
 
 const MAX_SSE_RETRIES = 3;
@@ -73,9 +76,9 @@ function createSubscriptionError(
 async function waitForRetryDelay(retryAfterMs: number, signal: AbortSignal) {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     await new Promise<void>((resolve, reject) => {
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        let timeoutId: number;
         const onAbort = () => {
-            if (timeoutId !== null) clearTimeout(timeoutId);
+            clearTimeout(timeoutId);
             signal.removeEventListener("abort", onAbort);
             reject(new DOMException("Aborted", "AbortError"));
         };
@@ -282,6 +285,10 @@ export const runAgentBackground = createAsyncThunk<
         serverBase: routedServerBase,
     } = runResponse;
     onStatusChange?.("pending");
+
+    if (args.waitForCompletion === false) {
+        return { dialogId, status: runResponse.status };
+    }
 
     // ── Step 2: 订阅 SSE 事件流（含断线重连，最多 3 次）────────────────────────
     let lastError: Error | undefined;

@@ -346,6 +346,31 @@ export async function resolveAgentRecordFromHybridStore(args: {
     try {
       const record = await args.db.get(key);
       if (record && typeof record === "object") {
+        // 如果缓存来自远程且过期，校验远程是否已 tombstone
+        const cacheAge = Date.now() - (Number(record?.cachedAt) || 0);
+        const STALE_CACHE_MS = 60_000;
+        if (record?.serverOrigin && shouldReadAgentKeyRemotely(key) && cacheAge > STALE_CACHE_MS) {
+          try {
+            await readAgentRecord({
+              agentKey: key,
+              authToken,
+              fallbackFetchImpl: args.fallbackFetchImpl,
+              fetchImpl: args.fetchImpl,
+              serverUrl: record.serverOrigin,
+            });
+            // 远程记录仍然活跃，刷新缓存时间
+            try { await args.db.put(key, { ...record, cachedAt: Date.now() }); } catch {}
+          } catch (err: unknown) {
+            // 只在远程确认 404（记录已删除/tombstone）时清缓存
+            // 暂态 500/网络错误不清缓存，保持可用性
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("HTTP 404")) {
+              try { await args.db.del(key); } catch {}
+              continue;
+            }
+            // 暂态错误：使用缓存继续，不阻塞读取
+          }
+        }
         return {
           agentKey: key,
           record,
@@ -370,7 +395,7 @@ export async function resolveAgentRecordFromHybridStore(args: {
           fetchImpl: args.fetchImpl,
           serverUrl,
         });
-        const cached = { ...remoteRecord, dbKey: key, serverOrigin: serverUrl };
+        const cached = { ...remoteRecord, dbKey: key, serverOrigin: serverUrl, cachedAt: Date.now() };
         await args.db.put(key, cached);
         return {
           agentKey: key,

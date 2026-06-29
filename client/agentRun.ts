@@ -6,6 +6,7 @@ import {
   WIN_CODEX_AGENT_KEY,
 } from "../agentAliases";
 import type { LocalAgentActionGate, LocalAgentToolEvent } from "../agent-runtime/localLoop";
+import type { PermissionRequest } from "../agent-runtime/actionGate";
 import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode, AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
 import { createStreamingTextWriter } from "./streamingOutput";
@@ -28,6 +29,15 @@ import {
   resolveToolDisplayMode,
   shouldEmitToolEvents,
 } from "./toolOutput";
+import {
+  type DispatchPlan,
+  resolveAuthToken,
+  isMachineBoundLocalhostCustomProvider,
+  resolveBoundMachineId,
+  detectCurrentMachineId,
+  CLI_PROVIDER_NAMES,
+  isCliProviderAgentConfig,
+} from "./agentRunTypes";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -79,6 +89,7 @@ type RunAgentTurnOptions = {
   fetchImpl?: typeof fetch;
   currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
   actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
+  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
 };
 
 export type RunAgentTurnResult = {
@@ -160,7 +171,7 @@ function formatElapsed(totalSeconds: number): string {
 }
 
 
-// Table mutations and parallel server orchestration require the server runtime.
+// Table mutations require the server runtime.
 // Read-only queryTableRows is intentionally excluded: local CLI executes it via
 // noloWorkspaceTools, so auto mode should not skip local just because it appears
 // in the private workspace tool surface.
@@ -169,7 +180,6 @@ const SERVER_PLATFORM_TOOL_NAMES = new Set([
   "addTableRows",
   "deleteTableRow",
   "deleteTableRows",
-  "streamParallelAgents",
   "updateTableRow",
   "updateTableRows",
 ]);
@@ -202,16 +212,6 @@ const KNOWN_SERVER_PLATFORM_AGENT_ALIASES = new Set([
   "reviewer",
 ]);
 
-const CLI_PROVIDER_NAMES = new Set([
-  "agy",
-  "claude",
-  "codex",
-  "copilot",
-  "gemini",
-  "grok",
-  "opencode",
-  "qoder",
-]);
 
 export function findServerPlatformTools(toolNames?: string[]) {
   if (!Array.isArray(toolNames)) return [];
@@ -237,65 +237,14 @@ function isKnownServerPlatformAgent(options: RunAgentTurnOptions) {
   return Boolean(normalizedKey && KNOWN_SERVER_PLATFORM_AGENT_ALIASES.has(normalizedKey));
 }
 
-function isMachineBoundLocalhostCustomProvider(agentConfig: any) {
-  const machineId =
-    agentConfig?.runtimeBinding && typeof agentConfig.runtimeBinding === "object"
-      ? String(agentConfig.runtimeBinding.machineId ?? "").trim()
-      : "";
-  const providerUrl = typeof agentConfig?.customProviderUrl === "string"
-    ? agentConfig.customProviderUrl.trim()
-    : "";
-  if (!machineId || !providerUrl) return false;
-  try {
-    const hostname = new URL(providerUrl).hostname.toLowerCase();
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-  } catch {
-    return false;
-  }
-}
 
-function isCliProviderAgentConfig(agentConfig: any) {
-  const cliProvider = typeof agentConfig?.cliProvider === "string"
-    ? agentConfig.cliProvider.trim().toLowerCase()
-    : "";
-  const provider = typeof agentConfig?.provider === "string"
-    ? agentConfig.provider.trim().toLowerCase()
-    : "";
-  return Boolean(cliProvider) || CLI_PROVIDER_NAMES.has(provider);
+function shouldShowUsage(env: EnvLike) {
+  return env.NOLO_DEBUG === "1" || env.NOLO_SHOW_USAGE === "1";
 }
-
-function resolveBoundMachineId(agentConfig: any) {
-  return agentConfig?.runtimeBinding && typeof agentConfig.runtimeBinding === "object"
-    ? String(agentConfig.runtimeBinding.machineId ?? "").trim()
-    : "";
-}
-
-async function detectCurrentMachineId(env: EnvLike): Promise<string | undefined> {
-  const fromEnv = (env.NOLO_CURRENT_MACHINE_ID || env.NOLO_MACHINE_ID || "").trim();
-  if (fromEnv) return fromEnv;
-  try {
-    const { detectMachineInfo } = await import("../connector-experimental/machineInfo");
-    const machine = await detectMachineInfo({ probeLaunchable: true });
-    return typeof machine?.machineId === "string" && machine.machineId.trim()
-      ? machine.machineId.trim()
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function resolveCurrentMachineId(options: RunAgentTurnOptions) {
   return options.currentMachineIdResolver
     ? options.currentMachineIdResolver(options.env)
     : detectCurrentMachineId(options.env);
-}
-
-function resolveAuthToken(env: EnvLike) {
-  return env.AUTH_TOKEN || env.AUTH || env.BENCHMARK_AUTH_TOKEN || "";
-}
-
-function shouldShowUsage(env: EnvLike) {
-  return env.NOLO_DEBUG === "1" || env.NOLO_SHOW_USAGE === "1";
 }
 
 function resolveRequestedRuntimeMode(options: RunAgentTurnOptions) {
@@ -311,6 +260,9 @@ function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
     fetchImpl: options.fetchImpl,
     cwd: options.localRuntimeCwd,
     output: options.output,
+    ...(options.confirmDestructiveAction
+      ? { confirmDestructiveAction: options.confirmDestructiveAction }
+      : {}),
   });
 }
 

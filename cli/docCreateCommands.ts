@@ -1,13 +1,3 @@
-import { NOLO_CLUSTER_SERVERS } from "../database/config";
-import { DEFAULT_LOCAL_API_ORIGIN } from "../core/localOrigins";
-import { buildSkillSummaryMarker } from "../ai/skills/skillSummaryMarker";
-import { writeAgentRecord } from "./agentRecordHelpers";
-import {
-  parseUserIdFromAuthToken,
-  readOption,
-  resolveAuthToken,
-  resolveServerUrl,
-} from "./cliEnvHelpers";
 import {
   buildPageKey,
   buildPageRecord,
@@ -20,43 +10,19 @@ import {
   buildSkillPageRecord,
   parseJsonArg,
 } from "./docSkillHelpers";
-import { ensurePageAttachedToSpace } from "./docSpaceHelpers";
+import {
+  buildSkillSummaryForRecord,
+  hasFlag,
+  hasHelpArg,
+  readTitle,
+  requireTokenUser,
+  resolveDocKind,
+  resolveWriteTargets,
+  writePageRecord,
+} from "./docCommandShared";
+import { readOption } from "./cliEnvHelpers";
 import { findPotentialSecrets, formatSecretFindings } from "./secretScan";
-
-type DocKind = "page" | "skill";
-
-type DocCreateDeps = {
-  env: NodeJS.ProcessEnv;
-};
-
-const VALUE_FLAGS = new Set([
-  "--title",
-  "--description",
-  "--body",
-  "--body-file",
-  "--id",
-  "--space",
-  "--sync",
-  "--server",
-  "--server-url",
-  "--token",
-  "--tools",
-  "--required-skills",
-  "--recommended-skills",
-  "--preferred-agents",
-  "--trigger-mode",
-  "--budget-tier",
-  "--prompt-patch",
-  "--kind",
-]);
-
-function hasHelpArg(args: string[]) {
-  return args.includes("--help") || args.includes("-h");
-}
-
-function hasFlag(args: string[], flag: string) {
-  return args.includes(flag);
-}
+import type { DocKind, DocWriteDeps } from "./docCommandShared";
 
 function printDocCreateUsage(output: { write(chunk: string): unknown }) {
   output.write(`Usage:
@@ -96,114 +62,9 @@ Options:
 `);
 }
 
-function normalizeBaseUrl(base: string) {
-  return base.trim().replace(/\/+$/, "");
-}
-
-function localBaseFromEnv(env: NodeJS.ProcessEnv) {
-  return normalizeBaseUrl(env.SCRIPT_LOCAL_BASE_URL || DEFAULT_LOCAL_API_ORIGIN);
-}
-
-function targetToBase(target: string, env: NodeJS.ProcessEnv) {
-  const normalized = target.trim().toLowerCase();
-  if (normalized === "local") return localBaseFromEnv(env);
-  if (normalized === "main") return normalizeBaseUrl(NOLO_CLUSTER_SERVERS[0]);
-  if (normalized === "us") return normalizeBaseUrl(NOLO_CLUSTER_SERVERS[1]);
-  return normalizeBaseUrl(target);
-}
-
-function parseSyncTargets(raw: string | undefined, env: NodeJS.ProcessEnv) {
-  if (!raw) return undefined;
-  return raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .filter((value) => value !== "none")
-    .map((value) => targetToBase(value, env));
-}
-
-function isLocalBaseUrl(baseUrl: string) {
-  try {
-    const hostname = new URL(baseUrl).hostname;
-    return hostname === "localhost" || hostname === "127.0.0.1";
-  } catch {
-    return false;
-  }
-}
-
-function resolveWriteTargets(args: string[], env: NodeJS.ProcessEnv) {
-  const explicitSync = parseSyncTargets(readOption(args, "--sync"), env);
-  const targets = hasFlag(args, "--local-only")
-    ? [localBaseFromEnv(env)]
-    : explicitSync ?? [resolveServerUrl(args, env)];
-  const filtered = hasFlag(args, "--no-local")
-    ? targets.filter((target) => !isLocalBaseUrl(target))
-    : targets;
-  return Array.from(new Set(filtered.map(normalizeBaseUrl)));
-}
-
-function readTitle(args: string[]) {
-  return readOption(args, "--title") ?? args.find((value, index) => {
-    if (index === 0) return false;
-    if (VALUE_FLAGS.has(args[index - 1])) return false;
-    return !value.startsWith("-");
-  });
-}
-
-function resolveDocKind(args: string[], fallback: DocKind): DocKind {
-  if (hasFlag(args, "--page") || readOption(args, "--kind") === "page") return "page";
-  return fallback;
-}
-
-function requireTokenUser(args: string[], env: NodeJS.ProcessEnv, dryRun: boolean) {
-  const authToken = resolveAuthToken(args, env);
-  const userId = parseUserIdFromAuthToken(authToken) || env.USER_ID || "";
-  if (!authToken && !dryRun) {
-    throw new Error("doc create requires an auth token. Pass --token or set AUTH_TOKEN.");
-  }
-  if (!userId && !dryRun) {
-    throw new Error("auth token does not contain userId. Pass a user-scoped token.");
-  }
-  return {
-    authToken,
-    userId: userId || "dry-run",
-  };
-}
-
-async function writePageRecord(args: {
-  authToken: string;
-  dbKey: string;
-  record: Record<string, any>;
-  serverUrl: string;
-  spaceId: string | null;
-  title: string;
-  userId: string;
-  skillSummary?: Record<string, any> | null;
-}) {
-  await writeAgentRecord({
-    agentKey: args.dbKey,
-    authToken: args.authToken,
-    fetchImpl: fetch,
-    serverUrl: args.serverUrl,
-    userId: args.userId,
-    record: args.record,
-  });
-  if (args.spaceId) {
-    await ensurePageAttachedToSpace({
-      baseUrl: args.serverUrl,
-      userId: args.userId,
-      authToken: args.authToken,
-      spaceId: args.spaceId,
-      contentKey: args.dbKey,
-      title: args.title,
-      skillSummary: args.skillSummary,
-    });
-  }
-}
-
 async function runCreateCommand(
   args: string[],
-  deps: DocCreateDeps,
+  deps: DocWriteDeps,
   options: { defaultKind: DocKind; usage: (output: { write(chunk: string): unknown }) => void }
 ) {
   if (hasHelpArg(args)) {
@@ -288,7 +149,7 @@ async function runCreateCommand(
           meta: description ? { description } : undefined,
         });
 
-  const skillSummary = docKind === "skill" ? buildSkillSummaryMarker(record.meta) : undefined;
+  const skillSummary = buildSkillSummaryForRecord(record);
   const summary = {
     dryRun: shouldDryRun,
     kind: docKind,
@@ -330,14 +191,14 @@ async function runCreateCommand(
   return 0;
 }
 
-export async function runDocCreateCommand(args: string[], deps: DocCreateDeps) {
+export async function runDocCreateCommand(args: string[], deps: DocWriteDeps) {
   return runCreateCommand(args, deps, {
     defaultKind: "page",
     usage: printDocCreateUsage,
   });
 }
 
-export async function runSkillDocCreateCommand(args: string[], deps: DocCreateDeps) {
+export async function runSkillDocCreateCommand(args: string[], deps: DocWriteDeps) {
   return runCreateCommand(args, deps, {
     defaultKind: "skill",
     usage: printSkillDocCreateUsage,

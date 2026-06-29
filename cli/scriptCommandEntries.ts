@@ -1,14 +1,7 @@
 import { createScriptCommand, type CommandEntry } from "./cliCommandTypes";
 
 function getDocScriptCommands(): CommandEntry[] {
-  return [
-    createScriptCommand(["doc", "read"], "readDoc.ts", "Read a normal doc"),
-    createScriptCommand(["doc", "update"], "updateDoc.ts", "Update a normal doc"),
-    createScriptCommand(["doc", "delete"], "deleteDoc.ts", "Delete a normal doc"),
-    createScriptCommand(["skill-doc", "read"], "readSkillDoc.ts", "Read a skill doc"),
-    createScriptCommand(["skill-doc", "update"], "updateSkillDoc.ts", "Update a skill doc"),
-    createScriptCommand(["skill-doc", "delete"], "deleteSkillDoc.ts", "Delete a skill doc"),
-  ];
+  return [];
 }
 
 function getSpaceScriptCommands(): CommandEntry[] {
@@ -29,7 +22,6 @@ function getTableScriptCommands(): CommandEntry[] {
     createScriptCommand(["table", "update-row"], "tableData.ts", "Update one table row", ["--action", "update-row"]),
     createScriptCommand(["table", "update-rows"], "tableData.ts", "Update table rows", ["--action", "update-rows"]),
     createScriptCommand(["table", "delete-row"], "tableData.ts", "Delete one table row", ["--action", "delete-row"]),
-    createScriptCommand(["table", "delete-rows"], "tableData.ts", "Delete table rows", ["--action", "delete-rows"]),
     createScriptCommand(["table", "data"], "tableData.ts", "Low-level table row script bridge"),
     createScriptCommand(["table", "meta"], "upsertTableMeta.ts", "Create or update table metadata"),
   ];

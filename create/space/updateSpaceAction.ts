@@ -10,10 +10,11 @@ export const updateSpaceAction = async (
     name?: string;
     description?: string;
     visibility?: SpaceVisibility;
+    boundFolder?: string;
   },
   thunkAPI: { dispatch: AppDispatch; getState: () => RootState }
 ) => {
-  const { spaceId, name, description, visibility } = input;
+  const { spaceId, name, description, visibility, boundFolder } = input;
   const { dispatch, getState } = thunkAPI;
   const state = getState();
   const userId = selectUserId(state);
@@ -46,6 +47,10 @@ export const updateSpaceAction = async (
   }
   if (visibility !== undefined && visibility !== spaceData.visibility) {
     changes.visibility = visibility;
+    hasChanges = true;
+  }
+  if (boundFolder !== undefined && (boundFolder || undefined) !== (spaceData.boundFolder || undefined)) {
+    changes.boundFolder = boundFolder || undefined;
     hasChanges = true;
   }
 

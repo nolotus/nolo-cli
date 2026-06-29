@@ -1,6 +1,7 @@
 export type HybridRecordKvDb = {
   get(key: string): Promise<any>;
   put(key: string, value: any): Promise<unknown>;
+  del(key: string): Promise<unknown>;
   batch(ops: Array<{ type: "put"; key: string; value: any }>): Promise<unknown>;
   iterator(options: { gte: string; lte?: string; lt?: string; reverse?: boolean; limit?: number }): AsyncIterable<[string, any]>;
 };

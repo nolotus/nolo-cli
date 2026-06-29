@@ -449,7 +449,7 @@ export const slice = createSliceWithThunks({
           const raw = agentId.trim();
           if (raw.startsWith("agent-") || raw.startsWith("cybot-")) {
             const parts = raw.split("-");
-            if (parts.length >= 3) return parts[parts.length - 1];
+            if (parts.length >= 3) return parts.slice(2).join("-");
           }
           return raw;
         })();

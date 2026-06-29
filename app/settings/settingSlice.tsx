@@ -28,6 +28,7 @@ import {
 import {
   normalizeThemeName,
   resolveThemeModeIsDark,
+  resolveThemeModePreload,
   SYSTEM_DARK_MEDIA_QUERY,
 } from "../theme/themeModeBootstrap";
 import {
@@ -152,6 +153,16 @@ interface SettingState {
 export const SYSTEM_DEFAULT_AGENT_ID = "system-default";
 
 // --- 初始状态 (包含所有字段的默认值) ---
+// Resolve themeMode + isDark from localStorage + system preference at load time,
+// matching the inline bootstrap script so GlobalThemeController never overwrites
+// the correct pre-paint theme with a stale hardcoded default.
+const _preloadedTheme = typeof window !== "undefined"
+  ? resolveThemeModePreload({
+      storage: localStorage,
+      systemPrefersDark: window.matchMedia(SYSTEM_DARK_MEDIA_QUERY).matches,
+    })
+  : { themeMode: "system" as const, isDark: false };
+
 const initialState: SettingState = {
   isAutoSync: false,
   currentServer: isProduction ? SERVERS.MAIN : SERVERS.US,
@@ -162,9 +173,9 @@ const initialState: SettingState = {
   maxExecutionTime: 600_000,
   maxCost: 1,
   themeName: DEFAULT_THEME_NAME,
-  themeMode: "system" as const,
-  isDark: false,
-  sidebarWidth: 320,
+  themeMode: _preloadedTheme.themeMode,
+  isDark: _preloadedTheme.isDark,
+  sidebarWidth: 280,
   headerHeight: 56,
   density: "compact" as const,
   fontPreset: DEFAULT_FONT_PRESET,
@@ -1126,6 +1137,20 @@ export const selectTheme = createSelector(
         lg:   compact ? "16px" : "17.5px",
         xl:   compact ? "20px" : "22px",
         "2xl": compact ? "24px" : "26px",
+        "3xl": compact ? "28px" : "30px",
+      },
+      // Font weight scale
+      fontWeight: {
+        normal:   "400",
+        medium:   "500",
+        semibold: "600",
+        bold:     "700",
+      },
+      // Letter spacing scale
+      tracking: {
+        tight:  "-0.02em",
+        normal: "0",
+        wide:   "0.02em",
       },
       // Semantic line-height scale
       leading: {
@@ -1156,6 +1181,20 @@ export const selectTheme = createSelector(
       motionDuration: "0.32s",
       motionDurationSlow: "0.52s",
       font: FONT_PRESET_CSS_VARIABLES[validFontPreset],
+      // Z-index scale aligned with existing hardcoded layers
+      z: {
+        sticky:        100,
+        dropdown:      1000,
+        modalBackdrop: 1010,
+        modal:         1020,
+        toast:         1030,
+        tooltip:       1040,
+      },
+      // Semantic spacing aliases
+      contentPadding: compact ? "16px" : "20px",
+      sectionGap:     compact ? "32px" : "40px",
+      cardPadding:    compact ? "16px" : "20px",
+      inputPadding:   compact ? "8px 12px" : "10px 14px",
       ...c,
       borderSubtle: c.borderLight,
       borderFaint: alphaColor(c.border, isDark ? 0.22 : 0.35, c.borderLight),
@@ -1191,6 +1230,16 @@ export const selectTheme = createSelector(
       errorGhost: alphaColor(c.error, isDark ? 0.2 : 0.12, "rgba(239, 68, 68, 0.12)"),
       primaryRgb: hexToRgbString(c.primary) ?? "59, 130, 246",
       focusRing: alphaColor(c.primary, isDark ? 0.3 : 0.22, c.primaryGhost),
+      // Generic interactive state tokens (dark-mode aware)
+      hoverBg:    alphaColor(c.text, isDark ? 0.06 : 0.04, c.backgroundTertiary),
+      activeBg:   alphaColor(c.text, isDark ? 0.10 : 0.08, c.backgroundTertiary),
+      disabledText: c.textTertiary,
+      disabledBg:   c.backgroundSecondary,
+      // Code block tokens
+      codeBg:   c.codeBackground,
+      codeText: c.text,
+      // Text selection token
+      selectionBg: alphaColor(c.primary, isDark ? 0.20 : 0.15, c.primaryGhost),
     };
   }
 );

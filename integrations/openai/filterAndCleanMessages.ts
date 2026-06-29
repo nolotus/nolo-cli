@@ -112,14 +112,9 @@ const parseJsonObject = (value: unknown): Record<string, any> | undefined => {
   }
 };
 
-const getStreamParallelReturnMode = (msg: any): string | undefined =>
-  msg?.toolPayload?.input?.returnMode ?? parseJsonObject(msg?.content)?.returnMode;
-
 const isHandoffToolMessage = (msg: any): boolean => {
   const toolName = getToolName(msg);
-  if (toolName === "runStreamingAgent") return true;
-  if (toolName !== "streamParallelAgents") return false;
-  return getStreamParallelReturnMode(msg) !== "continue";
+  return toolName === "runStreamingAgent";
 };
 
 const getToolMessageCallId = (msg: any): string | undefined =>

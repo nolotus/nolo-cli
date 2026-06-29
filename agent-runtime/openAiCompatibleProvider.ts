@@ -3,6 +3,9 @@ import type {
   AgentRuntimeResult,
 } from "./types";
 import { buildProviderAuthHeaders } from "./providerResolution";
+import { buildKimiCodeHeaders, isKimiCodeEndpoint } from "./kimiHeaders";
+import { createThinkParserState, extractThinkContent, flushThinkParser, processThinkChunk } from "./thinkTagParser";
+import type { ThinkParseState } from "./thinkTagParser";
 
 export type OpenAiCompatibleProviderConfig = {
   model: string;
@@ -48,18 +51,26 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
     ...(args.tools && args.tools.length > 0 ? { tools: args.tools } : {}),
     ...(args.stream ? { stream_options: { include_usage: true } } : {}),
   };
+
+  const endpoint = args.providerConfig.endpoint;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...buildProviderAuthHeaders({
+      endpoint,
+      apiKey: args.providerConfig.apiKey,
+      apiKeyHeader: args.providerConfig.apiKeyHeader,
+    }),
+  };
+
+  if (isKimiCodeEndpoint(endpoint)) {
+    Object.assign(headers, buildKimiCodeHeaders());
+  }
+
   return {
-    url: args.providerConfig.endpoint,
+    url: endpoint,
     init: {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...buildProviderAuthHeaders({
-          endpoint: args.providerConfig.endpoint,
-          apiKey: args.providerConfig.apiKey,
-          apiKeyHeader: args.providerConfig.apiKeyHeader,
-        }),
-      },
+      headers,
       body: JSON.stringify(body),
     },
   };
@@ -71,11 +82,14 @@ export function parseOpenAiCompatibleChatCompletionResponse(args: {
   trace: AgentRuntimeChatMessage[];
 }): AgentRuntimeResult {
   const choiceMessage = args.data?.choices?.[0]?.message ?? {};
+  const rawContent = String(choiceMessage?.content ?? "");
+  const { content, reasoning } = extractThinkContent(rawContent);
   return {
-    content: String(choiceMessage?.content ?? ""),
+    content,
     model: args.providerConfig.model,
     provider: args.providerConfig.provider,
     ...(Array.isArray(choiceMessage?.tool_calls) ? { tool_calls: choiceMessage.tool_calls } : {}),
+    ...(reasoning ? { reasoning_content: reasoning } : {}),
     ...(typeof choiceMessage?.reasoning_content === "string" && choiceMessage.reasoning_content
       ? { reasoning_content: choiceMessage.reasoning_content }
       : {}),
@@ -116,6 +130,7 @@ function finalizeAccumulatedToolCalls(accumulated: Record<number, AccumulatedToo
     .filter((call) => call?.function?.name);
 }
 
+
 function processOpenAiCompatibleSseEvent(
   event: string,
   state: {
@@ -124,6 +139,7 @@ function processOpenAiCompatibleSseEvent(
     usage?: Record<string, unknown>;
     accumulatedToolCalls: Record<number, AccumulatedToolCall>;
     onTextDelta?: (chunk: string) => void;
+    thinkState: ThinkParseState;
   }
 ) {
   for (const line of event.split("\n")) {
@@ -160,8 +176,15 @@ function processOpenAiCompatibleSseEvent(
 
     const textChunk = typeof delta.content === "string" ? delta.content : "";
     if (textChunk) {
-      state.content += textChunk;
-      state.onTextDelta?.(textChunk);
+      const parsed = processThinkChunk(textChunk, state.thinkState);
+      state.thinkState = parsed.state;
+      if (parsed.content) {
+        state.content += parsed.content;
+        state.onTextDelta?.(parsed.content);
+      }
+      if (parsed.reasoning) {
+        state.reasoning += parsed.reasoning;
+      }
     }
   }
 }
@@ -183,6 +206,7 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     usage: undefined as Record<string, unknown> | undefined,
     accumulatedToolCalls: {} as Record<number, AccumulatedToolCall>,
     onTextDelta: args.onTextDelta,
+    thinkState: createThinkParserState(),
   };
 
   while (true) {
@@ -199,9 +223,18 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     }
   }
 
-  buffer += decoder.decode();
   if (buffer.trim()) {
     processOpenAiCompatibleSseEvent(buffer, state);
+  }
+
+  const flushed = flushThinkParser(state.thinkState);
+  state.thinkState = flushed.state;
+  if (flushed.content) {
+    state.content += flushed.content;
+    state.onTextDelta?.(flushed.content);
+  }
+  if (flushed.reasoning) {
+    state.reasoning += flushed.reasoning;
   }
 
   const tool_calls = finalizeAccumulatedToolCalls(state.accumulatedToolCalls);

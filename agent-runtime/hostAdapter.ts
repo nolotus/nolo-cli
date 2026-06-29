@@ -17,8 +17,8 @@ export type AgentRuntimeAgentConfig = {
   apiKey?: string;
   apiKeyHeader?: string;
   apiKeyFromAgentKey?: string;
+  apiKeyRef?: string;
   useServerProxy?: boolean;
-  toolNames?: string[];
   temperature?: number;
   top_p?: number;
   frequency_penalty?: number;

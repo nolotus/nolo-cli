@@ -373,10 +373,6 @@ export const sendOpenAIResponseRequest = async ({
         messageId,
         dialogId,
         dialogKey,
-        parallelSessionId: activeMessageMetadata?.parallelSessionId,
-        parallelBranchId: activeMessageMetadata?.parallelBranchId,
-        parallelLabel: activeMessageMetadata?.parallelLabel,
-        parallelIndex: activeMessageMetadata?.parallelIndex,
       })
     ).unwrap();
 

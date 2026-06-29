@@ -4,12 +4,8 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { loadProfileConfig } from "./client/profileConfig";
 import { resolveDefaultSpawn, type SpawnFn, type SpawnedProcess } from "./processSpawn";
-import {
-  buildNpmSelfUpdateCommand,
-  detectStandaloneBundleInstall,
-  getCliInstallChannel,
-  runStandaloneBundleUpdate,
-} from "./standaloneBundle";
+
+export type CliReleaseChannel = "alpha" | "latest";
 
 type PackageInfo = {
   name: string;
@@ -22,8 +18,8 @@ type DoctorInfo = {
   entrypoint: string;
   serverUrl: string;
   profileName: string;
-  installKind: "standalone-bundle" | "npm-global";
-  updateChannel: "alpha" | "latest";
+  installKind: "npm-global";
+  updateChannel: CliReleaseChannel;
 };
 
 type RunSelfUpdateOptions = {
@@ -38,6 +34,29 @@ type SpawnOutputChunk = string | ArrayBuffer | ArrayBufferView;
 
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_JSON_PATH = join(CLI_DIR, "package.json");
+
+export function getCliInstallChannel(serverUrl?: string | null): CliReleaseChannel {
+  const normalized =
+    typeof serverUrl === "string" ? serverUrl.trim().replace(/\/+$/, "") : "";
+  if (!normalized) {
+    return "latest";
+  }
+  try {
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    if (hostname === "us.nolo.chat" || hostname.endsWith(".us.nolo.chat")) {
+      return "alpha";
+    }
+  } catch {
+    if (/us\.nolo\.chat/i.test(normalized)) {
+      return "alpha";
+    }
+  }
+  return "latest";
+}
+
+export function buildNpmSelfUpdateCommand(channel: CliReleaseChannel = "latest") {
+  return ["npm", "install", "-g", `nolo-cli@${channel}`, "--force"];
+}
 
 export function readPackageInfo(): PackageInfo {
   const raw = readFileSync(PACKAGE_JSON_PATH, "utf8");
@@ -76,9 +95,6 @@ export function resolveSelfUpdateServerUrl(
 }
 
 export function buildCliDoctorText(info: DoctorInfo) {
-  const updateCommand = info.installKind === "standalone-bundle"
-    ? "nolo update"
-    : buildNpmSelfUpdateCommand(info.updateChannel).join(" ");
   return [
     "Nolo CLI doctor",
     "---------------",
@@ -93,7 +109,7 @@ export function buildCliDoctorText(info: DoctorInfo) {
     "If direct `nolo` differs from repo-local `bun ./packages/cli/index.ts`,",
     "the global install is older than this checkout.",
     "",
-    `Manual update: ${updateCommand}`,
+    `Manual update: ${buildNpmSelfUpdateCommand(info.updateChannel).join(" ")}`,
   ].join("\n");
 }
 
@@ -151,18 +167,6 @@ export async function runSelfUpdate(
   const spawn: SpawnFn = options.spawn ?? resolveDefaultSpawn();
   const env = options.env ?? process.env;
   const serverUrl = resolveSelfUpdateServerUrl(env, options.serverUrl);
-  const entrypointPath = options.entrypointPath ?? join(CLI_DIR, "index.js");
-  const bundleInstall = detectStandaloneBundleInstall(entrypointPath);
-
-  if (bundleInstall) {
-    return runStandaloneBundleUpdate({
-      install: bundleInstall,
-      serverUrl,
-      output,
-      spawn,
-      env,
-    });
-  }
 
   const command = buildNpmSelfUpdateCommand(getCliInstallChannel(serverUrl));
   output.write(`Updating nolo with: ${command.join(" ")}\n`);

@@ -27,9 +27,11 @@ import {
   shouldUsePlatformChatProvider,
 } from "../agentRuntimeLocal";
 import type { AgentRuntimeChatMessage } from "../../agent-runtime";
+import type { PermissionRequest } from "../../agent-runtime/actionGate";
 import { getDefaultCliLocalRuntimeDb } from "../localRuntimeDb";
 import { resolveAgentRuntimeConfigFromRecord } from "./agentConfigResolver";
 import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
+import { createOAuthApiKeyRefResolver } from "../oauth/apiKeyRefResolver";
 import {
   buildLocalDialogWritePlan,
   localDialogMessageRecordToRuntimeMessage,
@@ -160,6 +162,7 @@ export type CliLocalRuntimeAdapterDeps = {
   sleep?: (ms: number) => Promise<void>;
   loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
   buildProviderOpenAiTools?: typeof buildOpenAiTools;
+  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
 };
 
 async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
@@ -1405,10 +1408,13 @@ export function createCliLocalRuntimeAdapter(
         };
       }
 
+      const apiKeyRefResolver = createOAuthApiKeyRefResolver();
+
       if (shouldUsePlatformChatProvider(deps.env, agentConfig)) {
-        const providerConfig = resolvePlatformChatProviderConfig({
+        const providerConfig = await resolvePlatformChatProviderConfig({
           agentConfig,
           env: deps.env,
+          apiKeyRefResolver,
         });
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1515,9 +1521,10 @@ export function createCliLocalRuntimeAdapter(
         };
       }
 
-      const providerConfig = resolveCliOpenAiProviderConfig({
+      const providerConfig = await resolveCliOpenAiProviderConfig({
         agentConfig,
         env: deps.env,
+        apiKeyRefResolver,
       });
       logLocalRuntimeDiagnostic("provider.selected", {
         agentKey: agentConfig.key,
@@ -1588,20 +1595,54 @@ export function createCliLocalRuntimeAdapter(
         budgets: localToolBudgets,
         usage: localToolUsage,
       });
-      const result = await executeLocalToolWithPolicy({
-        env: deps.env,
-        agentToolNames: activeAgentToolNames,
-        call,
-        executors: localToolExecutors,
-      });
-      return {
-        ...result,
-        metadata: {
-          ...(result.metadata ?? {}),
-          workspaceRoot,
-          workspaceKind: "current",
-        },
-      };
+      try {
+        const result = await executeLocalToolWithPolicy({
+          env: deps.env,
+          agentToolNames: activeAgentToolNames,
+          call,
+          executors: localToolExecutors,
+        });
+        return {
+          ...result,
+          metadata: {
+            ...(result.metadata ?? {}),
+            workspaceRoot,
+            workspaceKind: "current",
+          },
+        };
+      } catch (error) {
+        const code =
+          error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+            ? (error as { code: string }).code
+            : undefined;
+        const request =
+          error && typeof error === "object" && (error as { permissionRequest?: unknown }).permissionRequest;
+        if (
+          code === "destructive_action_requires_confirmation" &&
+          deps.confirmDestructiveAction &&
+          request && typeof request === "object"
+        ) {
+          const confirmed = await deps.confirmDestructiveAction(request as PermissionRequest);
+          if (confirmed) {
+            const result = await executeLocalToolWithPolicy({
+              env: deps.env,
+              agentToolNames: activeAgentToolNames,
+              call,
+              executors: localToolExecutors,
+              confirmed: true,
+            });
+            return {
+              ...result,
+              metadata: {
+                ...(result.metadata ?? {}),
+                workspaceRoot,
+                workspaceKind: "current",
+              },
+            };
+          }
+        }
+        throw error;
+      }
     },
   };
 }

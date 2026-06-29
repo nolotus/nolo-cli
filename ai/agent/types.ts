@@ -1,11 +1,6 @@
 // 文件路径: ai/agent/types.ts
 
 export interface AgentRuntimeOptions {
-    parallelSessionId?: string;
-    parallelBranchId?: string;
-    parallelLabel?: string;
-    parallelIndex?: number;
-
     /**
      * 在本次调用中额外开放给 LLM 的工具名称。
      * 会与 Agent 本身的 tools 数组合并后再传给 LLM。
@@ -70,4 +65,7 @@ export interface AgentRuntimeOptions {
         /** 本轮期望的分辨率大小，不指定则使用上层默认值 */
         imageSize?: "1K" | "2K" | "4K";
     };
+
+    cwd?: string;
+    restrictShellToWorkspace?: boolean;
 }

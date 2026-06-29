@@ -3,7 +3,6 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
 import { DataType } from "../../create/types";
 import { write } from "../../database/dbSlice";
-import { createDialogMessageKeyAndId } from "../../database/keys";
 import type { AppThunkApi } from "../../app/store";
 
 import { findToolExecutor, toolDefinitionsByName } from "../../ai/tools";
@@ -16,7 +15,6 @@ import {
   toolRunSetPending,
 } from "../../ai/tools/toolRunSlice";
 import { streamAgentChatTurn } from "../../ai/agent/agentSlice";
-import { startParallelAgentStreams } from "../../ai/agent/startParallelAgentStreams";
 
 import type { Message, ToolPayload, ToolErrorPayload } from "./types";
 import { addToolMessage, updateToolMessage } from "./messageSlice";
@@ -61,10 +59,6 @@ export interface HandleToolCallsPayload {
   messageId: string;
   dialogId: string;
   dialogKey?: string;
-  parallelSessionId?: string;
-  parallelBranchId?: string;
-  parallelLabel?: string;
-  parallelIndex?: number;
 }
 
 const processToolData = createAsyncThunk(
@@ -393,10 +387,6 @@ export const handleToolCalls = createAsyncThunk(
       messageId,
       dialogId,
       dialogKey,
-      parallelSessionId,
-      parallelBranchId,
-      parallelLabel,
-      parallelIndex,
     } = args;
 
     const { dispatch } = thunkApi;
@@ -405,16 +395,18 @@ export const handleToolCalls = createAsyncThunk(
     let hasHandedOff = false;
     let hasPendingInteraction = false;
 
-    for (const toolCall of accumulatedCalls) {
+    for (let toolIndex = 0; toolIndex < accumulatedCalls.length; toolIndex++) {
+      const toolCall = accumulatedCalls[toolIndex];
       if (!toolCall.function?.name) continue;
 
       const toolCallId =
         toolCall.id ||
         `call_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const toolRunId = createToolRunId();
+      // 从 parent 消息 ID 派生 tool 消息 ID，保证 tool 排在 parent 之后、下一个 assistant 之前
       const canonicalToolName = findToolExecutor(toolCall.function.name).canonicalName;
-      const { key: runningToolDbKey, messageId: runningToolMessageId } =
-        createDialogMessageKeyAndId(dialogId);
+      const runningToolMessageId = `${messageId}-t${String(toolIndex).padStart(3, "0")}`;
+      const runningToolDbKey = `dialog-${dialogId}-msg-${runningToolMessageId}`;
       const runningToolMessage: Message = {
         id: runningToolMessageId,
         dbKey: runningToolDbKey,
@@ -462,61 +454,6 @@ export const handleToolCalls = createAsyncThunk(
         let toolPayload = result.toolPayload;
 
         if (toolName) {
-          if (toolName === "streamParallelAgents") {
-            const raw = (result.rawResult as any) ?? {};
-            const task =
-              typeof raw.task === "string" ? raw.task.trim() : "";
-            const agents = Array.isArray(raw.agents) ? raw.agents : [];
-            const returnMode =
-              raw.returnMode === "continue" ? "continue" : "handoff";
-            const displayMode = "inline";
-            const budgetCredits =
-              typeof raw.budgetCredits === "number" &&
-              Number.isFinite(raw.budgetCredits) &&
-              raw.budgetCredits > 0
-                ? raw.budgetCredits
-                : undefined;
-
-            if (task && agents.length > 0) {
-              const parallelResult = await startParallelAgentStreams({
-                task,
-                agents,
-                dispatch,
-                getState: thunkApi.getState,
-                dialogId,
-                dialogKey,
-                waitForCompletion: returnMode === "continue",
-                displayMode,
-                budgetCredits,
-              });
-
-              rawResult = parallelResult;
-
-              if (returnMode === "continue") {
-                const stats = (parallelResult as any)?.stats;
-                const budget = (parallelResult as any)?.budget;
-                const summary = stats
-                  ? `并行调用 ${stats.total} 个 Agent · ${stats.succeeded} 成功 · ${stats.failed} 失败 · 分支回答已展开${
-                      budget
-                        ? ` · 已花费 ${budget.spentCredits} / ${budget.budgetCredits} 积分`
-                        : ""
-                    }`
-                  : toolPayload?.summary || "并行调用已完成";
-
-                toolPayload = {
-                  ...toolPayload,
-                  summary,
-                  ...(typeof (parallelResult as any)?.llmContext === "string" &&
-                  (parallelResult as any).llmContext.trim()
-                    ? { llmContext: (parallelResult as any).llmContext.trim() }
-                    : {}),
-                };
-              } else {
-                hasHandedOff = true;
-              }
-            }
-          }
-
           dispatch(
             updateToolMessage({
               id: runningToolMessageId,
@@ -569,19 +506,6 @@ export const handleToolCalls = createAsyncThunk(
                   userInput,
                   ...(dialogKey ? { dialogKey } : {}),
                   ...(serverBase ? { serverBase } : {}),
-                  ...((parallelSessionId ||
-                    parallelBranchId ||
-                    parallelLabel ||
-                    parallelIndex !== undefined)
-                    ? {
-                        runtimeOptions: {
-                          ...(parallelSessionId ? { parallelSessionId } : {}),
-                          ...(parallelBranchId ? { parallelBranchId } : {}),
-                          ...(parallelLabel ? { parallelLabel } : {}),
-                          ...(parallelIndex !== undefined ? { parallelIndex } : {}),
-                        },
-                      }
-                    : {}),
                 })
               );
             }

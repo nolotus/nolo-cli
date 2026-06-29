@@ -391,6 +391,22 @@ const preloadSummaryCountByLevel = (level: SpaceContextLevel): number =>
 const preloadBudgetRatioByLevel = (level: SpaceContextLevel): number =>
   ({ 1: 0, 2: 0.01, 3: 0.04, 4: 0.08 }[level]);
 
+const knowledgeCaptureLevelLabel = (level: KnowledgeCaptureLevel): string =>
+  ({
+    1: "不主动创建",
+    2: "先问再创建",
+    3: "回答后建议创建",
+    4: "高价值结果可自动创建",
+  })[level];
+
+const spaceContextLevelLabel = (level: SpaceContextLevel): string =>
+  ({
+    1: "不自动读取",
+    2: "只看结构和标题",
+    3: "轻量读取",
+    4: "自适应读取",
+  })[level];
+
 export const resolveRuntimePolicy = (params: {
   agentConfig?: Agent | any;
   settingsRecord?: Record<string, any> | null;
@@ -497,11 +513,19 @@ export const buildStaticUserPolicyContext = (params: {
     userPreferenceProfile.tone?.preset ?? "default",
     agentBasePolicy.tone?.resolutionMode ?? "blend",
   );
+  const knowledgeLevel = Math.min(
+    agentBasePolicy.knowledgeCaptureMaxLevel,
+    userPreferenceProfile.knowledgeCaptureLevel,
+  ) as KnowledgeCaptureLevel;
+  const spaceLevel = Math.min(
+    agentBasePolicy.spaceContextMaxLevel,
+    userPreferenceProfile.spaceContextLevel,
+  ) as SpaceContextLevel;
 
   return [
     `用户语气偏好：${tonePreset}`,
-    `知识沉淀级别：${Math.min(agentBasePolicy.knowledgeCaptureMaxLevel, userPreferenceProfile.knowledgeCaptureLevel)}`,
-    `空间上下文级别：${Math.min(agentBasePolicy.spaceContextMaxLevel, userPreferenceProfile.spaceContextLevel)}`,
+    `知识沉淀级别：${knowledgeLevel}（${knowledgeCaptureLevelLabel(knowledgeLevel)}）`,
+    `空间上下文级别：${spaceLevel}（${spaceContextLevelLabel(spaceLevel)}）`,
     "请尽量保留 agent 自身角色设定，同时按用户偏好调整表达和自动化程度。",
   ].join("\n");
 };

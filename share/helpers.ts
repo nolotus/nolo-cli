@@ -238,7 +238,7 @@ export const toPublicAgentKey = (value: unknown): string => {
   if (parts.length < 3) return "";
 
   const [type, owner] = parts;
-  const agentId = parts[parts.length - 1];
+  const agentId = parts.slice(2).join("-");
   if (!agentId) return "";
   if (owner === "pub") return key;
 

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  applyTuiInputKey,
+  completeSlashCommand,
   createInitialTuiState,
   handleTuiInput,
   isLikelySlashCommand,
@@ -55,6 +57,20 @@ describe("handleTuiInput - image attachments", () => {
     };
     const result = handleTuiInput("/new", state);
     expect(result.nextState.attachedImages).toEqual([]);
+  });
+});
+
+describe("applyTuiInputKey", () => {
+  test("handles multiline, submit, backspace, and abort keys", () => {
+    expect(applyTuiInputKey("a", "\x1b[13;2~").buffer).toBe("a\n");
+    expect(applyTuiInputKey("a", "\x1b[27;2;13~").buffer).toBe("a\n");
+    expect(applyTuiInputKey("a", "\n").buffer).toBe("a\n");
+    expect(applyTuiInputKey("ab", "\x7f").buffer).toBe("a");
+    expect(applyTuiInputKey("abc", "\r", { name: "enter" })).toEqual({
+      buffer: "",
+      submit: "abc",
+    });
+    expect(applyTuiInputKey("abc", "\u0003").abort).toBe(true);
   });
 });
 
@@ -208,6 +224,42 @@ describe("isLikelySlashCommand", () => {
     expect(isLikelySlashCommand("hello")).toBe(false);
     expect(isLikelySlashCommand("看图")).toBe(false);
     expect(isLikelySlashCommand("")).toBe(false);
+  });
+});
+
+describe("completeSlashCommand", () => {
+  test("returns matching commands for partial slash input", () => {
+    const matches = completeSlashCommand("/he");
+    expect(matches).toContain("/help");
+  });
+
+  test("returns all commands starting with the prefix", () => {
+    const matches = completeSlashCommand("/a");
+    expect(matches).toContain("/agent");
+    expect(matches).toContain("/agents");
+  });
+
+  test("excludes exact match from completions", () => {
+    expect(completeSlashCommand("/help")).toEqual([]);
+    expect(completeSlashCommand("/new")).toEqual([]);
+  });
+
+  test("returns empty for non-slash input", () => {
+    expect(completeSlashCommand("hello")).toEqual([]);
+    expect(completeSlashCommand("")).toEqual([]);
+  });
+
+  test("returns empty when buffer has spaces", () => {
+    expect(completeSlashCommand("/agent list")).toEqual([]);
+    expect(completeSlashCommand("/runtime local")).toEqual([]);
+  });
+
+  test("matches /c for context, compact, customize, ctx, compact", () => {
+    const matches = completeSlashCommand("/c");
+    expect(matches).toContain("/context");
+    expect(matches).toContain("/ctx");
+    expect(matches).toContain("/compact");
+    expect(matches).toContain("/customize");
   });
 });
 

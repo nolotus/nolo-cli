@@ -1281,8 +1281,15 @@ export const selectMessageDialogState = (
   dialogId?: string | null
 ) => getMessageDialogState(state.message, dialogId);
 
-export const selectAllMsgs = (state: RootState, dialogId?: string | null) =>
-  dialogMessageSelectors.selectAll(selectMessageDialogState(state, dialogId));
+// 用 createSelector 包裹，避免 dialogMessageSelectors.selectAll 每次返回新数组引用
+// 导致 useSelector 检测到引用变化而无限重渲染
+export const selectAllMsgs = createSelector(
+  [
+    (state: RootState, dialogId?: string | null) =>
+      selectMessageDialogState(state, dialogId),
+  ],
+  (dialogState) => dialogMessageSelectors.selectAll(dialogState)
+);
 
 export const selectMsgById = (
   state: RootState,

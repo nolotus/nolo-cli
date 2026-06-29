@@ -92,10 +92,6 @@ export function resolveLocalToolPolicy(args: {
     };
   }
 
-  if (toolName === "execShell") {
-    return { allowed: true, toolName };
-  }
-
   if (NEVER_LOCAL_TOOLS.has(toolName)) {
     return {
       allowed: false,
@@ -143,6 +139,7 @@ export async function executeLocalToolWithPolicy(args: {
   agentToolNames?: string[];
   call: AgentRuntimeToolCallInput;
   executors?: Record<string, (call: AgentRuntimeToolCallInput) => Promise<AgentRuntimeToolResult>>;
+  confirmed?: boolean;
 }): Promise<AgentRuntimeToolResult> {
   const decision = resolveLocalToolPolicy({
     env: args.env,
@@ -155,7 +152,7 @@ export async function executeLocalToolWithPolicy(args: {
   if (!executor) {
     throw new Error(`${decision.toolName} is allowed by policy but no local executor is registered.`);
   }
-  if (decision.toolName === "execShell") {
+  if (decision.toolName === "execShell" && !args.confirmed) {
     const parsed = parseShellCommandPayload(args.call.arguments);
     const shellPolicy = evaluateShellCommandPolicy({
       command: parsed.command ?? parsed.cmd,

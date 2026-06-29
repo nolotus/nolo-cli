@@ -147,8 +147,8 @@ export const updateContentTitleAction = async (
   if (contentKey.startsWith("meta-")) {
     const parts = contentKey.split(SEPARATOR);
     if (parts.length >= 3) {
-      const tableId = parts[parts.length - 1];
-      const tenantId = parts.slice(1, parts.length - 1).join(SEPARATOR);
+      const tableId = parts.slice(2).join(SEPARATOR);
+      const tenantId = parts[1];
 
       try {
         await dispatch(

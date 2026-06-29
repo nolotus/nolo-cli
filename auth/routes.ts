@@ -192,7 +192,19 @@ export const authRoutes = {
   },
 } as const;
 
-// 简单的路径匹配器，只处理基本的参数提取
+/**
+ * 简单的路径匹配器，只处理基本的参数提取。
+ * 非参数部分的 regex 特殊字符会被转义，防止 regex injection。
+ */
 export function createPathMatcher(routePath: string) {
-  return new RegExp(`^${routePath.replace(/:(\w+)/g, "([^/]+)")}$`);
+  // 按 :paramName 拆分，偶数位是静态 path，奇数位是参数名
+  const segments = routePath.split(/:(\w+)/);
+  const pattern = segments
+    .map((part, i) =>
+      i % 2 === 0
+        ? part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        : "([^/]+)",
+    )
+    .join("");
+  return new RegExp(`^${pattern}$`);
 }

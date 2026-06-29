@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
-import { LOCAL_CODEX_AGENT_KEY, LOCAL_GROK_AGENT_KEY, LOCAL_OPENCODE_AGENT_KEY, LOCAL_QODER_AGENT_KEY, MIMO_MONTH_AGENT_KEY } from "../agentAliases";
+import type { PermissionRequest } from "../agent-runtime/actionGate";
 import {
   clearCliLocalRuntimePreparedAgentCache,
   createCliLocalRuntimeAdapter,
 } from "./localRuntimeAdapter";
+import { LOCAL_CODEX_AGENT_KEY, LOCAL_GROK_AGENT_KEY, LOCAL_OPENCODE_AGENT_KEY, LOCAL_QODER_AGENT_KEY, MIMO_MONTH_AGENT_KEY } from "../agentAliases";
 
 describe("CLI local runtime adapter", () => {
   beforeEach(() => {
@@ -2633,6 +2634,85 @@ describe("CLI local runtime adapter", () => {
 
     expect(result.content).toContain(import.meta.dir);
     expect(result.metadata).toMatchObject({ exitCode: 0 });
+  });
+
+  test("confirms destructive shell command and retries when callback returns true", async () => {
+    const permissionRequests: PermissionRequest[] = [];
+    const shellCalls: { args: any; confirmed?: boolean }[] = [];
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {},
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-shell-destructive",
+          toolNames: ["execShell"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      cwd: import.meta.dir,
+      localToolExecutors: {
+        execShell: async (call: any) => {
+          shellCalls.push({ args: call.arguments, confirmed: call.confirmed });
+          return {
+            content: "deleted",
+            metadata: { exitCode: 0, timedOut: false },
+          };
+        },
+      },
+      confirmDestructiveAction: async (request) => {
+        permissionRequests.push(request);
+        return true;
+      },
+      fetchImpl: async () => Response.json({}),
+    });
+
+    await adapter.loadAgentConfig("shell-destructive");
+    const result = await adapter.executeTool({
+      id: "call-1",
+      name: "execShell",
+      arguments: JSON.stringify({ cmd: "rm -rf tmp" }),
+    });
+    expect(permissionRequests).toHaveLength(1);
+    expect(permissionRequests[0]).toMatchObject({
+      tool: "execShell",
+      action: "destructive_shell_command",
+    });
+    expect(shellCalls).toHaveLength(1);
+    expect(result.content).toBe("deleted");
+    expect(result.metadata).toMatchObject({ exitCode: 0 });
+  });
+
+  test("rejects destructive shell command when confirmation callback returns false", async () => {
+    const adapter = createCliLocalRuntimeAdapter({
+      env: {},
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-shell-destructive-deny",
+          toolNames: ["execShell"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      cwd: import.meta.dir,
+      localToolExecutors: {
+        execShell: async () => ({ content: "deleted", metadata: { exitCode: 0 } }),
+      },
+      confirmDestructiveAction: async () => false,
+      fetchImpl: async () => Response.json({}),
+    });
+
+    await adapter.loadAgentConfig("shell-destructive-deny");
+    await expect(
+      adapter.executeTool({
+        id: "call-1",
+        name: "execShell",
+        arguments: JSON.stringify({ cmd: "rm -rf tmp" }),
+      })
+    ).rejects.toMatchObject({
+      code: "destructive_action_requires_confirmation",
+    });
   });
 
   test("applies runtime policy shell settings to local executors without adding a timeout", async () => {

@@ -66,6 +66,7 @@ function createNullCliDb(): CliKvDb {
       throw new Error("local cache unavailable");
     },
     put: async () => undefined,
+    del: async () => undefined,
     batch: async () => undefined,
     iterator: () => {
       throw new Error("local cache unavailable");

@@ -1190,7 +1190,7 @@ describe("cli agent run client", () => {
           prompt: "Implement frontend tasks.",
           provider: "agy",
           cliProvider: "agy",
-          toolNames: ["streamParallelAgents", "queryTableRows"],
+          toolNames: ["addTableRow", "queryTableRows"],
         }),
         loadDialogHistory: async () => [],
         saveTurn: async () => ({ dialogId: "dialog-agy-auto-local" }),
@@ -1474,7 +1474,7 @@ describe("cli agent run client", () => {
     expect(output.text()).not.toContain("studio-agy -> working locally");
   });
 
-  test.each(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok"])(
+  test.each(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok", "kimi"])(
     "auto mode treats provider-only %s CLI records as machine-bound CLI agents",
     async (provider) => {
       const output = new CaptureOutput();
@@ -1597,7 +1597,7 @@ describe("cli agent run client", () => {
           model: "fake-local",
           runtimeToolPolicy: {
             version: 1,
-            agentTools: ["queryTableRows", "streamParallelAgents"],
+            agentTools: ["queryTableRows", "addTableRow"],
             runtimeTools: ["execShell"],
           },
         }),
@@ -1622,7 +1622,7 @@ describe("cli agent run client", () => {
     expect(httpCalls).toHaveLength(1);
     expect(httpCalls[0]?.body.agentKey).toBe("agent-policy-platform-tools");
     expect(output.text()).toContain("auto runtime: skipping local runtime");
-    expect(output.text()).toContain("streamParallelAgents");
+    expect(output.text()).toContain("addTableRow");
     expect(output.text()).not.toContain("queryTableRows");
   });
 

@@ -83,6 +83,7 @@ export const addSpaceAction = async (
     name,
     description = "",
     visibility = SpaceVisibility.PRIVATE,
+    boundFolder,
   } = input;
   const { dispatch, getState, extra } = thunkAPI;
   const state = getState();
@@ -98,6 +99,7 @@ export const addSpaceAction = async (
     id: spaceId,
     name,
     description,
+    boundFolder,
     ownerId: userId,
     visibility,
     members: [userId],
@@ -107,7 +109,6 @@ export const addSpaceAction = async (
     updatedAt: now,
     type: DataType.SPACE,
   };
-
   const spaces = selectAllMemberSpaces(state);
   const hasSpace = spaces.length > 0;
 
@@ -115,6 +116,7 @@ export const addSpaceAction = async (
     userId,
     name,
     visibility,
+    boundFolder,
     memberSpaceCount: spaces.length,
     currentPath: getCurrentPathForLog(),
   });

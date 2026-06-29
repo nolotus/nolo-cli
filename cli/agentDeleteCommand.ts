@@ -25,6 +25,7 @@ import {
   resolveServerUrl,
 } from "./cliEnvHelpers";
 import { deleteDbRecordOnServers, type GlobalDeleteResult } from "./globalRecordOperations";
+import { clearAgentKeysFromLocalLevelDbs } from "./localLevelDbCleanup";
 
 const AGENT_PRIVATE_KEY_RE = /^agent-([^-]+)-(.+)$/i;
 const AGENT_PUBLIC_KEY_RE = /^agent-pub-(.+)$/i;
@@ -210,6 +211,21 @@ export async function runAgentDeleteCommand(
       const msg = error instanceof Error ? error.message : String(error);
       output.write(`[nolo] agent delete fan-out failed: ${msg}\n`);
       return 1;
+    }
+  }
+
+  // 清理本地所有 LevelDB 副本中的 agent 记录（防止 slot 进程回写旧记录）
+  if (shouldDelete) {
+    try {
+      const cleanedPaths = await clearAgentKeysFromLocalLevelDbs({
+        keys: [keys.privateKey, keys.publicKey],
+      });
+      if (cleanedPaths.length > 0 && !json) {
+        output.write(`Cleaned local LevelDB copies: ${cleanedPaths.length}\n`);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (!json) output.write(`[nolo] local LevelDB cleanup skipped: ${msg}\n`);
     }
   }
 

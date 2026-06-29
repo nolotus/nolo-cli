@@ -51,8 +51,11 @@ export const createSpaceKey = {
   },
 
   // 从成员key中提取空间key
+  // 成员 key 格式: space-member-{userId}-{spaceId}
+  // userId 是单段（无连字符），spaceId 是 ULID（无连字符）
   spaceFromMember: (memberKey: string) => {
     const parts = memberKey.split(SEPARATOR);
+    if (parts.length < 4) return "";
     const spaceId = parts[parts.length - 1];
     return [SPACE_PREFIX, spaceId].join(SEPARATOR);
   },
@@ -60,6 +63,6 @@ export const createSpaceKey = {
   // 从成员key中提取空间ID
   spaceIdFromMember: (memberKey: string) => {
     const parts = memberKey.split(SEPARATOR);
-    return parts[parts.length - 1];
+    return parts.length >= 4 ? parts[parts.length - 1] : "";
   },
 };

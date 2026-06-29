@@ -1,13 +1,12 @@
 import {
-  neutral,
   trail,
-  ocean,
   iris,
-  forest,
   wave,
   rose,
   ember,
   catppuccin,
+  // legacy theme objects kept for alias references
+  neutral, ocean, forest,
   // backward compat aliases
   blue, purple, green, orange, yellow, graphite, pink, red, mocha,
 } from "./colors";
@@ -36,21 +35,24 @@ export const SPACE = {
   24: "96px",
 };
 
-// 2. 主题色系（8 个核心 + 向后兼容 alias）
+// 2. 主题色系（6 个核心 — 每个覆盖一个画像，无冗余）
 export const THEME_COLORS = {
-  neutral, trail, ocean, iris, forest, wave, rose, ember, catppuccin,
-  // alias — DB 中可能存了旧 key，映射到最近似的新主题
-  blue, purple, green, orange, yellow, graphite, pink, red, mocha,
+  catppuccin, trail, wave, iris, rose, ember,
 };
 
+// 3. 旧主题名 → 保留主题的映射（DB 中可能存了旧 key）
 export const THEME_NAME_ALIASES = {
-  blue: "catppuccin",
+  // 原核心主题被精简
   ocean: "catppuccin",
+  forest: "wave",
+  neutral: "catppuccin",
+  // 原向后兼容 alias
+  blue: "catppuccin",
   purple: "iris",
-  green: "forest",
+  green: "wave",
   orange: "ember",
   yellow: "ember",
-  graphite: "neutral",
+  graphite: "catppuccin",
   pink: "rose",
   red: "ember",
   mocha: "catppuccin",

@@ -13,6 +13,13 @@ export {
   readCommandActionGatePayload,
 } from "./actionGate";
 export { createRuntimeHostDescriptor } from "./hostAdapter";
+export {
+  createThinkParserState,
+  extractThinkContent,
+  flushThinkParser,
+  processThinkChunk,
+} from "./thinkTagParser";
+export type { ThinkParseState } from "./thinkTagParser";
 export { runLocalAgentTurn } from "./localLoop";
 export {
   pickAgentRuntimeInferenceOptions,

@@ -113,6 +113,8 @@ const defaultOpenBrowser = async (url: string) => {
     return false;
   }
 };
+export { defaultOpenBrowser };
+
 
 async function saveTokenLogin(args: {
   configPath: string;

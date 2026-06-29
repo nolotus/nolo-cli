@@ -42,9 +42,17 @@ export const callAgentFunctionSchema = {
                 type: "string",
                 enum: ["client", "server"],
                 description:
-                    "执行模式：'server'（默认）为服务端后台异步执行，能复用 runtime auto-routing；" +
+                    "执行模式：'server'（默认）为服务端后台异步执行，结果写回 DB 并通过 SSE 回传，能复用 runtime auto-routing；" +
                     "'client' 为客户端同步执行，适合明确只需本地轻量完成的任务。",
                 default: "server",
+            },
+            background: {
+                type: "boolean",
+                description:
+                    "可选。当为 true 时，server 模式会立即创建后台子对话并返回 childDialogId，由调用方稍后查询结果；" +
+                    "适合可能超过 HTTP 网关等待窗口（约 100 秒）的长任务，避免 Cloudflare 524 导致结果丢失。" +
+                    "默认 false，即继续等待子任务完成并返回 content。",
+                default: false,
             },
             serverBase: {
                 type: "string",
@@ -63,6 +71,7 @@ interface CallAgentArgs {
     task: string;
     input?: any;
     mode?: "client" | "server";
+    background?: boolean;
     serverBase?: string;
 }
 
@@ -77,7 +86,7 @@ export async function callAgentFunc(
     thunkApi: any,
     context?: { parentMessageId: string }
 ): Promise<{ rawData: any; displayData?: string }> {
-    const { agentKey, task, input, mode = "server", serverBase } = args;
+    const { agentKey, task, input, mode = "server", background, serverBase } = args;
     const { dispatch, getState } = thunkApi;
     const state = getState() as RootState;
 
@@ -104,18 +113,26 @@ export async function callAgentFunc(
     try {
         if (mode === "server") {
             // 服务端后台执行：适合耗时/计算密集型任务
-            // 通过 /api/agent/run?background=true 派发到服务端，SSE 监听结果
-            const result = await dispatch(
+            // 通过 /api/agent/run?background=true 派发到服务端
+            const bgResult = await dispatch(
                 runAgentBackground({
                     agentKey,
                     userInput: content,
+                    ...(background === true ? { waitForCompletion: false } : {}),
                     ...(serverBase ? { serverBase } : {}),
                 })
             ).unwrap();
 
+            if (background === true) {
+                return {
+                    rawData: { dialogId: bgResult.dialogId, status: bgResult.status ?? "pending" },
+                    displayData: `⏳ callAgent(服务端后台) 已启动，dialogId: ${bgResult.dialogId}，请稍后查询结果。`,
+                };
+            }
+
             return {
-                rawData: result.content ?? result,
-                displayData: `✅ callAgent(服务端) 执行完成，dialogId: ${result.dialogId}`,
+                rawData: bgResult.content ?? bgResult,
+                displayData: `✅ callAgent(服务端) 执行完成，dialogId: ${bgResult.dialogId}`,
             };
         }
 

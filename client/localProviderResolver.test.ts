@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
 
 describe("CLI local provider resolver", () => {
-  test("uses agent customProviderUrl as the OpenAI-compatible chat completions endpoint", () => {
-    expect(resolveCliOpenAiProviderConfig({
+  test("uses agent customProviderUrl as the OpenAI-compatible chat completions endpoint", async () => {
+    expect(await resolveCliOpenAiProviderConfig({
       agentConfig: {
         key: "agent-user-1-custom",
         model: "qwen-coder",
@@ -28,18 +28,18 @@ describe("CLI local provider resolver", () => {
     });
   });
 
-  test("appends chat completions to custom provider base urls", () => {
-    expect(resolveCliOpenAiProviderConfig({
+  test("appends chat completions to custom provider base urls", async () => {
+    expect((await resolveCliOpenAiProviderConfig({
       agentConfig: {
         key: "agent-user-1-custom",
         customProviderUrl: "https://provider.example/v1/",
       },
       env: {},
-    }).endpoint).toBe("https://provider.example/v1/chat/completions");
+    })).endpoint).toBe("https://provider.example/v1/chat/completions");
   });
 
-  test("falls back to the env OpenAI-compatible base url", () => {
-    expect(resolveCliOpenAiProviderConfig({
+  test("falls back to the env OpenAI-compatible base url", async () => {
+    expect(await resolveCliOpenAiProviderConfig({
       agentConfig: {
         key: "agent-user-1-openai",
       },
@@ -56,8 +56,8 @@ describe("CLI local provider resolver", () => {
     });
   });
 
-  test("defaults Xiaomi custom endpoints to api-key auth header", () => {
-    expect(resolveCliOpenAiProviderConfig({
+  test("defaults Xiaomi custom endpoints to api-key auth header", async () => {
+    expect(await resolveCliOpenAiProviderConfig({
       agentConfig: {
         key: "agent-user-1-mimo",
         provider: "custom",
@@ -77,8 +77,8 @@ describe("CLI local provider resolver", () => {
     });
   });
 
-  test("carries explicit agent inference options for request body construction", () => {
-    expect(resolveCliOpenAiProviderConfig({
+  test("carries explicit agent inference options for request body construction", async () => {
+    expect((await resolveCliOpenAiProviderConfig({
       agentConfig: {
         key: "agent-user-1-tuned",
         temperature: 0.2,
@@ -89,7 +89,7 @@ describe("CLI local provider resolver", () => {
         reasoning_effort: "medium",
       },
       env: {},
-    }).requestOptions).toEqual({
+    })).requestOptions).toEqual({
       temperature: 0.2,
       top_p: 0.9,
       frequency_penalty: 0.1,

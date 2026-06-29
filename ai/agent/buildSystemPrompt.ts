@@ -28,12 +28,8 @@ const CONTEXT_USAGE_INSTRUCTIONS = `参考资料使用说明：
 // 交互说明（有 ui_ask_choice 工具时注入）
 // ============================================================================
 
-const MENU_USAGE_INSTRUCTIONS = `--- 交互说明（菜单与快捷入口） ---
-在这个系统里，无论用户是手动输入文字，还是点击某个按钮/菜单，最终你只会收到一条普通的自然语言消息（就像用户直接键入的一样）。
-
-对你来说：
-- 不要假设或讨论用户点击了哪些按钮、使用了什么菜单，也不要在回复中提到"按钮""菜单""界面""第几个选项"等字样。
-- 把所有收到的消息都当作用户刚刚输入的一句话，根据这句话的内容直接理解和回答即可。`;
+const MENU_USAGE_INSTRUCTIONS = `--- 交互说明 ---
+所有用户输入均为纯文本消息，直接理解即可，不要在回复中提及按钮、菜单、界面等 UI 元素。`;
 
 // ============================================================================
 // 网页访问（有 exa_search 工具时注入）
@@ -75,19 +71,6 @@ const WEBPAGE_ACCESS_INSTRUCTIONS = `--- 网页访问能力 (Web Access) ---
 // 本地文件整理（有 local desktop file tools 时注入）
 // ============================================================================
 
-const LOCAL_FILE_ORGANIZATION_INSTRUCTIONS = `--- 本地文件整理能力 ---
-你可以帮助用户整理桌面客户端里已授权的本地文件夹。必须遵守：
-
-- 只能访问用户已授权的本地文件夹，所有路径都必须是授权根目录内的相对路径。
-- 开始使用 listLocalFiles / readLocalFile 之前，先调用 listLocalRoots 查看当前已授权 roots。
-- 如果目标文件夹还没授权，先调用 requestLocalFolderAccess 请求授权，拿到 rootId 后再继续。
-- 如果用户要求“默认桌面路径 / 默认下载路径 / 默认文档路径”，不要把“默认”原样传给工具；先用 execShell 解析当前机器上的绝对路径，再把具体 path 传给 requestLocalFolderAccess。
-- 对工作区或代码仓库任务，不要用本地文件夹授权工具；优先使用 readFile / listFiles / writeFile / editFile / searchFiles 这组 workspace-scoped coding 工具。
-- 开始整理前，先列目录和读取必要文件，理解现状后再提出计划。
-- 对移动、重命名、写入、删除等改动，不要直接修改文件；先调用 proposeLocalFileChanges 创建待确认计划。
-- 用户确认后，才执行已确认的本地文件整理计划。
-- 删除类操作要保守；能通过移动到整理目录解决时，不要优先删除。
-- 回复用户时说明将要改哪些文件、为什么改、以及是否可撤销。`;
 
 // ============================================================================
 // Agent 编排协作（有 callAgent / runStreamingAgent 工具时注入）
@@ -101,7 +84,7 @@ const AGENT_ORCHESTRATION_INSTRUCTIONS = `--- Agent 编排与协作 ---
 - 如果用户明确给了另一个可访问的 server origin（例如 Windows 机器的 Cloudflare 域名），可以在工具参数里传 serverBase 覆盖自动路由；不要臆造地址，也不要把普通 localhost 当成远端机器。
 - 需要异步启动一个子对话、让当前对话稍后根据子 Agent 的完成/失败继续判断时，使用 startAgentDialog。它只表示 child dialog 已启动或排队，不表示任务已经完成；child 进入 done/failed 后，系统会用 terminal wake 继续父对话，你再读取 child evidence 决定下一步。
 - startAgentDialog 是通用多 Agent 协作能力，不限于代码任务；游戏设计、电影策划、写作、运营、研究等需要异步分工的场景也可以使用。
-- 需要等待一个短结果并直接综合时，使用 callAgent；需要用户前台实时看到另一个 Agent 发言时，使用 runStreamingAgent；需要多 Agent 并行比较或分支展示时，使用 streamParallelAgents。
+- 需要等待一个短结果并直接综合时，使用 callAgent；需要用户前台实时看到另一个 Agent 发言时，使用 runStreamingAgent。
 - 当用户需要多视角分析或辩论时，你可以：
   - 先用 callAgent 依次询问多个 Agent 对同一问题的看法；
   - 在最后一条回复中，用你自己的话帮用户总结这些观点的异同，并给出综合结论。
@@ -210,42 +193,6 @@ const GENERIC_AGENT_UPDATE_INSTRUCTIONS = `--- Agent 维护能力 ---
 - 修改前先确认目标 Agent 是否正确，避免误改
 - 如果工具返回需要确认，不要绕过确认流程`;
 
-const CODE_EDITING_FIDELITY_INSTRUCTIONS = `--- 代码编辑真值规则 ---
-当任务涉及 readFile / writeFile / applyEdit / applyLineEdits 等代码编辑工具时，必须遵守以下规则：
-
-- 先读取目标文件的最新内容，再决定修改。
-- 读取本地或代码仓库文件时，必须调用 readFile。不要用 read、readDoc、readPage 读取本地路径；这些工具用于知识库页面/文档 ID。
-- 执行本地 shell/bash 命令时，必须调用 execShell。
-- 如果用户提供了 URL、文档页或产品页，且你需要据此改代码，必须先抓取这些网页，再开始编辑。
-- 如果用户已经提供可用 URL，就不要再搜索替代来源；只有这些 URL 无法满足任务时，才允许降级到搜索，并在最终回复中说明。
-- 网页中直接出现的模型名、价格、上下文窗口、发布日期、能力描述、是否支持 function calling / vision 等字段，视为本次修改的权威来源。
-- 如果用户提供了精确代码块、对象字面量、字段值、补丁片段或“唯一真值”，必须逐字使用这些内容，不得自行润色、改写数值、替换描述或补全你记忆里的“更合理版本”。
-- 对价格、上下文窗口、模型能力、布尔字段、枚举值这类结构化配置，禁止凭记忆推断。
-- 如果网页没有明确给出某个字段，不要编造。优先保留文件中已有的相邻风格与安全默认值，或只填写网页能直接支持的字段。
-- 保守默认值规则：
-  - 对“新加模型条目”，recommended 必须默认 false。只有用户明确要求“设为推荐/高亮”，才允许写成 true。网页里的营销词（如 flagship、strong default、best-in-class）不构成 recommended=true 的证据。
-  - deprecated 默认 false，除非网页明确写了废弃、停用、legacy、sunset。
-  - supportReasoning 默认 false，除非网页明确说明该模型支持 reasoning / thinking / reasoning tokens。
-  - supportVision 只有在网页明确出现 image input / multimodal / vision 支持时才设为 true。
-  - supportTool 只有在网页明确出现 function calling / tool calling / tools 支持时才设为 true。
-- 最终汇报必须以“实际写入后的文件内容”或 applyEdit / writeFile 的返回结果为准，不要汇报没有真正落盘的字段值。
-- 编辑完成后，最终回复只做简短结果汇报：说清改了哪些条目、依据了哪些 URL、是否还有缺失字段。不要长篇复述网页正文。`;
-
-const TABLE_SHARE_INSTRUCTIONS = `--- 表格创建与分享 ---
-如果用户明确要求“社区分享 / 公开分享 / 分享链接”，并且你有 shareTable 工具：
-- 优先调用 shareTable；
-- 传入表的 dbKey，或 tenantId + tableId；
-- 完成后直接返回 /share/... 链接。`;
-
-const AGENT_CREATION_DRAFT_INSTRUCTIONS = `--- Agent 创建草稿流程 ---
-当用户想创建、定制、配置自己的 Agent / AI 助手时，必须走草稿优先流程：
-
-- 不要直接创建真实 Agent 记录，也不要声称已经创建完成。
-- 先基于当前对话和用户刚说的话整理一个可预览草稿，调用 prepareAgentDraft。
-- 草稿应尽量包含名称、用途简介、prompt 摘要、完整 prompt、能力、知识引用建议、公开状态和仍需确认的问题。
-- 用户表达模糊时，也先给出合理的初版草稿；信息不足时每次只问一个关键问题。
-- 对知识引用、公开状态、高风险工具能力，必须等待用户确认后再视为已选。
-- 草稿足够完整后，引导用户点击“预览并创建”，进入 /create/agent 做最终确认。`;
 
 // ============================================================================
 // 无 prompt 时的澄清模式
@@ -363,14 +310,7 @@ const buildSpaceContextBlock = (contexts: Contexts): string => {
   ].join("\n");
 };
 
-const buildUserPolicyBlock = (contexts: Contexts): string => {
-  if (!contexts.userPolicyContext) return "";
 
-  return [
-    "--- 用户偏好与自动化边界 ---",
-    contexts.userPolicyContext,
-  ].join("\n");
-};
 
 const buildSkillGuidanceBlock = (agentConfig: Agent): string => {
   const recommendedSkillHints = Array.isArray((agentConfig as any).recommendedSkillHints)
@@ -447,7 +387,7 @@ export const buildSystemPromptContext = (options: {
 
   // 按工具能力条件注入各指令块
   const agentOrchestrationSection = agentTools.some((t) =>
-    ["callAgent", "runStreamingAgent", "streamParallelAgents", "startAgentDialog"].includes(t)
+    ["callAgent", "runStreamingAgent", "startAgentDialog"].includes(t)
   )
     ? [
       AGENT_ORCHESTRATION_INSTRUCTIONS,
@@ -463,28 +403,6 @@ export const buildSystemPromptContext = (options: {
     ["exa_search", "fetchWebpage", "browser_openSession", "read_x_post"].includes(t)
   )
     ? WEBPAGE_ACCESS_INSTRUCTIONS
-    : "";
-  const localFileOrganizationSection = agentTools.some((t) =>
-    [
-      "listLocalRoots",
-      "requestLocalFolderAccess",
-      "listLocalFiles",
-      "readLocalFile",
-      "proposeLocalFileChanges",
-      "executeApprovedLocalFileChanges",
-      "undoLocalFileChangeBatch",
-    ].includes(t)
-  )
-    ? LOCAL_FILE_ORGANIZATION_INSTRUCTIONS
-    : "";
-  const tableShareSection = agentTools.some((t) =>
-    ["createTable", "shareTable", "addTableRow", "addTableRows"].includes(t)
-  )
-    ? TABLE_SHARE_INSTRUCTIONS
-    : "";
-
-  const agentCreationDraftSection = agentTools.includes("prepareAgentDraft")
-    ? AGENT_CREATION_DRAFT_INSTRUCTIONS
     : "";
 
   // 知识管理：有页面读写工具时注入通用知识管理说明
@@ -506,11 +424,6 @@ export const buildSystemPromptContext = (options: {
     ? GENERIC_AGENT_UPDATE_INSTRUCTIONS
     : "";
 
-  const codeEditingFidelitySection = agentTools.some((t) =>
-    ["readFile", "writeFile", "applyEdit", "applyLineEdits"].includes(t)
-  )
-    ? CODE_EDITING_FIDELITY_INSTRUCTIONS
-    : "";
 
   const {
     startupProtocol,
@@ -535,7 +448,6 @@ export const buildSystemPromptContext = (options: {
   const editingContextSection = buildEditingContextBlock(contexts);
   const appWorkingMemorySection = buildAppWorkingMemoryBlock(contexts);
   const spaceContextSection = buildSpaceContextBlock(contexts);
-  const userPolicySection = buildUserPolicyBlock(contexts);
   const rawMemoryOverlay = contexts.memoryOverlay?.trim() || "";
   const memoryOverlaySection = rawMemoryOverlay
     ? rawMemoryOverlay + "\n\n" + MEMORY_USE_GUIDANCE
@@ -553,43 +465,40 @@ export const buildSystemPromptContext = (options: {
     : "";
 
   return compileContextLayers([
-    { id: "identity", owner: "platform", content: identitySection },
-    { id: "core-persona", owner: "agent", content: corePersonaSection },
-    { id: "agent-orchestration", owner: "platform", content: agentOrchestrationSection },
-    { id: "web-access", owner: "platform", content: webAccessSection },
-    { id: "local-file-organization", owner: "platform", content: localFileOrganizationSection },
-    { id: "table-share", owner: "platform", content: tableShareSection },
-    { id: "agent-creation-draft", owner: "platform", content: agentCreationDraftSection },
-    { id: "menu-usage", owner: "platform", content: menuUsageSection },
-    { id: "clarification-mode", owner: "platform", content: clarifyingSection },
-    { id: "knowledge-management", owner: "platform", content: knowledgeManagementSection },
-    { id: "memory-capture", owner: "platform", content: memoryCaptureSection },
-    { id: "self-update", owner: "platform", content: selfUpdateSection },
-    { id: "generic-agent-update", owner: "platform", content: genericAgentUpdateSection },
-    { id: "code-editing-fidelity", owner: "platform", content: codeEditingFidelitySection },
-    { id: "startup-protocol", owner: "platform", content: startupProtocol },
-    { id: "context-layer-contract", owner: "platform", content: contextLayerContract },
+    { id: "identity", owner: "platform", cacheScope: "session", content: identitySection },
+    { id: "startup-protocol", owner: "platform", cacheScope: "static", content: startupProtocol },
+    { id: "core-persona", owner: "agent", cacheScope: "session", content: corePersonaSection },
+    { id: "agent-orchestration", owner: "platform", cacheScope: "session", content: agentOrchestrationSection },
+    { id: "web-access", owner: "platform", cacheScope: "session", content: webAccessSection },
+    { id: "menu-usage", owner: "platform", cacheScope: "session", content: menuUsageSection },
+    { id: "clarification-mode", owner: "platform", cacheScope: "session", content: clarifyingSection },
+    { id: "knowledge-management", owner: "platform", cacheScope: "session", content: knowledgeManagementSection },
+    { id: "memory-capture", owner: "platform", cacheScope: "session", content: memoryCaptureSection },
+    { id: "self-update", owner: "platform", cacheScope: "session", content: selfUpdateSection },
+    { id: "generic-agent-update", owner: "platform", cacheScope: "session", content: genericAgentUpdateSection },
+    { id: "context-layer-contract", owner: "platform", cacheScope: "static", content: contextLayerContract },
     {
       id: "email-registration-workflow",
       owner: "platform",
+      cacheScope: "static",
       content: emailRegistrationWorkflow,
     },
     {
       id: "web-research-tool-policy",
       owner: "platform",
+      cacheScope: "static",
       content: webResearchToolPolicy,
     },
-    { id: "user-global-prompt", owner: "user", content: userGlobalPromptSection },
-    { id: "response-guidelines", owner: "platform", content: responseGuidelinesSection },
-    { id: "skill-guidance", owner: "runtime", content: skillGuidanceSection },
-    { id: "space-context", owner: "runtime", content: spaceContextSection },
-    { id: "user-policy", owner: "user", content: userPolicySection },
-    { id: "reference-materials", owner: "agent", content: referenceMaterialsSection },
-    { id: "memory-overlay", owner: "runtime", content: memoryOverlaySection },
-    { id: "app-working-memory", owner: "runtime", content: appWorkingMemorySection },
-    { id: "dialog-summary", owner: "runtime", content: dialogSummarySection },
-    { id: "proactive-summary", owner: "runtime", content: proactiveSummarySection },
-    { id: "editing-context", owner: "runtime", content: editingContextSection },
+    { id: "user-global-prompt", owner: "user", cacheScope: "session", content: userGlobalPromptSection },
+    { id: "response-guidelines", owner: "platform", cacheScope: "session", content: responseGuidelinesSection },
+    { id: "skill-guidance", owner: "runtime", cacheScope: "turn", content: skillGuidanceSection },
+    { id: "space-context", owner: "runtime", cacheScope: "turn", content: spaceContextSection },
+    { id: "reference-materials", owner: "agent", cacheScope: "turn", content: referenceMaterialsSection },
+    { id: "memory-overlay", owner: "runtime", cacheScope: "turn", content: memoryOverlaySection },
+    { id: "app-working-memory", owner: "runtime", cacheScope: "turn", content: appWorkingMemorySection },
+    { id: "dialog-summary", owner: "runtime", cacheScope: "turn", content: dialogSummarySection },
+    { id: "proactive-summary", owner: "runtime", cacheScope: "turn", content: proactiveSummarySection },
+    { id: "editing-context", owner: "runtime", cacheScope: "turn", content: editingContextSection },
     {
       id: "current-time",
       owner: "platform",

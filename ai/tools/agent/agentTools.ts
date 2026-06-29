@@ -29,10 +29,6 @@ import {
     runStreamingAgentFunc,
 } from "./runStreamingAgentTool";
 import {
-    streamParallelAgentsFunctionSchema,
-    streamParallelAgentsFunc,
-} from "./streamParallelAgentsTool";
-import {
     startAgentDialogFunctionSchema,
     startAgentDialogFunc,
 } from "./startAgentDialogTool";
@@ -154,19 +150,6 @@ export const agentToolDefinitions: ToolDefinition[] = [
             name: "runStreamingAgent",
             description:
                 "将本轮回答交由指定的 Agent 以流式方式输出，常用于从通用助手切换到某个专用应用。",
-            category: "计划与编排",
-        },
-        behavior: "orchestrator",
-        uiGroup: "agent",
-    },
-    {
-        id: "streamParallelAgents",
-        schema: streamParallelAgentsFunctionSchema,
-        executor: streamParallelAgentsFunc,
-        description: {
-            name: "streamParallelAgents",
-            description:
-                "并行调用多个 Agent，并让它们分别以流式方式输出结果。",
             category: "计划与编排",
         },
         behavior: "orchestrator",

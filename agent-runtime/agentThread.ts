@@ -17,7 +17,6 @@ export const AGENT_THREAD_KINDS = [
   "background",
   "inline",
   "handoff",
-  "parallel_branch",
   "scheduled",
 ] as const;
 
@@ -25,7 +24,6 @@ export const AGENT_THREAD_PRESENTATION_INTENTS = [
   "background_handoff",
   "inline_result",
   "handoff_speaker",
-  "parallel_branch",
 ] as const;
 
 export type AgentThreadStatus = (typeof AGENT_THREAD_STATUSES)[number];

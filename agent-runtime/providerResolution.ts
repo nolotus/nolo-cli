@@ -1,6 +1,8 @@
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import { pickAgentRuntimeInferenceOptions } from "./agentConfigOptions";
 import { getModelConfig } from "../ai/llm/providers";
+import { resolveFreshAccessToken } from "./oauthTokenStore";
+import { OAUTH_PROVIDER_REFRESH } from "./oauthProviders";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -35,7 +37,7 @@ function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
   const customProviderUrl = agentConfig.customProviderUrl?.trim();
   if (customProviderUrl) return resolveChatCompletionsEndpoint(customProviderUrl);
 
-  const provider = agentConfig.provider?.trim().toLowerCase();
+  const provider = (agentConfig.provider ?? agentConfig.apiSource ?? "openai").toString().trim().toLowerCase();
   if (!provider) {
     throw new Error("Platform chat provider requires agentConfig.provider.");
   }
@@ -56,6 +58,13 @@ function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
 export type AgentProviderMode = "cli" | "platform" | "custom";
 export type ProviderExecutionTransport = "direct" | "proxy";
 export type AgentRuntimeLocation = "server" | "bound-machine" | "local-host";
+
+/**
+ * Resolves an `apiKeyRef` (e.g. "chatgpt") into a fresh OAuth access token.
+ * Injected by the caller so agent-runtime stays free of provider-specific OAuth
+ * wiring (which lives in packages/cli/oauth).
+ */
+export type ApiKeyRefResolver = (ref: string) => Promise<string | null>;
 
 export type ProviderTransportDecision = {
   mode: AgentProviderMode;
@@ -229,11 +238,12 @@ export function buildProviderAuthHeaders(args: {
     : { [headerName]: args.apiKey };
 }
 
-export function buildProviderExecutionPlan(args: {
+export async function buildProviderExecutionPlan(args: {
   agentConfig: AgentRuntimeAgentConfig;
   env: EnvLike;
   runtimeKind: "local" | "desktop" | "server";
-}): ProviderExecutionPlan {
+  apiKeyRefResolver?: ApiKeyRefResolver;
+}): Promise<ProviderExecutionPlan> {
   const { agentConfig, env } = args;
   const mode = resolveAgentProviderMode(agentConfig);
   const runtimeLocation = resolveAgentRuntimeLocation({
@@ -261,7 +271,12 @@ export function buildProviderExecutionPlan(args: {
 
   if (mode === "custom") {
     const endpoint = resolveChatCompletionsEndpoint(agentConfig.customProviderUrl || resolveOpenAiCompatibleBaseUrl(env));
-    const apiKey = agentConfig.apiKey?.trim() || agentConfig.apiKeyFromAgentKey?.trim() || "";
+    let apiKey = agentConfig.apiKey?.trim() || agentConfig.apiKeyFromAgentKey?.trim() || "";
+    const apiKeyRef = agentConfig.apiKeyRef?.trim();
+    if (apiKeyRef && args.apiKeyRefResolver) {
+      const resolved = await args.apiKeyRefResolver(apiKeyRef);
+      if (resolved) apiKey = resolved;
+    }
     const apiKeyHeader = resolveProviderAuthHeaderName({
       endpoint,
       apiKeyHeader: agentConfig.apiKeyHeader,

@@ -296,6 +296,8 @@ import {
 
 // ✅ 多模态：Gemini 图片（2.5 Flash 文生图 / 3 Pro 编辑）
 import {
+  geminiFlashLiteImageFunctionSchema,
+  geminiFlashLiteImageFunc,
   geminiFlashImageFunctionSchema,
   geminiFlashImageFunc,
   geminiProImagePreviewFunctionSchema,
@@ -2129,6 +2131,19 @@ const baseToolDefinitions: ToolDefinition[] = [
 
   // --- 多媒体生成 / 文档生成 ---
 
+  {
+    id: "geminiFlashLiteImage",
+    schema: geminiFlashLiteImageFunctionSchema,
+    executor: geminiFlashLiteImageFunc,
+    description: {
+      name: "geminiFlashLiteImage",
+      description:
+        "使用 Gemini 3.1 Flash Lite Image 模型（Nano Banana 2 Lite），根据文字说明和可选输入图片生成图像，速度最快、成本最低。",
+      category: "多媒体生成",
+    },
+    behavior: "action",
+    uiGroup: "media",
+  },
   {
     id: "geminiFlashImage",
     schema: geminiFlashImageFunctionSchema,

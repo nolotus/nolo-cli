@@ -256,7 +256,7 @@ export default {
           description: "Create a new Agent (intelligent assistant/app) based on the given configuration and return the complete Agent information.",
           params: {
             name: "The name of the Agent, e.g., 'Meeting Minutes Assistant'.",
-            model: "The model name to use. Logic: Default 'xiaomi/mimo-v2.5-pro'. Complex tasks: 'openai/gpt-5.2'. Cost-saving: 'openai/gpt-5.1'. Aesthetic/Creative: 'gemini-3-pro-preview'. Reliable low-cost summary/reasoning: 'deepseek-v4-pro'. Image Generation: 'gemini-3-pro-image-preview' (Best/Expensive) or 'gemini-3.1-flash-image-preview' (Ordinary).",
+            model: "The model name to use. Logic: Default 'xiaomi/mimo-v2.5-pro'. Complex tasks: 'openai/gpt-5.2'. Cost-saving: 'openai/gpt-5.1'. Aesthetic/Creative: 'gemini-3-pro-preview'. Reliable low-cost summary/reasoning: 'deepseek-v4-pro'. Image Generation: 'gemini-3-pro-image-preview' (Best/Expensive), 'gemini-3.1-flash-image-preview' (Ordinary), or 'gemini-3.1-flash-lite-image' (Fastest/Cheapest).",
             provider: "The model provider identifier, must match the selected model, e.g., 'openrouter', 'deepseek', 'fireworks', 'mistral', etc.",
             prompt: "System prompt/instruction describing the Agent's role, tone, and usage.",
             introduction: "Introduction displayed in the app market or list, explanatory text for end users.",
@@ -584,7 +584,7 @@ export default {
           description: "根据给定配置创建一个新的 Agent（智能体 / 应用），并返回完整的 Agent 信息。",
           params: {
             name: "Agent 的名称，例如：'会议纪要助手'。",
-            model: "默认使用 'xiaomi/mimo-v2.5-pro'。复杂任务: 'openai/gpt-5.2'。省成本但复杂: 'openai/gpt-5.1'。追求美观/创意: 'gemini-3-pro-preview'。低成本摘要/推理: 'deepseek-v4-pro'。生成图片: 贵/高质量选 'gemini-3-pro-image-preview'，普通选 'gemini-3.1-flash-image-preview'。",
+            model: "默认使用 'xiaomi/mimo-v2.5-pro'。复杂任务: 'openai/gpt-5.2'。省成本但复杂: 'openai/gpt-5.1'。追求美观/创意: 'gemini-3-pro-preview'。低成本摘要/推理: 'deepseek-v4-pro'。生成图片: 贵/高质量选 'gemini-3-pro-image-preview'，普通选 'gemini-3.1-flash-image-preview'，最快最便宜选 'gemini-3.1-flash-lite-image'。",
             provider: "模型提供方标识，必须与所选模型相匹配，例如 'openrouter'、'deepseek'、'fireworks'、'mistral' 等。",
             prompt: "系统提示词 / 指令，描述这个 Agent 的角色、语气和使用方式。",
             introduction: "在应用市场或列表中展示的简介，面向终端用户的说明文案。",

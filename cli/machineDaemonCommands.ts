@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSyn
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isCompiledBinary } from "./cliEnvHelpers";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -145,7 +146,13 @@ function resolveDaemonLogPath(env: EnvLike) {
 }
 
 function buildDaemonCommand(cliEntrypointPath: string | undefined) {
-  return [process.execPath, cliEntrypointPath || fileURLToPath(import.meta.url), "connect", "--ws"];
+  const execPath = process.execPath;
+  const entrypoint = cliEntrypointPath || fileURLToPath(import.meta.url);
+  if (isCompiledBinary() || entrypoint === execPath) {
+    // Standalone binary: the executable itself is the CLI entrypoint.
+    return [execPath, "connect", "--ws"];
+  }
+  return [execPath, entrypoint, "connect", "--ws"];
 }
 
 function defaultSpawnDaemon(args: {

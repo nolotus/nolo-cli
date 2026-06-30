@@ -231,11 +231,11 @@ function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function normalizeNoloSubjectKind(kind: string) {
+function normalizeNoloSubjectKind(kind: string) {
   return kind === "tableRow" ? "table-row" : kind;
 }
 
-export function normalizeNoloSubjectRef(value: unknown): NoloSubjectRef | null {
+function normalizeNoloSubjectRef(value: unknown): NoloSubjectRef | null {
   if (!isRecord(value)) return null;
   const kind = typeof value.kind === "string" && value.kind.trim()
     ? normalizeNoloSubjectKind(value.kind.trim())
@@ -266,15 +266,14 @@ export function buildNoloSubjectRefQueryTarget(args: Record<string, any>): NoloS
     ...(subjectRole ? { role: subjectRole } : {}),
   };
 }
-
-export function extractNoloDialogSubjectRefs(dialog: unknown): NoloSubjectRef[] {
+function extractNoloDialogSubjectRefs(dialog: unknown): NoloSubjectRef[] {
   if (!isRecord(dialog) || !Array.isArray(dialog.subjectRefs)) return [];
   return dialog.subjectRefs
     .map(normalizeNoloSubjectRef)
     .filter((ref): ref is NoloSubjectRef => Boolean(ref));
 }
 
-export function noloDialogMatchesSubjectRef(dialog: unknown, target: NoloSubjectRef) {
+function noloDialogMatchesSubjectRef(dialog: unknown, target: NoloSubjectRef) {
   const normalizedTarget = normalizeNoloSubjectRef(target);
   if (!normalizedTarget) return false;
   return extractNoloDialogSubjectRefs(dialog).some(
@@ -288,7 +287,7 @@ function noloArtifactCount(value: unknown) {
   return value ? 1 : 0;
 }
 
-export function summarizeNoloDialogSubjectRefEvidence(dialog: any, target: NoloSubjectRef) {
+function summarizeNoloDialogSubjectRefEvidence(dialog: any, target: NoloSubjectRef) {
   const dialogKey = typeof dialog?.dbKey === "string" && dialog.dbKey.trim()
     ? dialog.dbKey.trim()
     : "";
@@ -355,7 +354,7 @@ function getNoloDialogIdentityValues(dialog: unknown) {
   return [...values];
 }
 
-export function filterNoloDialogsByExcludedIds(dialogs: any[], excludeDialogIds?: unknown) {
+function filterNoloDialogsByExcludedIds(dialogs: any[], excludeDialogIds?: unknown) {
   const excluded = new Set(normalizeNoloExcludeDialogIds(excludeDialogIds));
   if (excluded.size === 0) return dialogs;
   return dialogs.filter((dialog) =>
@@ -372,14 +371,36 @@ export function filterNoloDialogSubjectRefEvidence(args: {
   hasArtifacts?: boolean | null;
   excludeDialogIds?: unknown;
 }) {
-  return filterNoloDialogsByExcludedIds(args.dialogs, args.excludeDialogIds)
-    .filter((dialog) => noloDialogMatchesSubjectRef(dialog, args.target))
-    .sort((left, right) => getNoloComparableUpdatedAt(right) - getNoloComparableUpdatedAt(left))
-    .map((dialog) => summarizeNoloDialogSubjectRefEvidence(dialog, args.target))
-    .filter((dialog) => !args.status || dialog.status === args.status)
-    .filter((dialog) => !args.checkpointStatus || dialog.checkpointStatus === args.checkpointStatus)
-    .filter((dialog) => args.hasArtifacts == null || dialog.hasArtifacts === args.hasArtifacts)
-    .slice(0, args.limit);
+  // Single pass: filter by excluded ids and subject ref
+  const matched: any[] = [];
+  for (const dialog of filterNoloDialogsByExcludedIds(args.dialogs, args.excludeDialogIds)) {
+    if (noloDialogMatchesSubjectRef(dialog, args.target)) {
+      matched.push(dialog);
+    }
+  }
+  // Sort dialogs by updatedAt descending
+  matched.sort((left, right) => getNoloComparableUpdatedAt(right) - getNoloComparableUpdatedAt(left));
+  // Single pass: map and apply all filters
+  const evidence: Array<{
+    dialogId: string | null;
+    dialogKey: string | null;
+    title: string | null;
+    status: string | null;
+    checkpointStatus: string | null;
+    updatedAt: string | number | null;
+    hasArtifacts: boolean;
+    artifactCount: number;
+    subjectRefs: Array<{ kind: string; id: string; role?: string }>;
+    lastToolNames: string[];
+  }> = [];
+  for (const dialog of matched) {
+    const entry = summarizeNoloDialogSubjectRefEvidence(dialog, args.target);
+    if (args.status && entry.status !== args.status) continue;
+    if (args.checkpointStatus && entry.checkpointStatus !== args.checkpointStatus) continue;
+    if (args.hasArtifacts != null && entry.hasArtifacts !== args.hasArtifacts) continue;
+    evidence.push(entry);
+  }
+  return evidence.slice(0, args.limit);
 }
 
 export function verifyNoloDialogSubjectRefQuery(
@@ -388,9 +409,14 @@ export function verifyNoloDialogSubjectRefQuery(
   options: { excludeDialogIds?: unknown } = {},
 ) {
   const checkedDialogs = filterNoloDialogsByExcludedIds(dialogs, options.excludeDialogIds);
-  const unmatchedDialogs = checkedDialogs
-    .filter((dialog) => !noloDialogMatchesSubjectRef(dialog, target))
-    .map((dialog) => ({
+  const unmatchedDialogs: Array<{
+    dialogId: string | null;
+    dialogKey: string | null;
+    subjectRefs: NoloSubjectRef[];
+  }> = [];
+  for (const dialog of checkedDialogs) {
+    if (noloDialogMatchesSubjectRef(dialog, target)) continue;
+    unmatchedDialogs.push({
       dialogId:
         typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
           ? dialog.dialogId.trim()
@@ -401,7 +427,8 @@ export function verifyNoloDialogSubjectRefQuery(
               : null,
       dialogKey: typeof dialog?.dbKey === "string" && dialog.dbKey.trim() ? dialog.dbKey.trim() : null,
       subjectRefs: extractNoloDialogSubjectRefs(dialog),
-    }));
+    });
+  }
   const reason = unmatchedDialogs.length > 0 ? "unmatched_results" : "ok";
   return {
     ok: reason === "ok",
@@ -587,8 +614,16 @@ export async function runNoloWorkspaceCliTool(call: {
     ?? (typeof bunSpawn === "function"
       ? (bunSpawn as NoloSpawn)
       : nodeSpawnFallback);
+  const execPath = args.processExecPath ?? process.execPath;
+  const entrypoint = args.cliEntrypoint;
+  // When the CLI is a standalone compiled binary, the executable itself is the
+  // entrypoint; passing it again would make the binary interpret its own path
+  // as a subcommand.
+  const cmd = entrypoint && entrypoint !== execPath
+    ? [execPath, entrypoint, ...cliArgs]
+    : [execPath, ...cliArgs];
   const proc = spawn({
-    cmd: [args.processExecPath ?? process.execPath, args.cliEntrypoint, ...cliArgs],
+    cmd,
     stdout: "pipe",
     stderr: "pipe",
     env: args.env,
@@ -613,7 +648,7 @@ export async function runNoloWorkspaceCliTool(call: {
 }
 
 export function buildNoloWorkspaceCliToolExecutors(args: {
-  cliEntrypoint: string;
+  cliEntrypoint?: string;
   env?: Record<string, string | undefined>;
   metadataKind?: string;
   processExecPath?: string;

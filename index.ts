@@ -9,12 +9,14 @@ import {
   runResolvedCommand,
 } from "./commandRegistry";
 import { buildCliRuntimeEnv, loadProfileConfig } from "./client/profileConfig";
+import { isCompiledBinary } from "./cliEnvHelpers";
 import { spawnProcess } from "./processSpawn";
 import { resolveTuiLaunchMode } from "./runtimeModeArgs";
 import { startTuiWorkspace } from "./tui/readlineWorkspace";
 import { readPackageInfo } from "./updateCommands";
 
-const CLI_DIR = dirname(fileURLToPath(import.meta.url));
+const SOURCE_CLI_DIR = dirname(fileURLToPath(import.meta.url));
+const CLI_DIR = isCompiledBinary() ? dirname(process.execPath) : SOURCE_CLI_DIR;
 const ROOT_DIR = join(CLI_DIR, "..", "..");
 const SCRIPT_DIR = join(ROOT_DIR, "scripts");
 const packageInfo = readPackageInfo();
@@ -40,7 +42,7 @@ const runtimeEnv = {
 const runtimeContext = createCliRuntimeContext({
   env: runtimeEnv,
   scriptDir: SCRIPT_DIR,
-  entrypointPath: fileURLToPath(import.meta.url),
+  entrypointPath: isCompiledBinary() ? process.execPath : fileURLToPath(import.meta.url),
   packageInfo,
 });
 

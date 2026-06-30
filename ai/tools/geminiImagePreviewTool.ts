@@ -8,6 +8,7 @@ import { extractCustomId } from "../../core/prefix";
 const DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview" as const;
 
 type GeminiImageModel =
+    | "gemini-3.1-flash-lite-image"
     | "gemini-3.1-flash-image-preview"
     | "gemini-3-pro-image-preview";
 
@@ -116,13 +117,102 @@ const buildGeminiImageLlmContext = ({
 
 /* ============================================================================
  * 工具 Schema（供 LLM 调用）
- *   - geminiFlashImage: 默认的 2.5 文生图工具
+ *   - geminiFlashLiteImage: 使用 gemini-3.1-flash-lite-image，最快最便宜
+ *   - geminiFlashImage: 默认的 3.1 文生图工具
  *   - geminiProImagePreview: 3 Pro 图像编辑/合成工具
  *
  * 决策逻辑放在提示词层，而不是工具内部逻辑：
  *   - 提示 LLM：简单“生成新图片”用 geminiFlashImage
  *   - 基于现有图片的复杂编辑 / 多图合成用 geminiProImagePreview
  * ========================================================================== */
+
+/**
+ * 3.1 Flash Lite 文生图：
+ * - 使用 Gemini 3.1 Flash Lite Image 模型，是 Nano Banana 家族中最快、最便宜的选项。
+ * - 适用于「文字生成新图片」或「对单张图片做极轻量调整」场景。
+ * - 当用户追求速度、低成本，或只是快速草稿时，优先使用本工具。
+ */
+export const geminiFlashLiteImageFunctionSchema = {
+    name: "geminiFlashLiteImage",
+    description: [
+        "使用 Gemini 3.1 Flash Lite Image 模型（Nano Banana 2 Lite），根据文字说明和可选的输入图片快速生成图像。",
+        "",
+        "使用建议（面向模型）：",
+        "1. 当用户只是描述希望生成怎样的图片，且对速度或成本敏感时，优先使用本工具。",
+        "2. 当用户需要快速视觉草稿、批量生图或低预算场景时，优先使用本工具。",
+        "3. 如果用户要求更高质量、复杂编辑或多图合成，请使用 geminiFlashImage 或 geminiProImagePreview。",
+        "",
+        "关于 images：",
+        "- 如果是纯文生图：可以不传 images 字段，或传空数组。",
+        "- 如果要参考当前对话中用户上传的图片：请在调用时显式构造 images 数组，",
+        "  对每一张图片，将该图片在消息中的 image_url.url（或对应的 Base64/dataURL）填入 images[*].data。",
+    ].join("\n"),
+    parameters: {
+        type: "object",
+        properties: {
+            prompt: {
+                type: "string",
+                description: [
+                    "描述要生成图片的文字提示。",
+                    "示例：",
+                    '  - "生成一只坐在沙发上的可爱橘猫，卡通风格"',
+                    '  - "给用户上传的这张头像加一个圣诞帽，并做成卡通风格"',
+                ].join("\n"),
+            },
+            images: {
+                type: "array",
+                description: [
+                    "可选的输入图片数组。",
+                    "",
+                    "用法：",
+                    "1. 纯文生图：不传 images，或传空数组。",
+                    "2. 需要参考当前轮用户上传的图片时：",
+                    "   - 遍历当前用户消息中的相关 image_url，",
+                    "   - 对每张图片构造元素 { data: 该图片的 URL 或 Base64/dataURL }，",
+                    "   - 通常直接将 image_url.url 原样填入 data 即可。",
+                    "",
+                    "data 字段支持三种形式：",
+                    "  - 不带 data: 前缀的 Base64；",
+                    "  - 完整 dataURL（例如 data:image/png;base64,AAAA...）；",
+                    "  - http(s) 图片 URL（例如对话消息中的 image_url.url）。",
+                ].join("\n"),
+                items: {
+                    type: "object",
+                    properties: {
+                        data: {
+                            type: "string",
+                            description: [
+                                "图片数据字符串，可为以下之一：",
+                                "1) 纯 Base64（不带 data: 前缀）；",
+                                "2) 完整 dataURL，例如 \"data:image/png;base64,AAAA...\"；",
+                                "3) http(s) 图片 URL，例如对话消息中的 image_url.url。",
+                            ].join("\n"),
+                        },
+                        mimeType: {
+                            type: "string",
+                            description: [
+                                "可选的 MIME 类型，例如 image/png 或 image/jpeg。",
+                                "如果 data 是 http(s) URL 或完整 dataURL，可不填。",
+                            ].join("\n"),
+                        },
+                    },
+                    required: ["data"],
+                },
+            },
+            aspectRatio: {
+                type: "string",
+                description:
+                    '生成图片的宽高比，例如 "5:4"、"16:9"、"1:1"。不指定则默认 "5:4"。',
+            },
+            imageSize: {
+                type: "string",
+                description:
+                    '生成图片的分辨率大小，支持 "1K" | "2K" | "4K"。不指定则默认 "2K"。',
+            },
+        },
+        required: ["prompt"],
+    },
+};
 
 /**
  * 3.1 文生图 / 轻量编辑：
@@ -366,6 +456,15 @@ const createGeminiImageExecutor =
 /* ============================================================================
  * 具体工具执行函数（供工具注册使用）
  * ========================================================================== */
+
+/**
+ * geminiFlashLiteImage:
+ * - 使用 gemini-3.1-flash-lite-image
+ * - 适用于追求极速和低成本的文生图场景
+ */
+export const geminiFlashLiteImageFunc = createGeminiImageExecutor(
+    "gemini-3.1-flash-lite-image"
+);
 
 /**
  * geminiFlashImage:

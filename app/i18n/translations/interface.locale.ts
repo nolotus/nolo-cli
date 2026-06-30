@@ -776,8 +776,10 @@ export default {
         myFavorites: "My Favorites",
         aiPlaza: "AI Plaza",
         shareCommunity: "Community Shares",
+        custom: "Custom",
         viewMore: "View more",
         enterCommunity: "Enter community",
+        viewCustom: "View details",
         myContentPageSubtitle:
           "Browse the latest pages, tables, apps, files, and conversations across all your spaces.",
         myFavoritesPageSubtitle:
@@ -1641,8 +1643,10 @@ export default {
         myFavorites: "我的收藏",
         aiPlaza: "AI 广场",
         shareCommunity: "社区分享",
+        custom: "自定义",
         viewMore: "查看更多",
         enterCommunity: "进入社区",
+        viewCustom: "查看详情",
         myContentPageSubtitle:
           "跨 space 查看最近更新的文档、表格、应用、附件与对话。",
         myFavoritesPageSubtitle:
@@ -2506,8 +2510,10 @@ quickChat: {
         myFavorites: "我的收藏",
         aiPlaza: "AI 廣場",
         shareCommunity: "社群分享",
+        custom: "自訂",
         viewMore: "查看更多",
         enterCommunity: "進入社群",
+        viewCustom: "查看詳情",
         myContentPageSubtitle:
           "跨 space 查看最近更新的頁面、表格、應用、檔案與對話。",
         myFavoritesPageSubtitle:
@@ -3386,8 +3392,10 @@ quickChat: {
         myFavorites: "お気に入り",
         aiPlaza: "AI広場",
         shareCommunity: "コミュニティ共有",
+        custom: "カスタム",
         viewMore: "もっと見る",
         enterCommunity: "コミュニティへ",
+        viewCustom: "詳細を見る",
         myContentPageSubtitle:
           "すべてのスペースを横断して、最近更新されたページ、テーブル、アプリ、ファイル、会話を確認できます。",
         myFavoritesPageSubtitle:

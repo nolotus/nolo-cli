@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { loadProfileConfig } from "./client/profileConfig";
 import { resolveDefaultSpawn, type SpawnFn, type SpawnedProcess } from "./processSpawn";
+import { isCompiledBinary } from "./cliEnvHelpers";
 
 export type CliReleaseChannel = "alpha" | "latest";
 
@@ -32,8 +33,22 @@ type RunSelfUpdateOptions = {
 
 type SpawnOutputChunk = string | ArrayBuffer | ArrayBufferView;
 
-const CLI_DIR = dirname(fileURLToPath(import.meta.url));
-const PACKAGE_JSON_PATH = join(CLI_DIR, "package.json");
+function resolvePackageJsonPath(): string | null {
+  if (isCompiledBinary()) {
+    // In a Bun-compiled binary, import.meta.url points into a virtual
+    // bunfs root. Look for a package.json next to the real executable,
+    // which native packages ship alongside the binary.
+    const execDir = dirname(process.execPath);
+    const candidate = join(execDir, "package.json");
+    if (existsSync(candidate)) return candidate;
+    return null;
+  }
+  const CLI_DIR = dirname(fileURLToPath(import.meta.url));
+  const candidate = join(CLI_DIR, "package.json");
+  return existsSync(candidate) ? candidate : null;
+}
+
+const PACKAGE_JSON_PATH = resolvePackageJsonPath();
 
 export function getCliInstallChannel(serverUrl?: string | null): CliReleaseChannel {
   const normalized =
@@ -59,11 +74,21 @@ export function buildNpmSelfUpdateCommand(channel: CliReleaseChannel = "latest")
 }
 
 export function readPackageInfo(): PackageInfo {
-  const raw = readFileSync(PACKAGE_JSON_PATH, "utf8");
-  const parsed = JSON.parse(raw) as Partial<PackageInfo>;
+  if (PACKAGE_JSON_PATH) {
+    try {
+      const raw = readFileSync(PACKAGE_JSON_PATH, "utf8");
+      const parsed = JSON.parse(raw) as Partial<PackageInfo>;
+      return {
+        name: parsed.name || "nolo-cli",
+        version: parsed.version || "0.0.0",
+      };
+    } catch {
+      // Fall through to env defaults.
+    }
+  }
   return {
-    name: parsed.name || "nolo-cli",
-    version: parsed.version || "0.0.0",
+    name: process.env.NOLO_CLI_PACKAGE_NAME || "nolo-cli",
+    version: process.env.NOLO_CLI_VERSION || "0.0.0",
   };
 }
 

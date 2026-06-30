@@ -24,6 +24,7 @@ const createGoogleImageModel = ({
   outputPrice,
   imageTokenPricePerMillion,
   imageOutputTokenEstimateBySize,
+  pricePerImage,
   maxOutputTokens,
   contextWindow,
   imageGenerationWaitTimeSeconds,
@@ -33,8 +34,9 @@ const createGoogleImageModel = ({
   displayName: string;
   inputPrice: number;
   outputPrice: number;
-  imageTokenPricePerMillion: number;
-  imageOutputTokenEstimateBySize: NonNullable<Model["imageOutputTokenEstimateBySize"]>;
+  imageTokenPricePerMillion?: number;
+  imageOutputTokenEstimateBySize?: NonNullable<Model["imageOutputTokenEstimateBySize"]>;
+  pricePerImage?: number;
   maxOutputTokens: number;
   contextWindow: number;
   imageGenerationWaitTimeSeconds?: Model["imageGenerationWaitTimeSeconds"];
@@ -57,6 +59,7 @@ const createGoogleImageModel = ({
   },
   imageTokenPricePerMillion,
   imageOutputTokenEstimateBySize,
+  pricePerImage,
   maxOutputTokens,
   contextWindow,
   imageGenerationWaitTimeSeconds,
@@ -325,6 +328,39 @@ export const googleModels: Model[] = [
         waitTimeSeconds: {
           min: 10,
           max: 25,
+        },
+      },
+      {
+        key: "quality",
+        label: "质量优先",
+        imageModel: "gemini-3-pro-image-preview",
+        waitTimeSeconds: {
+          min: 25,
+          max: 60,
+        },
+      },
+    ],
+  }),
+  createGoogleImageModel({
+    name: "gemini-3.1-flash-lite-image",
+    displayName: "Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)",
+    inputPrice: 0.25 * 7,
+    outputPrice: 1.5 * 7,
+    pricePerImage: 0.034 * 7,
+    maxOutputTokens: 65536,
+    contextWindow: 65536,
+    imageGenerationWaitTimeSeconds: {
+      min: 4,
+      max: 10,
+    },
+    imageGenerationProfiles: [
+      {
+        key: "speed",
+        label: "速度优先",
+        imageModel: "gemini-3.1-flash-lite-image",
+        waitTimeSeconds: {
+          min: 4,
+          max: 10,
         },
       },
       {

@@ -154,3 +154,19 @@ export function readOption(args: string[], flag: string) {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : undefined;
 }
+
+/**
+ * Detect whether we are running inside a Bun `--compile` standalone binary.
+ *
+ * In compiled mode `import.meta.url` resolves to a virtual `/$bunfs/root/...`
+ * path, while `process.execPath` points at the real binary on disk. Source runs
+ * under `bun` have a real `import.meta.url` ending in `.ts`.
+ */
+export function isCompiledBinary(): boolean {
+  try {
+    const url = import.meta.url;
+    return url.startsWith("file:///$bunfs/root/") || url.startsWith("/$bunfs/root/");
+  } catch {
+    return false;
+  }
+}

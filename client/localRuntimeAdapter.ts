@@ -85,6 +85,7 @@ import {
   readXPostFunctionSchema,
 } from "../ai/tools/readXPostTool";
 import { ulid } from "ulid";
+import { isCompiledBinary } from "../cliEnvHelpers";
 
 type EnvLike = Record<string, string | undefined>;
 type FetchInput = Parameters<typeof fetch>[0];
@@ -104,10 +105,13 @@ type LocalCliExecutor = (
 ) => Promise<CliExecuteResult>;
 const TRANSIENT_FETCH_MAX_ATTEMPTS = 3;
 const TRANSIENT_FETCH_RETRY_BASE_DELAY_MS = 250;
-export const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
+const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
 export const BUILTIN_NOLO_AGENT_KEY = NOLO_DEFAULT_AGENT_KEY;
-const CLI_DIR = dirname(fileURLToPath(import.meta.url));
-const CLI_ENTRYPOINT = join(CLI_DIR, "..", "index.ts");
+const SOURCE_CLI_DIR = dirname(fileURLToPath(import.meta.url));
+const CLI_DIR = isCompiledBinary() ? dirname(process.execPath) : SOURCE_CLI_DIR;
+const CLI_ENTRYPOINT = isCompiledBinary()
+  ? process.execPath
+  : join(SOURCE_CLI_DIR, "..", "index.ts");
 const LOCAL_SERVER_TABLE_TOOL_NAMES = [
   "createTable",
   "addTableRow",
@@ -146,7 +150,7 @@ export function clearCliLocalRuntimePreparedAgentCache() {
 
 export type CliLocalRuntimeDb = CliKvDb;
 
-export type CliLocalRuntimeAdapterDeps = {
+type CliLocalRuntimeAdapterDeps = {
   env: EnvLike;
   db?: CliLocalRuntimeDb;
   store?: HybridRecordStore;
@@ -442,35 +446,39 @@ function resolveCliProviderName(agentConfig: AgentRuntimeAgentConfig) {
 function stringifyRuntimeMessageContent(content: AgentRuntimeChatMessage["content"]) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (part && typeof part === "object" && "text" in part) {
-          return String((part as any).text ?? "");
-        }
-        return JSON.stringify(part);
-      })
-      .filter((part) => part.trim())
-      .join("\n");
+    const parts: string[] = [];
+    for (const part of content) {
+      let text: string;
+      if (typeof part === "string") {
+        text = part;
+      } else if (part && typeof part === "object" && "text" in part) {
+        text = String(part.text ?? "");
+      } else {
+        text = JSON.stringify(part);
+      }
+      if (text.trim()) parts.push(text);
+    }
+    return parts.join("\n");
   }
   return content == null ? "" : String(content);
 }
 
 function buildPromptForCliProvider(messages: AgentRuntimeChatMessage[]) {
-  const systemPrompt = messages
-    .filter((message) => message.role === "system")
-    .map((message) => stringifyRuntimeMessageContent(message.content).trim())
-    .filter(Boolean)
-    .join("\n\n");
-  const taskPrompt = messages
-    .filter((message) => message.role !== "system")
-    .map((message) => {
+  const systemParts: string[] = [];
+  const taskParts: string[] = [];
+  for (const message of messages) {
+    if (message.role === "system") {
       const content = stringifyRuntimeMessageContent(message.content).trim();
-      if (!content) return "";
-      return `[${message.role}]\n${content}`;
-    })
-    .filter(Boolean)
-    .join("\n\n");
+      if (content) systemParts.push(content);
+    } else {
+      const content = stringifyRuntimeMessageContent(message.content).trim();
+      if (content) {
+        taskParts.push(`[${message.role}]\n${content}`);
+      }
+    }
+  }
+  const systemPrompt = systemParts.join("\n\n");
+  const taskPrompt = taskParts.join("\n\n");
   return buildCliPrompt(systemPrompt, taskPrompt);
 }
 
@@ -504,14 +512,14 @@ function logLocalRuntimeDiagnostic(event: string, fields: Record<string, unknown
 }
 
 function summarizeOpenAiToolNames(tools: Array<Record<string, unknown>>) {
-  return tools
-    .map((tool) => {
-      const fn = tool.function;
-      return fn && typeof fn === "object" && "name" in fn && typeof fn.name === "string"
-        ? fn.name
-        : null;
-    })
-    .filter((name): name is string => Boolean(name));
+  return tools.reduce<string[]>((acc, tool) => {
+    const fn = tool.function;
+    const name = fn && typeof fn === "object" && "name" in fn && typeof fn.name === "string"
+      ? fn.name
+      : null;
+    if (name) acc.push(name);
+    return acc;
+  }, []);
 }
 
 function shouldExposeLocalPlatformTools(agentKey?: string) {
@@ -593,9 +601,16 @@ function buildLocalPolicyToolNames(args: { toolNames?: string[]; env: EnvLike })
       exposeShellTools: true,
       useDeclaredToolNamesOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(args.env),
     }),
-    ...((args.toolNames ?? []).includes("read_x_post") ? ["read_x_post"] : []),
-    ...((args.toolNames ?? []).includes("read_xhs_profile") ? ["read_xhs_profile"] : []),
-    ...(args.toolNames ?? []).filter((name) => LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)),
+    ...(() => {
+      const extra: string[] = [];
+      const names = args.toolNames ?? [];
+      for (const name of names) {
+        if (name === "read_x_post") extra.push("read_x_post");
+        if (name === "read_xhs_profile") extra.push("read_xhs_profile");
+        if (LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)) extra.push(name);
+      }
+      return extra;
+    })(),
     ...filterNoloWorkspaceToolNames(args.toolNames),
   ];
 }
@@ -648,18 +663,18 @@ function resolveLocalWorkspaceParameterVariant(value: string | undefined) {
 }
 
 function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
-  const toolNames = new Set(args.toolNames ?? []);
+  const toolNameSet = new Set(args.toolNames ?? []);
   const tableTools = prepareTools(
-    (args.toolNames ?? []).filter((name) => LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)),
+    Array.from(toolNameSet).filter((name) => LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)),
   );
   return [
-    ...(toolNames.has("read_xhs_profile")
+    ...(toolNameSet.has("read_xhs_profile")
       ? [{
           type: "function",
           function: readXhsProfileFunctionSchema,
         }]
       : []),
-    ...(toolNames.has("read_x_post")
+    ...(toolNameSet.has("read_x_post")
       ? [{
           type: "function",
           function: readXPostFunctionSchema,
@@ -751,13 +766,12 @@ function normalizeRemoteString(value: unknown): string | undefined {
 
 function normalizeRemoteStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return [
-    ...new Set(
-      value
-        .map(normalizeRemoteString)
-        .filter((item): item is string => Boolean(item)),
-    ),
-  ];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const normalized = normalizeRemoteString(item);
+    if (normalized) seen.add(normalized);
+  }
+  return [...seen];
 }
 
 function normalizeRemoteSubjectRef(value: unknown) {
@@ -786,13 +800,18 @@ function mergeRemoteSubjectRefs(...groups: unknown[]) {
   }
   return refs;
 }
-
 function resolveParentAgentKeyFromDialog(parentDialog: Record<string, any>) {
-  return normalizeRemoteString(parentDialog.primaryAgentKey) ??
-    normalizeRemoteString(parentDialog.agentKey) ??
-    (Array.isArray(parentDialog.cybots)
-      ? parentDialog.cybots.map(normalizeRemoteString).find(Boolean)
-      : undefined);
+  const primaryKey = normalizeRemoteString(parentDialog.primaryAgentKey);
+  if (primaryKey) return primaryKey;
+  const agentKey = normalizeRemoteString(parentDialog.agentKey);
+  if (agentKey) return agentKey;
+  if (Array.isArray(parentDialog.cybots)) {
+    for (const item of parentDialog.cybots) {
+      const normalized = normalizeRemoteString(item);
+      if (normalized) return normalized;
+    }
+  }
+  return undefined;
 }
 
 function clipLocalWakeEvidence(value: unknown, max = 1200) {
@@ -972,22 +991,34 @@ async function syncLocalDialogEvidenceToRemote(args: {
     return { attempted: false as const };
   }
 
-  const orderedOps = [
-    ...args.ops.filter((op) => op.type === "put" && op.key.includes("-msg-")),
-    ...args.ops.filter((op) => op.type === "put" && !op.key.includes("-msg-")),
-  ];
-
-  for (const op of orderedOps) {
+  // Single pass: partition into msg ops (front) and non-msg ops (back)
+  const orderedOps: Array<{ type: "put"; key: string; value: any }> = [];
+  const nonMsgOps: Array<{ type: "put"; key: string; value: any }> = [];
+  for (const op of args.ops) {
     if (op.type !== "put") continue;
-    await postRemoteRecord({
-      authToken,
-      data: op.value,
-      fetchImpl: args.fetchImpl,
-      key: op.key,
-      serverUrl,
-      userId: args.userId,
-    });
+    if (op.key.includes("-msg-")) {
+      orderedOps.push(op);
+    } else {
+      nonMsgOps.push(op);
+    }
   }
+  orderedOps.push(...nonMsgOps);
+
+  // Remote post requests are independent — parallelize with Promise.all
+  await Promise.all(
+    orderedOps
+      .filter((op) => op.type === "put")
+      .map((op) =>
+        postRemoteRecord({
+          authToken,
+          data: op.value,
+          fetchImpl: args.fetchImpl,
+          key: op.key,
+          serverUrl,
+          userId: args.userId,
+        })
+      )
+  );
 
   const childDialogOp = args.ops.find((op) => op.type === "put" && !op.key.includes("-msg-"));
   const childDialogRecord = childDialogOp?.value && typeof childDialogOp.value === "object"
@@ -1165,6 +1196,7 @@ async function readAgentFromStore(args: {
   agentRef: string;
   userId: string;
 }): Promise<AgentRuntimeAgentConfig | null> {
+  // Sequential lookup with early return — each key must be checked in order, stopping at first match.
   for (const key of buildLocalAgentLookupKeys(args)) {
     const record = await args.store.read(key, {
       remote: shouldReadAgentKeyRemotely(key),
@@ -1175,6 +1207,7 @@ async function readAgentFromStore(args: {
   const normalizedRef = normalizeRemoteString(args.agentRef)?.toLowerCase().replace(/\s+/g, " ");
   if (!normalizedRef) return null;
   try {
+    // Async iterator — must consume entries sequentially from the store cursor.
     const iterator = args.store.iterator({ gte: "agent-", lte: "agent-\uffff" });
     for await (const [key, record] of iterator) {
       if (!record || typeof record !== "object") continue;
@@ -1195,6 +1228,7 @@ async function readDialogMessages(args: {
   const messages: AgentRuntimeChatMessage[] = [];
   const prefix = `dialog-${args.dialogId}-msg-`;
   const iterator = args.store.iterator({ gte: prefix, lte: `${prefix}\uffff` });
+  // Async iterator — must consume entries sequentially from the store cursor.
   for await (const [, value] of iterator) {
     const message = localDialogMessageRecordToRuntimeMessage(value);
     if (message) messages.push(message);

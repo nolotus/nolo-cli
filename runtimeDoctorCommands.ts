@@ -28,6 +28,7 @@ function detectLocalProvider(env: EnvLike) {
     env.OPENAI_API_KEY ||
     env.ANTHROPIC_API_KEY ||
     env.GOOGLE_API_KEY ||
+    env.GEMINI_API_KEY ||
     env.NOLO_LOCAL_OPENAI_BASE_URL ||
     env.OLLAMA_BASE_URL
   );
@@ -39,6 +40,7 @@ function detectProviderLabel(env: EnvLike) {
   if (env.OPENAI_API_KEY) return "openai via env OPENAI_API_KEY";
   if (env.ANTHROPIC_API_KEY) return "anthropic via env ANTHROPIC_API_KEY";
   if (env.GOOGLE_API_KEY) return "google via env GOOGLE_API_KEY";
+  if (env.GEMINI_API_KEY) return "google via env GEMINI_API_KEY";
   return "missing";
 }
 

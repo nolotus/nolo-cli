@@ -42,14 +42,18 @@ export type ResolvedSkillGraph = {
   visits: SkillGraphVisit[];
 };
 
-export const joinUniqueStrings = (...groups: Array<string[] | undefined>): string[] =>
-  Array.from(
-    new Set(
-      groups
-        .flatMap((items) => items ?? [])
-        .filter((item): item is string => typeof item === "string" && !!item.trim()),
-    ),
-  );
+export const joinUniqueStrings = (...groups: Array<string[] | undefined>): string[] => {
+  const combined: string[] = [];
+  for (const items of groups) {
+    if (!items) continue;
+    for (const item of items) {
+      if (typeof item === "string" && item.trim()) {
+        combined.push(item);
+      }
+    }
+  }
+  return Array.from(new Set(combined));
+};
 
 export const extractRuntimePageCapabilities = (
   content: SkillRuntimePageLike,
@@ -102,7 +106,7 @@ export const buildSkillGuidancePromptBlock = (options: {
 };
 
 export const buildReferenceRuntimePromptBlock = (visits: SkillGraphVisit[], skillPromptPatches: string[]): string => {
-  const referenceLines: string[] = [];
+  const referenceLines = new Set<string>();
   const hardSkillNames = new Set<string>();
   const softSkillNames = new Set<string>();
   const promptSections: string[] = [];
@@ -112,20 +116,18 @@ export const buildReferenceRuntimePromptBlock = (visits: SkillGraphVisit[], skil
       visit.sourceLabel && visit.sourceLabel !== visit.dbKey
         ? `${visit.title ?? visit.dbKey} (${visit.dbKey}) <- ${visit.sourceLabel}`
         : `${visit.title ?? visit.dbKey} (${visit.dbKey})`;
-    if (!referenceLines.includes(line)) {
-      referenceLines.push(line);
-    }
+    referenceLines.add(line);
     const skillName = visit.meta?.skillConfig?.name;
     if (!skillName) continue;
     if (visit.mode === "required") hardSkillNames.add(skillName);
     else softSkillNames.add(skillName);
   }
 
-  if (referenceLines.length > 0) {
+  if (referenceLines.size > 0) {
     promptSections.push(
       [
         "你当前挂载了这些 references，可按需直接读取它们的 dbKey：",
-        ...referenceLines.map((line) => `- ${line}`),
+        ...Array.from(referenceLines).map((line) => `- ${line}`),
       ].join("\n"),
     );
   }
@@ -158,21 +160,17 @@ const buildIdentifierCandidates = (
   const trimmed = identifier.trim();
   if (!trimmed || contentByKey.has(trimmed)) return trimmed;
 
-  for (const [key, page] of contentByKey.entries()) {
+  const candidateToKey = new Map<string, string>();
+  for (const [key, page] of Array.from(contentByKey.entries())) {
     const meta = resolvePageSkillMetadata(page);
-    const candidates = [
-      key,
-      page?.dbKey,
-      page?.title,
-      meta?.skillConfig?.id,
-      meta?.skillConfig?.name,
-    ].filter((value): value is string => typeof value === "string" && !!value.trim());
-    if (candidates.includes(trimmed)) {
-      return key;
+    for (const value of [key, page?.dbKey, page?.title, meta?.skillConfig?.id, meta?.skillConfig?.name]) {
+      if (typeof value === "string" && value.trim()) {
+        candidateToKey.set(value.trim(), key);
+      }
     }
   }
 
-  return trimmed;
+  return candidateToKey.get(trimmed) ?? trimmed;
 };
 
 export async function resolveSkillGraphFromRoots(options: {
@@ -245,23 +243,15 @@ export async function resolveSkillGraphFromRoots(options: {
     const nextSoft = meta?.recommendedSkills ?? meta?.skillConfig?.recommendedSkills ?? [];
 
     if (mode === "required") {
-      for (const childKey of nextHard) {
-        await visit(childKey, "required", page.dbKey);
-      }
-      for (const childKey of nextSoft) {
-        await visit(childKey, "recommended", page.dbKey);
-      }
+      await Promise.all(nextHard.map((childKey) => visit(childKey, "required", page.dbKey)));
+      await Promise.all(nextSoft.map((childKey) => visit(childKey, "recommended", page.dbKey)));
       return;
     }
 
-    for (const childKey of [...nextHard, ...nextSoft]) {
-      await visit(childKey, "recommended", page.dbKey);
-    }
+    await Promise.all([...nextHard, ...nextSoft].map((childKey) => visit(childKey, "recommended", page.dbKey)));
   };
 
-  for (const root of options.roots) {
-    await visit(root.identifier, root.mode, root.sourceLabel);
-  }
+  await Promise.all(options.roots.map((root) => visit(root.identifier, root.mode, root.sourceLabel)));
 
   return {
     requiredTools: Array.from(requiredTools),

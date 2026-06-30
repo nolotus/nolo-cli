@@ -7,7 +7,7 @@ import {
   type PayloadAction,
 } from "@reduxjs/toolkit";
 import type { RootState } from "../store";
-import { isProduction } from "../utils/env";
+import { isProduction, isDevelopment } from "../utils/env";
 import { getIsDesktopApp } from "../utils/env";
 import { getAllServers } from "../../database/actions/common";
 import { SERVERS } from "../../database/config";
@@ -147,6 +147,9 @@ interface SettingState {
   desktopChromeConnectorEnabled: boolean;
   deleteShortcut: string;
 
+  // 实验功能：首页 Widgets（用量统计等小卡片）
+  widgetsEnabled: boolean;
+
   [key: string]: any;
 }
 
@@ -222,6 +225,8 @@ const initialState: SettingState = {
   deleteShortcut: (typeof window !== "undefined" && typeof window.navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(window.navigator.platform))
     ? "meta+backspace"
     : "ctrl+backspace",
+  // 实验功能：开发/测试环境默认开启 Widgets，生产环境默认关闭（用户可在设置中手动开启）
+  widgetsEnabled: isDevelopment,
 };
 
 // --- Slice 创建 ---
@@ -979,6 +984,8 @@ export const selectPreferredAnimationSet = (state: RootState): number =>
   state.settings.preferredAnimationSet ?? DEFAULT_ANIMATION_SET_INDEX;
 export const selectShowThinking = (state: RootState): boolean =>
   state.settings.showThinking;
+export const selectWidgetsEnabled = (state: RootState): boolean =>
+  state.settings.widgetsEnabled ?? false;
 export const selectMaxCost = (state: RootState): number =>
   state.settings.maxCost;
 export const selectMaxExecutionTime = (state: RootState): number =>

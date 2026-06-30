@@ -223,6 +223,8 @@ export interface PendingFile {
     | "ocr_text";
   groupId?: string;
   ocrText?: string;  // ← 新增：OCR 识别结果
+  /** 关联到文件处理状态（如 useMessageInputFiles 的 fileStatus）的跟踪 id。 */
+  trackingId?: string;
 }
 
 export interface CreatePagePayload {
@@ -298,7 +300,7 @@ interface DialogRuntimeState {
 
 // --- Initial State ---
 
-const GLOBAL_DIALOG_RUNTIME_KEY = "__global__";
+export const GLOBAL_DIALOG_RUNTIME_KEY = "__global__";
 
 const createEmptyTokenStats = (): TokenStats => ({
   inputTokens: 0,

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ANSI_ESCAPE_REGEX,
   appendToCurrentTurn,
+  applyScrollAction,
   createFixedInput,
   createHistoryOutputStream,
   createRawInputDecoder,
@@ -10,10 +11,14 @@ import {
   displayWidth,
   countPhysicalLines,
   finalizeCurrentTurn,
+  padOrTruncateToWidth,
+  parseScrollAction,
   renderHistory,
   splitRawInput,
   startTurn,
   stripAnsi,
+  takeDisplayWidth,
+  wrapTextToLines,
 } from "./readlineWorkspace";
 describe("displayWidth", () => {
   test("returns 0 for empty string", () => {
@@ -344,5 +349,128 @@ describe("createRawInputDecoder", () => {
     decode(" 世界");
 
     expect(tokens.join("")).toBe("hello 世界");
+  });
+});
+
+describe("scroll-aware history", () => {
+  function makeOutput(rows = 10, columns = 40) {
+    const chunks: string[] = [];
+    const output = {
+      isTTY: true,
+      rows,
+      columns,
+      write(chunk: string) {
+        chunks.push(chunk);
+        return true;
+      },
+    } as unknown as NodeJS.WritableStream;
+    return { output, chunks };
+  }
+
+  test("createTurnHistory starts at bottom with follow mode", () => {
+    const history = createTurnHistory();
+    expect(history.scrollTop).toBe(0);
+    expect(history.followBottom).toBe(true);
+  });
+
+  test("wrapTextToLines wraps long lines by display width", () => {
+    expect(wrapTextToLines("hello world", 5)).toEqual([
+      "hello",
+      " worl",
+      "d",
+    ]);
+  });
+
+  test("wrapTextToLines keeps empty lines", () => {
+    expect(wrapTextToLines("a\n\nb", 10)).toEqual(["a", "", "b"]);
+  });
+
+  test("takeDisplayWidth never returns empty when a single char exceeds width", () => {
+    const { prefix, rest } = takeDisplayWidth("你好", 1);
+    expect(prefix).toBe("你");
+    expect(rest).toBe("好");
+  });
+
+  test("padOrTruncateToWidth pads short text and truncates long text", () => {
+    expect(padOrTruncateToWidth("hi", 5)).toBe("hi   ");
+    expect(padOrTruncateToWidth("hello world", 5)).toBe("hello");
+    expect(padOrTruncateToWidth("你好世界", 3)).toBe("你");
+  });
+
+  test("renderHistory shows scrollbar when history exceeds viewport", () => {
+    const { output, chunks } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    for (let i = 0; i < 20; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    renderHistory(output, history, 2);
+    const stdout = chunks.join("");
+    expect(stdout).toContain("█");
+    expect(stdout).toContain("│");
+  });
+
+  test("renderHistory scrolls to follow bottom by default", () => {
+    const { output, chunks } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    for (let i = 0; i < 30; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    renderHistory(output, history, 2);
+    const stdout = chunks.join("");
+    expect(stdout).toContain("line 29");
+    expect(stdout).not.toContain("line 0");
+    expect(history.scrollTop).toBeGreaterThan(0);
+  });
+
+  test("renderHistory respects scrollTop when not following bottom", () => {
+    const { output, chunks } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    history.followBottom = false;
+    for (let i = 0; i < 30; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    history.scrollTop = 2;
+    renderHistory(output, history, 2);
+    const stdout = chunks.join("");
+    expect(stdout).toContain("line 2");
+    expect(stdout).not.toContain("line 29");
+  });
+
+  test("parseScrollAction recognizes scroll keys", () => {
+    expect(parseScrollAction("\x1b[5~")).toBe("page-up");
+    expect(parseScrollAction("\x1b[6~")).toBe("page-down");
+    expect(parseScrollAction("\x1b[5;2~")).toBe("half-page-up");
+    expect(parseScrollAction("\x1b[6;5~")).toBe("half-page-down");
+    expect(parseScrollAction("\x1b[H")).toBe("top");
+    expect(parseScrollAction("\x1b[F")).toBe("bottom");
+    expect(parseScrollAction("\x1b[1~")).toBe("top");
+    expect(parseScrollAction("\x1b[4~")).toBe("bottom");
+    expect(parseScrollAction("a")).toBeNull();
+  });
+
+  test("applyScrollAction moves scrollTop and disables follow bottom", () => {
+    const { output } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    history.followBottom = true;
+    for (let i = 0; i < 30; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    applyScrollAction(history, "page-up", output, 2);
+    expect(history.followBottom).toBe(false);
+    expect(history.scrollTop).toBe(0);
+
+    applyScrollAction(history, "page-down", output, 2);
+    expect(history.scrollTop).toBe(8);
+
+    applyScrollAction(history, "bottom", output, 2);
+    expect(history.followBottom).toBe(true);
+    expect(history.scrollTop).toBe(22);
+  });
+
+  test("splitRawInput keeps CSI scroll sequences intact", () => {
+    expect(splitRawInput("\x1b[5~")).toEqual(["\x1b[5~"]);
+    expect(splitRawInput("\x1b[6;2~")).toEqual(["\x1b[6;2~"]);
+    expect(splitRawInput("\x1b[H")).toEqual(["\x1b[H"]);
+    expect(splitRawInput("\x1b[F")).toEqual(["\x1b[F"]);
   });
 });

@@ -74,10 +74,20 @@ export type TurnHistory = {
   turns: Turn[];
   currentRole: TurnRole | null;
   currentContent: string;
+  scrollTop: number;
+  followBottom: boolean;
 };
 
+const MAX_TUI_HISTORY_TURNS = 500;
+
 export function createTurnHistory(): TurnHistory {
-  return { turns: [], currentRole: null, currentContent: "" };
+  return {
+    turns: [],
+    currentRole: null,
+    currentContent: "",
+    scrollTop: 0,
+    followBottom: true,
+  };
 }
 
 export function startTurn(history: TurnHistory, role: TurnRole) {
@@ -103,6 +113,9 @@ export function finalizeCurrentTurn(history: TurnHistory) {
     });
     history.currentRole = null;
     history.currentContent = "";
+    if (history.turns.length > MAX_TUI_HISTORY_TURNS) {
+      history.turns = history.turns.slice(history.turns.length - MAX_TUI_HISTORY_TURNS);
+    }
   }
 }
 
@@ -118,26 +131,45 @@ export function renderHistory(
   history: TurnHistory,
   inputLines: number
 ) {
-  const tty = output as { isTTY?: boolean; rows?: number };
+  const tty = output as { isTTY?: boolean; rows?: number; columns?: number };
   if (!tty.isTTY) return;
   const rows = tty.rows ?? 24;
-  const mainBottom = Math.max(1, rows - inputLines);
+  const columns = tty.columns ?? 80;
+  const visibleHeight = Math.max(1, rows - inputLines);
+  const contentWidth = Math.max(1, columns - 1);
+
+  const lines = buildHistoryLines(history, contentWidth);
+  const totalLines = lines.length;
+
+  if (history.followBottom) {
+    history.scrollTop = Math.max(0, totalLines - visibleHeight);
+  } else {
+    history.scrollTop = Math.max(
+      0,
+      Math.min(history.scrollTop, Math.max(0, totalLines - visibleHeight))
+    );
+  }
+
+  const visibleStart = history.scrollTop;
+  const visibleEnd = Math.min(totalLines, visibleStart + visibleHeight);
+  const visibleLines = lines.slice(visibleStart, visibleEnd);
+
   output.write("\x1b[1;1H");
   output.write("\x1b[J");
-  for (const turn of history.turns) {
-    if (turn.role === "user") {
-      output.write(`\n❯ ${turn.content}\n`);
-    } else {
-      output.write(`${turn.content}\n`);
+
+  for (let i = 0; i < visibleHeight; i++) {
+    const line = visibleLines[i] ?? "";
+    const padded = padOrTruncateToWidth(line, contentWidth);
+    const thumb = renderScrollbarRow(i, visibleHeight, totalLines, history.scrollTop);
+    output.write(padded);
+    output.write(`\x1b[${columns}G`);
+    output.write(thumb);
+    if (i < visibleHeight - 1) {
+      output.write("\n");
     }
   }
-  if (history.currentRole !== null && history.currentContent) {
-    if (history.currentRole === "user") {
-      output.write(`\n❯ ${history.currentContent}\n`);
-    } else {
-      output.write(`${history.currentContent}\n`);
-    }
-  }
+
+  const mainBottom = Math.max(1, rows - inputLines);
   output.write(`\x1b[${mainBottom};1H`);
 }
 
@@ -388,6 +420,167 @@ export function countPhysicalLines(text: string, columns: number): number {
   return Math.max(total, 1);
 }
 
+export function takeDisplayWidth(
+  text: string,
+  width: number
+): { prefix: string; rest: string } {
+  let used = 0;
+  let index = 0;
+  for (const char of text) {
+    const charWidth = displayWidth(char);
+    if (used + charWidth > width && used > 0) break;
+    used += charWidth;
+    index += char.length;
+  }
+  return { prefix: text.slice(0, index), rest: text.slice(index) };
+}
+
+export function padOrTruncateToWidth(text: string, width: number): string {
+  const textWidth = displayWidth(text);
+  if (textWidth > width) {
+    return takeDisplayWidth(text, width).prefix;
+  }
+  return `${text}${" ".repeat(width - textWidth)}`;
+}
+
+export function wrapTextToLines(text: string, columns: number): string[] {
+  const result: string[] = [];
+  for (const logicalLine of text.split("\n")) {
+    if (logicalLine === "") {
+      result.push("");
+      continue;
+    }
+    let remaining = logicalLine;
+    while (remaining.length > 0) {
+      const { prefix, rest } = takeDisplayWidth(remaining, columns);
+      result.push(prefix);
+      remaining = rest;
+    }
+  }
+  return result;
+}
+
+function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
+  const lines: string[] = [];
+  for (const turn of history.turns) {
+    if (turn.role === "user") {
+      lines.push("", `❯ ${turn.content}`);
+    } else {
+      lines.push(turn.content);
+    }
+  }
+  if (history.currentRole !== null && history.currentContent) {
+    if (history.currentRole === "user") {
+      lines.push("", `❯ ${history.currentContent}`);
+    } else {
+      lines.push(history.currentContent);
+    }
+  }
+  const wrapped: string[] = [];
+  for (const line of lines) {
+    wrapped.push(...wrapTextToLines(line, contentWidth));
+  }
+  return wrapped;
+}
+
+function renderScrollbarRow(
+  rowIndex: number,
+  visibleHeight: number,
+  totalLines: number,
+  scrollTop: number
+): string {
+  if (totalLines <= visibleHeight) return " ";
+  const trackHeight = visibleHeight;
+  const thumbSize = Math.max(
+    1,
+    Math.floor((visibleHeight * visibleHeight) / totalLines)
+  );
+  const maxScrollTop = totalLines - visibleHeight;
+  const thumbTop = Math.floor(
+    (scrollTop / maxScrollTop) * (trackHeight - thumbSize)
+  );
+  const thumbBottom = thumbTop + thumbSize;
+  if (rowIndex >= thumbTop && rowIndex < thumbBottom) {
+    return "█";
+  }
+  return "│";
+}
+
+export type ScrollAction =
+  | "page-up"
+  | "page-down"
+  | "half-page-up"
+  | "half-page-down"
+  | "top"
+  | "bottom";
+
+export function parseScrollAction(sequence: string): ScrollAction | null {
+  switch (sequence) {
+    case "\x1b[5~":
+      return "page-up";
+    case "\x1b[6~":
+      return "page-down";
+    case "\x1b[5;2~":
+    case "\x1b[5;5~":
+      return "half-page-up";
+    case "\x1b[6;2~":
+    case "\x1b[6;5~":
+      return "half-page-down";
+    case "\x1b[H":
+    case "\x1b[1~":
+    case "\x1b[7~":
+      return "top";
+    case "\x1b[F":
+    case "\x1b[4~":
+    case "\x1b[8~":
+      return "bottom";
+    default:
+      return null;
+  }
+}
+
+export function applyScrollAction(
+  history: TurnHistory,
+  action: ScrollAction,
+  output: NodeJS.WritableStream,
+  inputLines: number
+): void {
+  const tty = output as { rows?: number; columns?: number };
+  const rows = tty.rows ?? 24;
+  const columns = tty.columns ?? 80;
+  const visibleHeight = Math.max(1, rows - inputLines);
+  const contentWidth = Math.max(1, columns - 1);
+  const totalLines = buildHistoryLines(history, contentWidth).length;
+  const maxScrollTop = Math.max(0, totalLines - visibleHeight);
+
+  history.followBottom = false;
+
+  switch (action) {
+    case "page-up":
+      history.scrollTop = Math.max(0, history.scrollTop - visibleHeight);
+      break;
+    case "page-down":
+      history.scrollTop = Math.min(maxScrollTop, history.scrollTop + visibleHeight);
+      break;
+    case "half-page-up":
+      history.scrollTop = Math.max(0, history.scrollTop - Math.floor(visibleHeight / 2));
+      break;
+    case "half-page-down":
+      history.scrollTop = Math.min(
+        maxScrollTop,
+        history.scrollTop + Math.floor(visibleHeight / 2)
+      );
+      break;
+    case "top":
+      history.scrollTop = 0;
+      break;
+    case "bottom":
+      history.scrollTop = maxScrollTop;
+      history.followBottom = true;
+      break;
+  }
+}
+
 function repaintInput(output: NodeJS.WritableStream, buffer: string, renderedLines = 1) {
   const text = renderInput(buffer);
   const columns = (output as { columns?: number }).columns ?? 80;
@@ -511,8 +704,8 @@ export function createFixedInput(
     const { text, lines, cursorCol, cursorRow } = renderInputArea(buffer);
     if (lines !== inputLines) {
       inputLines = lines;
-      setScrollRegion(inputLines);
     }
+    setScrollRegion(inputLines);
     const startRow = getRows() - inputLines + 1;
     write(`\x1b[${startRow};1H`);
     write("\x1b[J");
@@ -565,6 +758,28 @@ export function createFixedInput(
   };
 }
 
+function readCsiSequence(input: string, start: number): string | null {
+  if (!input.startsWith("\x1b[", start)) return null;
+  let index = start + 2;
+  while (index < input.length) {
+    const code = input.charCodeAt(index);
+    if (code >= 0x30 && code <= 0x3f) {
+      index += 1;
+      continue;
+    }
+    if (code >= 0x20 && code <= 0x2f) {
+      index += 1;
+      continue;
+    }
+    if (code >= 0x40 && code <= 0x7e) {
+      index += 1;
+      return input.slice(start, index);
+    }
+    return null;
+  }
+  return null;
+}
+
 export function splitRawInput(input: string) {
   const chunks: string[] = [];
   for (let index = 0; index < input.length;) {
@@ -581,6 +796,12 @@ export function splitRawInput(input: string) {
     if (input.startsWith("\x1b\r", index)) {
       chunks.push("\x1b\r");
       index += 2;
+      continue;
+    }
+    const csi = readCsiSequence(input, index);
+    if (csi) {
+      chunks.push(csi);
+      index += csi.length;
       continue;
     }
     const codePoint = input.codePointAt(index);
@@ -866,6 +1087,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
       }
 
+      history.followBottom = true;
       startTurn(history, "user");
       appendToCurrentTurn(history, result.action.message);
       finalizeCurrentTurn(history);
@@ -944,6 +1166,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     const handleInputToken = async (sequence: string) => {
       if (busy || done) return;
+      const scrollAction = parseScrollAction(sequence);
+      if (scrollAction) {
+        applyScrollAction(history, scrollAction, output, fixedInput.getInputLines());
+        renderHistoryToOutput();
+        fixedInput.repaint(buffer);
+        return;
+      }
       const result = applyTuiInputKey(buffer, sequence);
       if (result.abort) {
         fixedInput.disable();

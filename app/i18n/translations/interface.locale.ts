@@ -701,6 +701,12 @@ export default {
         linuxDesc: "Native package for your environment.",
         macosTitle: "macOS",
         macosDesc: "Optimized for Apple Silicon.",
+        macosDmgInstaller: {
+          windowTitle: "Nolo Desktop",
+          subtitle: "Drag to Applications to install",
+          appLabel: "Nolo Desktop",
+          applicationsLabel: "Applications",
+        },
         cliTitle: "Nolo CLI",
         cliDesc:
           "Agent-first terminal workspace. Install with npm, then run nolo in your shell.",
@@ -1569,6 +1575,12 @@ export default {
         linuxDesc: "适配你本地环境的原生包。",
         macosTitle: "macOS",
         macosDesc: "为 Apple Silicon 优化。",
+        macosDmgInstaller: {
+          windowTitle: "Nolo Desktop",
+          subtitle: "拖到「应用程序」即可安装",
+          appLabel: "Nolo Desktop",
+          applicationsLabel: "应用程序",
+        },
         cliTitle: "Nolo CLI",
         cliDesc: "面向 Agent 的终端工作台。用 npm 安装后，在终端运行 nolo 即可开始。",
         cliInstallLabel: "安装命令",
@@ -2436,6 +2448,12 @@ quickChat: {
         linuxDesc: "適配你本地環境的原生包。",
         macosTitle: "macOS",
         macosDesc: "為 Apple Silicon 優化。",
+        macosDmgInstaller: {
+          windowTitle: "Nolo Desktop",
+          subtitle: "拖到「應用程式」即可安裝",
+          appLabel: "Nolo Desktop",
+          applicationsLabel: "應用程式",
+        },
         cliTitle: "Nolo CLI",
         cliDesc: "面向 Agent 的終端工作台。用 npm 安裝後，在終端執行 nolo 即可開始。",
         cliInstallLabel: "安裝命令",
@@ -3317,6 +3335,12 @@ quickChat: {
         linuxDesc: "ローカル環境向けネイティブパッケージ。",
         macosTitle: "macOS",
         macosDesc: "Apple Silicon に最適化済み。",
+        macosDmgInstaller: {
+          windowTitle: "Nolo Desktop",
+          subtitle: "「アプリケーション」にドラッグしてインストール",
+          appLabel: "Nolo Desktop",
+          applicationsLabel: "アプリケーション",
+        },
         cliTitle: "Nolo CLI",
         cliDesc:
           "Agent-first のターミナルワークスペース。npm でインストール後、シェルで nolo を実行できます。",

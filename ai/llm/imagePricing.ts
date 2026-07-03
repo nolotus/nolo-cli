@@ -3,6 +3,7 @@ import { findModelConfig } from "./providers";
 import type { Model } from "./types";
 
 export type ImageSizeKey = "1K" | "2K" | "4K";
+export type ImageQualityKey = "low" | "medium" | "high" | "auto";
 
 type ImagePricingModel = Pick<
   Model,
@@ -10,10 +11,34 @@ type ImagePricingModel = Pick<
 >;
 
 const DEFAULT_IMAGE_SIZE: ImageSizeKey = "1K";
+const DEFAULT_IMAGE_QUALITY: ImageQualityKey = "medium";
+
+type ImageTokenEstimate =
+  NonNullable<ImagePricingModel["imageOutputTokenEstimateBySize"]>[ImageSizeKey];
+
+const hasEstimateForSize = (
+  tokenEstimates: NonNullable<ImagePricingModel["imageOutputTokenEstimateBySize"]>,
+  size: ImageSizeKey
+): boolean => typeof tokenEstimates[size] !== "undefined";
+
+const resolveTokenEstimate = (
+  estimate: ImageTokenEstimate,
+  requestedQuality?: ImageQualityKey
+): number | undefined => {
+  if (typeof estimate === "number") return estimate;
+  if (!estimate) return undefined;
+
+  const quality =
+    requestedQuality && typeof estimate[requestedQuality] === "number"
+      ? requestedQuality
+      : DEFAULT_IMAGE_QUALITY;
+  return estimate[quality];
+};
 
 export const getApproxPricePerImage = (
   model: ImagePricingModel | null | undefined,
-  requestedSize?: ImageSizeKey
+  requestedSize?: ImageSizeKey,
+  requestedQuality?: ImageQualityKey
 ): number | undefined => {
   if (!model) return undefined;
 
@@ -29,10 +54,13 @@ export const getApproxPricePerImage = (
   if (!tokenEstimates) return undefined;
 
   const resolvedSize =
-    requestedSize && typeof tokenEstimates[requestedSize] === "number"
+    requestedSize && hasEstimateForSize(tokenEstimates, requestedSize)
       ? requestedSize
       : DEFAULT_IMAGE_SIZE;
-  const outputTokens = tokenEstimates[resolvedSize];
+  const outputTokens = resolveTokenEstimate(
+    tokenEstimates[resolvedSize],
+    requestedQuality
+  );
 
   if (typeof outputTokens !== "number") {
     return undefined;

@@ -73,7 +73,13 @@ export interface Model {
   pricePerImage?: number;
   imagePricingNote?: string;
   imageTokenPricePerMillion?: number;
-  imageOutputTokenEstimateBySize?: Partial<Record<"1K" | "2K" | "4K", number>>;
+  imageOutputTokenEstimateBySize?: Partial<
+    Record<
+      "1K" | "2K" | "4K",
+      | number
+      | Partial<Record<"low" | "medium" | "high" | "auto", number>>
+    >
+  >;
   imageGenerationWaitTimeSeconds?: ImageGenerationWaitTimeSeconds;
   imageGenerationProfiles?: ImageGenerationProfile[];
 

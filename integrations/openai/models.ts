@@ -86,8 +86,16 @@ export const openAIModels: Model[] = [
     supportsTool: false,
     contextWindow: 128_000,
     maxOutputTokens: 32_768,
-    price: { input: 5 * 8, output: 10 * 8, inputCacheHit: 1.25 * 8 },
-    pricePerImage: 0.04 * 8,
+    price: { input: 5 * 8, output: 0, inputCacheHit: 1.25 * 8 },
+    pricePerImage: undefined, // Dynamic cost via imageTokenPricePerMillion and quality/size
+    imageTokenPricePerMillion: 30 * 8, // $30.00 per 1M output tokens
+    // Official GPT Image 2 output estimates from the OpenAI image guide:
+    // low/medium/high cost by size divided by $30 per 1M output tokens.
+    imageOutputTokenEstimateBySize: {
+      "1K": { low: 200, medium: 1766, high: 7033 },
+      "2K": { low: 166, medium: 1366, high: 5500 },
+      "4K": { low: 166, medium: 1366, high: 5500 },
+    },
   },
   {
     name: "gpt-5.4",

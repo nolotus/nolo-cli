@@ -3,7 +3,10 @@ import { Agent, Message } from "../../app/types";
 import { generateOpenAIRequestBody } from "../../integrations/openai/generateOpenAIRequestBody";
 import { generateResponseRequestBody } from "../../integrations/openai/generateResponseRequestBody";
 
-import { isResponseAPIModel } from "./isResponseAPIModel";
+import {
+  resolveAgentCallPlan,
+  resolveClientWire,
+} from "../../agent-runtime/agentCallPlan";
 import { Contexts } from "../types";
 import { getModelConfig } from "./providers";
 import type { Model } from "./types";
@@ -140,8 +143,13 @@ export const generateRequestBody = ({
     imageSettings.shouldEnableImage
   );
 
-  // 1) Response API 走新版 /v1/responses（目前主要是 OpenAI）
-  if (isResponseAPIModel(agentConfigForRequest)) {
+  // 1) Response API 走新版 /v1/responses。用描述符的 client wire 判定，
+  //    而不是 isResponseAPIModel —— 后者只看 provider/model，对 codex
+  //    (apiKeyRef:chatgpt) 会误判为 responses 而发 input（F1 bug）。
+  const clientWire = resolveClientWire(
+    resolveAgentCallPlan(agentConfigForRequest as any, {})
+  );
+  if (clientWire === "responses") {
     return generateResponseRequestBody(
       agentConfigForRequest,
       [...(stableMessages ?? []), ...messages],

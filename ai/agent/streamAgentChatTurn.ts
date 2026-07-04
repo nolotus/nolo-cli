@@ -32,6 +32,10 @@ import type { Agent, DialogConfig } from "../../app/types";
 import { isResponseAPIModel } from "../llm/isResponseAPIModel";
 import { getModelContextWindow } from "../llm/getModelContextWindow";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
+import {
+    resolveAgentCallPlan,
+    resolveClientWire,
+} from "../../agent-runtime/agentCallPlan";
 
 import {
     sendOpenAICompletionsRequest,
@@ -1747,7 +1751,10 @@ export const streamAgentChatTurnHandler = async (
                 : {}),
         };
 
-        const isRespModel = isResponseAPIModel(agentConfigForCall);
+        const isRespModel =
+            resolveClientWire(
+                resolveAgentCallPlan(agentConfigForCall as any, {}),
+            ) === "responses";
 
         // 🔹 Response-style 模型：与 completions 一样走完整 Agent Loop
         if (isRespModel) {

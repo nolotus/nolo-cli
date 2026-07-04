@@ -12,7 +12,6 @@ import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import {
   isLocalCliAgentKey,
   LOCAL_CODEX_AGENT_KEY,
-  MIMO_MONTH_AGENT_KEY,
   resolveCliAgentKeyInput,
 } from "./agentAliases";
 import type { TaskEvidenceInput } from "./client/agentRun";
@@ -81,18 +80,15 @@ export function runtimeModeFromArgs(args: string[]): AgentRuntimeRequestedMode |
   return undefined;
 }
 
-export function isMonthlyMimoAgentRef(raw: string | undefined, resolved: string) {
+export function isFullstackCodingAgentRef(raw: string | undefined, resolved: string) {
   const normalized = raw?.trim().toLowerCase();
   return (
-    resolved === MIMO_MONTH_AGENT_KEY ||
     normalized === "fullstack" ||
     normalized === "full-stack" ||
     normalized === "nolo-fullstack" ||
-    normalized === "包月mimo" ||
-    normalized === "包月mimo2.5" ||
-    normalized === "mimo-month" ||
     normalized === "全栈" ||
-    normalized === "nolo 全栈工程师"
+    normalized === "nolo 全栈工程师" ||
+    resolved === "fullstack"
   );
 }
 
@@ -278,8 +274,8 @@ export function parseAgentRunArgs(
     ...readRepeatedFlagValues(args, "--image"),
     ...readRepeatedFlagValues(args, "--image-url"),
   ];
-  const mimoLocalWorkspaceDefault =
-    isMonthlyMimoAgentRef(rawAgentKey, agentKey) && runtimeMode !== "server";
+  const fullstackLocalWorkspaceDefault =
+    isFullstackCodingAgentRef(rawAgentKey, agentKey) && runtimeMode !== "server";
   const workflowRef = readFlagValue(args, "--workflow");
   const taskRowDbKey = readFlagValue(args, "--task-row-dbkey");
   const artifactIds = readFlagValue(args, "--artifact-ids")
@@ -290,10 +286,10 @@ export function parseAgentRunArgs(
     agentKey,
     message,
     imageUrls,
-    allowShell: args.includes("--dangerously-allow-shell") || mimoLocalWorkspaceDefault || explicitLocalCliAgentDefault,
+    allowShell: args.includes("--dangerously-allow-shell") || fullstackLocalWorkspaceDefault || explicitLocalCliAgentDefault,
     traceTools: args.includes("--trace-tools"),
     ...(eventsMode ? { eventsMode } : {}),
-    injectFeatureWorktreeInstruction: mimoLocalWorkspaceDefault,
+    injectFeatureWorktreeInstruction: fullstackLocalWorkspaceDefault,
     ...(workflowRef ? { workflowRef } : {}),
     ...(taskRowDbKey
       ? {
@@ -305,7 +301,7 @@ export function parseAgentRunArgs(
       : {}),
     ...(runtimeMode
       ? { runtimeMode }
-      : mimoLocalWorkspaceDefault || explicitLocalCliAgentDefault || args.includes("--dangerously-allow-shell")
+      : fullstackLocalWorkspaceDefault || explicitLocalCliAgentDefault || args.includes("--dangerously-allow-shell")
         ? { runtimeMode: "local" as const }
         : {}),
     background: args.includes("--bg"),

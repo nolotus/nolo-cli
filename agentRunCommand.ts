@@ -15,7 +15,7 @@ import { getReadableCliDb } from "./agentCommandSupport";
 import {
   buildLocalRunEnv,
   isLocalCliAgentKey,
-  isMonthlyMimoAgentRef,
+  isFullstackCodingAgentRef,
   parseAgentRunArgs,
   resolveRawAgentInput,
   resolveServerUrl,
@@ -117,9 +117,9 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // for "下一个 下下个" sequencing.
   const wantsFallbackSuggestions = parsed.fallbackAgentKeys && parsed.fallbackAgentKeys.length > 0;
   const rawAgentInput = resolveRawAgentInput(args, deps.commandPath) ?? parsed.agentKey;
-  const mimoLocal = isMonthlyMimoAgentRef(rawAgentInput, parsed.agentKey);
+  const fullstackLocal = isFullstackCodingAgentRef(rawAgentInput, parsed.agentKey);
   const explicitLocalCli = isLocalCliAgentKey(parsed.agentKey);
-  const isLocalRun = parsed.runtimeMode === "local" || (!parsed.runtimeMode && (mimoLocal || explicitLocalCli || args.includes("--dangerously-allow-shell")));
+  const isLocalRun = parsed.runtimeMode === "local" || (!parsed.runtimeMode && (fullstackLocal || explicitLocalCli || args.includes("--dangerously-allow-shell")));
 
   if (wantsFallbackSuggestions && !isLocalRun) {
     output.write("[nolo] --fallback-agent (suggestions) is only supported for local CLI runs (use --local)\n");

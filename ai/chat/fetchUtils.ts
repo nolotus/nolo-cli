@@ -2,8 +2,8 @@
 import { Agent } from "../../app/types";
 
 import { API_ENDPOINTS } from "../../database/config";
-import { shouldUseServerProxy } from "./shouldUseServerProxy";
 import { performServerProxyFetchWithRetry } from "./serverProxyRetry";
+import { resolveAgentCallPlan } from "../../agent-runtime/agentCallPlan";
 
 interface BodyData {
   model: string;
@@ -107,10 +107,14 @@ export const performFetchRequest = async (
   params: FetchParams
 ): Promise<Response> => {
   try {
-    return shouldUseServerProxy(
-      params.agentConfig,
-      params.bodyData.provider
-    )
+    // Preserve the old shouldUseServerProxy(agentConfig, bodyData.provider)
+    // request-provider override semantics.
+    const planConfig = {
+      ...params.agentConfig,
+      provider: params.bodyData.provider || params.agentConfig.provider,
+    };
+    return resolveAgentCallPlan(planConfig as any, {}).transport ===
+      "server-proxy"
       ? await fetchWithServerProxy(params)
       : await fetchDirectly(params);
   } catch (error: any) {

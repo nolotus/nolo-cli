@@ -8,7 +8,7 @@ import {
   runAgentTurn,
 } from "./agentRun";
 import { BUILTIN_NOLO_AGENT_KEY } from "./localRuntimeAdapter";
-import { MIMO_MONTH_AGENT_KEY, NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
+import { NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
 
 class CaptureOutput extends Writable {
   chunks: string[] = [];
@@ -336,7 +336,7 @@ describe("cli agent run client", () => {
       agentKey: NOLO_PROJECT_MANAGER_AGENT_KEY,
       serverUrl: "https://nolo.chat",
       message: "Supervise child dispatch",
-      allowedChildAgentKeys: [MIMO_MONTH_AGENT_KEY],
+      allowedChildAgentKeys: ["fullstack"],
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
       output,
@@ -348,7 +348,7 @@ describe("cli agent run client", () => {
     });
 
     expect(requests[0]?.body.runtimeContext.allowedChildAgentKeys).toEqual([
-      MIMO_MONTH_AGENT_KEY,
+      "fullstack",
     ]);
   });
 
@@ -1219,14 +1219,14 @@ describe("cli agent run client", () => {
     expect(output.text()).toContain("frontend-implementer > agy local ok");
   });
 
-  test("auto mode does not skip monthly Mimo when a local shell cwd is already bound", async () => {
+  test("auto mode does not skip fullstack when a local shell cwd is already bound", async () => {
     const output = new CaptureOutput();
     const httpCalls: string[] = [];
     let providerCalled = false;
 
     const result = await runAgentTurn({
-      agentName: MIMO_MONTH_AGENT_KEY,
-      agentKey: MIMO_MONTH_AGENT_KEY,
+      agentName: "fullstack",
+      agentKey: "fullstack",
       serverUrl: "https://us.nolo.chat",
       message: "fix tests and commit",
       scriptDir: "C:/missing/scripts",
@@ -1235,25 +1235,25 @@ describe("cli agent run client", () => {
       },
       output,
       runtimeMode: "auto",
-      localRuntimeCwd: "/repo/.worktrees/nolo-agent-mimo",
+      localRuntimeCwd: "/repo/.worktrees/nolo-agent-fullstack",
       localRuntimeAdapter: {
         host: "cli",
         capabilities: ["leveldb-agent-config", "local-provider", "local-tools"],
         loadAgentConfig: async (agentRef) => ({
           key: agentRef,
-          name: "包月 Mimo",
+          name: "fullstack",
           prompt: "Implement backend tasks.",
-          provider: "custom",
-          model: "mimo-v2.5-pro",
+          provider: "deepseek",
+          model: "deepseek-v4-flash",
           toolNames: ["queryTableRows"],
         }),
         loadDialogHistory: async () => [],
-        saveTurn: async () => ({ dialogId: "dialog-mimo-local" }),
+        saveTurn: async () => ({ dialogId: "dialog-fullstack-local" }),
         resolveProvider: async () => ({
-          model: "mimo-v2.5-pro",
+          model: "deepseek-v4-flash",
           complete: async () => {
             providerCalled = true;
-            return { content: "local mimo ok", model: "mimo-v2.5-pro" };
+            return { content: "local fullstack ok", model: "deepseek-v4-flash" };
           },
         }),
         executeTool: async () => ({ content: "ok" }),
@@ -1265,10 +1265,10 @@ describe("cli agent run client", () => {
     });
 
     expect(providerCalled).toBe(true);
-    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-mimo-local" });
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-fullstack-local" });
     expect(httpCalls).toEqual([]);
     expect(output.text()).not.toContain("skipping local runtime");
-    expect(output.text()).toContain(`${MIMO_MONTH_AGENT_KEY} -> working locally`);
+    expect(output.text()).toContain("fullstack -> working locally");
   });
 
   test("auto mode skips local runtime for machine-bound localhost custom providers", async () => {

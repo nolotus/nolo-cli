@@ -3,6 +3,11 @@ import {
   createEnvCommand,
   createEnvScriptDirCommand,
 } from "./cliCommandFactories";
+import {
+  runAgentEmailBindCommand,
+  runAgentEmailCreateAndProvisionCommand,
+  runAgentEmailProvisionCommand,
+} from "./agentEmailCommands";
 
 export function getAgentInternalCommandEntries(): CommandEntry[] {
   const createAgentRunCommand = (path: string[], description: string): CommandEntry =>
@@ -39,6 +44,19 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
       const { runAgentUpdateCommand } = await import("./agentRecordCommands");
       return runAgentUpdateCommand(args, deps);
     }),
+    createEnvCommand(["agent", "email", "provision"], "Provision a controlled inbox for an agent", async (args, deps) => {
+      return runAgentEmailProvisionCommand(args, deps);
+    }),
+    createEnvCommand(["agent", "email", "bind"], "Bind an existing email address to an agent", async (args, deps) => {
+      return runAgentEmailBindCommand(args, deps);
+    }),
+    createEnvCommand(
+      ["agent", "email", "create-and-provision"],
+      "Create an agent and provision its controlled inbox",
+      async (args, deps) => {
+        return runAgentEmailCreateAndProvisionCommand(args, deps);
+      }
+    ),
     createEnvCommand(["agent", "delete"], "Hard-delete an agent's private and public records", async (args, deps) => {
       const { runAgentDeleteCommand } = await import("./agentDeleteCommand");
       return runAgentDeleteCommand(args, deps);

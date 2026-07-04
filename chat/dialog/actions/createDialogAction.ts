@@ -284,6 +284,7 @@ export const createDialogAction = async (
         contentKey: dialogPath,
         type: DataType.DIALOG,
         title,
+        categoryId: category,
         ...(triggerType && { triggerType }),
       })
     );

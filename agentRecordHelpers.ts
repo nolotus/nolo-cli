@@ -158,7 +158,7 @@ function shouldUseCurlTransportFallback(error: unknown) {
   return /Unable to connect|ConnectionRefused|ECONNREFUSED|Failed to connect|Was there a typo|handshake|certificate|ECONNRESET|socket|network/i.test(message);
 }
 
-async function fetchWithTransportFallback(
+export async function fetchWithTransportFallback(
   url: string,
   init: RequestInit,
   options: { fallbackFetchImpl?: typeof fetch; fetchImpl: typeof fetch }

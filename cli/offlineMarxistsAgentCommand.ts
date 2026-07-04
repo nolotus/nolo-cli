@@ -28,7 +28,7 @@ type ParsedArgs = {
 
 const DEFAULT_USER_ID = "b2e06f801f";
 const DEFAULT_SPACE_ID = "01KKY77TT0DA9NY7TNW3R7255N";
-const DEFAULT_SOURCE_AGENT_ID = "01MIMO25MONTH0000000NEW001";
+const DEFAULT_SOURCE_AGENT_HANDLE = "fullstack";
 const DEFAULT_TARGET_AGENT_ID = "01OFFMARXBOOK000000010AHL1";
 const DEFAULT_AGENT_NAME = "离线马克思主义文库书籍转换助手";
 const TOOL_NAME = "convertMarxistsBookToOfflineHtml";
@@ -75,8 +75,8 @@ function parseArgs(args: string[], env: EnvLike): ParsedArgs | null {
     DEFAULT_USER_ID;
   const sourceAgentKey =
     readFlagValue(args, "--source-agent") ??
-    env.NOLO_MIMO_SOURCE_AGENT_KEY ??
-    `agent-${userId}-${DEFAULT_SOURCE_AGENT_ID}`;
+    env.NOLO_FULLSTACK_SOURCE_AGENT_KEY ??
+    DEFAULT_SOURCE_AGENT_HANDLE;
   const targetAgentId =
     readFlagValue(args, "--target-agent-id") ??
     env.NOLO_OFFLINE_MARXISTS_AGENT_ID ??

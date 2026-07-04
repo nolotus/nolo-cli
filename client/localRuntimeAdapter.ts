@@ -53,13 +53,6 @@ import { prepareTools } from "../ai/tools/prepareTools";
 import {
   LOCAL_CODEX_AGENT_ID,
   LOCAL_CODEX_AGENT_KEY,
-  LOCAL_GROK_AGENT_ID,
-  LOCAL_GROK_AGENT_KEY,
-  LOCAL_OPENCODE_AGENT_ID,
-  LOCAL_OPENCODE_AGENT_KEY,
-  LOCAL_QODER_AGENT_ID,
-  LOCAL_QODER_AGENT_KEY,
-  MIMO_MONTH_AGENT_KEY,
   NOLO_DEFAULT_AGENT_ID,
   NOLO_DEFAULT_AGENT_KEY,
 } from "../agentAliases";
@@ -204,71 +197,6 @@ function resolveBuiltinLocalCliAgentConfig(agentRef: string, userId: string): Ag
         apiSource: "cli",
         provider: "cli",
         cliProvider: "codex",
-      },
-    };
-  }
-  if (normalized === LOCAL_QODER_AGENT_KEY || normalized === LOCAL_QODER_AGENT_ID) {
-    return {
-      key: LOCAL_QODER_AGENT_KEY,
-      name: "Local Qoder",
-      prompt: "You are a local Qoder CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
-      apiSource: "cli",
-      provider: "cli",
-      cliProvider: "qoder",
-      model: "Qwen3.7-Max",
-      toolNames: ["readFile", "searchFiles", "execShell"],
-      rawRecord: {
-        dbKey: LOCAL_QODER_AGENT_KEY,
-        id: LOCAL_QODER_AGENT_ID,
-        userId,
-        type: "agent",
-        name: "Local Qoder",
-        apiSource: "cli",
-        provider: "cli",
-        cliProvider: "qoder",
-        model: "Qwen3.7-Max",
-      },
-    };
-  }
-  if (normalized === LOCAL_OPENCODE_AGENT_KEY || normalized === LOCAL_OPENCODE_AGENT_ID) {
-    return {
-      key: LOCAL_OPENCODE_AGENT_KEY,
-      name: "Local OpenCode",
-      prompt: "You are a local OpenCode CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
-      apiSource: "cli",
-      provider: "cli",
-      cliProvider: "opencode",
-      toolNames: ["readFile", "searchFiles", "execShell"],
-      rawRecord: {
-        dbKey: LOCAL_OPENCODE_AGENT_KEY,
-        id: LOCAL_OPENCODE_AGENT_ID,
-        userId,
-        type: "agent",
-        name: "Local OpenCode",
-        apiSource: "cli",
-        provider: "cli",
-        cliProvider: "opencode",
-      },
-    };
-  }
-  if (normalized === LOCAL_GROK_AGENT_KEY || normalized === LOCAL_GROK_AGENT_ID) {
-    return {
-      key: LOCAL_GROK_AGENT_KEY,
-      name: "Local Grok",
-      prompt: "You are a local Grok CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
-      apiSource: "cli",
-      provider: "cli",
-      cliProvider: "grok",
-      toolNames: ["readFile", "searchFiles", "execShell"],
-      rawRecord: {
-        dbKey: LOCAL_GROK_AGENT_KEY,
-        id: LOCAL_GROK_AGENT_ID,
-        userId,
-        type: "agent",
-        name: "Local Grok",
-        apiSource: "cli",
-        provider: "cli",
-        cliProvider: "grok",
       },
     };
   }
@@ -522,9 +450,6 @@ function summarizeOpenAiToolNames(tools: Array<Record<string, unknown>>) {
   }, []);
 }
 
-function shouldExposeLocalPlatformTools(agentKey?: string) {
-  return agentKey !== MIMO_MONTH_AGENT_KEY;
-}
 
 function addDefaultLightWebToolsForConfiguredAgents(
   toolNames: string[],
@@ -549,7 +474,6 @@ function addDefaultLightWebToolsForConfiguredAgents(
 
 function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: EnvLike }) {
   const toolset = buildLocalWorkspaceToolsetForEnv(args);
-  const exposePlatformTools = shouldExposeLocalPlatformTools(args.agentKey);
   return [
     ...buildLocalWorkspaceOpenAiTools({
       toolNames: toolset.toolNames,
@@ -563,8 +487,8 @@ function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: 
       searchFilesDescriptionVariant: resolveSearchFilesDescriptionVariant(args.env),
       searchFilesParameterVariant: resolveSearchFilesParameterVariant(args.env),
     }),
-    ...(exposePlatformTools ? buildServerPlatformOpenAiTools({ toolNames: args.toolNames }) : []),
-    ...(exposePlatformTools ? buildNoloWorkspaceOpenAiTools({ toolNames: args.toolNames }) : []),
+    ...buildServerPlatformOpenAiTools({ toolNames: args.toolNames }),
+    ...buildNoloWorkspaceOpenAiTools({ toolNames: args.toolNames }),
   ];
 }
 

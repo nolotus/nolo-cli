@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type OAuthProvider = "chatgpt" | "xai" | "antigravity";
+export type OAuthProvider = "chatgpt" | "xai" | "antigravity" | "cloudflare";
 
 export type OAuthCredential = {
   provider: OAuthProvider;

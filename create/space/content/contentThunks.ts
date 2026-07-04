@@ -9,6 +9,7 @@ import { updateContentCategoryAction } from "./updateContentCategoryAction";
 import { deleteMultipleContentAction } from "./deleteMultipleContentAction"; // <-- 新增: 导入批量删除 Action
 import { uploadAndAddFileToSpaceAction } from "./uploadAndAddFileToSpaceAction";
 import { normalizeSpaceId } from "../spaceKeys";
+import { toast } from "../../../app/utils/toast";
 
 type Create = ReturnType<typeof asyncThunkCreator<SpaceState>>;
 
@@ -20,7 +21,11 @@ export const createContentThunks = (create: Create) => ({
   addContentToSpace: create.asyncThunk(addContentAction, {
     fulfilled: (state, action) => {
       const { spaceId, updatedSpaceData } = action.payload;
-      if (state.currentSpaceId === spaceId) {
+      const normalizedSpaceId = normalizeSpaceId(spaceId);
+      const normalizedCurrentSpaceId = state.currentSpaceId
+        ? normalizeSpaceId(state.currentSpaceId)
+        : null;
+      if (normalizedCurrentSpaceId === normalizedSpaceId) {
         state.currentSpace = updatedSpaceData;
       }
     },

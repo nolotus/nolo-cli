@@ -3,7 +3,13 @@
 import pino from "pino";
 import { getIsDesktopApp } from "../../app/utils/env";
 import { fetchWithTransientReadRetry } from "../../app/utils/retryFetch";
-import { API_ENDPOINTS, NOLO_CLUSTER_SERVERS, normalizeKnownServerOrigin } from "../config";
+import {
+  API_ENDPOINTS,
+  NOLO_CLUSTER_SERVERS,
+  isLocalDevServerOrigin,
+  isNoloClusterServerOrigin,
+  normalizeKnownServerOrigin,
+} from "../config";
 
 // RN 下 pino 的 browser 写法可能有兼容性问题
 // 使用简单的 console 封装作为 fallback
@@ -25,8 +31,6 @@ export const logger = isRN ? {
 });
 const normalizeServer = (server: string): string =>
   normalizeKnownServerOrigin(server) ?? server.trim().replace(/\/+$/, "");
-const isNoloClusterServer = (server: string): boolean =>
-  /^https?:\/\/(?:us\.)?nolo\.chat$/i.test(normalizeServer(server));
 
 export const mergeConfiguredServers = (
   currentServer: string | undefined,
@@ -49,7 +53,10 @@ export const mergeConfiguredServers = (
   );
 
   const normalized = raw.map(normalizeServer);
-  if (normalized.some(isNoloClusterServer)) {
+  const shouldIncludeClusterPeers =
+    normalized.some(isNoloClusterServerOrigin) ||
+    (typeof currentServer === "string" && isLocalDevServerOrigin(currentServer));
+  if (shouldIncludeClusterPeers) {
     normalized.push(...NOLO_CLUSTER_SERVERS);
   }
   return Array.from(new Set(normalized));
@@ -111,7 +118,7 @@ export const getAllServers = (
       : null;
   const servers = mergeConfiguredServers(
     currentServer,
-    preferredNormalized && isNoloClusterServer(preferredNormalized)
+    preferredNormalized && isNoloClusterServerOrigin(preferredNormalized)
       ? [...(Array.isArray(syncServers) ? syncServers : []), preferredNormalized]
       : syncServers
   );

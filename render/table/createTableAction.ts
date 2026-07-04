@@ -306,13 +306,18 @@ export const createTableAction = async (
       (addContentToSpace as any)({
         spaceId,
         contentKey: dbKey,
-        type: DataType.TABLE, // ContentType 里要有 "table"
+        type: DataType.TABLE,
         title,
         categoryId,
       })
     ).unwrap();
   }
 
-  // 5) 返回 dbKey，用于路由跳转 /meta-{tenantId}-{tableId}
+  // 5) 通知 useUserData 刷新，使新表格立即出现在侧边栏
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("nolo-user-data-updated"));
+  }
+
+  // 6) 返回 dbKey，用于路由跳转 /meta-{tenantId}-{tableId}
   return dbKey;
 };

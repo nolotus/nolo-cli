@@ -1,9 +1,7 @@
 import { runLocalAgentTurn } from "../agentRuntimeLocal";
 import { LOCAL_AGENT_CONFIG_MISSING_CODE } from "../agent-runtime/localLoop";
 import {
-  MIMO_MONTH_AGENT_KEY,
   NOLO_PROJECT_MANAGER_AGENT_KEY,
-  WIN_CODEX_AGENT_KEY,
 } from "../agentAliases";
 import type { LocalAgentActionGate, LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
@@ -185,9 +183,7 @@ const SERVER_PLATFORM_TOOL_NAMES = new Set([
 ]);
 
 const KNOWN_SERVER_PLATFORM_AGENT_KEYS = new Set([
-  MIMO_MONTH_AGENT_KEY,
   NOLO_PROJECT_MANAGER_AGENT_KEY,
-  WIN_CODEX_AGENT_KEY,
 ]);
 
 const KNOWN_SERVER_PLATFORM_AGENT_ALIASES = new Set([

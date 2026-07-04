@@ -26,6 +26,24 @@ export const normalizeKnownServerOrigin = (server: unknown): string | null => {
   }
   return LEGACY_SERVER_ORIGIN_MAP[origin.toLowerCase()] ?? origin;
 };
+const LOCAL_DEV_SERVER_ORIGIN_PATTERN =
+  /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|nolotus\.local)(?::\d+)?$/i;
+
+/** True when the origin is a local Nolo dev API (e.g. http://127.0.0.1:38123). */
+export const isLocalDevServerOrigin = (server: unknown): boolean => {
+  if (typeof server !== "string" || server.trim().length === 0) return false;
+  const normalized =
+    normalizeKnownServerOrigin(server) ?? server.trim().replace(/\/+$/, "");
+  return LOCAL_DEV_SERVER_ORIGIN_PATTERN.test(normalized);
+};
+
+export const isNoloClusterServerOrigin = (server: unknown): boolean => {
+  if (typeof server !== "string" || server.trim().length === 0) return false;
+  const normalized =
+    normalizeKnownServerOrigin(server) ?? server.trim().replace(/\/+$/, "");
+  return /^https?:\/\/(?:us\.)?nolo\.chat$/i.test(normalized);
+};
+
 
 export const API_ENDPOINTS = {
   DATABASE: `${API_VERSION}/db`,

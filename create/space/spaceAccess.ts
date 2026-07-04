@@ -1,8 +1,7 @@
 import type { SpaceData, SpaceMemberWithSpaceInfo } from "../../app/types";
-import { getIsDesktopApp } from "../../app/utils/env";
 import { createSpaceKey, normalizeSpaceId } from "../space/spaceKeys";
-import { fetchFromServer } from "../../database/actions/common";
-import { NOLO_CLUSTER_SERVERS, normalizeKnownServerOrigin } from "../../database/config";
+import { fetchFromServer, getAllServers } from "../../database/actions/common";
+import { normalizeKnownServerOrigin } from "../../database/config";
 import { isTombstoneRecord } from "../../database/tombstones";
 
 export interface SpaceRemoteAuth {
@@ -17,37 +16,15 @@ export interface RemoteMembershipFetchResult {
   memberships: SpaceMemberWithSpaceInfo[];
 }
 
-const normalizeServerOrigin = (server: unknown): string | null => {
-  return normalizeKnownServerOrigin(server);
-};
-
-const isLocalServerOrigin = (server: string): boolean =>
-  /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|nolotus\.local)(?::\d+)?$/i.test(server);
-
 const resolveSpaceRemoteServers = (state: any): string[] => {
-  const currentServer = normalizeServerOrigin(state?.settings?.currentServer);
-  const normalized = [
-    currentServer,
-    ...(Array.isArray(state?.settings?.syncServers)
-      ? state.settings.syncServers
-      : []),
-  ]
-    .map(normalizeServerOrigin)
-    .filter((server): server is string => !!server);
-
-  if (!getIsDesktopApp()) {
-    return Array.from(new Set(normalized));
-  }
-
-  const remoteServers = normalized.filter((server) => !isLocalServerOrigin(server));
-  if (currentServer && isLocalServerOrigin(currentServer)) {
-    return Array.from(new Set([...NOLO_CLUSTER_SERVERS, ...remoteServers]));
-  }
-  if (remoteServers.length === 0) {
-    remoteServers.push(...NOLO_CLUSTER_SERVERS);
-  }
-
-  return Array.from(new Set(remoteServers));
+  const currentServer =
+    typeof state?.settings?.currentServer === "string"
+      ? state.settings.currentServer
+      : undefined;
+  const syncServers = Array.isArray(state?.settings?.syncServers)
+    ? state.settings.syncServers
+    : undefined;
+  return getAllServers(currentServer, syncServers);
 };
 
 export const selectSpaceRemoteAuth = (state: any): SpaceRemoteAuth => ({

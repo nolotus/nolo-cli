@@ -275,7 +275,13 @@ export async function buildProviderExecutionPlan(args: {
     const apiKeyRef = agentConfig.apiKeyRef?.trim();
     if (apiKeyRef && args.apiKeyRefResolver) {
       const resolved = await args.apiKeyRefResolver(apiKeyRef);
-      if (resolved) apiKey = resolved;
+      if (resolved) {
+        apiKey = resolved;
+      } else if (!apiKey) {
+        throw new Error(
+          `OAuth credential for "${apiKeyRef}" not found locally. Run \`nolo auth ${apiKeyRef}\` (and \`--sync-to-server\` for server-side agent runs).`,
+        );
+      }
     }
     const apiKeyHeader = resolveProviderAuthHeaderName({
       endpoint,

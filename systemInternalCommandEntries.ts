@@ -9,6 +9,10 @@ import type { CommandEntry } from "./cliCommandTypes";
 
 export function getSystemInternalCommandEntries(renderHelpText: () => string): CommandEntry[] {
   return [
+    createArgsCommand(["auth", "cloudflare"], "Authorize Cloudflare OAuth", async (args) => {
+      const { runAuthCloudflareCommand } = await import("./oauth/authCommand");
+      return runAuthCloudflareCommand(args);
+    }),
     createArgsCommand(["auth", "chatgpt"], "Authorize ChatGPT / OpenAI Codex OAuth", async (args) => {
       const { runAuthChatgptCommand } = await import("./oauth/authCommand");
       return runAuthChatgptCommand(args);

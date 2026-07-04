@@ -339,6 +339,7 @@ export enum ContentType {
   AGENT = "agent",
   APP = "app",
   TASK = "task",
+  TABLE = "table",
 } // --- 枚举 (保持不变) ---
 export type FileCategory =
   | "image"

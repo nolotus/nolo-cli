@@ -103,6 +103,12 @@ export default {
       noAlternativeModels: "No other available models",
       noAvailableAgentMessage: "No available Agent message",
       creditsUnit: "credits",
+      dialogUsageTitle: "Session usage",
+      usageInputLabel: "input",
+      usageOutputLabel: "output",
+      contextWindow: "Context window",
+      dialogUsageTokensSection: "Session tokens",
+      dialogUsageBillingSection: "Billing",
       recharge: "Click to recharge", // 新增单独的充值翻译
       // 新增中止功能相关翻译
       stopAllGeneration: "Stop All Generations",
@@ -316,6 +322,12 @@ export default {
       noAlternativeModels: "没有其他可用模型",
       noAvailableAgentMessage: "没有可用的智能体消息",
       creditsUnit: "积分",
+      dialogUsageTitle: "会话用量",
+      usageInputLabel: "输入",
+      usageOutputLabel: "输出",
+      contextWindow: "上下文窗口",
+      dialogUsageTokensSection: "本会话 token",
+      dialogUsageBillingSection: "计费",
       recharge: "点此充值", // 新增单独的充值翻译
       // 新增中止功能相关翻译
       stopAllGeneration: "停止所有生成",
@@ -521,6 +533,12 @@ export default {
       noAlternativeModels: "沒有其他可用模型",
       noAvailableAgentMessage: "沒有可用的智能體消息",
       creditsUnit: "積分",
+      dialogUsageTitle: "會話用量",
+      usageInputLabel: "輸入",
+      usageOutputLabel: "輸出",
+      contextWindow: "上下文視窗",
+      dialogUsageTokensSection: "本會話 token",
+      dialogUsageBillingSection: "計費",
       recharge: "點此充值", // 新增单独的充值翻译
       // 新增中止功能相关翻译
       stopAllGeneration: "停止所有生成",
@@ -722,6 +740,12 @@ export default {
       noAlternativeModels: "利用可能な他のモデルがありません",
       noAvailableAgentMessage: "利用可能なエージェントメッセージがありません",
       creditsUnit: "ポイント",
+      dialogUsageTitle: "セッション使用量",
+      usageInputLabel: "入力",
+      usageOutputLabel: "出力",
+      contextWindow: "コンテキストウィンドウ",
+      dialogUsageTokensSection: "セッション token",
+      dialogUsageBillingSection: "課金",
       recharge: "クリックしてチャージ", // 新增单独的充值翻译
       // 新增中止功能相关翻译
       stopAllGeneration: "すべての生成を停止",

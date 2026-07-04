@@ -9,7 +9,9 @@ import {
   clearCliLocalRuntimePreparedAgentCache,
   createCliLocalRuntimeAdapter,
 } from "./localRuntimeAdapter";
-import { LOCAL_CODEX_AGENT_KEY, LOCAL_GROK_AGENT_KEY, LOCAL_OPENCODE_AGENT_KEY, LOCAL_QODER_AGENT_KEY, MIMO_MONTH_AGENT_KEY } from "../agentAliases";
+import { LOCAL_CODEX_AGENT_KEY } from "../agentAliases";
+
+const FULLSTACK_TEST_AGENT_KEY = "fullstack";
 
 describe("CLI local runtime adapter", () => {
   beforeEach(() => {
@@ -178,7 +180,7 @@ describe("CLI local runtime adapter", () => {
     });
   });
 
-  test("falls back to built-in local Codex and Qoder CLI agents without machine binding", async () => {
+  test("falls back to built-in local Codex CLI agent without machine binding", async () => {
     const adapter = createCliLocalRuntimeAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
@@ -195,9 +197,6 @@ describe("CLI local runtime adapter", () => {
     } as any);
 
     const codex = await adapter.loadAgentConfig(LOCAL_CODEX_AGENT_KEY);
-    const qoder = await adapter.loadAgentConfig(LOCAL_QODER_AGENT_KEY);
-    const opencode = await adapter.loadAgentConfig(LOCAL_OPENCODE_AGENT_KEY);
-    const grok = await adapter.loadAgentConfig(LOCAL_GROK_AGENT_KEY);
 
     expect(codex).toMatchObject({
       key: LOCAL_CODEX_AGENT_KEY,
@@ -206,38 +205,8 @@ describe("CLI local runtime adapter", () => {
       provider: "cli",
       cliProvider: "codex",
     });
-    expect(qoder).toMatchObject({
-      key: LOCAL_QODER_AGENT_KEY,
-      name: "Local Qoder",
-      apiSource: "cli",
-      provider: "cli",
-      cliProvider: "qoder",
-      model: "Qwen3.7-Max",
-    });
-    expect(opencode).toMatchObject({
-      key: LOCAL_OPENCODE_AGENT_KEY,
-      name: "Local OpenCode",
-      apiSource: "cli",
-      provider: "cli",
-      cliProvider: "opencode",
-    });
-    expect(grok).toMatchObject({
-      key: LOCAL_GROK_AGENT_KEY,
-      name: "Local Grok",
-      apiSource: "cli",
-      provider: "cli",
-      cliProvider: "grok",
-    });
-    expect((grok as any)?.model).toBeUndefined();
-    expect((grok as any)?.rawRecord?.model).toBeUndefined();
     expect((codex as any)?.runtimeBinding).toBeUndefined();
-    expect((qoder as any)?.runtimeBinding).toBeUndefined();
-    expect((opencode as any)?.runtimeBinding).toBeUndefined();
-    expect((grok as any)?.runtimeBinding).toBeUndefined();
     expect((codex as any)?.rawRecord?.runtimeBinding).toBeUndefined();
-    expect((qoder as any)?.rawRecord?.runtimeBinding).toBeUndefined();
-    expect((opencode as any)?.rawRecord?.runtimeBinding).toBeUndefined();
-    expect((grok as any)?.rawRecord?.runtimeBinding).toBeUndefined();
   });
 
   test("runs cli-provider agents through the local CLI executor instead of OpenAI-compatible direct mode", async () => {
@@ -1880,11 +1849,22 @@ describe("CLI local runtime adapter", () => {
   test("allows registered execShell by default", async () => {
     const adapter = createCliLocalRuntimeAdapter({
       env: {},
+      db: {
+        get: async () => ({
+          dbKey: "shell",
+          prompt: "Use shell.",
+          toolNames: ["execShell"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
       localToolExecutors: {
         execShell: async (call) => ({ content: `shell:${call.arguments}` }),
       },
       fetchImpl: async () => Response.json({}),
     });
+    await adapter.loadAgentConfig("shell");
 
     const result = await adapter.executeTool({
       id: "call-1",
@@ -1971,7 +1951,7 @@ describe("CLI local runtime adapter", () => {
     ]);
   });
 
-  test("keeps monthly Mimo local model tools to the compact coding surface", async () => {
+  test("keeps fullstack local model tools to the compact coding surface", async () => {
     const requests: Array<{ body: any }> = [];
     const adapter = createCliLocalRuntimeAdapter({
       env: {
@@ -1980,7 +1960,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: FULLSTACK_TEST_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -2015,11 +1995,14 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: FULLSTACK_TEST_AGENT_KEY,
       input: "inspect cwd",
     });
 
-    expect(toolNamesFromRequest(requests[0])).toEqual(SHELL_LOCAL_CODING_TOOL_NAMES);
+    expect(toolNamesFromRequest(requests[0])).toEqual([
+      ...SHELL_LOCAL_CODING_TOOL_NAMES,
+      "queryTableRows",
+    ]);
   });
 
   test("can expose only declared local workspace tools for tool ablations", async () => {
@@ -2032,7 +2015,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: FULLSTACK_TEST_AGENT_KEY,
           prompt: "Use exactly the declared local tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -2052,7 +2035,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: FULLSTACK_TEST_AGENT_KEY,
       input: "inspect cwd",
     });
 
@@ -2069,7 +2052,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: FULLSTACK_TEST_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -2089,7 +2072,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: FULLSTACK_TEST_AGENT_KEY,
       input: "inspect cwd",
     });
 
@@ -2148,7 +2131,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: FULLSTACK_TEST_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -2168,7 +2151,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: FULLSTACK_TEST_AGENT_KEY,
       input: "find tests",
     });
 
@@ -2194,7 +2177,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: FULLSTACK_TEST_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -2214,7 +2197,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: FULLSTACK_TEST_AGENT_KEY,
       input: "list directories",
     });
 
@@ -2239,7 +2222,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: FULLSTACK_TEST_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -2259,7 +2242,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: FULLSTACK_TEST_AGENT_KEY,
       input: "read a file range",
     });
 
@@ -2286,7 +2269,7 @@ describe("CLI local runtime adapter", () => {
       },
       db: {
         get: async () => ({
-          dbKey: MIMO_MONTH_AGENT_KEY,
+          dbKey: FULLSTACK_TEST_AGENT_KEY,
           prompt: "Use local coding tools.",
           model: "mimo-v2.5-pro",
           provider: "custom",
@@ -2306,7 +2289,7 @@ describe("CLI local runtime adapter", () => {
 
     await runLocalAgentTurn({
       adapter,
-      agentRef: MIMO_MONTH_AGENT_KEY,
+      agentRef: FULLSTACK_TEST_AGENT_KEY,
       input: "find TODO",
     });
 

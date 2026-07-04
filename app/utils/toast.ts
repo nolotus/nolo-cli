@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-// Web toast adapter — bridges react-hot-toast API to react-aria-components ToastQueue.
+// Web toast adapter — bridges react-hot-toast API to @base-ui/react Toast.
 // The .native.ts variant handles React Native separately.
 
-import { queue } from "../../render/web/ui/Toast";
+import { toastManager } from "../../render/web/ui/Toast";
 
 type ToastType = "success" | "error" | "loading" | "default";
 
@@ -29,27 +29,27 @@ const DEFAULT_TIMEOUT = 4000;
 
 /**
  * Add a toast, optionally replacing an existing one with the same id.
- * react-aria-components ToastQueue has no update() method, so we close-then-add.
+ * @base-ui/react uses upsert semantics — add with existing id updates in place.
  */
 function addToast(
   message: ReactNode,
   type: ToastType,
   options?: ToastOptions,
 ): string {
-  // If an id is provided, close the existing toast first (loading→success pattern)
-  if (options?.id) {
-    queue.close(options.id);
-  }
-
+  const id = options?.id;
   const timeout = options?.timeout ?? options?.duration;
-  const toastOptions =
-    type === "loading"
-      ? timeout
-        ? { timeout }
-        : undefined
-      : { timeout: timeout ?? DEFAULT_TIMEOUT };
+  // loading toasts: no auto-dismiss (timeout=0) unless explicit timeout given
+  const finalTimeout = type === "loading"
+    ? (timeout ?? 0)
+    : (timeout ?? DEFAULT_TIMEOUT);
 
-  return queue.add({ title: message, type, icon: options?.icon }, toastOptions);
+  return toastManager.add({
+    id,
+    title: message,
+    type,
+    data: { icon: options?.icon },
+    timeout: finalTimeout,
+  });
 }
 
 const customToast = ((message: ReactNode, options?: ToastOptions) => {
@@ -68,13 +68,7 @@ customToast.loading = (message: ReactNode, options?: ToastOptions) => {
   return addToast(message, "loading", options);
 };
 
-customToast.dismiss = (toastId?: string) => {
-  if (toastId) {
-    queue.close(toastId);
-  } else {
-    queue.clear();
-  }
-};
+customToast.dismiss = (toastId?: string) => toastManager.close(toastId);
 
 export const toast = customToast;
 export default customToast;

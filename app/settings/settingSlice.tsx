@@ -128,11 +128,17 @@ interface SettingState {
   // 默认启动的智能体 ID
   defaultAgentId?: string;
 
-  // 快速对话「平衡」模式使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
+  // 快速对话「快速」档使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
+  flashAgentId?: string;
+
+  // 快速对话「平衡」档使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
   balancedAgentId?: string;
 
-  // 快速对话「质量」模式使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
+  // 快速对话「质量」档使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
   qualityAgentId?: string;
+
+  // 快速对话「图片」档使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
+  imageAgentId?: string;
 
   // PDF OCR 模型选择（"none" 表示不使用 OCR，用 pdf.js 提取文本）
   ocrModel: "none" | "google_document_ocr" | "olm_ocr";
@@ -210,8 +216,10 @@ const initialState: SettingState = {
   aiRecentContentLimit: 50,
   contextRetention: 50,
   defaultAgentId: SYSTEM_DEFAULT_AGENT_ID,
+  flashAgentId: "agent-pub-deepseek-v4-flash",
   balancedAgentId: "agent-pub-deepseek-v4-pro",
   qualityAgentId: "agent-pub-01GLM52CHAT00000000001U721",
+  imageAgentId: "agent-pub-01FWKIMI26IMGX0VE801000000",
   ocrModel: "google_document_ocr",
   showScrollToTopButton: false,
   showScrollToBottomButton: false,
@@ -862,6 +870,10 @@ const settingSlice = createSliceWithThunks({
       async (agentId: string, { dispatch }) =>
         dispatch(setSettings({ defaultAgentId: agentId })).unwrap()
     ),
+    setFlashAgentId: create.asyncThunk(
+      async (agentId: string, { dispatch }) =>
+        dispatch(setSettings({ flashAgentId: agentId })).unwrap()
+    ),
     setBalancedAgentId: create.asyncThunk(
       async (agentId: string, { dispatch }) =>
         dispatch(setSettings({ balancedAgentId: agentId })).unwrap()
@@ -869,6 +881,10 @@ const settingSlice = createSliceWithThunks({
     setQualityAgentId: create.asyncThunk(
       async (agentId: string, { dispatch }) =>
         dispatch(setSettings({ qualityAgentId: agentId })).unwrap()
+    ),
+    setImageAgentId: create.asyncThunk(
+      async (agentId: string, { dispatch }) =>
+        dispatch(setSettings({ imageAgentId: agentId })).unwrap()
     ),
     setPreferredAnimationSet: create.asyncThunk(
       async (index: number, { dispatch }) =>
@@ -918,8 +934,10 @@ export const {
   setContextRetention, // ADDED
   setMaxExecutionTime,
   setDefaultAgentId,
+  setFlashAgentId,
   setBalancedAgentId,
   setQualityAgentId,
+  setImageAgentId,
   setPreferredAnimationSet,
   setThemeMode,
 } = settingSlice.actions;
@@ -1021,6 +1039,11 @@ export const selectDefaultAgentPreference = (state: RootState): string =>
 export const selectDefaultAgentId = (state: RootState): string =>
   selectResolvedDefaultAgentId(state.settings.defaultAgentId);
 
+export const selectFlashAgentPreference = (state: RootState): string =>
+  resolveDefaultAgentIdSetting(state.settings.flashAgentId);
+export const selectFlashAgentId = (state: RootState): string =>
+  selectResolvedDefaultAgentId(state.settings.flashAgentId);
+
 export const selectBalancedAgentPreference = (state: RootState): string =>
   resolveDefaultAgentIdSetting(state.settings.balancedAgentId);
 export const selectBalancedAgentId = (state: RootState): string =>
@@ -1030,6 +1053,11 @@ export const selectQualityAgentPreference = (state: RootState): string =>
   resolveDefaultAgentIdSetting(state.settings.qualityAgentId);
 export const selectQualityAgentId = (state: RootState): string =>
   selectResolvedDefaultAgentId(state.settings.qualityAgentId);
+
+export const selectImageAgentPreference = (state: RootState): string =>
+  resolveDefaultAgentIdSetting(state.settings.imageAgentId);
+export const selectImageAgentId = (state: RootState): string =>
+  selectResolvedDefaultAgentId(state.settings.imageAgentId);
 
 export const selectOcrModel = (
   state: RootState

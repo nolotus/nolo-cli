@@ -132,8 +132,12 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     effectiveMessage = `${parsed.message}\n\n[Quota fallback context for agent decision: If this execution for ${parsed.agentKey} hits subscription quota, YOU (the agent) must decide the next agent to use. Do not rely on automatic wrapper. Reason based on the specific task (complexity, length, domain), agent strengths, cost, previous attempt results. Suggested alternatives: ${parsed.fallbackAgentKeys!.join(', ')}. Update the task row with attempt history and dispatch the chosen next (via new agent run or startAgentDialog).]`;
   }
 
+  // Resolve handle/name -> agent key for any run that may reach the server
+  // (default/auto/server). Only an explicit local CLI run skips this, since the
+  // local adapter resolves its own way. Without this, a bare handle like
+  // "agy-pro" is sent to the server verbatim and 404s.
   const resolvedAgentKey =
-    parsed.runtimeMode === "server" || parsed.runtimeMode === "auto"
+    parsed.runtimeMode !== "local"
       ? await (deps.resolveAgentRunAgentKey ?? resolveAgentRunAgentKey)({
           agentInput: resolveRawAgentInput(args, deps.commandPath) ?? parsed.agentKey,
           cliArgs: args,

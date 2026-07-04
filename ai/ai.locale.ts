@@ -52,6 +52,8 @@ export default {
         untitled: "Untitled AI",
         chat: "Start Chat",
         public: "Public",
+        byConversation: "Create AI by Conversation",
+        manualConfiguration: "Manual Configuration",
       },
       editAgent: "Edit AI",
 
@@ -383,6 +385,8 @@ export default {
         untitled: "未命名AI",
         chat: "开始聊天",
         public: "公开",
+        byConversation: "用对话创建 AI",
+        manualConfiguration: "手动配置 AI",
       },
       editAgent: "编辑AI",
 

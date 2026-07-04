@@ -216,7 +216,7 @@ export const createTableAction = async (
 
   const dbKey = metaKey(userId, tableId);
 
-  const defaultTitle = i18n.t("table:defaultTitle", {
+  const defaultTitle = i18n.t("space:newTable", {
     defaultValue: "新建表格",
   });
   const title = customTitle?.trim() || defaultTitle;

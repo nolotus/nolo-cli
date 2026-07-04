@@ -89,6 +89,7 @@ export default {
       cancel_changes: "Cancel Changes",
       set_default_success: "Set as default space successfully",
       set_default_error: "Failed to set as default space",
+      clear_default_success: "Switched to All",
       default_space_description: "Set this space as your default workspace when launching the app.",
       this_space: "this space",
 
@@ -284,6 +285,10 @@ export default {
       manage: "Manage",
       finish: "Finish",
       ocrAddToChat: "OCR to Chat",
+      newTable: "New Table",
+      myShares: {
+        title: "My Shares",
+      },
     },
   },
 
@@ -372,6 +377,7 @@ export default {
       cancel_changes: "取消更改",
       set_default_success: "已成功设为默认空间",
       set_default_error: "设置默认空间失败",
+      clear_default_success: "已切换为全部",
       default_space_description: "将此空间设置为启动应用时的默认工作空间",
       this_space: "此空间",
 
@@ -564,6 +570,10 @@ export default {
       manage: "管理",
       finish: "完成",
       ocrAddToChat: "OCR 加入对话",
+      newTable: "新建表格",
+      myShares: {
+        title: "我的分享",
+      },
     },
   },
 
@@ -835,6 +845,9 @@ export default {
       delete_space_cancel_desc: "先不刪除空間，返回設定頁。",
       manage: "管理",
       finish: "完成",
+      myShares: {
+        title: "我的分享",
+      },
     },
   },
 
@@ -1116,6 +1129,9 @@ export default {
       delete_space_with_owned_desc:
         "このスペース内で現在のユーザーが所有するコンテンツを削除し、スペース自体も削除します。",
       delete_space_cancel_desc: "今回は削除せず、設定ページに戻ります。",
+      myShares: {
+        title: "マイ共有",
+      },
     },
   },
 };

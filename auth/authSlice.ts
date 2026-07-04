@@ -132,6 +132,7 @@ export const authSlice = createSliceWithThunks({
 
           const nowSec = Math.floor(Date.now() / 1000);
           const currentServer = selectRemoteServer(state);
+          console.log(`[Auth] currentServer resolved to: ${currentServer}`);
           const localeCandidates = Array.from(
             new Set(
               (Array.isArray(rawLocaleCandidates) && rawLocaleCandidates.length > 0
@@ -142,6 +143,7 @@ export const authSlice = createSliceWithThunks({
                 .map((value) => value.trim())
             )
           );
+          console.log(`[Auth] localeCandidates: [${localeCandidates.join(", ")}]`);
 
           let matchedPublicKey: string | null = null;
           let matchedSecretKey: string | null = null;
@@ -160,6 +162,7 @@ export const authSlice = createSliceWithThunks({
             );
 
             const userId = generateUserIdV1(publicKey, username, loginLocale);
+            console.log(`[Auth] generated userId=${userId} (username=${username}, locale=${loginLocale})`);
             const loginToken = signToken(
               buildPersistentAuthTokenPayload({ userId, publicKey, username }, nowSec),
               secretKey

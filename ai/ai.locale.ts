@@ -715,6 +715,8 @@ export default {
         untitled: "未命名AI",
         chat: "開始聊天",
         public: "公開",
+        byConversation: "用對話建立 AI",
+        manualConfiguration: "手動設定 AI",
       },
       editAgent: "編輯AI",
 
@@ -966,6 +968,8 @@ export default {
         untitled: "無題のAI",
         chat: "チャットを開始",
         public: "公開",
+        byConversation: "会話で AI を作成",
+        manualConfiguration: "手動設定で AI を作成",
       },
       editAgent: "AIを編集",
 

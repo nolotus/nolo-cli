@@ -661,6 +661,7 @@ export default {
       cancel_changes: "取消變更",
       set_default_success: "已成功設為預設空間",
       set_default_error: "設定預設空間失敗",
+      clear_default_success: "已切換為全部",
       default_space_description: "將此空間設置為啟動應用程式時的預設工作空間",
       this_space: "此空間",
 
@@ -845,6 +846,8 @@ export default {
       delete_space_cancel_desc: "先不刪除空間，返回設定頁。",
       manage: "管理",
       finish: "完成",
+      ocrAddToChat: "OCR 加入對話",
+      newTable: "新增表格",
       myShares: {
         title: "我的分享",
       },
@@ -939,6 +942,7 @@ export default {
       cancel_changes: "変更をキャンセル",
       set_default_success: "デフォルトスペースに正常に設定されました",
       set_default_error: "デフォルトスペースの設定に失敗しました",
+      clear_default_success: "「すべて」に切り替えました",
       default_space_description: "アプリ起動時のデフォルトワークスペースとしてこのスペースを設定します。",
       this_space: "このスペース",
 
@@ -1129,6 +1133,8 @@ export default {
       delete_space_with_owned_desc:
         "このスペース内で現在のユーザーが所有するコンテンツを削除し、スペース自体も削除します。",
       delete_space_cancel_desc: "今回は削除せず、設定ページに戻ります。",
+      ocrAddToChat: "OCR チャットへ追加",
+      newTable: "新しいテーブル",
       myShares: {
         title: "マイ共有",
       },

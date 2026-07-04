@@ -39,13 +39,6 @@ import {
 } from "../theme/fontPreference";
 import { legacyNoloAgentId, noloAgentId } from "../../core/init";
 import { DEFAULT_ANIMATION_SET_INDEX } from "../constants/animationSets";
-import {
-  areSidebarVisibleTypesEqual,
-  DEFAULT_SIDEBAR_VISIBLE_TYPES,
-  LEGACY_DEFAULT_SIDEBAR_VISIBLE_TYPES,
-  normalizeSidebarVisibleTypes,
-  type SidebarVisibleType,
-} from "../../create/space/sidebarVisibleTypes";
 import { normalizeSpaceId } from "../../create/space/spaceKeys";
 import {
   DEFAULT_USER_PREFERENCE_PROFILE,
@@ -109,8 +102,6 @@ interface SettingState {
   // 是否允许读取当前空间内容作为上下文
   enableReadCurrentSpace: boolean;
 
-  // 侧边栏默认显示的内容类型
-  sidebarVisibleTypes: SidebarVisibleType[];
 
   // 通用提示词
   globalPrompt: string;
@@ -137,6 +128,12 @@ interface SettingState {
   // 默认启动的智能体 ID
   defaultAgentId?: string;
 
+  // 快速对话「平衡」模式使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
+  balancedAgentId?: string;
+
+  // 快速对话「质量」模式使用的智能体 ID；SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
+  qualityAgentId?: string;
+
   // PDF OCR 模型选择（"none" 表示不使用 OCR，用 pdf.js 提取文本）
   ocrModel: "none" | "google_document_ocr" | "olm_ocr";
 
@@ -146,9 +143,6 @@ interface SettingState {
   createMenuOpenCount: number;
   desktopChromeConnectorEnabled: boolean;
   deleteShortcut: string;
-
-  // 实验功能：首页 Widgets（用量统计等小卡片）
-  widgetsEnabled: boolean;
 
   [key: string]: any;
 }
@@ -203,7 +197,6 @@ const initialState: SettingState = {
   editorTabSize: 2,
   editorFontFamily: "SF Mono, Monaco, Cascadia Code, Roboto Mono, monospace",
   enableReadCurrentSpace: true,
-  sidebarVisibleTypes: [...DEFAULT_SIDEBAR_VISIBLE_TYPES],
   globalPrompt:
     "以下是关于我的通用说明，请在任意场景下都以此来理解和服务我：\n" +
     "1. 我希望你用清晰、简洁的方式回答问题，并在必要时给出示例。\n" +
@@ -217,6 +210,8 @@ const initialState: SettingState = {
   aiRecentContentLimit: 50,
   contextRetention: 50,
   defaultAgentId: SYSTEM_DEFAULT_AGENT_ID,
+  balancedAgentId: "agent-pub-deepseek-v4-pro",
+  qualityAgentId: "agent-pub-01GLM52CHAT00000000001U721",
   ocrModel: "google_document_ocr",
   showScrollToTopButton: false,
   showScrollToBottomButton: false,
@@ -225,8 +220,6 @@ const initialState: SettingState = {
   deleteShortcut: (typeof window !== "undefined" && typeof window.navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(window.navigator.platform))
     ? "meta+backspace"
     : "ctrl+backspace",
-  // 实验功能：开发/测试环境默认开启 Widgets，生产环境默认关闭（用户可在设置中手动开启）
-  widgetsEnabled: isDevelopment,
 };
 
 // --- Slice 创建 ---
@@ -236,24 +229,6 @@ const createSliceWithThunks = buildCreateSlice({
 
 const hasOwn = (target: object, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(target, key);
-
-const normalizeSidebarVisibleTypesSetting = (
-  value: unknown
-): SidebarVisibleType[] => {
-  const rawValues = Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : undefined;
-  const normalized = normalizeSidebarVisibleTypes(rawValues);
-
-  if (
-    rawValues &&
-    areSidebarVisibleTypesEqual(normalized, LEGACY_DEFAULT_SIDEBAR_VISIBLE_TYPES)
-  ) {
-    return [...DEFAULT_SIDEBAR_VISIBLE_TYPES];
-  }
-
-  return normalized;
-};
 
 const normalizeDefaultAgentIdSetting = (
   value: unknown
@@ -392,14 +367,6 @@ const normalizeSettingChanges = (
 ): Partial<SettingState> => {
   let normalizedChanges = changes;
 
-  if (hasOwn(normalizedChanges, "sidebarVisibleTypes")) {
-    normalizedChanges = {
-      ...normalizedChanges,
-      sidebarVisibleTypes: normalizeSidebarVisibleTypesSetting(
-        normalizedChanges.sidebarVisibleTypes
-      ),
-    };
-  }
 
   if (hasOwn(normalizedChanges, "defaultAgentId")) {
     normalizedChanges = {
@@ -895,6 +862,14 @@ const settingSlice = createSliceWithThunks({
       async (agentId: string, { dispatch }) =>
         dispatch(setSettings({ defaultAgentId: agentId })).unwrap()
     ),
+    setBalancedAgentId: create.asyncThunk(
+      async (agentId: string, { dispatch }) =>
+        dispatch(setSettings({ balancedAgentId: agentId })).unwrap()
+    ),
+    setQualityAgentId: create.asyncThunk(
+      async (agentId: string, { dispatch }) =>
+        dispatch(setSettings({ qualityAgentId: agentId })).unwrap()
+    ),
     setPreferredAnimationSet: create.asyncThunk(
       async (index: number, { dispatch }) =>
         dispatch(setSettings({ preferredAnimationSet: index })).unwrap()
@@ -943,6 +918,8 @@ export const {
   setContextRetention, // ADDED
   setMaxExecutionTime,
   setDefaultAgentId,
+  setBalancedAgentId,
+  setQualityAgentId,
   setPreferredAnimationSet,
   setThemeMode,
 } = settingSlice.actions;
@@ -984,8 +961,6 @@ export const selectPreferredAnimationSet = (state: RootState): number =>
   state.settings.preferredAnimationSet ?? DEFAULT_ANIMATION_SET_INDEX;
 export const selectShowThinking = (state: RootState): boolean =>
   state.settings.showThinking;
-export const selectWidgetsEnabled = (state: RootState): boolean =>
-  state.settings.widgetsEnabled ?? false;
 export const selectMaxCost = (state: RootState): number =>
   state.settings.maxCost;
 export const selectMaxExecutionTime = (state: RootState): number =>
@@ -1008,11 +983,6 @@ export const selectFontPreset = (state: RootState): FontPreset =>
   normalizeFontPreset(state.settings.fontPreset) ?? DEFAULT_FONT_PRESET;
 export const selectEnableReadCurrentSpace = (state: RootState): boolean =>
   state.settings.enableReadCurrentSpace;
-export const selectSidebarVisibleTypes = createSelector(
-  [(state: RootState) => state.settings.sidebarVisibleTypes],
-  (sidebarVisibleTypes): SidebarVisibleType[] =>
-    normalizeSidebarVisibleTypesSetting(sidebarVisibleTypes)
-);
 export const selectGlobalPrompt = (state: RootState): string =>
   state.settings.globalPrompt;
 export const selectUserTonePreset = (state: RootState): TonePreset =>
@@ -1050,6 +1020,16 @@ export const selectDefaultAgentPreference = (state: RootState): string =>
   resolveDefaultAgentIdSetting(state.settings.defaultAgentId);
 export const selectDefaultAgentId = (state: RootState): string =>
   selectResolvedDefaultAgentId(state.settings.defaultAgentId);
+
+export const selectBalancedAgentPreference = (state: RootState): string =>
+  resolveDefaultAgentIdSetting(state.settings.balancedAgentId);
+export const selectBalancedAgentId = (state: RootState): string =>
+  selectResolvedDefaultAgentId(state.settings.balancedAgentId);
+
+export const selectQualityAgentPreference = (state: RootState): string =>
+  resolveDefaultAgentIdSetting(state.settings.qualityAgentId);
+export const selectQualityAgentId = (state: RootState): string =>
+  selectResolvedDefaultAgentId(state.settings.qualityAgentId);
 
 export const selectOcrModel = (
   state: RootState
@@ -1247,6 +1227,24 @@ export const selectTheme = createSelector(
       codeText: c.text,
       // Text selection token
       selectionBg: alphaColor(c.primary, isDark ? 0.20 : 0.15, c.primaryGhost),
+      // ── --focus 全局 token（消除 ~30 处内联 fallback）──────────
+      focus: alphaColor(c.primary, isDark ? 0.3 : 0.22, c.primaryGhost),
+      // ── RAC 别名层（让 RAC 组件自动获得项目主题色）──────────
+      focusRingColor: c.primary,
+      invalidColor: c.error,
+      buttonBackground: alphaColor(c.primary, isDark ? 0.12 : 0.08, c.primaryGhost),
+      buttonBackgroundPressed: alphaColor(c.primary, isDark ? 0.18 : 0.12, c.primaryGhost),
+      highlightBackground: c.primary,
+      highlightForeground: c.textOnPrimary,
+      highlightBackgroundPressed: c.primary,
+      highlightOverlay: alphaColor(c.primary, isDark ? 0.15 : 0.10, c.primaryGhost),
+      highlightBackgroundInvalid: alphaColor(c.error, isDark ? 0.55 : 0.50, "rgba(239, 68, 68, 0.5)"),
+      fieldBackground: c.backgroundSecondary,
+      fieldTextColor: c.text,
+      linkColor: c.primary,
+      linkColorSecondary: c.text,
+      linkColorPressed: c.primaryDark,
+      borderColorDisabled: c.borderLight,
     };
   }
 );

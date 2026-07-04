@@ -278,19 +278,10 @@ export default {
             level4: "4: Adaptive reading",
           },
         },
-        defaultAgent: {
-          title: "Home page default Agent",
-        },
-        ocrModel: {
-          title: "PDF OCR Model",
-        },
         scrollButtons: {
           title: "Quick scroll buttons",
           top: "Scroll to top",
           bottom: "Scroll to bottom",
-        },
-        sidebarVisibleTypes: {
-          title: "Default sidebar items",
         },
       },
     },
@@ -562,19 +553,10 @@ export default {
             level4: "4: 自适应读取",
           },
         },
-        defaultAgent: {
-          title: "首页默认智能体",
-        },
-        ocrModel: {
-          title: "PDF OCR 模型",
-        },
         scrollButtons: {
           title: "快捷滚动按钮",
           top: "滚动到顶部",
           bottom: "滚动到底部",
-        },
-        sidebarVisibleTypes: {
-          title: "侧边栏默认显示内容",
         },
       },
     },

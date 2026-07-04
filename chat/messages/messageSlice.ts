@@ -438,6 +438,49 @@ export const messageSlice = createSliceWithThunks({
       }
     ),
 
+    // Error-path finalizer: keep whatever the transient message already shows
+    // instead of wiping the trace. Empty transients are removed (nothing to
+    // show); non-empty ones stop streaming and get an error marker so the UI
+    // renders the partial content alongside the error state.
+    finalizeTransientMessageOnError: create.reducer(
+      (
+        state,
+        action: PayloadAction<
+          string | { id: string; dialogId?: string; error?: string }
+        >
+      ) => {
+        const payload =
+          typeof action.payload === "string"
+            ? { id: action.payload }
+            : action.payload;
+        const dialogId =
+          payload.dialogId ?? findDialogIdByMessageId(state, payload.id);
+        const dialogState = ensureMessageDialogState(state, dialogId);
+        const existing = dialogState.msgs.entities[payload.id];
+        if (!existing) return;
+        const content = existing.content;
+        const hasContent =
+          typeof content === "string"
+            ? content.trim().length > 0
+            : Array.isArray(content) && content.length > 0;
+        if (!hasContent) {
+          removeOneMessage(dialogState, payload.id);
+          return;
+        }
+        updateOneMessage(dialogState, {
+          id: payload.id,
+          changes: {
+            isStreaming: false,
+            metadata: {
+              ...((existing as any).metadata ?? {}),
+              error: true,
+              ...(payload.error ? { message: payload.error } : {}),
+            },
+          } as Partial<Message>,
+        });
+      }
+    ),
+
     addToolMessage: create.reducer<Message & { dialogId?: string }>((state, action) => {
       const dialogState = ensureMessageDialogState(
         state,
@@ -1377,6 +1420,7 @@ export const {
   resetMsgs,
   clearAllStreaming,
   removeTransientMessage,
+  finalizeTransientMessageOnError,
   prepareAndPersistMessage,
   prepareAndPersistUserMessage,
   initMsgs,

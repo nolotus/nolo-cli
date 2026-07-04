@@ -17,7 +17,11 @@ import {
     clearPendingUserInputQueue,
     selectActiveControllers,
 } from "../../chat/dialog/dialogSlice";
-import { removeTransientMessage, selectAllMsgs } from "../../chat/messages/messageSlice";
+import {
+    finalizeTransientMessageOnError,
+    removeTransientMessage,
+    selectAllMsgs,
+} from "../../chat/messages/messageSlice";
 import {
     selectContextRetention,
     selectMaxExecutionTime,
@@ -1376,28 +1380,33 @@ export const streamAgentChatTurnHandler = async (
                 streamError = err?.message || "Local turn read stream error";
             }
 
-            if (streamError) {
+            // On error, keep what the user already watched happen: finalize
+            // non-empty transients (assistant text + executed tool messages)
+            // with an error marker instead of wiping the whole trace down to a
+            // single error badge. Empty transients are still removed.
+            const finalizeDesktopTurnOnError = (errorText: string) => {
                 if (assistantMessageKeys) {
-                    dispatch(removeTransientMessage(assistantMessageKeys.messageId));
+                    dispatch(finalizeTransientMessageOnError({
+                        id: assistantMessageKeys.messageId,
+                        error: errorText,
+                    }));
                 }
                 for (const toolMsg of activeToolMessages.values()) {
-                    dispatch(removeTransientMessage(toolMsg.id));
+                    dispatch(finalizeTransientMessageOnError({ id: toolMsg.id }));
                 }
                 remoteTransientMessageFinalized = true;
                 setLoopStopReason("error");
+            };
+
+            if (streamError) {
+                finalizeDesktopTurnOnError(streamError);
                 return rejectWithValue(streamError);
             }
 
             if (!streamResult) {
-                if (assistantMessageKeys) {
-                    dispatch(removeTransientMessage(assistantMessageKeys.messageId));
-                }
-                for (const toolMsg of activeToolMessages.values()) {
-                    dispatch(removeTransientMessage(toolMsg.id));
-                }
-                remoteTransientMessageFinalized = true;
-                setLoopStopReason("error");
-                return rejectWithValue("Local turn stream closed unexpectedly without result");
+                const message = "Local turn stream closed unexpectedly without result";
+                finalizeDesktopTurnOnError(message);
+                return rejectWithValue(message);
             }
 
             const desktopTurnMessages = (streamResult as any).turnMessages || [];
@@ -2350,7 +2359,12 @@ export const streamAgentChatTurnHandler = async (
             error,
         );
         if (remoteTransientMessageId && !remoteTransientMessageFinalized) {
-            dispatch(removeTransientMessage(remoteTransientMessageId));
+            // Keep partial streamed content visible with an error marker;
+            // only empty transients get removed.
+            dispatch(finalizeTransientMessageOnError({
+                id: remoteTransientMessageId,
+                error: error?.message || String(error),
+            }));
             remoteTransientMessageFinalized = true;
             setLoopStopReason("error");
         }

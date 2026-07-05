@@ -161,8 +161,8 @@ export const SYSTEM_DEFAULT_AGENT_ID = "system-default";
 // the correct pre-paint theme with a stale hardcoded default.
 const _preloadedTheme = typeof window !== "undefined"
   ? resolveThemeModePreload({
-      storage: localStorage,
-      systemPrefersDark: window.matchMedia(SYSTEM_DARK_MEDIA_QUERY).matches,
+      storage: typeof localStorage !== "undefined" ? localStorage : undefined,
+      systemPrefersDark: typeof window.matchMedia === "function" ? window.matchMedia(SYSTEM_DARK_MEDIA_QUERY).matches : false,
     })
   : { themeMode: "system" as const, isDark: false };
 

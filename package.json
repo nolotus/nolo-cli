@@ -750,7 +750,7 @@
     "js-base64": "^3.7.7",
     "crypto-js": "^4.1.1",
     "react": "19.2.3",
-    "@base-ui/react": "^1.0.0",
+    "react-dom": "19.2.3",
     "date-fns": "^2.30.0",
     "react-i18next": "^14.1.2",
     "react-redux": "^9.2.0",

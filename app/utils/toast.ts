@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-// Web toast adapter — bridges react-hot-toast API to @base-ui/react Toast.
+// Web toast adapter — reacts-toast style API, backed by render/web/ui/Toast.
 // The .native.ts variant handles React Native separately.
 
 import { toastManager } from "../../render/web/ui/Toast";
@@ -29,7 +29,7 @@ const DEFAULT_TIMEOUT = 4000;
 
 /**
  * Add a toast, optionally replacing an existing one with the same id.
- * @base-ui/react uses upsert semantics — add with existing id updates in place.
+ * Uses upsert semantics — add with existing id updates in place.
  */
 function addToast(
   message: ReactNode,

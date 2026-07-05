@@ -80,6 +80,32 @@ export const buildRoutableContentPath = ({
     spaceId
   );
 
+// Route segments that trail the content key instead of being it
+// (e.g. `/:agentPageKey/inbox`). When the last segment is one of these,
+// the active content key is the segment before it.
+const CONTENT_ROUTE_TRAILING_SEGMENTS = new Set(["inbox"]);
+
+// The sidebar renders outside the content route (it is a sibling of the
+// routed <Outlet/>), so useParams() cannot see `:pageKey`. Derive the active
+// content key straight from the URL instead — useLocation works anywhere.
+export const extractActiveRouteKey = (
+  currentPath?: string | null
+): string | undefined => {
+  if (!currentPath) return undefined;
+  const pathname = currentPath.split("?")[0].split("#")[0];
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length === 0) return undefined;
+  let last = segments[segments.length - 1];
+  if (CONTENT_ROUTE_TRAILING_SEGMENTS.has(last) && segments.length >= 2) {
+    last = segments[segments.length - 2];
+  }
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+};
+
 export const isRoutableContentActive = ({
   contentKey,
   type,
@@ -101,10 +127,6 @@ export const isRoutableContentActive = ({
     userId ?? undefined
   );
 
-  if (activePageKey === contentKey || activePageKey === routeContentKey) {
-    return true;
-  }
-
   if (
     type?.toLowerCase() === ContentType.APP ||
     isAppContentKey(contentKey)
@@ -113,5 +135,15 @@ export const isRoutableContentActive = ({
     return currentPath === appEditorPath;
   }
 
-  return false;
+  // Explicit route param wins when a caller actually has it.
+  if (activePageKey === contentKey || activePageKey === routeContentKey) {
+    return true;
+  }
+
+  // Fall back to the key parsed out of the URL so the sidebar stays in sync
+  // even though it lives above the content route in the tree.
+  const activeKeyFromPath = extractActiveRouteKey(currentPath);
+  return (
+    activeKeyFromPath === contentKey || activeKeyFromPath === routeContentKey
+  );
 };

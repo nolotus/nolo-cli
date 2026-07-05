@@ -176,6 +176,7 @@ function ToastList() {
 }
 
 export function MyToastRegion() {
+  if (typeof document === "undefined") return null;
   return createPortal(
     <div className="toast-viewport">
       <ToastList />

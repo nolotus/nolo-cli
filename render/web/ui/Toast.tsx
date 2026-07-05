@@ -9,44 +9,29 @@ import {
 } from "react-icons/lu";
 import "./Toast.css";
 
-// ─── Types ──────────────────────────────────────────
+export type ToastType = "success" | "error" | "loading" | "default";
 
-interface ToastData {
-  icon?: ReactNode;
-}
-
-type ToastType = "success" | "error" | "loading";
-
-const TYPE_ICONS = {
+const TYPE_ICONS: Partial<Record<ToastType, typeof LuCheckCircle2>> = {
   success: LuCheckCircle2,
   error: LuAlertCircle,
   loading: LuLoader2,
-} as const;
-
-interface ToastContent {
-  title: ReactNode;
-  description?: ReactNode;
-}
-
-interface AddOptions {
-  timeout?: number;
-}
-
-// ─── Internal toast state (with animation phase) ────
+};
 
 interface InternalToast {
   id: string;
   title: ReactNode;
   description?: ReactNode;
-  type?: string;
-  data?: ToastData;
+  type?: ToastType;
+  icon?: ReactNode;
   timeout?: number;
   phase: "entering" | "visible" | "exiting";
 }
 
-// ─── Store ──────────────────────────────────────────
-
 type Listener = () => void;
+
+// Must match the CSS transition duration (.toast-root transition) so exits
+// finish before the node is removed.
+const EXIT_MS = 320;
 
 class ToastStore {
   private toasts: InternalToast[] = [];
@@ -64,25 +49,26 @@ class ToastStore {
     id?: string;
     title: ReactNode;
     description?: ReactNode;
-    type?: string;
-    data?: ToastData;
+    type?: ToastType;
+    icon?: ReactNode;
     timeout?: number;
   }): string {
     const id = item.id ?? `toast-${++this.nextId}`;
     const filtered = this.toasts.filter((t) => t.id !== id);
-    const entry: InternalToast = { ...item, id, phase: "entering" } as InternalToast;
+    const entry: InternalToast = { ...item, id, phase: "entering" };
     this.toasts = [...filtered, entry];
     this.notify();
 
-    // Transition entering → visible (enter animation via data-starting-style removal)
-    requestAnimationFrame(() => {
+    // entering → visible next frame; removing data-starting-style fires the
+    // CSS enter transition.
+    requestAnimationFrame(() =>
       requestAnimationFrame(() => {
         this.toasts = this.toasts.map((t) =>
           t.id === id ? { ...t, phase: "visible" } : t,
         );
         this.notify();
-      });
-    });
+      }),
+    );
 
     if (item.timeout && item.timeout > 0) {
       setTimeout(() => this.close(id), item.timeout);
@@ -93,22 +79,18 @@ class ToastStore {
 
   close(id?: string) {
     if (id) {
+      if (!this.toasts.some((t) => t.id === id)) return;
       this.toasts = this.toasts.map((t) =>
         t.id === id ? { ...t, phase: "exiting" } : t,
       );
-      this.notify();
-      setTimeout(() => {
-        this.toasts = this.toasts.filter((t) => t.id !== id);
-        this.notify();
-      }, 200);
     } else {
       this.toasts = this.toasts.map((t) => ({ ...t, phase: "exiting" }));
-      this.notify();
-      setTimeout(() => {
-        this.toasts = [];
-        this.notify();
-      }, 200);
     }
+    this.notify();
+    setTimeout(() => {
+      this.toasts = id ? this.toasts.filter((t) => t.id !== id) : [];
+      this.notify();
+    }, EXIT_MS);
   }
 
   private notify = () => {
@@ -116,50 +98,41 @@ class ToastStore {
   };
 }
 
-// Module-level toast manager — usable from outside React (toast.ts adapter)
+// Module-level toast manager — usable from outside React (toast.ts adapter).
 export const toastManager = new ToastStore();
 
-// Queue API compatible with the React Aria ToastQueue example.
-// Example: queue.add({ title: 'Files uploaded', description: '3 files uploaded successfully.' }, { timeout: 5000 })
-export const queue = {
-  add(content: ToastContent, options?: AddOptions): string {
-    return toastManager.add({
-      title: content.title,
-      description: content.description,
-      timeout: options?.timeout,
-    });
-  },
-  close(id?: string) {
-    toastManager.close(id);
-  },
-};
-
-// ─── React Components ────────────────────────────────
-
 function ToastItem({ toast }: { toast: InternalToast }) {
-  const type = toast.type as ToastType | undefined;
+  const type = toast.type;
   const TypeIcon = type ? TYPE_ICONS[type] : undefined;
-  const customIcon = toast.data?.icon;
+  const icon = toast.icon;
 
   return (
     <div
       className="toast-root"
       data-starting-style={toast.phase === "entering" ? "" : undefined}
       data-ending-style={toast.phase === "exiting" ? "" : undefined}
-      data-type={type ?? undefined}
+      data-type={type}
     >
       <div className="toast-content">
-        {(customIcon || TypeIcon) && (
-          <div className="toast-icon-wrapper">
-            {customIcon ?? (TypeIcon && <TypeIcon className={`toast-icon ${type ?? ""}`} />)}
-          </div>
+        {icon ? (
+          <span className="toast-icon">{icon}</span>
+        ) : (
+          TypeIcon && (
+            <TypeIcon className={`toast-icon${type ? ` ${type}` : ""}`} />
+          )
         )}
         <div className="toast-text-wrapper">
           <div className="toast-title">{toast.title}</div>
-          {toast.description && <div className="toast-description">{toast.description}</div>}
+          {toast.description && (
+            <div className="toast-description">{toast.description}</div>
+          )}
         </div>
       </div>
-      <button className="toast-close" aria-label="Close" onClick={() => toastManager.close(toast.id)}>
+      <button
+        className="toast-close"
+        aria-label="Close"
+        onClick={() => toastManager.close(toast.id)}
+      >
         <LuX size={16} />
       </button>
     </div>
@@ -171,7 +144,6 @@ function ToastList() {
     (cb) => toastManager.subscribe(cb),
     () => toastManager.getSnapshot(),
   );
-
   return toasts.map((item) => <ToastItem key={item.id} toast={item} />);
 }
 

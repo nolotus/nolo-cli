@@ -27,14 +27,14 @@ const updateClientDbIfNewer = async (
   clientDb: any,
   dbKey: string,
   remoteData: any,
-  localData: any
+  localData: any,
 ): Promise<void> => {
   if (!clientDb) return;
   try {
     if (isRemoteDataNewer(remoteData, localData)) {
       await clientDb.put(
         dbKey,
-        normalizeReadRecord(dbKey, remoteData, { forCache: true })
+        normalizeReadRecord(dbKey, remoteData, { forCache: true }),
       );
     }
   } catch (err) {
@@ -45,7 +45,7 @@ const updateClientDbIfNewer = async (
 const normalizeReadRecord = (
   dbKey: string,
   data: any,
-  options: { forCache?: boolean } = {}
+  options: { forCache?: boolean } = {},
 ): any => {
   if (!data || typeof data !== "object") return data;
   const baseRecord = options.forCache ? data : { ...data, dbKey };
@@ -65,7 +65,7 @@ const syncLocalDataToServer = async (
     state: unknown;
   },
   dbKey: string,
-  localData: any
+  localData: any,
 ): Promise<void> => {
   try {
     scheduleExistingRecordReplication({
@@ -84,7 +84,7 @@ const saveRemoteDataToClientDb = async (
   clientDb: any,
   dbKey: string,
   remoteData: any,
-  serverOrigin?: string | null
+  serverOrigin?: string | null,
 ): Promise<void> => {
   if (!clientDb) return;
   try {
@@ -98,7 +98,7 @@ const saveRemoteDataToClientDb = async (
             ...normalizedRemoteData,
             serverOrigin,
           }
-        : normalizedRemoteData
+        : normalizedRemoteData,
     );
   } catch (err) {
     // Error ignored
@@ -115,7 +115,7 @@ const processRemoteDataInBackground = async (
     currentServer: string | undefined;
     syncServers: string[] | undefined;
     state: unknown;
-  }
+  },
 ): Promise<void> => {
   if (!clientDb) return;
   try {
@@ -142,7 +142,7 @@ const processRemoteDataInBackground = async (
         clientDb,
         dbKey,
         serverOrigin ? { ...validRemoteData, serverOrigin } : validRemoteData,
-        localData
+        localData,
       );
     }
     if (
@@ -167,7 +167,7 @@ export const readAction = async (
     signal?: AbortSignal;
     preferredServerOrigin?: string | null;
   },
-  thunkApi: AppThunkApi
+  thunkApi: AppThunkApi,
 ): Promise<any> => {
   const dbKey = payload.dbKey;
   const signal = payload.signal;
@@ -188,6 +188,8 @@ export const readAction = async (
   }
 
   const executeRead = async (): Promise<any> => {
+    const isDialogKey = dbKey.startsWith("dialog-") && !dbKey.includes("-msg-");
+    const readStartedAt = isDialogKey ? Date.now() : 0;
     const state = thunkApi.getState();
     const {
       currentToken,
@@ -201,6 +203,14 @@ export const readAction = async (
     const isLoggedIn = !!currentToken;
     const now = Date.now();
     const localData = await fetchFromClientDb(clientDb, dbKey);
+    if (isDialogKey) {
+      console.info("[readAction-perf] dialog local-read", {
+        dbKey,
+        localHit: !!localData,
+        localReadMs: Date.now() - readStartedAt,
+        serverCount: allServers.length,
+      });
+    }
     const authority = resolveRecordAuthority({
       dbKey,
       record: localData,
@@ -213,14 +223,12 @@ export const readAction = async (
       authorityServer: preferredServerOrigin ?? authority.authorityServer,
       serverOrigin: authority.serverOrigin,
     });
-    const {
-      preferredServer,
-      fallbackServers,
-      orderedServersForLocalHit,
-    } = partitionReadServers({
-      allServers: authorityPlannedServers,
-      preferredServerOrigin: preferredServerOrigin ?? authority.authorityServer,
-    });
+    const { preferredServer, fallbackServers, orderedServersForLocalHit } =
+      partitionReadServers({
+        allServers: authorityPlannedServers,
+        preferredServerOrigin:
+          preferredServerOrigin ?? authority.authorityServer,
+      });
     readRequestManager.cleanupMisses(now);
     readRequestManager.cleanupLocalHitRevalidations(now);
 
@@ -231,20 +239,28 @@ export const readAction = async (
       if (typeof retryInMs === "number" && retryInMs > 0) {
         logger.debug(
           { dbKey, retryInMs },
-          "[readAction] Suppressing repeated miss read"
+          "[readAction] Suppressing repeated miss read",
         );
-        throw new Error(`Read temporarily suppressed for missing key "${dbKey}".`);
+        throw new Error(
+          `Read temporarily suppressed for missing key "${dbKey}".`,
+        );
       }
     }
 
     // 离线 / 无可用远程服务器：只看本地
     if (authorityPlannedServers.length === 0) {
       if (localData) {
+        if (isDialogKey) {
+          console.info("[readAction-perf] dialog offline-local-hit", {
+            dbKey,
+            totalMs: Date.now() - readStartedAt,
+          });
+        }
         return normalizeReadRecord(dbKey, localData);
       }
       readRequestManager.markMiss(dbKey, now);
       throw new Error(
-        `Failed to fetch data for key "${dbKey}" because network is offline and no local data is available.`
+        `Failed to fetch data for key "${dbKey}" because network is offline and no local data is available.`,
       );
     }
 
@@ -253,15 +269,19 @@ export const readAction = async (
       // against remote servers in the background. This avoids turning a
       // preferred-server timeout into a visible read failure for data we
       // already have locally (for example createDialog -> initDialog).
+      const retryInMs = signal?.aborted
+        ? undefined
+        : readRequestManager.getLocalHitRevalidateInMs(dbKey, now);
       if (!signal?.aborted) {
-        const retryInMs = readRequestManager.getLocalHitRevalidateInMs(
-          dbKey,
-          now
-        );
         if (retryInMs === null) {
           readRequestManager.markLocalHitRevalidated(dbKey, now);
           const remotePromises = orderedServersForLocalHit.map((server) =>
-            fetchFromServer(server, dbKey, isLoggedIn ? currentToken : undefined, signal)
+            fetchFromServer(
+              server,
+              dbKey,
+              isLoggedIn ? currentToken : undefined,
+              signal,
+            ),
           );
           void processRemoteDataInBackground(
             clientDb,
@@ -269,14 +289,21 @@ export const readAction = async (
             remotePromises,
             orderedServersForLocalHit,
             localData,
-            { currentServer, syncServers, state }
+            { currentServer, syncServers, state },
           );
         } else {
           logger.debug(
             { dbKey, retryInMs },
-            "[readAction] Skipping frequent local-hit revalidation"
+            "[readAction] Skipping frequent local-hit revalidation",
           );
         }
+      }
+      if (isDialogKey) {
+        console.info("[readAction-perf] dialog local-hit-return", {
+          dbKey,
+          totalMs: Date.now() - readStartedAt,
+          revalidating: retryInMs === null,
+        });
       }
       return normalizeReadRecord(dbKey, localData);
     }
@@ -287,7 +314,7 @@ export const readAction = async (
           preferredServer,
           dbKey,
           isLoggedIn ? currentToken : undefined,
-          signal
+          signal,
         );
 
         if (preferredRemoteData) {
@@ -295,27 +322,37 @@ export const readAction = async (
             clientDb,
             dbKey,
             preferredRemoteData,
-            preferredServer
+            preferredServer,
           );
           readRequestManager.clearMiss(dbKey);
+          if (isDialogKey) {
+            console.info("[readAction-perf] dialog preferred-remote-hit", {
+              dbKey,
+              totalMs: Date.now() - readStartedAt,
+              server: preferredServer,
+            });
+          }
           return normalizeReadRecord(dbKey, {
             ...preferredRemoteData,
             serverOrigin: preferredServer,
           });
         }
       } catch (error) {
-        if (signal?.aborted || (error as { name?: string } | null)?.name === "AbortError") {
+        if (
+          signal?.aborted ||
+          (error as { name?: string } | null)?.name === "AbortError"
+        ) {
           throw error;
         }
         if (isReadTimeoutError(error)) {
           logger.warn(
             { dbKey, preferredServer, error: String((error as Error).message) },
-            "[readAction] Preferred server timed out; falling back to remaining servers"
+            "[readAction] Preferred server timed out; falling back to remaining servers",
           );
         } else {
           logger.warn(
             { dbKey, preferredServer, error: String(error) },
-            "[readAction] Preferred server read failed; falling back to remaining servers"
+            "[readAction] Preferred server read failed; falling back to remaining servers",
           );
         }
       }
@@ -323,7 +360,12 @@ export const readAction = async (
 
     // 3. 将 signal 传递给所有网络请求
     const remotePromises = fallbackServers.map((server) =>
-      fetchFromServer(server, dbKey, isLoggedIn ? currentToken : undefined, signal)
+      fetchFromServer(
+        server,
+        dbKey,
+        isLoggedIn ? currentToken : undefined,
+        signal,
+      ),
     );
 
     // 如果本地没有数据，则等待网络请求结果
@@ -347,7 +389,7 @@ export const readAction = async (
           clientDb,
           dbKey,
           validRemoteData,
-          serverOrigin
+          serverOrigin,
         );
       }
       readRequestManager.clearMiss(dbKey);
@@ -358,7 +400,9 @@ export const readAction = async (
     }
 
     readRequestManager.markMiss(dbKey, Date.now());
-    throw new Error(`Failed to fetch data for key "${dbKey}" from all sources.`);
+    throw new Error(
+      `Failed to fetch data for key "${dbKey}" from all sources.`,
+    );
   };
 
   const canDedup = !signal;

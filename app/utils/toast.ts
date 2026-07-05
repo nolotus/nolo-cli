@@ -1,74 +1,49 @@
 import type { ReactNode } from "react";
-// Web toast adapter — reacts-toast style API, backed by render/web/ui/Toast.
+// Web toast adapter — react-hot-toast style API, backed by render/web/ui/Toast.
 // The .native.ts variant handles React Native separately.
 
-import { toastManager } from "../../render/web/ui/Toast";
-
-type ToastType = "success" | "error" | "loading" | "default";
+import { toastManager, type ToastType } from "../../render/web/ui/Toast";
 
 type ToastOptions = {
-  /** Timeout in milliseconds (react-hot-toast compatible) */
+  /** Auto-dismiss timeout in ms (react-hot-toast alias `duration` supported) */
   timeout?: number;
-  /** Alias for timeout, used by react-hot-toast callers */
   duration?: number;
-  /** Toast key for updating an existing toast (react-hot-toast compatible) */
+  /** Toast key — reusing an id updates the existing toast in place */
   id?: string;
-  /** Custom icon (string or node) — rendered instead of the type default */
+  /** Custom icon node — overrides the type default */
   icon?: ReactNode;
 };
 
-interface CustomToast {
-  (message: ReactNode, options?: ToastOptions): string;
-  success: (message: ReactNode, options?: ToastOptions) => string;
-  error: (message: ReactNode, options?: ToastOptions) => string;
-  loading: (message: ReactNode, options?: ToastOptions) => string;
-  dismiss: (toastId?: string) => void;
-}
-
 const DEFAULT_TIMEOUT = 4000;
 
-/**
- * Add a toast, optionally replacing an existing one with the same id.
- * Uses upsert semantics — add with existing id updates in place.
- */
-function addToast(
+function add(
   message: ReactNode,
   type: ToastType,
   options?: ToastOptions,
 ): string {
-  const id = options?.id;
   const timeout = options?.timeout ?? options?.duration;
-  // loading toasts: no auto-dismiss (timeout=0) unless explicit timeout given
-  const finalTimeout = type === "loading"
-    ? (timeout ?? 0)
-    : (timeout ?? DEFAULT_TIMEOUT);
-
   return toastManager.add({
-    id,
+    id: options?.id,
     title: message,
     type,
-    data: { icon: options?.icon },
-    timeout: finalTimeout,
+    icon: options?.icon,
+    // loading toasts stay until explicitly replaced/closed (timeout=0)
+    timeout: type === "loading" ? (timeout ?? 0) : (timeout ?? DEFAULT_TIMEOUT),
   });
 }
 
-const customToast = ((message: ReactNode, options?: ToastOptions) => {
-  return addToast(message, "default", options);
-}) as CustomToast;
+export const toast = Object.assign(
+  (message: ReactNode, options?: ToastOptions) =>
+    add(message, "default", options),
+  {
+    success: (message: ReactNode, options?: ToastOptions) =>
+      add(message, "success", options),
+    error: (message: ReactNode, options?: ToastOptions) =>
+      add(message, "error", options),
+    loading: (message: ReactNode, options?: ToastOptions) =>
+      add(message, "loading", options),
+    dismiss: (id?: string) => toastManager.close(id),
+  },
+);
 
-customToast.success = (message: ReactNode, options?: ToastOptions) => {
-  return addToast(message, "success", options);
-};
-
-customToast.error = (message: ReactNode, options?: ToastOptions) => {
-  return addToast(message, "error", options);
-};
-
-customToast.loading = (message: ReactNode, options?: ToastOptions) => {
-  return addToast(message, "loading", options);
-};
-
-customToast.dismiss = (toastId?: string) => toastManager.close(toastId);
-
-export const toast = customToast;
-export default customToast;
+export default toast;

@@ -54,8 +54,8 @@ export const deepinfraModels = [
     supportsTool: false,
   },
   {
-    name: "anthropic/claude-opus-4-7",
-    displayName: "Anthropic: Claude Opus 4.7",
+    name: "anthropic/claude-opus-4-8",
+    displayName: "Anthropic: Claude Opus 4.8",
     hasVision: true,
     price: {
       input: 5 * 9,

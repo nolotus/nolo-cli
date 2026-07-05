@@ -21,7 +21,7 @@ import { DataType } from "../../create/types";
 import { remove, write, patch, selectById as selectDbRecordById } from "../../database/dbSlice";
 import type { Message } from "./types";
 import { selectUserId } from "../../auth/authSlice";
-import { fetchAndCacheMessages } from "./fetchAndCacheMessages";
+import { fetchAndCacheMessages, fetchAndCacheMessagesLocalFirst } from "./fetchAndCacheMessages";
 import { createDialogMessageKeyAndId } from "../../database/keys";
 import { extractCustomId } from "../../core/prefix";
 import type { DialogConfig } from "../../app/types";
@@ -509,6 +509,18 @@ export const messageSlice = createSliceWithThunks({
       dialogState.msgs = messagesAdapter.removeMany(dialogState.msgs, action.payload.ids);
     }),
 
+    setMessages: create.reducer<{
+      dialogId: string;
+      messages: Message[];
+      isLoadingInitial?: boolean;
+    }>((state, action) => {
+      const dialogState = ensureMessageDialogState(state, action.payload.dialogId);
+      setAllMessages(dialogState, action.payload.messages);
+      if (action.payload.isLoadingInitial !== undefined) {
+        dialogState.isLoadingInitial = action.payload.isLoadingInitial;
+      }
+    }),
+
 
 
     prepareAndPersistMessage: create.asyncThunk(
@@ -602,13 +614,14 @@ export const messageSlice = createSliceWithThunks({
         thunkApi
       ): Promise<Message[]> => {
         const { db } = thunkApi.extra;
-        const { getState, signal } = thunkApi;
+        const { getState, signal, dispatch } = thunkApi;
 
         const state = getState() as RootState;
         const { currentToken: token, remoteServers } =
           getRuntimeServerContext(state);
-        const finalMessages = (
-          await fetchAndCacheMessages({
+
+        const { localMessages, remotePromise, earlyReturned } =
+          await fetchAndCacheMessagesLocalFirst({
             db,
             dialogId,
             dialogKey,
@@ -616,17 +629,43 @@ export const messageSlice = createSliceWithThunks({
             token,
             remoteServers,
             signal,
-          })
-        ).filter(isValidMessage);
+          });
+
+        const validLocalMessages = localMessages.filter(isValidMessage);
+
+        if (earlyReturned) {
+          dispatch(
+            messageSlice.actions.setMessages({
+              dialogId,
+              messages: validLocalMessages,
+              isLoadingInitial: false,
+            })
+          );
+
+          // Remote revalidation continues in the background. Do not block
+          // bootstrap completion; the UI already shows local messages.
+          remotePromise
+            .then((finalMessages) => {
+              dispatch(
+                messageSlice.actions.setMessages({
+                  dialogId,
+                  messages: finalMessages.filter(isValidMessage),
+                })
+              );
+            })
+            .catch((err) => {
+              console.error("[initMsgs] background remote revalidate failed:", err);
+            });
+
+          return validLocalMessages;
+        }
+
+        const finalMessages = (await remotePromise).filter(isValidMessage);
 
         // --- Post-fetch check: Resume suspended summary tasks ---
         try {
-          // Note: We need to find the dialogKey. We have dialogId.
-          // Usually we can query state, but state might be stale if we just loaded.
-          // However, dialogConfig should be in 'dbSlice' or 'dialogSlice' state.
-          // Let's try to find it from the Redux state.
           const rootState = getState() as RootState;
-          const { entities } = rootState.db; // Access raw DB entities if needed, or use selectors
+          const { entities } = rootState.db;
 
           const dialogConfig = Object.values(entities).find(
             (entity): entity is DialogConfig => {
@@ -638,20 +677,18 @@ export const messageSlice = createSliceWithThunks({
 
           if (dialogConfig && dialogConfig.summaryPending && dialogConfig.dbKey) {
             console.log("[initMsgs] Found suspended summary task, resuming...", dialogConfig.dbKey);
-            // Clear the flag first to avoid loops (though action has lock)
             thunkApi.dispatch(patch({
               dbKey: dialogConfig.dbKey,
               changes: { summaryPending: false }
             }));
 
-            // 2. Resume summary update (directly calling async function)
             updateDialogSummaryAction(
               { dialogKey: dialogConfig.dbKey, preFetchedMessages: finalMessages },
               thunkApi
-            ).catch(err => console.error("Resume summary failed:", err));
+            ).catch((err) => console.error("Resume summary failed:", err));
           }
-        } catch (e) {
-          console.error("[initMsgs] Failed to resume summary:", e);
+        } catch {
+          console.error("[initMsgs] Failed to resume summary");
         }
 
         return finalMessages;
@@ -691,6 +728,7 @@ export const messageSlice = createSliceWithThunks({
             return;
           }
 
+          dialogState.currentInitMsgsRequestId = undefined;
           dialogState.isLoadingInitial = false;
           if (action.meta.arg.isNew) {
             upsertManyMessages(dialogState, action.payload);
@@ -698,23 +736,6 @@ export const messageSlice = createSliceWithThunks({
             // 用从 DB 加载的消息原子性替换，确保不遗留已删除消息或旧的流式消息
             setAllMessages(dialogState, action.payload);
           }
-
-          // Check for pending summary tasks and resume them
-          // We need access to the dialog config. We can try to find it in the store via thunkAPI (not available here)
-          // OR we can do a fire-and-forget logic if we had access to dispatch.
-          // Since we are in a reducer, we CANNOT dispatch actions or access other slices easily.
-          // The correct way is to use a Listener Middleware or AppThunk, but for minimal changes:
-          // We can piggyback on the thunk's promise handling if we return extra data, but initMsgs returns Message[].
-          // Alternatively, we use `initMsgs.fulfilled` in a separate listener or component.
-
-          // BETTER: Do it in the component layer or use a thunk wrapper. 
-          // However, for "minimal changes" requested by user:
-          // We can try to do this in the `swallowNonAbortError` or logic inside the thunk? 
-          // NO, the user moved logic OUT of the thunk body because of P1 error (empty state).
-          // user said: "Move to initMsgs.fulfilled IS NOT POSSIBLE because it is a reducer".
-          // Actually user said: "Remove from initMsgs async ... and use updateDialogSummaryAction with preFetchedMessages".
-          // So we should put it BACK into the thunk body, but pass `allMessages` explicitly!
-
         },
         rejected: (state, action) => {
           const dialogState = ensureMessageDialogState(state, action.meta.arg.dialogId);
@@ -722,6 +743,7 @@ export const messageSlice = createSliceWithThunks({
             return;
           }
 
+          dialogState.currentInitMsgsRequestId = undefined;
           dialogState.isLoadingInitial = false;
 
           if (action.meta?.aborted) {

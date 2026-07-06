@@ -55,7 +55,7 @@ export type TaskEvidenceInput = {
   artifactIds?: string[];
 };
 
-type RunAgentTurnOptions = {
+export type RunAgentTurnOptions = {
   agentName: string;
   agentKey: string;
   serverUrl: string;

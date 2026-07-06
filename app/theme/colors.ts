@@ -406,23 +406,91 @@ export const rose = {
   },
 };
 
-// ─── 7. Ember — 琥珀暖焰，暗夜篝火气质 ──────────────────────────────────
-export const ember = {
+// ─── 7. Mono — 灰橙极简，open-props 中性灰 + 暖橙强调 ─────────────────────
+//   整组只用两态：light（gray-0..3 画布 + orange-6 品牌）和 dim（gray-5..8 画布 + orange-4 品牌）。
+//   dark 字段是 framework 强制的兼容位，等同 dim，避免系统 dark 模式接管后样式错乱。
+//   主品牌始终橙色，中性灰让出层级；圆角与动效走简洁利落路线。
+export const mono = {
+  meta: { radiusBoost: 0, motionEase: "cubic-bezier(0.4, 0, 0.2, 1)" },
   light: {
-    primary: "#D97706", primaryLight: "#F59E0B", primaryDark: "#B45309",
-    primaryGradient: "linear-gradient(135deg, #D97706, #F59E0B)",
-    primaryGhost: "rgba(217,119,6,0.08)", primaryHover: "rgba(217,119,6,0.10)",
-    borderAccent: "#FCD34D", ...semantic.light,
-    ...mkLight("#FFFBF4", "#FFF7E6", "#FDEECB", "#2C1A04", "#6B4718", "#8A6230", "#E8D5A3", "#FFF7E6"),
+    // open-props: --orange-6 = #FF9500, --orange-3 = #FFD599, --orange-7 = #E68600
+    primary:         "#FF9500",
+    primaryLight:    "#FFD599",
+    primaryDark:     "#E68600",
+    primaryGradient: "linear-gradient(135deg, #FF9500, #FFD599)",
+    primaryGhost:    "rgba(255,149,0,0.08)",
+    primaryHover:    "rgba(255,149,0,0.12)",
+    borderAccent:    "#FFBF66",
+    success:         "#16A34A",
+    warning:         "#D97706",
+    info:            "#2563EB",
+    error:           "#DC2626",
+    // 采用 open-props 默认的冷系 slate-gray 调色（H=210, S=10%），完美消除泥土发灰感
+    background:          "#FCFCFD",  // gray-0
+    backgroundSecondary: "#F9FAFA",  // gray-1
+    backgroundTertiary:  "#F1F2F4",  // gray-2
+    backgroundGhost:     "rgba(252,252,253,0.94)",
+    backgroundHover:     "#EBEDEF",  // gray-3
+    backgroundSelected:  "#C1C7CD",  // gray-6
+    backgroundElevated:  "#FFFFFF",
+    text:                "#292E32",  // gray-12
+    textSecondary:       "#57616B",  // gray-10
+    textTertiary:        "#7B8793",  // gray-8
+    textQuaternary:      "#9DA6AF",  // gray-7
+    textLight:           "#C1C7CD",
+    placeholder:         "#9DA6AF",
+    border:              "#E6E8EA",  // gray-4
+    borderHover:         "#C1C7CD",
+    borderLight:         "#F1F2F4",
+    messageBackground:   "#FFFFFF",
+    codeBackground:      "#F1F2F4",
+    // 基于 slate-gray 调色 #292E32 (RGB 41, 46, 50) 的有机冷调阴影
+    shadowLight:         "rgba(41, 46, 50, 0.05)",
+    shadowMedium:        "rgba(41, 46, 50, 0.09)",
+    shadowHeavy:         "rgba(41, 46, 50, 0.15)",
+    textHeading:         "#292E32",
+    textOnPrimary:       "#FFFFFF",
   },
+  // dim 是 mono 的"主"暗态：用 open-props 经典 slate-gray 暗色（gray-12..9）做画布，
+  // 完美对应参考图中的深石墨色/冷灰色调，对比极强、层次细腻。
   dark: {
-    primary: "#F59E0B", primaryLight: "#FCD34D", primaryDark: "#D97706",
-    primaryGradient: "linear-gradient(135deg, #F59E0B, #FCD34D)",
-    primaryGhost: "rgba(245,158,11,0.10)", primaryHover: "rgba(245,158,11,0.12)",
-    borderAccent: "#92400E", ...semantic.dark,
-    ...mkDark("#1A1207", "#221809", "#2E220C", "#F0E2C0", "#C4A056", "#8A7040", "#3A2A10", "#221809", "26,18,7"),
-    textHeading: "#FCD34D",
-    textOnPrimary: "#1A1207",
+    // open-props: --orange-3 = #FFD599, --orange-4 = #FFBF66, --orange-5 = #FFAA33
+    primary:         "#FFBF66",
+    primaryLight:    "#FFD599",
+    primaryDark:     "#FFAA33",
+    primaryGradient: "linear-gradient(135deg, #FFBF66, #FFAA33)",
+    primaryGhost:    "rgba(255,191,102,0.12)",
+    primaryHover:    "rgba(255,191,102,0.18)",
+    borderAccent:    "#FFAA33",
+    success:         "#4ADE80",
+    warning:         "#FCD34D",
+    info:            "#60A5FA",
+    error:           "#F87171",
+    // open-props 冷系 slate-gray 暗色画布（H=210, S=10%）
+    background:          "#292E32",  // gray-12
+    backgroundSecondary: "#3E454C",  // gray-11
+    backgroundTertiary:  "#57616B",  // gray-10
+    backgroundGhost:     "rgba(41,46,50,0.94)",
+    backgroundHover:     "#4F5862",  // ~gray-10.5
+    backgroundSelected:  "#6E7A87",  // gray-9
+    backgroundElevated:  "#3E454C",
+    text:                "#EBEDEF",  // gray-3
+    textSecondary:       "#DDE0E3",  // gray-5
+    textTertiary:        "#C1C7CD",  // gray-6
+    textQuaternary:      "#7B8793",  // gray-8
+    textLight:           "#3E454C",
+    placeholder:         "#7B8793",
+    border:              "#3E454C",
+    borderHover:         "#6E7A87",
+    borderLight:         "#292E32",
+    messageBackground:   "#3E454C",
+    codeBackground:      "#1A1D20",  // 略深于 canvas 的冷墨色
+    // 基于深 slate-gray #0F1113 (RGB 15, 17, 19) 的有机阴影，在冷深色背景上极其细腻浮空
+    shadowLight:         "rgba(15, 17, 19, 0.28)",
+    shadowMedium:        "rgba(15, 17, 19, 0.45)",
+    shadowHeavy:         "rgba(15, 17, 19, 0.65)",
+    textHeading:         "#FFBF66",
+    textOnPrimary:       "#2E2E2E",
   },
 };
 
@@ -514,6 +582,8 @@ export const green    = forest;
 export const graphite = neutral;
 export const mocha    = catppuccin;
 export const pink     = rose;
-export const red      = ember;
-export const orange   = ember;
-export const yellow   = ember;
+// ember 已下线：旧 key 统一落到 mono
+export const red      = mono;
+export const orange   = mono;
+export const yellow   = mono;
+export const ember    = mono;

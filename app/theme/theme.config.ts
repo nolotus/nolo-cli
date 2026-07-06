@@ -3,7 +3,7 @@ import {
   iris,
   wave,
   rose,
-  ember,
+  mono,
   catppuccin,
   // legacy theme objects kept for alias references
   neutral, ocean, forest,
@@ -37,7 +37,7 @@ export const SPACE = {
 
 // 2. 主题色系（6 个核心 — 每个覆盖一个画像，无冗余）
 export const THEME_COLORS = {
-  catppuccin, trail, wave, iris, rose, ember,
+  catppuccin, trail, wave, iris, rose, mono,
 };
 
 // 3. 旧主题名 → 保留主题的映射（DB 中可能存了旧 key）
@@ -50,11 +50,11 @@ export const THEME_NAME_ALIASES = {
   blue: "catppuccin",
   purple: "iris",
   green: "wave",
-  orange: "ember",
-  yellow: "ember",
+  orange: "mono",
+  yellow: "mono",
   graphite: "catppuccin",
   pink: "rose",
-  red: "ember",
+  red: "mono",
   mocha: "catppuccin",
 } as const;
 

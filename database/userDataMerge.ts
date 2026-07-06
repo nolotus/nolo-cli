@@ -16,16 +16,16 @@ interface MergeableUserDataItem {
 export const getUserDataItemTimestamp = (dataItem: MergeableUserDataItem): number =>
   getRecordTimestamp(dataItem);
 
-const getItemKey = (item: MergeableUserDataItem): string | null => {
-  // dbKey 必须优先于 id：dbKey 是全局唯一的 "type-userId-id" 格式，
-  // 而 id 可能只是 ULID 短串，与本地 tombstone 的 dbKey 不匹配会导致
-  // merge 时 tombstone 无法覆盖远端活记录。
+export const getItemKey = (item: MergeableUserDataItem): string | null => {
+  // contentKey/dbKey 是跨本地 tombstone、远端 summary、完整记录共享的实体键。
+  // raw id 可能只是 ULID/短 id；如果优先使用 id，deleted tombstone 会无法覆盖
+  // 只带 contentKey 的远端活记录，导致已删除内容重新出现在列表里。
   const candidates = [
-    typeof item.dbKey === "string" ? item.dbKey : undefined,
-    item.id,
     typeof item.contentKey === "string" ? item.contentKey : undefined,
+    typeof item.dbKey === "string" ? item.dbKey : undefined,
     typeof item.appKey === "string" ? item.appKey : undefined,
     typeof item.appId === "string" ? item.appId : undefined,
+    item.id,
   ];
 
   for (const candidate of candidates) {

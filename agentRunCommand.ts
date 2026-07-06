@@ -5,7 +5,7 @@
 // the dependency-injected orchestration and re-exports the public surface
 // for back-compat with existing callers.
 
-import { runAgentTurn, type RunAgentTurnResult } from "./client/agentRun";
+import { runAgentTurn, type RunAgentTurnOptions, type RunAgentTurnResult } from "./client/agentRun";
 import { CliProviderQuotaError } from "./ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
 import { resolveAgentRecordFromHybridStore } from "./agentRecordHelpers";
@@ -165,9 +165,24 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     env,
     allowShell: parsed.allowShell,
   });
-  const result: RunAgentTurnResult = await runner({
-    agentName: agentKey,
-    agentKey,
+
+  // --bg has no effect on local CLI runs: the local provider loop runs
+  // synchronously in-process and never detaches into a background dialog
+  // (background is only honored by the server runtime, which streams via
+  // /api/agent/run with background:true). Surface this explicitly instead of
+  // silently ignoring the flag so users do not expect detached behavior.
+  if (parsed.background && isLocalRun) {
+    output.write(
+      "[nolo] --bg is not supported for local runs; the local CLI runtime runs synchronously in-process and does not detach into a background dialog. Ignoring --bg for this run.\n"
+    );
+  }
+
+  // Build the runner options once; the same options (message, cwd,
+  // subjectRefs, runtime mode, etc.) are reused for any quota fallback retry
+  // so the fallback agent executes against an identical request surface.
+  const buildRunOptions = (targetAgentKey: string): RunAgentTurnOptions => ({
+    agentName: targetAgentKey,
+    agentKey: targetAgentKey,
     serverUrl: resolveServerUrl(env),
     message: prependWorkflowReferencePrompt(
       prependSubjectDialogMarker(
@@ -206,8 +221,37 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(parsed.taskEvidence ? { taskEvidence: parsed.taskEvidence } : {}),
   });
 
-  // Surface quota error clearly (no auto switch - agent decides via prompt)
-  if (result.localError instanceof CliProviderQuotaError) {
+  let result: RunAgentTurnResult = await runner(buildRunOptions(agentKey));
+
+  // Quota auto-fallback: when a run fails because the provider reports a
+  // quota/limit (HTTP 429 or CliProviderQuotaError, or an error message that
+  // mentions quota/额度/上限), and the command line supplied --fallback-agent,
+  // retry the SAME request exactly once with the first fallback agent. This
+  // is a run-level switch only; it does not touch server-side scheduling.
+  if (result.exitCode !== 0 && isQuotaExhaustedError(result.localError) && isLocalRun && parsed.fallbackAgentKeys && parsed.fallbackAgentKeys.length > 0) {
+    const fallbackAgentKey = parsed.fallbackAgentKeys[0];
+    output.write(
+      `[nolo] quota exhausted on ${agentKey}, falling back to ${fallbackAgentKey}\n`
+    );
+    const fallbackResult: RunAgentTurnResult = await runner(buildRunOptions(fallbackAgentKey));
+    if (fallbackResult.exitCode === 0) {
+      result = fallbackResult;
+    } else {
+      // Fallback also failed: report the fallback failure normally and keep
+      // the fallback's error for downstream surfacing.
+      result = fallbackResult;
+      output.write(
+        `[nolo] fallback to ${fallbackAgentKey} also failed: ${
+          fallbackResult.localError instanceof Error
+            ? fallbackResult.localError.message
+            : String(fallbackResult.localError ?? "unknown error")
+        }\n`
+      );
+    }
+  } else if (result.localError instanceof CliProviderQuotaError) {
+    // Surface quota error clearly when no automatic fallback is available
+    // (no --fallback-agent given, or run was not local). The agent still gets
+    // the prompt-level suggestions for self-dispatch.
     output.write(`\n[nolo] Quota limit hit for ${parsed.agentKey} (CliProviderQuotaError).\n`);
     if (parsed.fallbackAgentKeys && parsed.fallbackAgentKeys.length > 0) {
       output.write(`Suggested alternatives for your decision: ${parsed.fallbackAgentKeys.join(', ')}\n`);
@@ -238,4 +282,35 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     }
   }
   return result.exitCode;
+}
+
+// Detect quota/limit exhaustion from a run error. Covers the structured
+// CliProviderQuotaError (local CLI providers), raw HTTP 429 responses, and
+// provider error messages that mention quota/额度/上限/rate limit keywords.
+const QUOTA_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
+  /429/,
+  /quota/i,
+  /rate\s*limit/i,
+  /too\s*many\s*requests/i,
+  /额度/,
+  /上限/,
+  /用尽/,
+  /CliProviderQuotaError/i,
+];
+
+function isQuotaExhaustedError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof CliProviderQuotaError) return true;
+  if (error instanceof Error) {
+    return QUOTA_ERROR_PATTERNS.some((pattern) => pattern.test(error.message));
+  }
+  if (typeof error === "string") {
+    return QUOTA_ERROR_PATTERNS.some((pattern) => pattern.test(error));
+  }
+  // Some adapter errors carry an HTTP status code directly on the object.
+  const maybeStatus = (error as { status?: unknown }).status;
+  if (typeof maybeStatus === "number" && maybeStatus === 429) return true;
+  const maybeStatusCode = (error as { statusCode?: unknown }).statusCode;
+  if (typeof maybeStatusCode === "number" && maybeStatusCode === 429) return true;
+  return false;
 }

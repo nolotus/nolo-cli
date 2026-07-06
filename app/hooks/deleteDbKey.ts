@@ -243,7 +243,11 @@ export const deleteDbKey =
                 }
 
                 if (typeof window !== "undefined") {
-                    window.dispatchEvent(new Event("nolo-user-data-updated"));
+                    window.dispatchEvent(
+                        new CustomEvent("nolo-user-data-updated", {
+                            detail: { deletedDbKey: contentKey },
+                        })
+                    );
                 }
 
                 // 3. 返回值：让上层可以 await

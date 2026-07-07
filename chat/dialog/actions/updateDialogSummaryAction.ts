@@ -10,8 +10,7 @@ import { patch, selectById } from "../../../database/dbSlice";
 // import { selectAllMsgs, selectMsgsByDialogId } from "../../messages/messageSlice"; // CIRCULAR
 import { serializeMessageContent } from "../../messages/messageContent";
 import { DialogConfig, Agent } from "../../../app/types";
-import { selectContextRetention } from "../../../app/settings/settingSlice";
-import { getModelContextWindow } from "../../../ai/llm/getModelContextWindow";
+import { getModelContextWindow, DEFAULT_CONTEXT_WINDOW } from "../../../ai/llm/getModelContextWindow";
 import { estimateTokenCount } from "../../../ai/context/tokenUtils";
 import { extractCustomId } from "../../../core/prefix";
 import type { Message } from "../../messages/types";
@@ -136,7 +135,7 @@ export const updateDialogSummaryAction = async (
         dialogKey: string;
         preFetchedMessages?: Message[];
         force?: boolean;
-        reason?: "task_completed" | "context_budget";
+        reason?: "task_completed" | "context_budget" | "manual";
     },
     thunkApi: any
 ) => {
@@ -155,10 +154,7 @@ export const updateDialogSummaryAction = async (
         const dialogConfig = selectById(state, dialogKey) as DialogConfig;
         if (!dialogConfig) return;
 
-        // 1. 获取配置
-        const retention = selectContextRetention(state);
-
-        let contextWindow = 128000;
+        let contextWindow = DEFAULT_CONTEXT_WINDOW;
         if (dialogConfig.cybots && dialogConfig.cybots.length > 0) {
             const agentId = dialogConfig.cybots[0];
             const agent = selectById(state, agentId) as Agent;
@@ -199,13 +195,13 @@ export const updateDialogSummaryAction = async (
 
         const { historyBudget, rawMessageBudget } = planContextUsage({
             contextWindow,
-            retentionSlider: retention,
             summaryTokens: adjustedSummaryTokens,
             recentLoad,
         });
 
         const shouldRunActiveSummary =
             force &&
+            args.reason === "manual" &&
             !hasOpenEndedToolCall(pendingMsgs[pendingMsgs.length - 1]) &&
             isActiveSummaryWorthDoing(pendingTokens, contextWindow);
 

@@ -60,21 +60,18 @@ import { getModelConfig, getProviderByModelName, type Provider } from "../llm/pr
 import type { ImageGenerationState } from "../../chat/messages/types";
 import { resolveToolBaseUrl } from "../tools/toolApiClient";
 
-const BROWSER_UNAVAILABLE_CORE_TOOLS = new Set([
-    "queryModelUsage",
-    "createDialogGoal",
-    "getDialogGoal",
-    "completeDialogGoal",
-    "createAgentAutomation",
-    "notifyUser",
-]);
+const BROWSER_UNAVAILABLE_CORE_TOOLS: Record<string, true> = {
+    queryModelUsage: true,
+    createAgentAutomation: true,
+    notifyUser: true,
+};
 
 const getRuntimeCoreTools = (): string[] => {
     if (typeof window === "undefined") {
         return TOOL_PACKS.CORE;
     }
     return TOOL_PACKS.CORE.filter(
-        (toolName) => !BROWSER_UNAVAILABLE_CORE_TOOLS.has(toolName),
+        (toolName) => !BROWSER_UNAVAILABLE_CORE_TOOLS[toolName],
     );
 };
 
@@ -196,13 +193,11 @@ export const trimMessagesWithSummary = (
     messages: OpenAIMessage[],
     contextWindow: number,
     summaryTokenCount: number,
-    retention: number = 50,
 ): OpenAIMessage[] => {
     const recentLoad = classifyConversationLoad(messages);
 
     const { rawMessageBudget, minTailTokens } = planContextUsage({
         contextWindow,
-        retentionSlider: retention,
         summaryTokens: summaryTokenCount,
         recentLoad,
     });

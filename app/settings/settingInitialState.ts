@@ -82,7 +82,6 @@ export const initialState: SettingState = {
   spaceContextLevel: DEFAULT_USER_PREFERENCE_PROFILE.spaceContextLevel,
   autoApproveSelfUpdateFields: [...DEFAULT_AUTO_APPROVED_SELF_UPDATE_FIELDS],
   aiRecentContentLimit: 50,
-  contextRetention: 50,
   defaultAgentId: SYSTEM_DEFAULT_AGENT_ID,
   flashAgentId: "agent-pub-deepseek-v4-flash",
   balancedAgentId: "agent-pub-deepseek-v4-pro",

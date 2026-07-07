@@ -334,12 +334,6 @@ export const setAiRecentContentLimit = createAsyncThunk(
     dispatch(setSettings({ aiRecentContentLimit: limit })).unwrap(),
 );
 
-export const setContextRetention = createAsyncThunk(
-  "settings/setContextRetention",
-  async (retention: number, { dispatch }) =>
-    dispatch(setSettings({ contextRetention: retention })).unwrap(),
-);
-
 export const setMaxExecutionTime = createAsyncThunk(
   "settings/setMaxExecutionTime",
   async (time: number, { dispatch }) =>

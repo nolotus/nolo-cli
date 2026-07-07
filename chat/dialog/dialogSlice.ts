@@ -11,9 +11,9 @@ import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import type { Descendant } from "slate";
 import { resetMsgs, clearAllStreaming } from "../messages/messageSlice";
 import { extractCustomId } from "../../core/prefix";
-import { patch, read, remove, selectById } from "../../database/dbSlice";
+import { read, remove, selectById } from "../../database/dbSlice";
 
-import type { DialogConfig, DialogGoalState } from "../../app/types";
+import type { DialogConfig } from "../../app/types";
 import { clearPlan } from "../../ai/agent/planSlice";
 import { clearWorkflow } from "../../ai/workflow/workflowSlice";
 
@@ -31,7 +31,6 @@ import { cleanupCliSessionForDialog } from "./actions/cleanupCliSession";
 import { createKey } from "../../database/keys";
 import { mergeDialogTokenStats } from "./dialogTokenStats";
 import { getDialogAgentIds, getPrimaryDialogAgentId } from "./dialogAgents";
-import { buildDialogGoal, getDialogGoalReport } from "./goal";
 
 const collectKeys = async (prefix: string, db: any): Promise<string[]> => {
   const keys: string[] = [];
@@ -256,18 +255,6 @@ type LiveTokenUsagePayload = {
   dialogKey?: string;
 };
 
-type CreateDialogGoalPayload = {
-  objective: string;
-  tokenBudget?: number;
-  dialogKey?: string;
-  now?: number;
-};
-
-type CompleteDialogGoalPayload = {
-  dialogKey?: string;
-  now?: number;
-};
-
 export type LoopStopReason =
   | "done"         // 模型主动结束，无工具调用
   | "handoff"      // 移交给子 Agent
@@ -289,7 +276,6 @@ interface DialogState {
 
 interface DialogRuntimeState {
   tokens: TokenStats;
-  goal?: DialogGoalState;
   pendingFiles: PendingFile[];
   activeControllers: Record<string, AbortController>;
   pendingRawData: Record<string, PendingRawData>;
@@ -564,74 +550,7 @@ const dialogSlice = createSliceWithThunks({
         );
       },
     }),
-    saveDialogGoal: create.asyncThunk(
-      async (
-        payload: CreateDialogGoalPayload,
-        { dispatch, getState }
-      ) => {
-        const state = getState() as RootState;
-        const dialogKey = payload.dialogKey ?? state.dialog.currentDialogKey;
-        if (!dialogKey) {
-          throw new Error("Cannot save dialog goal without a dialog key.");
-        }
 
-        const goal = buildDialogGoal(payload);
-        await (dispatch as any)(
-          patch({
-            dbKey: dialogKey,
-            changes: { goal },
-          })
-        ).unwrap();
-
-        return { dialogKey, goal };
-      },
-      {
-        fulfilled: (state, action) => {
-          const runtime = ensureDialogRuntimeState(state, action.payload.dialogKey);
-          runtime.goal = action.payload.goal;
-        },
-      }
-    ),
-    saveCompletedDialogGoal: create.asyncThunk(
-      async (
-        payload: CompleteDialogGoalPayload | undefined,
-        { dispatch, getState }
-      ) => {
-        const state = getState() as RootState;
-        const dialogKey = payload?.dialogKey ?? state.dialog.currentDialogKey;
-        if (!dialogKey) {
-          throw new Error("Cannot complete dialog goal without a dialog key.");
-        }
-
-        const runtimeGoal =
-          state.dialog.dialogRuntimeByKey[dialogKey]?.goal ?? null;
-        const persistedDialog = selectById(state, dialogKey) as DialogConfig | null;
-        const goal = runtimeGoal ?? persistedDialog?.goal ?? null;
-        if (!goal) {
-          throw new Error("Cannot complete dialog goal before one is created.");
-        }
-
-        const completedGoal: DialogGoalState = {
-          ...goal,
-          status: "complete",
-          completedAt: payload?.now ?? Date.now(),
-        };
-        await (dispatch as any)(
-          patch({
-            dbKey: dialogKey,
-            changes: { goal: completedGoal },
-          })
-        ).unwrap();
-
-        return { dialogKey, goal: completedGoal };
-      },
-      {
-        fulfilled: (state, action) => {
-          const runtime = ensureDialogRuntimeState(state, action.payload.dialogKey);
-          runtime.goal = action.payload.goal;
-        },
-      }
-    ),
     createDialog: create.asyncThunk(runCreateDialogAction),
     createAgentAutomation: create.asyncThunk(runCreateAgentAutomationAction),
     updateDialogTitle: create.asyncThunk(runUpdateDialogTitleAction),
@@ -704,37 +623,6 @@ const dialogSlice = createSliceWithThunks({
       }
     ),
 
-    createDialogGoal: create.reducer(
-      (state, action: PayloadAction<CreateDialogGoalPayload>) => {
-        const objective = action.payload.objective.trim();
-        if (!objective) return;
-        const runtime = ensureDialogRuntimeState(state, action.payload.dialogKey);
-        const tokenBudget =
-          typeof action.payload.tokenBudget === "number" &&
-          Number.isFinite(action.payload.tokenBudget) &&
-          action.payload.tokenBudget > 0
-            ? Math.floor(action.payload.tokenBudget)
-            : undefined;
-        runtime.goal = {
-          objective,
-          status: "active",
-          ...(tokenBudget ? { tokenBudget } : {}),
-          createdAt: action.payload.now ?? Date.now(),
-        };
-      }
-    ),
-
-    completeDialogGoal: create.reducer(
-      (state, action: PayloadAction<CompleteDialogGoalPayload | undefined>) => {
-        const runtime = ensureDialogRuntimeState(state, action.payload?.dialogKey);
-        if (!runtime.goal) return;
-        runtime.goal = {
-          ...runtime.goal,
-          status: "complete",
-          completedAt: action.payload?.now ?? Date.now(),
-        };
-      }
-    ),
 
     addActiveController: create.reducer(
       (
@@ -854,8 +742,6 @@ const dialogSlice = createSliceWithThunks({
       getDialogRuntimeState(state, dialogKey).pendingRawData,
     selectDialogRuntimeTokens: (state, dialogKey?: string) =>
       getDialogRuntimeState(state, dialogKey).tokens,
-    selectDialogRuntimeGoal: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).goal ?? null,
     selectTotalDialogTokens: (state, dialogKey?: string) =>
       getDialogRuntimeState(state, dialogKey).tokens,
     selectPendingRawDataByPageKey: (state, pageKey: string) =>
@@ -877,13 +763,9 @@ export const {
   initDialog,
   deleteDialog,
   updateTokens,
-  saveDialogGoal,
-  saveCompletedDialogGoal,
   clearDialogState,
   createDialog,
   createAgentAutomation,
-  createDialogGoal,
-  completeDialogGoal,
   updateDialogTitle,
   addCybot,
   addDialogAgent,
@@ -915,7 +797,6 @@ export const {
   selectLoopStopReason,
   selectPendingRawData,
   selectDialogRuntimeTokens,
-  selectDialogRuntimeGoal,
   selectPendingRawDataByPageKey,
   selectPendingUserInputQueue,
 } = dialogSlice.selectors;
@@ -964,24 +845,3 @@ export const selectCurrentDialogTokens = createSelector(
 
 export const selectTotalDialogTokens = selectCurrentDialogTokens;
 
-export const selectCurrentDialogGoalReport = createSelector(
-  (state: RootState) => state,
-  selectCurrentDialogConfig,
-  (state: RootState) => selectDialogRuntimeTokens(state),
-  (state: RootState) => selectDialogRuntimeGoal(state),
-  (_state: RootState, dialogKey?: string) => dialogKey,
-  (state, currentDialog, currentRuntimeTokens, currentRuntimeGoal, dialogKey) => {
-    if (dialogKey) {
-      const dialogConfig = selectById(state, dialogKey) as DialogConfig | null;
-      const runtimeTokens = selectDialogRuntimeTokens(state, dialogKey);
-      const runtimeGoal = selectDialogRuntimeGoal(state, dialogKey);
-      return getDialogGoalReport(dialogConfig, runtimeTokens, runtimeGoal);
-    }
-
-    return getDialogGoalReport(
-      currentDialog,
-      currentRuntimeTokens,
-      currentRuntimeGoal
-    );
-  }
-);

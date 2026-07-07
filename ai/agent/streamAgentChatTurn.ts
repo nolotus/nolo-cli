@@ -23,7 +23,6 @@ import {
     selectAllMsgs,
 } from "../../chat/messages/messageSlice";
 import {
-    selectContextRetention,
     selectMaxExecutionTime,
     selectCurrentServer,
 } from "../../app/settings/settingSlice";
@@ -1734,11 +1733,7 @@ export const streamAgentChatTurnHandler = async (
             runtimeOptions,
         );
 
-        // 如果对话设置了 maxTokens，覆盖 agent 的 max_tokens
-        const dialogMaxTokens = currentDialog?.maxTokens;
-        const effectiveAgentConfig = dialogMaxTokens
-            ? { ...agentConfigForCall, max_tokens: dialogMaxTokens }
-            : agentConfigForCall;
+        let effectiveAgentConfig = agentConfigForCall;
 
         // 应用 runtimeOptions.llmConfigOverride
         // 覆盖 provider/model/reasoningEffort，仅本轮生效（CLI/desktop 路径已提前 return）
@@ -1922,7 +1917,6 @@ export const streamAgentChatTurnHandler = async (
                 const cleanedMessages = filterAndCleanMessages(visibleMessages);
                 const ctxWindow =
                     getModelContextWindow(agentConfigForCall.model) || 128000;
-                const retention = selectContextRetention(loopState);
                 const summaryTokenCount = contexts.dialogSummary
                     ? estimateTokenCount(contexts.dialogSummary)
                     : 0;
@@ -1930,7 +1924,6 @@ export const streamAgentChatTurnHandler = async (
                     compressOldToolResults(cleanedMessages),
                     ctxWindow,
                     summaryTokenCount,
-                    retention,
                 );
 
                 let firstDynamicIdx = processedMessages.findIndex(
@@ -2201,7 +2194,6 @@ export const streamAgentChatTurnHandler = async (
             const cleanedMessages = filterAndCleanMessages(visibleMessages);
             const ctxWindow =
                 getModelContextWindow(agentConfigForCall.model) || 128000;
-            const retention = selectContextRetention(loopState);
             const summaryTokenCount = contexts.dialogSummary
                 ? estimateTokenCount(contexts.dialogSummary)
                 : 0;
@@ -2209,7 +2201,6 @@ export const streamAgentChatTurnHandler = async (
                 compressOldToolResults(cleanedMessages),
                 ctxWindow,
                 summaryTokenCount,
-                retention,
             );
 
             // --- [优化 P1] 使用 findIndex + slice 确保顺序和无 ID 稳定消息的保留 ---

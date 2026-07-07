@@ -74,10 +74,6 @@ export interface SettingState {
   // AI Recent Content Limit
   aiRecentContentLimit: number;
 
-  // 上下文保留程度 1-100(默认 50)
-  // 值越高 = 保留越多历史上下文,新对话空间越小
-  contextRetention: number;
-
   // 默认启动的智能体 ID
   defaultAgentId?: string;
 

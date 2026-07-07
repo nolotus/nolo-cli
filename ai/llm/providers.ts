@@ -18,6 +18,7 @@ import {
   getCloudflareWorkersAiChatCompletionsUrl,
 } from "./cloudflare";
 import { gmiModels, GMI_CHAT_COMPLETIONS_URL } from "./gmi";
+import { zaiModels } from "./zai";
 import type { ModelPrice } from "./types";
 import { VULTR_KIMI_MODEL } from "./kimi";
 export { supportedReasoningModels } from "./reasoningModels";
@@ -43,6 +44,7 @@ const MODEL_MAP = {
   mimo: mimoModels,
   cloudflare: cloudflareModels,
   gmi: gmiModels,
+  zai: zaiModels,
 } as const;
 
 const MODEL_LOOKUP_MAP = {

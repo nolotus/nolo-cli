@@ -144,60 +144,6 @@ export const createAgentAutomationFunctionSchema = {
   },
 };
 
-export const createDialogGoalFunctionSchema = {
-  name: "createDialogGoal",
-  description:
-    "为当前对话创建或替换一个轻量目标，可选设置 token 预算。目标会持久化到当前 dialog。",
-  parameters: {
-    type: "object",
-    properties: {
-      objective: {
-        type: "string",
-        description: "目标描述，应该是可完成的具体任务。",
-      },
-      tokenBudget: {
-        type: "number",
-        description: "可选 token 预算。用于报告 used / remaining，不会自动中断运行。",
-      },
-      dialogId: {
-        type: "string",
-        description: "可选 dialogId。默认使用当前运行中的对话。",
-      },
-    },
-    required: ["objective"],
-  },
-};
-
-export const getDialogGoalFunctionSchema = {
-  name: "getDialogGoal",
-  description:
-    "读取当前或指定对话的 goal 状态，并返回 token 使用与剩余预算报告。",
-  parameters: {
-    type: "object",
-    properties: {
-      dialogId: {
-        type: "string",
-        description: "可选 dialogId。默认使用当前运行中的对话。",
-      },
-    },
-  },
-};
-
-export const completeDialogGoalFunctionSchema = {
-  name: "completeDialogGoal",
-  description:
-    "将当前或指定对话的 goal 标记为 complete，并持久化完成时间。",
-  parameters: {
-    type: "object",
-    properties: {
-      dialogId: {
-        type: "string",
-        description: "可选 dialogId。默认使用当前运行中的对话。",
-      },
-    },
-  },
-};
-
 export const notifyUserFunctionSchema = {
   name: "notifyUser",
   description:
@@ -241,10 +187,6 @@ const serverOnlyResult = (toolName: string) => ({
 });
 
 export const queryModelUsageFunc = async () => serverOnlyResult("queryModelUsage");
-export const queryUserGrowthReportFunc = async () =>
-  serverOnlyResult("queryUserGrowthReport");
+export const queryUserGrowthReportFunc = async () => serverOnlyResult("queryUserGrowthReport");
 export const createAgentAutomationFunc = async () => serverOnlyResult("createAgentAutomation");
-export const createDialogGoalFunc = async () => serverOnlyResult("createDialogGoal");
-export const getDialogGoalFunc = async () => serverOnlyResult("getDialogGoal");
-export const completeDialogGoalFunc = async () => serverOnlyResult("completeDialogGoal");
 export const notifyUserFunc = async () => serverOnlyResult("notifyUser");

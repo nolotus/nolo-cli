@@ -141,10 +141,6 @@ export default {
       privateDialogGuestTitle: "This is a private dialog link",
       privateDialogGuestHint:
         "The /dialog-… route is only available to signed-in users who have permission to this dialog. If you want to share it with someone else, use a /share/<token> link instead.",
-      contextRetention: {
-        title: "Context Retention",
-        description: "Controls how much historical context is preserved in AI conversations. Higher values retain more history, lower values leave more room for new content.",
-      },
       thinkingProcess: "Thinking Process",
       thinkingContent: "Thinking Content",
       answerContent: "Answer",
@@ -422,10 +418,6 @@ export default {
       privateDialogGuestTitle: "这是私有对话链接",
       privateDialogGuestHint:
         "当前 /dialog-… 路由只对登录且有权限的账号可见。若要把这段对话发给别人，请改用 /share/<token> 链接。",
-      contextRetention: {
-        title: "上下文保留程度",
-        description: "控制 AI 对话中保留的历史上下文量。值越高保留越多历史，值越低留给新内容的空间越大。",
-      },
       thinkingProcess: "思考过程",
       thinkingContent: "思考内容",
       answerContent: "回答",
@@ -686,10 +678,6 @@ export default {
       privateDialogGuestTitle: "這是私有對話連結",
       privateDialogGuestHint:
         "目前 /dialog-… 路由只對已登入且有權限的帳號可見。若要把這段對話分享給別人，請改用 /share/<token> 連結。",
-      contextRetention: {
-        title: "上下文保留程度",
-        description: "控制 AI 對話中保留的歷史上下文量。值越高保留越多歷史，值越低留給新內容的空間越大。",
-      },
       thinkingProcess: "思考過程",
       thinkingContent: "思考內容",
       answerContent: "回答",
@@ -895,10 +883,6 @@ export default {
       privateDialogGuestTitle: "これは非公開ダイアログリンクです",
       privateDialogGuestHint:
         "/dialog-… ルートは、このダイアログに権限のあるログイン済みユーザーだけが開けます。他の人に共有したい場合は、/share/<token> リンクを使ってください。",
-      contextRetention: {
-        title: "コンテキスト保持度",
-        description: "AIの会話で保持される履歴コンテキストの量を制御します。値が高いほどより多くの履歴が保持され、低いほど新しいコンテンツのためのスペースが確保されます。",
-      },
       thinkingProcess: "思考プロセス",
       thinkingContent: "思考内容",
       answerContent: "回答",

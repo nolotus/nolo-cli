@@ -1,35 +1,11 @@
 // 文件路径: packages/ai/context/retention.ts
 
 /**
- * 将 contextRetention slider (1–100) 映射为实际保留比例 R ∈ (0, 1)。
- *
- * 分三档线性映射：
- * - 低保留：  1–30  → 15% ~ 30%
- * - 中保留： 31–70 → 30% ~ 60%
- * - 高保留： 71–100 → 60% ~ 85%
+ * 安全系数：cache-first 策略下尽量保留稳定历史前缀，但仍预留少量空间给
+ * system prompt / 工具描述 / 当前输入等固定和动态开销。
  */
-export const mapRetentionSliderToRatio = (slider: number): number => {
-  const s = Math.min(100, Math.max(1, slider));
-
-  if (s <= 30) {
-    // Low retention: 15% ~ 30%
-    return 0.15 + (0.30 - 0.15) * (s / 30);
-  }
-
-  if (s <= 70) {
-    // Medium retention: 30% ~ 60%
-    return 0.30 + (0.60 - 0.30) * ((s - 30) / 40);
-  }
-
-  // High retention: 60% ~ 85%
-  return 0.60 + (0.85 - 0.60) * ((s - 70) / 30);
-};
-
-/**
- * 安全系数：只允许历史对话最多占用 contextWindow 的 SAFE_BUFFER_RATIO 部分，
- * 预留剩余空间给 system prompt / 工具描述等固定开销。
- */
-export const SAFE_BUFFER_RATIO = 0.9;
+export const SAFE_BUFFER_RATIO = 0.95;
+const CACHE_FIRST_RETENTION_STRENGTH = 0.95;
 
 /**
  * 对话负载分档：
@@ -62,39 +38,37 @@ const clamp = (v: number, min: number, max: number): number =>
 
 /**
  * 统一的上下文使用规划函数：
- * - 输入：模型 window、用户 slider、现有 summary 长度、近期对话负载分档
+ * - 输入：模型 window、现有 summary 长度、近期对话负载分档
  * - 输出：历史总预算 + 原始消息预算 + 尾部最少保留 token 数
  *
  * 约束与策略：
  * - 历史最多只能占用 contextWindow * SAFE_BUFFER_RATIO
- * - slider 决定「整体偏好多记还是少记」
+ * - 默认 cache-first：大上下文模型尽量晚压缩，优先复用 provider prompt/KV cache
  * - recentLoad 决定在该偏好下的微调：
  *   - light ：适当放宽，给更多历史空间
  *   - heavy ：适当收紧，为当前大块内容 / 工具描述预留空间
  */
 export const planContextUsage = (params: {
   contextWindow: number;
-  retentionSlider: number;
   summaryTokens: number;
   recentLoad: ConversationLoad;
 }): ContextPlan => {
-  const { contextWindow, retentionSlider, summaryTokens, recentLoad } = params;
+  const { contextWindow, summaryTokens, recentLoad } = params;
 
   const safeWindowLimit = Math.floor(contextWindow * SAFE_BUFFER_RATIO);
 
-  const s = Math.min(100, Math.max(1, retentionSlider));
-  const iq = s / 100; // 0~1，表示用户偏好的“记忆强度”
+  const iq = CACHE_FIRST_RETENTION_STRENGTH;
 
   const isBigWindow = contextWindow >= 128000; // 例如 128k / 1M 等大模型
   const isSmallWindow = contextWindow <= 32000; // 例如 8k / 16k 等小模型
 
-  // 基础历史比例（只考虑 slider，不考虑对话负载）
+  // 基础历史比例（只考虑默认 cache-first 强度，不考虑对话负载）
   // - 小窗口：历史占 35% ~ 70% 的 safeWindow
   // - 中窗口：历史占 40% ~ 75%
-  // - 大窗口：历史占 65% ~ 90%（尽量吃满大模型上下文）
+  // - 大窗口：历史占 80% ~ 100% 的 safeWindow，避免过早压缩破坏 prompt/KV cache。
   let baseHistoryRatio: number;
   if (isBigWindow) {
-    baseHistoryRatio = 0.65 + 0.25 * iq; // 0.65 ~ 0.90
+    baseHistoryRatio = 0.80 + 0.20 * iq; // 0.80 ~ 1.00
   } else if (isSmallWindow) {
     baseHistoryRatio = 0.35 + 0.35 * iq; // 0.35 ~ 0.70
   } else {
@@ -107,19 +81,20 @@ export const planContextUsage = (params: {
   switch (recentLoad) {
     case "light": {
       // 短句对话：可以多给一点历史空间，但仍保留少量余量给其他上下文
-      const maxRatio = isBigWindow ? 0.95 : 0.85;
+      const maxRatio = isBigWindow ? 1.0 : 0.85;
       historyRatio = clamp(historyRatio * 1.05, 0.3, maxRatio);
       break;
     }
     case "heavy": {
       // 重内容对话：适当收紧历史比例，为当前大块内容 / 工具描述等预留更多窗口
-      const maxRatio = isBigWindow ? 0.90 : 0.80;
-      historyRatio = clamp(historyRatio * 0.9, 0.3, maxRatio);
+      const maxRatio = isBigWindow ? 0.98 : 0.80;
+      const multiplier = isBigWindow ? 0.98 : 0.9;
+      historyRatio = clamp(historyRatio * multiplier, 0.3, maxRatio);
       break;
     }
     case "medium":
     default: {
-      const maxRatio = isBigWindow ? 0.90 : 0.85;
+      const maxRatio = isBigWindow ? 1.0 : 0.85;
       historyRatio = clamp(historyRatio, 0.3, maxRatio);
       break;
     }

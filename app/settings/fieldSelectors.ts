@@ -105,9 +105,6 @@ export const selectAutoApproveSelfUpdateFields = createSelector(
 export const selectAiRecentContentLimit = (state: RootState): number =>
   state.settings.aiRecentContentLimit ?? 50;
 
-export const selectContextRetention = (state: RootState): number =>
-  state.settings.contextRetention ?? 50;
-
 // --- 快速对话 agent id 偏好(每个档位一对:preference 是 raw stored,sentinel 留原值;
 //     id 是运行时回退后的 nolo agent) ---
 

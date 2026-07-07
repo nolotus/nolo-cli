@@ -13,6 +13,7 @@ import { mistralModels } from "./mistral";
 import { mimoModels } from "./mimo";
 import { cloudflareModels } from "./cloudflare";
 import { gmiModels } from "./gmi";
+import { zaiModels } from "./zai";
 
 /**
  * @interface ModelWithProvider
@@ -46,4 +47,5 @@ export const ALL_MODELS: ModelWithProvider[] = [
   ...withProvider("mimo")(mimoModels),
   ...withProvider("cloudflare")(cloudflareModels),
   ...withProvider("gmi")(gmiModels),
+  ...withProvider("zai")(zaiModels),
 ];

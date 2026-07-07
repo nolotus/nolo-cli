@@ -9,8 +9,9 @@
 import { ALL_MODELS, type ModelWithProvider } from "./models";
 
 // 默认 Context Window（用于未知模型）
-const DEFAULT_CONTEXT_WINDOW = 128000;
-const QWEN_3_6_CONTEXT_WINDOW = 262144;
+export const DEFAULT_CONTEXT_WINDOW = 256_000;
+const QWEN_3_6_CONTEXT_WINDOW = 262_144;
+const GLM_5_2_CONTEXT_WINDOW = 1_000_000;
 
 // 缓存模型映射表
 let modelMap: Map<string, ModelWithProvider> | null = null;
@@ -54,6 +55,14 @@ export const getModelContextWindow = (modelName: string): number => {
         normalizedName.includes("qwen3p6")
     ) {
         return QWEN_3_6_CONTEXT_WINDOW;
+    }
+
+    // 处理 GLM 5.2 的变体命名（如 opencode-glm-5.2、glm5.2 等）
+    if (
+        normalizedName.includes("glm-5.2") ||
+        normalizedName.includes("glm5.2")
+    ) {
+        return GLM_5_2_CONTEXT_WINDOW;
     }
 
     return DEFAULT_CONTEXT_WINDOW;

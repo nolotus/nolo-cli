@@ -166,7 +166,7 @@ function buildTaskEvidencePrompt(args: {
     "Handoff context: query dialog.subjectRefs first, then inspect dialog checkpoints, artifacts, commits, and test evidence. Treat row activityRefs/latestActivityRef as cache hints, not state truth.",
     "Reviewer autonomy: if you are reviewing and find a concrete fix, you may directly dispatch the rework agent/dialog instead of sending the task back to PM first.",
     "Rework evidence rule: every implementation, review, and rework dialog must preserve the same table-row subjectRef and report any child/rework dialog id it starts.",
-    `Read task row: bun packages/cli/index.ts table query --table meta-0e95801d90-NOLOTASKBOARD --row ${JSON.stringify(rowDbKey)} --include-activity --output json`,
+    `Read task row: bun packages/cli/index.ts table query --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --row ${JSON.stringify(rowDbKey)} --include-activity --output json`,
     `Query linked dialogs: bun packages/cli/index.ts dialog query --row-dbkey ${JSON.stringify(rowDbKey)} --json`,
     "If this run already has a dialog id, exclude it from evidence queries: bun packages/cli/index.ts dialog query --row-dbkey <rowDbKey> --exclude-dialog <currentDialogId> --json",
     "Then read exact dialog traces with: bun packages/cli/index.ts dialog read <dialogId>",

@@ -73,8 +73,8 @@ export function renderHelpText() {
     "  nolo space read 01KKY77TT0DA9NY7TNW3R7255N --content-key page-user-id --brief",
     "  nolo space delete --name-prefix rn_owner_verify_0504 --yes",
     "  nolo table query --table 01ABCXYZ",
-    '  nolo table query --table meta-0e95801d90-NOLOTASKBOARD --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
-    '  nolo table update-row --table meta-0e95801d90-NOLOTASKBOARD --row 01ROWID --changes \'{"status":"已完成"}\'',
+    '  nolo table query --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
+    '  nolo table update-row --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --row 01ROWID --changes \'{"status":"已完成"}\'',
     "  nolo llama status",
   ];
 

@@ -16,9 +16,9 @@ export function renderTableHelpText() {
   "  nolo table delete-rows --table <tableId|metaKey> (--row-ids <json-array> | --row-dbkeys <json-array> | --filters <json-object>)",
     "",
     "Examples:",
-    '  nolo table query --table meta-0e95801d90-NOLOTASKBOARD --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
-    '  nolo table meta --table meta-0e95801d90-NOLOTASKBOARD --name "NOLOTASKBOARD"',
-    '  nolo table add-row --table meta-0e95801d90-NOLOTASKBOARD --values \'{"title":"Task","status":"todo"}\'',
+    '  nolo table query --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
+    '  nolo table meta --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --name "01KWSK4Q4TESXQ06SW39JN2TTJ"',
+    '  nolo table add-row --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --values \'{"title":"Task","status":"todo"}\'',
     "",
   ].join("\n");
 }

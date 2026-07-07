@@ -803,3 +803,323 @@ export async function runTableDeleteRowsCommand(args: string[], deps: TableComma
   output.write(`${JSON.stringify({ ok: true, deleted: results.filter((r) => r.ok).length, results })}\n`);
   return results.every((r) => r.ok) ? 0 : 1;
 }
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseValuesObject(flag: string, raw: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${flag} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isPlainObject(parsed)) {
+    throw new Error(`${flag} must be a JSON object`);
+  }
+  return parsed;
+}
+
+function parseRowsArray(flag: string, raw: string): Array<Record<string, unknown>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${flag} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`${flag} must be a non-empty JSON array`);
+  }
+  if (!parsed.every(isPlainObject)) {
+    throw new Error(`${flag} must be an array of JSON objects`);
+  }
+  return parsed as Array<Record<string, unknown>>;
+}
+
+function parseUpdatesArray(flag: string, raw: string): Array<Record<string, unknown>> {
+  const updates = parseRowsArray(flag, raw);
+  for (const update of updates) {
+    if (typeof update.rowId !== "string" && typeof update.rowDbKey !== "string") {
+      throw new Error(`${flag}[*] must include rowId or rowDbKey`);
+    }
+    if (!isPlainObject(update.changes)) {
+      throw new Error(`${flag}[*].changes must be a JSON object`);
+    }
+  }
+  return updates;
+}
+
+function resolveRowTarget(raw: string | undefined): { rowId?: string; rowDbKey?: string } {
+  if (!raw) return {};
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("row-")) return { rowDbKey: trimmed };
+  return { rowId: trimmed };
+}
+
+function resolveTableContext(args: string[], env: EnvLike, output: OutputLike):
+  | { ok: true; authToken: string; tenantId: string; tableId: string; serverUrl: string; tableArg: { tenantId?: string; tableId?: string } }
+  | { ok: false } {
+  const tableArg = parseTableArg(readOption(args, "--table"));
+  const authToken = resolveAuthToken(args, env);
+  const tenantId = readOption(args, "--tenant-id") || tableArg.tenantId || resolveUserId(args, env, authToken);
+  const tableId = tableArg.tableId;
+  if (!tenantId || !tableId) {
+    output.write("Usage:\n  nolo table <action> --table <tableId|metaKey> [action-specific flags]\n\n");
+    return { ok: false };
+  }
+  if (!authToken) {
+    output.write("[nolo] table failed: AUTH_TOKEN is required.\n");
+    return { ok: false };
+  }
+  return { ok: true, authToken, tenantId, tableId, serverUrl: resolveServerUrl(args, env), tableArg };
+}
+
+async function postTableJson(
+  deps: TableCommandDeps,
+  ctx: { authToken: string; serverUrl: string },
+  path: string,
+  body: Record<string, unknown>
+): Promise<{ ok: true; payload: unknown } | { ok: false; message: string }> {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const response = await fetchImpl(`${ctx.serverUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ctx.authToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    return { ok: false, message: await readTableCommandError(response) };
+  }
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  return { ok: true, payload };
+}
+
+const TABLE_ADD_COLUMN_USAGE = "Usage:\n  nolo table add-column --table <tableId|metaKey> --name <columnName> [--label <label>] [--type <text|number|boolean|date|datetime|select|multi_select>] [--options <json-array>]\n\n";
+const TABLE_ADD_ROW_USAGE = "Usage:\n  nolo table add-row --table <tableId|metaKey> --values <json-object>\n\n";
+const TABLE_ADD_ROWS_USAGE = "Usage:\n  nolo table add-rows --table <tableId|metaKey> --rows <non-empty-json-array>\n\n";
+const TABLE_UPDATE_ROW_USAGE = "Usage:\n  nolo table update-row --table <tableId|metaKey> --row <rowId|rowDbKey> --changes <json-object>\n\n";
+const TABLE_UPDATE_ROWS_USAGE = "Usage:\n  nolo table update-rows --table <tableId|metaKey> --updates <non-empty-json-array>\n\n";
+const TABLE_DELETE_ROW_USAGE = "Usage:\n  nolo table delete-row --table <tableId|metaKey> --row <rowId|rowDbKey>\n\n";
+
+export async function runTableAddColumnCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    output.write(TABLE_ADD_COLUMN_USAGE);
+    return 0;
+  }
+  const ctx = resolveTableContext(args, env, output);
+  if (!ctx.ok) {
+    output.write(TABLE_ADD_COLUMN_USAGE);
+    return 1;
+  }
+  const name = readOption(args, "--name").trim();
+  if (!name) {
+    output.write(`[nolo] table add-column failed: --name is required.\n${TABLE_ADD_COLUMN_USAGE}`);
+    return 1;
+  }
+  const body: Record<string, unknown> = {
+    tenantId: ctx.tenantId,
+    tableId: ctx.tableId,
+    name,
+  };
+  const label = readOption(args, "--label").trim();
+  if (label) body.label = label;
+  const type = readOption(args, "--type").trim();
+  if (type) body.type = type;
+  const optionsRaw = readOption(args, "--options");
+  if (optionsRaw) {
+    let optionsParsed: unknown;
+    try {
+      optionsParsed = JSON.parse(optionsRaw);
+    } catch (error) {
+      output.write(`[nolo] table add-column failed: --options must be valid JSON: ${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+    if (!Array.isArray(optionsParsed)) {
+      output.write(`[nolo] table add-column failed: --options must be a JSON array.\n`);
+      return 1;
+    }
+    body.options = optionsParsed;
+  }
+  const result = await postTableJson(deps, ctx, "/api/table/add-column", body);
+  if (!result.ok) {
+    output.write(`[nolo] table add-column failed: ${result.message}\n`);
+    return 1;
+  }
+  output.write(`${JSON.stringify({ ok: true, action: "add-column", result: result.payload })}\n`);
+  return 0;
+}
+
+export async function runTableAddRowCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    output.write(TABLE_ADD_ROW_USAGE);
+    return 0;
+  }
+  const ctx = resolveTableContext(args, env, output);
+  if (!ctx.ok) {
+    output.write(TABLE_ADD_ROW_USAGE);
+    return 1;
+  }
+  const valuesRaw = readOption(args, "--values");
+  if (!valuesRaw) {
+    output.write(`[nolo] table add-row failed: --values is required.\n${TABLE_ADD_ROW_USAGE}`);
+    return 1;
+  }
+  let values: Record<string, unknown>;
+  try {
+    values = parseValuesObject("--values", valuesRaw);
+  } catch (error) {
+    output.write(`[nolo] table add-row failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_ADD_ROW_USAGE}`);
+    return 1;
+  }
+  const result = await postTableJson(deps, ctx, "/api/table/add-row", { tenantId: ctx.tenantId, tableId: ctx.tableId, values });
+  if (!result.ok) {
+    output.write(`[nolo] table add-row failed: ${result.message}\n`);
+    return 1;
+  }
+  output.write(`${JSON.stringify({ ok: true, action: "add-row", result: result.payload })}\n`);
+  return 0;
+}
+
+export async function runTableAddRowsCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    output.write(TABLE_ADD_ROWS_USAGE);
+    return 0;
+  }
+  const ctx = resolveTableContext(args, env, output);
+  if (!ctx.ok) {
+    output.write(TABLE_ADD_ROWS_USAGE);
+    return 1;
+  }
+  const rowsRaw = readOption(args, "--rows");
+  if (!rowsRaw) {
+    output.write(`[nolo] table add-rows failed: --rows is required.\n${TABLE_ADD_ROWS_USAGE}`);
+    return 1;
+  }
+  let rows: Array<Record<string, unknown>>;
+  try {
+    rows = parseRowsArray("--rows", rowsRaw);
+  } catch (error) {
+    output.write(`[nolo] table add-rows failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_ADD_ROWS_USAGE}`);
+    return 1;
+  }
+  const result = await postTableJson(deps, ctx, "/api/table/add-rows", { tenantId: ctx.tenantId, tableId: ctx.tableId, rows });
+  if (!result.ok) {
+    output.write(`[nolo] table add-rows failed: ${result.message}\n`);
+    return 1;
+  }
+  output.write(`${JSON.stringify({ ok: true, action: "add-rows", result: result.payload })}\n`);
+  return 0;
+}
+
+export async function runTableUpdateRowCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    output.write(TABLE_UPDATE_ROW_USAGE);
+    return 0;
+  }
+  const ctx = resolveTableContext(args, env, output);
+  if (!ctx.ok) {
+    output.write(TABLE_UPDATE_ROW_USAGE);
+    return 1;
+  }
+  const rowRaw = readOption(args, "--row");
+  const target = resolveRowTarget(rowRaw);
+  if (!target.rowId && !target.rowDbKey) {
+    output.write(`[nolo] table update-row failed: --row is required (rowId or row dbKey).\n${TABLE_UPDATE_ROW_USAGE}`);
+    return 1;
+  }
+  const changesRaw = readOption(args, "--changes");
+  if (!changesRaw) {
+    output.write(`[nolo] table update-row failed: --changes is required.\n${TABLE_UPDATE_ROW_USAGE}`);
+    return 1;
+  }
+  let changes: Record<string, unknown>;
+  try {
+    changes = parseValuesObject("--changes", changesRaw);
+  } catch (error) {
+    output.write(`[nolo] table update-row failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_UPDATE_ROW_USAGE}`);
+    return 1;
+  }
+  const result = await postTableJson(deps, ctx, "/api/table/update-row", { tenantId: ctx.tenantId, tableId: ctx.tableId, ...target, changes });
+  if (!result.ok) {
+    output.write(`[nolo] table update-row failed: ${result.message}\n`);
+    return 1;
+  }
+  output.write(`${JSON.stringify({ ok: true, action: "update-row", result: result.payload })}\n`);
+  return 0;
+}
+
+export async function runTableUpdateRowsCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    output.write(TABLE_UPDATE_ROWS_USAGE);
+    return 0;
+  }
+  const ctx = resolveTableContext(args, env, output);
+  if (!ctx.ok) {
+    output.write(TABLE_UPDATE_ROWS_USAGE);
+    return 1;
+  }
+  const updatesRaw = readOption(args, "--updates");
+  if (!updatesRaw) {
+    output.write(`[nolo] table update-rows failed: --updates is required.\n${TABLE_UPDATE_ROWS_USAGE}`);
+    return 1;
+  }
+  let updates: Array<Record<string, unknown>>;
+  try {
+    updates = parseUpdatesArray("--updates", updatesRaw);
+  } catch (error) {
+    output.write(`[nolo] table update-rows failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_UPDATE_ROWS_USAGE}`);
+    return 1;
+  }
+  const result = await postTableJson(deps, ctx, "/api/table/update-rows", { tenantId: ctx.tenantId, tableId: ctx.tableId, updates });
+  if (!result.ok) {
+    output.write(`[nolo] table update-rows failed: ${result.message}\n`);
+    return 1;
+  }
+  output.write(`${JSON.stringify({ ok: true, action: "update-rows", result: result.payload })}\n`);
+  return 0;
+}
+
+export async function runTableDeleteRowCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    output.write(TABLE_DELETE_ROW_USAGE);
+    return 0;
+  }
+  const ctx = resolveTableContext(args, env, output);
+  if (!ctx.ok) {
+    output.write(TABLE_DELETE_ROW_USAGE);
+    return 1;
+  }
+  const rowRaw = readOption(args, "--row");
+  const target = resolveRowTarget(rowRaw);
+  if (!target.rowId && !target.rowDbKey) {
+    output.write(`[nolo] table delete-row failed: --row is required (rowId or row dbKey).\n${TABLE_DELETE_ROW_USAGE}`);
+    return 1;
+  }
+  const result = await postTableJson(deps, ctx, "/api/table/delete-row", { tenantId: ctx.tenantId, tableId: ctx.tableId, ...target });
+  if (!result.ok) {
+    output.write(`[nolo] table delete-row failed: ${result.message}\n`);
+    return 1;
+  }
+  output.write(`${JSON.stringify({ ok: true, action: "delete-row", result: result.payload })}\n`);
+  return 0;
+}

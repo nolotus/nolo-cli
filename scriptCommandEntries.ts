@@ -16,13 +16,6 @@ function getSpaceScriptCommands(): CommandEntry[] {
 
 function getTableScriptCommands(): CommandEntry[] {
   return [
-    createScriptCommand(["table", "add-column"], "tableData.ts", "Add one table column", ["--action", "add-column"]),
-    createScriptCommand(["table", "add-row"], "tableData.ts", "Add one table row", ["--action", "add-row"]),
-    createScriptCommand(["table", "add-rows"], "tableData.ts", "Add table rows", ["--action", "add-rows"]),
-    createScriptCommand(["table", "update-row"], "tableData.ts", "Update one table row", ["--action", "update-row"]),
-    createScriptCommand(["table", "update-rows"], "tableData.ts", "Update table rows", ["--action", "update-rows"]),
-    createScriptCommand(["table", "delete-row"], "tableData.ts", "Delete one table row", ["--action", "delete-row"]),
-    createScriptCommand(["table", "data"], "tableData.ts", "Low-level table row script bridge"),
     createScriptCommand(["table", "meta"], "upsertTableMeta.ts", "Create or update table metadata"),
   ];
 }

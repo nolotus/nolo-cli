@@ -14,10 +14,19 @@ export const googleSearchScraperFunctionSchema = {
   parameters: {
     type: "object",
     properties: {
+      // 单数 query 是 OpenAI 风格常见写法：模型经常把 `query: "xxx"` 传过来。
+      // 历史上只支持 `queries: string[]` 导致 DeepSeek / GPT-4o 等模型 5/6 调用失败。
+      // 同时保留 `queries: string[]` 是 Apify Google Search Scraper Actor 的入参要求。
+      query: {
+        type: "string",
+        description:
+          "【推荐】单个搜索关键词。等价于 `queries: [query]`，与 `queries` 互斥。",
+      },
       queries: {
         type: "array",
         items: { type: "string" },
-        description: "要搜索的关键词列表，每个元素对应一次 Google 搜索。",
+        description:
+          "搜索关键词列表，每个元素对应一次 Google 搜索。与 `query` 互斥。",
       },
       maxPagesPerQuery: {
         type: "integer",
@@ -53,13 +62,16 @@ export const googleSearchScraperFunctionSchema = {
         default: false,
       },
     },
-    required: ["queries"],
+    required: [],
   },
 };
 
 export async function googleSearchScraperFunc(
   args: {
-    queries: string[];
+    // 接受 OpenAI 风格的单数 `query` 与 Apify 风格的复数 `queries`。
+    // 实现层归一化为 `string[]` 后再调用 Actor。
+    query?: string;
+    queries?: string | string[];
     maxPagesPerQuery?: number;
     resultsPerPage?: number;
     languageCode?: string;
@@ -68,10 +80,9 @@ export async function googleSearchScraperFunc(
     includeUnfilteredResults?: boolean;
     saveHtml?: boolean;
   },
-  thunkApi: any
+  thunkApi: unknown
 ) {
   const {
-    queries,
     maxPagesPerQuery = 1,
     resultsPerPage = 10,
     languageCode,
@@ -81,12 +92,31 @@ export async function googleSearchScraperFunc(
     saveHtml = false,
   } = args;
 
-  if (!queries || queries.length === 0) {
-    throw new Error("Google 搜索：必须提供至少一个搜索关键词（queries）。");
+  // 归一化 query / queries → string[]：去空白、跳过空串。
+  // 同时接受 `query: string`、`queries: string[]`、`queries: string` 三种模型常见写法。
+  const collected: string[] = [];
+  if (typeof args.query === "string" && args.query.trim().length > 0) {
+    collected.push(args.query.trim());
+  }
+  if (Array.isArray(args.queries)) {
+    for (const q of args.queries) {
+      if (typeof q === "string" && q.trim().length > 0) {
+        collected.push(q.trim());
+      }
+    }
+  } else if (
+    typeof args.queries === "string" &&
+    args.queries.trim().length > 0
+  ) {
+    // 兼容模型把 queries 也写成单字符串的边界情况。
+    collected.push(args.queries.trim());
+  }
+  if (collected.length === 0) {
+    throw new Error("Google 搜索：必须提供至少一个搜索关键词（query 或 queries）。");
   }
 
-  const input: Record<string, any> = {
-    queries: queries.join("\n"),
+  const input: Record<string, unknown> = {
+    queries: collected.join("\n"),
     maxPagesPerQuery,
     resultsPerPage,
     mobileResults,

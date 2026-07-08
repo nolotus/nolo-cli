@@ -1,4 +1,4 @@
-import { bumpDevReloadSuppressIfSelfEditing } from "./devReloadUtils";
+
 import { buildToolRequestHeaders, getToolBaseUrl } from "./toolApiClient";
 
 type EditMatchOptions = {
@@ -205,7 +205,7 @@ export async function applyEditFunc(
     assertValidArgs(args);
 
     const { filePath, edits } = args;
-    bumpDevReloadSuppressIfSelfEditing(filePath);
+    
 
     try {
         const baseUrl = getToolBaseUrl(thunkApi);

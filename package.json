@@ -517,7 +517,6 @@
     "ai/tools/codeSearchTool.ts",
     "ai/tools/applyEditTool.ts",
     "ai/tools/applyLineEditsTool.ts",
-    "ai/tools/devReloadUtils.ts",
     "ai/tools/agent/callAgentTool.ts",
     "ai/tools/agent/prepareAgentDraftTool.ts",
     "ai/tools/agent/createSkillAgentTool.ts",

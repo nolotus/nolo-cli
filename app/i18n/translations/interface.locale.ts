@@ -3163,6 +3163,7 @@ export default {
       },
       // === End Welcome Section ===
 quickChat: {
+        greeting: "今天一起做什麼？",
         placeholder: "我是 {{name}}。想跟我聊聊吗？你也可以在设置里切换 AI 或定制你的专属 AI",
         uploadImage: "上傳圖片",
         failedToStart: "啟動失敗",

@@ -1,6 +1,6 @@
 // 文件路径: packages/ai/tools/writeFileTool.ts
 
-import { bumpDevReloadSuppressIfSelfEditing } from "./devReloadUtils";
+
 import { buildToolRequestHeaders, getToolBaseUrl } from "./toolApiClient";
 
 // ---- Types ----
@@ -127,8 +127,7 @@ export async function writeFileFunc(
 
         const apiUrl = `${baseUrl.replace(/\/+$/, "")}/api/write-file`;
 
-        // 自举写入前增加 reload 抑制
-        bumpDevReloadSuppressIfSelfEditing(filePath);
+        
 
         const response = await fetch(apiUrl, {
             method: "POST",

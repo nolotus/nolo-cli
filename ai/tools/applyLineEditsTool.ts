@@ -1,6 +1,6 @@
 // 文件路径: packages/ai/tools/applyLineEditsTool.ts
 
-import { bumpDevReloadSuppressIfSelfEditing } from "./devReloadUtils";
+
 import { buildToolRequestHeaders, getToolBaseUrl } from "./toolApiClient";
 
 // ---- Types ----
@@ -259,7 +259,7 @@ export async function applyLineEditsFunc(
 
     const { filePath, edits } = args;
 
-    bumpDevReloadSuppressIfSelfEditing(filePath);
+    
 
     try {
         const baseUrl = getToolBaseUrl(thunkApi);

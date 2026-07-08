@@ -1059,41 +1059,6 @@ export const messageSlice = createSliceWithThunks({
             },
           });
 
-          // === 一轮流式回复结束后的 dev-reload 行为（仅限无工具调用的简单轮次）===
-          if (
-            typeof window !== "undefined" &&
-            typeof window.location?.reload === "function"
-          ) {
-            const w = window as any;
-            const isProd = w.__IS_PRODUCTION_BUILD__ === true;
-
-            // Agent Loop / 工具调用场景下，本轮结束后很可能还会有后续轮次。
-            // 为避免在中途刷新打断 Agent Loop，当本条消息包含 tool_calls 时，
-            // 仅重置自举保护计数，不做自动 reload。
-            const hasToolCalls =
-              Array.isArray((action.payload as any).tool_calls) &&
-              (action.payload as any).tool_calls.length > 0;
-
-            // 结束一轮后，无论成败，清空自举保护计数
-            if (typeof w.__DEV_RELOAD_SUPPRESS_COUNT__ === "number") {
-              w.__DEV_RELOAD_SUPPRESS_COUNT__ = 0;
-            }
-
-            // 开发环境：如果这轮期间有 pending 的新构建，且本轮没有工具调用，自动刷新一次
-            if (!hasToolCalls && !isProd && w.__DEV_RELOAD_PENDING__) {
-              w.__DEV_RELOAD_PENDING__ = false;
-              try {
-
-                // 延迟到当前事件循环尾部，避免影响 Redux 自身逻辑
-                setTimeout(() => {
-                  window.location.reload();
-                }, 0);
-              } catch (e) {
-                console.error("自动 dev reload 失败:", e);
-              }
-            }
-          }
-          // === dev-reload 逻辑结束 ===
 
           // === 新增结束 ===
         },

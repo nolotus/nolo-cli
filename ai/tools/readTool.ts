@@ -73,7 +73,7 @@ export const readFunctionSchema = {
 export async function readFunc(
   args: ReadArgs,
   thunkApi: any,
-  context?: { parentMessageId?: string; signal?: AbortSignal }
+  context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData?: string }> {
   const { dbKey, waitRemote = false } = args || {};
   const localFilePath =

@@ -49,7 +49,7 @@ export const runStreamingAgentFunctionSchema = {
 export async function runStreamingAgentFunc(
   args: { agentKey: string; userInput: string; serverBase?: string },
   _thunkApi: any,
-  _context?: { parentMessageId: string }
+  _context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData: string }> {
   const { agentKey, userInput, serverBase } = args;
 

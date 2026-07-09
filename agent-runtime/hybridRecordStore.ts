@@ -18,7 +18,7 @@ type HybridRecordStoreDeps = {
   defaultServer: string;
   fallbackServers?: string[];
   authToken?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 };
 
 function normalizeHybridServer(value: string) {
@@ -97,7 +97,7 @@ async function fetchHybridRemoteRecord(args: {
   dbKey: string;
   server: string;
   authToken?: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }) {
   const response = await args.fetchImpl(
     `${args.server}/api/v1/db/read/${encodeURIComponent(args.dbKey)}`,

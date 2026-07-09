@@ -96,7 +96,7 @@ async function requestExec(
   args: ExecShellRequestArgs,
   thunkApi?: any,
   endpoint = "/api/exec-shell",
-  context?: { agentKey?: string },
+  context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string },
 ): Promise<any> {
   const payload = Object.fromEntries(
     Object.entries(args).filter(([, value]) => value !== undefined)
@@ -226,7 +226,7 @@ export const startExecShellSession = (
     thunkApi,
   );
 
-export async function execShellFunc(args: any, thunkApi?: any, context?: { agentKey?: string }): Promise<{
+export async function execShellFunc(args: any, thunkApi?: any, context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }): Promise<{
   rawData: any;
   displayData: string;
 }> {

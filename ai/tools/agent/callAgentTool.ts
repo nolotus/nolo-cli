@@ -84,7 +84,7 @@ interface CallAgentArgs {
 export async function callAgentFunc(
     args: CallAgentArgs,
     thunkApi: any,
-    context?: { parentMessageId: string }
+    context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData?: string }> {
     const { agentKey, task, input, mode = "server", background, serverBase } = args;
     const { dispatch, getState } = thunkApi;

@@ -27,6 +27,7 @@ type LevelBatchWriterLike = {
   write(): Promise<void>;
 };
 
+/** Minimal Level-compatible surface; keep loose so real `level` package instances assign. */
 type LevelLike = {
   readonly location?: string;
   readonly status?: string;
@@ -35,34 +36,32 @@ type LevelLike = {
   get(key: string): Promise<unknown>;
   put(key: string, value: unknown): Promise<void>;
   del(key: string): Promise<void>;
-  batch(ops: AuthorityBatchOperation[]): Promise<void>;
-  batch(): LevelBatchWriterLike;
-  iterator(
-    options?: AuthorityIteratorOptions
-  ): AsyncIterableIterator<[string, unknown]>;
+  batch(ops?: AuthorityBatchOperation[]): Promise<void> | LevelBatchWriterLike | unknown;
+  iterator(options?: AuthorityIteratorOptions): AsyncIterable<[string, unknown]>;
 };
 
 export function createLevelAuthorityStore(
   source: string | LevelLike
 ): AuthorityStore {
   const levelDb: LevelLike = typeof source === "string"
-    ? new Level<string, any>(source, { valueEncoding: safeJsonEncoding })
+    ? (new Level<string, any>(source, { valueEncoding: safeJsonEncoding }) as unknown as LevelLike)
     : source;
   const writeBatchOps = async (ops: AuthorityBatchOperation[]) => {
-    const result = levelDb.batch(ops);
-    if (result && typeof (result as any).then === "function") {
-      await result;
+    const result: unknown = levelDb.batch(ops);
+    if (result && typeof (result as { then?: unknown }).then === "function") {
+      await (result as Promise<void>);
       return;
     }
-    if (result && typeof (result as any).write === "function") {
+    if (result && typeof (result as LevelBatchWriterLike).write === "function") {
+      const writer = result as LevelBatchWriterLike;
       for (const op of ops) {
         if (op.type === "put") {
-          (result as LevelBatchWriterLike).put(op.key, op.value);
+          writer.put(op.key, op.value);
         } else {
-          (result as LevelBatchWriterLike).del(op.key);
+          writer.del(op.key);
         }
       }
-      await (result as LevelBatchWriterLike).write();
+      await writer.write();
       return;
     }
     throw new Error("Level backing does not support batch writes");
@@ -94,7 +93,7 @@ export function createLevelAuthorityStore(
       await writeBatchOps(ops);
     },
     createBatch(): AuthorityBatchWriter {
-      const batch = levelDb.batch();
+      const batch = levelDb.batch() as LevelBatchWriterLike;
       return {
         put(key: string, value: unknown) {
           batch.put(key, value);

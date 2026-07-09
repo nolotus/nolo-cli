@@ -36,6 +36,11 @@ export const readXPostFunctionSchema = {
 };
 
 type ReadXPostToolContext = {
+  parentMessageId?: string;
+  signal?: AbortSignal;
+  toolRunId?: string;
+  agentKey?: string;
+  userInput?: string;
   reader?: (
     url: string,
     args: { keepOpen?: boolean; profileDir?: string; headless?: boolean },

@@ -49,11 +49,12 @@ export function createLevelBackedAuthorityStore(dbPath: string): AuthorityStore 
   const levelDb = new Level<string, any>(dbPath, {
     valueEncoding: safeJsonEncoding,
   });
-  return createLevelAuthorityStore(levelDb);
+  // Level package typings are stricter than the store's LevelLike surface.
+  return createLevelAuthorityStore(levelDb as any);
 }
 
 export function resolveServerStoreDriver(
-  env: ServerStoreFactoryEnv = process.env
+  env: ServerStoreFactoryEnv | NodeJS.ProcessEnv = process.env
 ): ServerStoreDriver {
   const rawDriver = env.NOLO_SERVER_AUTHORITY_DRIVER?.trim().toLowerCase();
   if (!rawDriver) return "level";

@@ -15,10 +15,17 @@ export interface ModelStats {
   cost: number;
 }
 
+/** Draft built before id/username/type are stamped at save time. */
+export type TokenRecordDraft = TokenUsageData & {
+  cost: number;
+  inputPrice?: number;
+  outputPrice?: number;
+};
+
 export const createTokenRecord = (
   data: TokenUsageData,
   { cost, inputPrice, outputPrice }: Partial<TokenRecord> = {}
-): TokenRecord => ({
+): TokenRecordDraft => ({
   ...data,
   cost: cost || data.cost,
   inputPrice,
@@ -28,9 +35,12 @@ export const createTokenRecord = (
 export const saveTokenRecord = async (
   tokenData: TokenUsageData,
   record: TokenRecord,
-  thunkApi
+  thunkApi: { dispatch: (action: unknown) => unknown }
 ) => {
-  const key = createTokenKey.record(tokenData.userId, tokenData.timestamp);
+  const key = createTokenKey.record(
+    tokenData.userId || record.userId,
+    tokenData.timestamp ?? record.createdAt
+  );
   try {
     await thunkApi.dispatch(
       write({
@@ -43,7 +53,7 @@ export const saveTokenRecord = async (
       {
         key,
         userId: tokenData.userId,
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       },
       "Failed to save token record"
     );

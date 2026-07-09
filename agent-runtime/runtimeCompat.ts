@@ -53,16 +53,22 @@ export function createGlob(pattern: string): GlobCompat {
 }
 
 function walkDir(dir: string, prefix: string, dot: boolean, out: string[]) {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
   try {
-    entries = readdirSync(dir, { withFileTypes: true });
+    // Force string Dirent names (Node overloads can infer NonSharedBuffer).
+    entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" }) as Array<{
+      name: string;
+      isDirectory(): boolean;
+      isFile(): boolean;
+    }>;
   } catch {
     return;
   }
   for (const entry of entries) {
-    if (!dot && entry.name.startsWith(".")) continue;
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-    const full = join(dir, entry.name);
+    const name = String(entry.name);
+    if (!dot && name.startsWith(".")) continue;
+    const rel = prefix ? `${prefix}/${name}` : name;
+    const full = join(dir, name);
     if (entry.isDirectory()) {
       walkDir(full, rel, dot, out);
     } else if (entry.isFile()) {

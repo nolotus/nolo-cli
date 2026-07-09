@@ -21,10 +21,14 @@ export const CHROME_CONNECTOR_READ_TOOL_NAMES = [
   "chrome_read_network",
 ] as const satisfies readonly ChromeConnectorToolName[];
 
-export const getChromeConnectorToolBehavior = (name: ChromeConnectorToolName) =>
+export const getChromeConnectorToolBehavior = (
+  name: ChromeConnectorToolName,
+): "data" | "action" =>
   CHROME_CONNECTOR_READ_TOOL_NAMES.includes(name as any) ? "data" : "action";
 
-export const getChromeConnectorToolDefaultConsent = (name: ChromeConnectorToolName) =>
+export const getChromeConnectorToolDefaultConsent = (
+  name: ChromeConnectorToolName,
+): "auto" | "ask" =>
   CHROME_CONNECTOR_READ_TOOL_NAMES.includes(name as any) ? "auto" : "ask";
 
 function baseSchema(

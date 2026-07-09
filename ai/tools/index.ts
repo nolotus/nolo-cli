@@ -391,6 +391,7 @@ export type ToolCapability =
   | "space_context"
   | "self_evolution"
   | "web_access"
+  | "web_search"
   | "browser_automation"
   | "code_edit"
   | "app_deploy"
@@ -413,7 +414,13 @@ export type ToolInteraction = "auto" | "confirm" | "authorize";
  * - media  : 多媒体（生成图片 / 生成视频等）
  * - data   : 数据操作
  */
-export type ToolUiGroup = "general" | "agent" | "content" | "media" | "data";
+export type ToolUiGroup =
+  | "general"
+  | "agent"
+  | "content"
+  | "media"
+  | "data"
+  | "external";
 
 /**
  * 分组元信息：
@@ -465,6 +472,15 @@ export const TOOL_GROUP_META: ToolGroupMeta[] = [
   },
 ];
 
+/** Shared tool run context passed from chat / agent loop into executors. */
+export type ToolExecutorContext = {
+  parentMessageId?: string;
+  signal?: AbortSignal;
+  toolRunId?: string;
+  agentKey?: string;
+  userInput?: string;
+};
+
 export interface ToolDefinition {
   id: string; // 唯一ID (camelCase)
   schema: any; // 提供给 LLM 的函数 Schema
@@ -472,7 +488,7 @@ export interface ToolDefinition {
   executor: (
     args: any,
     thunkApi: any,
-    context?: { parentMessageId: string; signal?: AbortSignal; toolRunId?: string }
+    context?: ToolExecutorContext
   ) => Promise<any>;
 
   /**
@@ -483,7 +499,7 @@ export interface ToolDefinition {
   previewExecutor?: (
     args: any,
     thunkApi: any,
-    context?: { parentMessageId: string; signal?: AbortSignal; toolRunId?: string }
+    context?: ToolExecutorContext
   ) => Promise<any>;
 
   description: {
@@ -1780,24 +1796,26 @@ const baseToolDefinitions: ToolDefinition[] = [
     },
     behavior: "data",
   },
-  ...chromeConnectorToolSchemas.map((schema) => ({
-    id: schema.name,
-    schema,
-    executor: chromeConnectorUnavailableFunc,
-    description: {
-      name: schema.name,
-      description: schema.description,
-      category: "网络与智能",
-    },
-    behavior: getChromeConnectorToolBehavior(schema.name),
-    capability: "browser_automation" as const,
-    riskLevel: schema.name === "chrome_click" || schema.name === "chrome_type"
-      ? "medium" as const
-      : "low" as const,
-    costLevel: "low" as const,
-    defaultConsent: getChromeConnectorToolDefaultConsent(schema.name),
-    cancelable: true,
-  })),
+  ...chromeConnectorToolSchemas.map((schema): ToolDefinition => {
+    const name = schema.name as Parameters<typeof getChromeConnectorToolBehavior>[0];
+    return {
+      id: schema.name,
+      schema,
+      executor: chromeConnectorUnavailableFunc,
+      description: {
+        name: schema.name,
+        description: schema.description,
+        category: "网络与智能",
+      },
+      behavior: getChromeConnectorToolBehavior(name),
+      capability: "browser_automation",
+      riskLevel:
+        name === "chrome_click" || name === "chrome_type" ? "medium" : "low",
+      costLevel: "low",
+      defaultConsent: getChromeConnectorToolDefaultConsent(name),
+      cancelable: true,
+    };
+  }),
   {
     id: "exaSearch",
     schema: exaSearchSchema,

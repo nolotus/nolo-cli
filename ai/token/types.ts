@@ -16,6 +16,12 @@ export const TOKEN_SCOPES = {
 
 interface BillingUsageMetadata {
   cost?: number;
+  /**
+   * xAI returns per-request cost in integer ticks (1 USD = 1e10 ticks).
+   * normalizeUsage converts this to `cost` (USD); the raw field is preserved
+   * for callers that want integer precision.
+   */
+  cost_in_usd_ticks?: number;
   billing_provider?: string;
   billing_model?: string;
   billing_service_tier?: string;
@@ -65,6 +71,8 @@ export interface TokenUsageData extends NormalizedUsage {
   model: string;
   provider: string;
   dialogId: string;
+  /** Optional event time used when building record keys. */
+  timestamp?: number;
   pay: any; // TODO: 明确支付数据类型
 }
 
@@ -82,6 +90,8 @@ export interface TokenRecord {
   output_tokens: number;
   input_tokens: number;
   cost: number;
+  inputPrice?: number;
+  outputPrice?: number;
   image_generation_count?: number;
   provider_response_ids?: string[];
   provider_request_ids?: string[];

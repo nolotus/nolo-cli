@@ -12,7 +12,7 @@ export interface WereadGatewayArgs {
 
 export interface WereadGatewayRunOptions {
   apiKey: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 
 export const wereadGatewayFunctionSchema = {

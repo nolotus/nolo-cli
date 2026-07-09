@@ -76,7 +76,7 @@ function createSubscriptionError(
 async function waitForRetryDelay(retryAfterMs: number, signal: AbortSignal) {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     await new Promise<void>((resolve, reject) => {
-        let timeoutId: number;
+        let timeoutId: ReturnType<typeof setTimeout>;
         const onAbort = () => {
             clearTimeout(timeoutId);
             signal.removeEventListener("abort", onAbort);

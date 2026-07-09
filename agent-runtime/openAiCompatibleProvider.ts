@@ -246,11 +246,13 @@ export async function readOpenAiCompatibleSseCompletion(args: {
   };
 }
 
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export async function executeOpenAiCompatibleChatCompletion(args: {
   providerConfig: OpenAiCompatibleProviderConfig;
   messages: AgentRuntimeChatMessage[];
   tools?: OpenAiCompatibleTool[];
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchLike;
   stream?: boolean;
   onTextDelta?: (chunk: string) => void;
   signal?: AbortSignal;

@@ -110,6 +110,11 @@ export const readXhsProfileFunctionSchema = {
 };
 
 type ReadXhsProfileToolContext = {
+  parentMessageId?: string;
+  signal?: AbortSignal;
+  toolRunId?: string;
+  agentKey?: string;
+  userInput?: string;
   reader?: (
     options: ReadXhsProfileArgs,
   ) => Promise<XhsReadResult<XhsProfileCollection>>;

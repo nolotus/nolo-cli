@@ -25,6 +25,8 @@ export type AgentRuntimeAgentConfig = {
   presence_penalty?: number;
   max_tokens?: number;
   reasoning_effort?: string;
+  /** Explicit tool names from agent record / form config. */
+  toolNames?: string[];
   runtimeBinding?: Record<string, unknown>;
   runtimeToolPolicy?: AgentRuntimeToolPolicy;
   delegation?: Record<string, unknown>;

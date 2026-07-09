@@ -42,6 +42,9 @@ export interface CompletionUsage {
   prompt_tokens_details?: Record<string, any>;
   completion_tokens_details?: Record<string, any>;
   cost_details?: Record<string, any>;
+  /** Platform billing identity when usage is rated into credits. */
+  billing_provider?: string;
+  billing_model?: string;
 }
 
 export type Content = string | MessageContentPart[];

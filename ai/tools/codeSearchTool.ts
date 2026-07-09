@@ -70,7 +70,7 @@ export const codeSearchFunctionSchema = {
 export async function codeSearchFunc(
     args: CodeSearchArgs,
     thunkApi: any,
-    context?: { signal?: AbortSignal; agentKey?: string },
+    context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string },
 ): Promise<{ rawData: any; displayData?: string }> {
     const baseUrl = getToolBaseUrl(thunkApi);
     const apiUrl = `${baseUrl}/api/code-search`;

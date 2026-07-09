@@ -437,6 +437,7 @@ export async function runLocalAgentTurn(
       messages: turnMessages,
       result: {
         content: `[nolo] Agent run failed: ${errorMessage}`,
+        model: agentConfig.model ?? "unknown",
         toolCallCount,
         error: true,
         errorMessage,

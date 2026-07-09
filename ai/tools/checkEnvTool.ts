@@ -47,7 +47,7 @@ const formatProbeOutput = (probe: any): string => {
 export async function checkEnvFunc(
     args: CheckEnvArgs,
     thunkApi: any,
-    context?: { agentKey?: string }
+    context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData: string }> {
     const key = typeof args?.key === "string" ? args.key.trim().toLowerCase() : "";
     const check = args?.check === "context" ? "context" : "build";

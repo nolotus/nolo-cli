@@ -1075,7 +1075,7 @@ export async function appPreflightFunc(
 export async function appDeployFunc(
   rawArgs: AppDeployArgs,
   thunkApi: any,
-  context?: { parentMessageId: string; toolRunId?: string; userInput?: string }
+  context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData: string }> {
   const args = normalizeAppDeployArgs(rawArgs);
   const { name, code, files, appId, framework } = args;

@@ -60,7 +60,7 @@ export const listUserSpacesFunctionSchema = {
 export async function listUserSpacesFunc(
     args: ListUserSpacesArgs,
     thunkApi: any,
-    context?: { parentMessageId?: string; signal?: AbortSignal }
+    context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData?: string }> {
     const { ownedOnly = false } = args || {};
 
@@ -68,7 +68,13 @@ export async function listUserSpacesFunc(
         const { getState } = thunkApi;
         const state: RootState = getState();
 
-        let memberSpaces = selectAllMemberSpaces(state);
+        type MemberSpaceRow = {
+            spaceId: string;
+            spaceName?: string;
+            role?: string;
+        };
+        // Selector typing can collapse membership fields under partial RootState shapes.
+        let memberSpaces = selectAllMemberSpaces(state) as MemberSpaceRow[];
 
         if (ownedOnly) {
             memberSpaces = memberSpaces.filter((ms) => ms.role === "owner");

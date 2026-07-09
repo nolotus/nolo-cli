@@ -168,10 +168,10 @@ export const convertMessagesToResponsesInput = (
       const replayImages = message.content
         .map((part) => part as MessageContentPart)
         .filter(
-          (part) =>
+          (part): part is Extract<MessageContentPart, { type: "image_url" }> =>
             part?.type === "image_url" &&
             typeof part.image_url?.url === "string" &&
-            part.image_url.url
+            Boolean(part.image_url.url)
         )
         .map((part) => ({
           type: "input_image" as const,

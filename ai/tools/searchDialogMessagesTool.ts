@@ -169,7 +169,14 @@ export const searchDialogMessagesFunctionSchema = {
 export async function searchDialogMessagesFunc(
   args: SearchDialogMessagesArgs,
   _thunkApi: any,
-  context?: { db?: any }
+  context?: {
+    parentMessageId?: string;
+    signal?: AbortSignal;
+    toolRunId?: string;
+    agentKey?: string;
+    userInput?: string;
+    db?: any;
+  }
 ) {
   const dialogKey = normalizeDialogSearchText(args?.dialogKey);
   const query = normalizeDialogSearchText(args?.query);

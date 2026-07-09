@@ -238,7 +238,7 @@ function normalizeProxyEnv(env: Record<string, string | undefined>): Record<stri
 }
 
 function buildCliProcessEnv(extraEnv?: Record<string, string | undefined>) {
-  const baseEnv = {
+  const baseEnv: Record<string, string | undefined> = {
     ...process.env,
     ...extraEnv,
     NO_COLOR: "1",

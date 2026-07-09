@@ -106,7 +106,7 @@ export async function readFilePreviewFunc(
 export async function readFileFunc(
     args: ReadFileArgs,
     thunkApi: any,
-    context?: { parentMessageId?: string; signal?: AbortSignal; agentKey?: string }
+    context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData?: string }> {
     const { filePath, startLine, endLine } = args;
 

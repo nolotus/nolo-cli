@@ -296,7 +296,9 @@ function summarizeNoloDialogSubjectRefEvidence(dialog: any, target: NoloSubjectR
     (ref) => ref.kind === normalizeNoloSubjectKind(target.kind) && ref.id === target.id
   );
   const lastToolNames = Array.isArray(checkpoint.lastToolNames)
-    ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim())
+    ? checkpoint.lastToolNames.filter(
+        (tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0
+      )
     : [];
   const artifactCount = noloArtifactCount(dialog?.artifacts);
 
@@ -602,7 +604,7 @@ export async function runNoloWorkspaceCliTool(call: {
   name: string;
   arguments: string;
 }, args: {
-  cliEntrypoint: string;
+  cliEntrypoint?: string;
   env?: Record<string, string | undefined>;
   metadataKind?: string;
   processExecPath?: string;

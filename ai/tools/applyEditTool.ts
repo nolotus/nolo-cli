@@ -200,7 +200,7 @@ function assertValidArgs(args: ApplyEditArgs): void {
 export async function applyEditFunc(
     args: ApplyEditArgs,
     thunkApi: any,
-    context?: { parentMessageId?: string; signal?: AbortSignal; agentKey?: string }
+    context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData?: string }> {
     assertValidArgs(args);
 

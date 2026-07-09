@@ -230,7 +230,7 @@ export function buildProviderAuthHeaders(args: {
   endpoint: string;
   apiKey: string;
   apiKeyHeader?: string;
-}) {
+}): Record<string, string> {
   if (!args.apiKey) return {};
   const headerName = resolveProviderAuthHeaderName(args);
   return headerName.toLowerCase() === "authorization"

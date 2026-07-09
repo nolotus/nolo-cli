@@ -23,7 +23,7 @@ export type MarxistsOfflineBookResult = {
 export type ConvertMarxistsBookArgs = {
   startUrl: string;
   encoding?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   maxPages?: number;
 };
 
@@ -49,7 +49,7 @@ const decodeBytes = (bytes: ArrayBuffer, encoding: string): string => {
 
 const fetchBytes = async (
   url: string,
-  fetchImpl: typeof fetch,
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 ): Promise<ArrayBuffer> => {
   const response = await fetchImpl(url, {
     headers: {
@@ -118,7 +118,7 @@ const guessMimeType = (url: string): string => {
 export const inlineCssUrlAssets = async (args: {
   css: string;
   cssUrl: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }): Promise<string> => {
   const replacements = new Map<string, string>();
   const matches = [...args.css.matchAll(/url\((['"]?)([^)'"]+)\1\)/gi)];

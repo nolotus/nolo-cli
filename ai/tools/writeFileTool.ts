@@ -107,7 +107,7 @@ export async function writeFilePreviewFunc(
 export async function writeFileFunc(
     args: WriteFileArgs,
     thunkApi: any,
-    context?: { parentMessageId?: string; signal?: AbortSignal; agentKey?: string }
+    context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData?: string }> {
     const { filePath, content, overwrite } = args;
 

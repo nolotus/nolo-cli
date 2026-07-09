@@ -397,7 +397,7 @@ const createGeminiImageExecutor =
         async (
             args: GeminiImageCommonArgs,
             thunkApi: any
-        ): Promise<{ rawData: any; displayData: string }> => {
+        ): Promise<{ rawData: any; displayData: string; llmContext?: unknown }> => {
             const { prompt, images = [], aspectRatio, imageSize } = args;
 
             const trimmedPrompt = prompt?.trim();

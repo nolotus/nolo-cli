@@ -66,6 +66,16 @@ export interface AgentRuntimeOptions {
         imageSize?: "1K" | "2K" | "4K";
     };
 
+    /**
+     * 本轮 LLM 路由覆盖（仅当前 turn）：provider / model / reasoningEffort。
+     * CLI/desktop 路径可能在更早分支处理，web 路径在 streamAgentChatTurn 中合并。
+     */
+    llmConfigOverride?: {
+        provider?: string;
+        model?: string;
+        reasoningEffort?: string;
+    };
+
     cwd?: string;
     restrictShellToWorkspace?: boolean;
 }

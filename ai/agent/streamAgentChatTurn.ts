@@ -805,7 +805,7 @@ export const streamAgentChatTurnHandler = async (
                 prompt: "",
                 tools: [],
                 references: [],
-            } as Agent;
+            } as unknown as Agent;
         } else {
             // 正常路径：从 DB / 缓存读取 agent 配置
             rawAgentConfig = isUsableAgentConfig(cachedAgentConfig)
@@ -1234,7 +1234,10 @@ export const streamAgentChatTurnHandler = async (
                                 }));
                             }
                             if (payload.done && Array.isArray(payload.warnings)) {
-                                cliCapabilityWarnings = payload.warnings.filter((warning): warning is string => typeof warning === "string" && warning.trim().length > 0);
+                                cliCapabilityWarnings = payload.warnings.filter(
+                                    (warning: unknown): warning is string =>
+                                        typeof warning === "string" && warning.trim().length > 0
+                                );
                             }
                         } catch {
                             // 忽略解析失败的行
@@ -1949,8 +1952,8 @@ export const streamAgentChatTurnHandler = async (
 
                 const bodyData = generateRequestBody({
                     agentConfig: effectiveAgentConfig,
-                    messages: dynamicMessages,
-                    stableMessages,
+                    messages: dynamicMessages as any,
+                    stableMessages: stableMessages as any,
                     userInput: userInputText,
                     contexts,
                 });
@@ -2227,8 +2230,8 @@ export const streamAgentChatTurnHandler = async (
 
             const bodyData = generateRequestBody({
                 agentConfig: effectiveAgentConfig,
-                messages: dynamicMessages,
-                stableMessages,
+                messages: dynamicMessages as any,
+                stableMessages: stableMessages as any,
                 userInput: userInputText,
                 contexts,
             });

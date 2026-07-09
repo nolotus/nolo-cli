@@ -53,6 +53,9 @@ export interface AgentRuntimeResult {
   runtimeToolNames?: string[];
   runtimeToolSurface?: unknown;
   toolCallCount?: number;
+  /** Set when a turn is persisted after a provider/runtime failure. */
+  error?: boolean;
+  errorMessage?: string;
   policyState?: unknown;
   latencyProfile?: {
     totalMs: number;

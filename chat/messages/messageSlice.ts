@@ -513,9 +513,18 @@ export const messageSlice = createSliceWithThunks({
       dialogId: string;
       messages: Message[];
       isLoadingInitial?: boolean;
+      /**
+       * Default merges (upsert, keeps unknown ids).
+       * Pass replace:true only for full-history reloads that must drop orphans.
+       */
+      replace?: boolean;
     }>((state, action) => {
       const dialogState = ensureMessageDialogState(state, action.payload.dialogId);
-      setAllMessages(dialogState, action.payload.messages);
+      if (action.payload.replace) {
+        setAllMessages(dialogState, action.payload.messages);
+      } else {
+        upsertManyMessages(dialogState, action.payload.messages);
+      }
       if (action.payload.isLoadingInitial !== undefined) {
         dialogState.isLoadingInitial = action.payload.isLoadingInitial;
       }
@@ -730,10 +739,11 @@ export const messageSlice = createSliceWithThunks({
 
           dialogState.currentInitMsgsRequestId = undefined;
           dialogState.isLoadingInitial = false;
+          // Same policy as setMessages: new dialogs merge (stream/optimistic rows
+          // may already exist); established dialogs replace from authoritative fetch.
           if (action.meta.arg.isNew) {
             upsertManyMessages(dialogState, action.payload);
           } else {
-            // 用从 DB 加载的消息原子性替换，确保不遗留已删除消息或旧的流式消息
             setAllMessages(dialogState, action.payload);
           }
         },
@@ -1023,6 +1033,8 @@ export const messageSlice = createSliceWithThunks({
 
         return {
           id: messageId,
+          dbKey: msgKey,
+          role: "assistant" as const,
           content: finalMessage.content,
           thinkContent: finalMessage.thinkContent,
           usage: finalMessage.usage,
@@ -1035,32 +1047,17 @@ export const messageSlice = createSliceWithThunks({
       },
       {
         fulfilled: (state, action) => {
-          const { dialogId, agentName } = action.payload as {
-            dialogId: string;
-            agentName?: string;
-          };
-          const dialogState = ensureMessageDialogState(state, dialogId);
-          updateOneMessage(dialogState, {
-            id: action.payload.id,
-            changes: {
-              isStreaming: false,
-              imageGenerationState: undefined,
-              content: action.payload.content,
-              thinkContent: action.payload.thinkContent,
-              usage: action.payload.usage,
-              ...(action.payload.agentKey
-                ? { agentKey: action.payload.agentKey }
-                : {}),
-              cybotKey: action.payload.cybotKey,
-              ...(action.payload.tool_calls
-                ? { tool_calls: action.payload.tool_calls }
-                : {}),
-              ...(agentName ? { agentName } : {}),
-            },
-          });
-
-
-          // === 新增结束 ===
+          const payload = action.payload as Message & { dialogId: string };
+          const dialogState = ensureMessageDialogState(state, payload.dialogId);
+          const existing = dialogState.msgs.entities[payload.id];
+          upsertOneMessage(dialogState, {
+            ...(existing ?? {}),
+            ...payload,
+            role: payload.role ?? existing?.role ?? "assistant",
+            dbKey: payload.dbKey ?? existing?.dbKey ?? action.meta.arg.msgKey,
+            isStreaming: false,
+            imageGenerationState: undefined,
+          } as Message);
         },
         rejected: (state, action) => {
           const arg = action.meta?.arg as MessageStreamEndPayload | undefined;
@@ -1404,6 +1401,7 @@ export const selectLastAssistantMessage = (
 export const {
   addUserMessage,
   messageStreaming,
+  setMessages,
   resetMsgs,
   clearAllStreaming,
   removeTransientMessage,

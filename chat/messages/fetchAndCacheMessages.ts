@@ -91,18 +91,28 @@ export const fetchAndCacheMessagesLocalFirst = async ({
       return value;
     });
 
-    const uniqueMap = new Map<string, MessageRecord>();
-    localMsgs.forEach((m) => uniqueMap.set(m.id, m));
+    // Re-read local after remote settles so concurrent messageStreamEnd writes
+    // (quick-chat first turn) are not lost when remote is empty/stale.
+    const freshLocalMsgs = await fetchLocalMessages(db, dialogId, {
+      limit,
+      beforeKey,
+      throwOnError: false,
+      includeDeleted: true,
+    }).catch(() => [] as MessageRecord[]);
 
+    const uniqueMap = new Map<string, MessageRecord>();
     const changedMessagesToCache = new Map<string, MessageRecord>();
-    remoteMsgs.forEach((m) => {
+    const put = (m: MessageRecord | null | undefined, trackChange = false) => {
       if (!m || !m.id) return;
       const existing = uniqueMap.get(m.id);
-      if (!existing || shouldReplaceWithNextRecord(m, existing)) {
-        uniqueMap.set(m.id, m);
-        changedMessagesToCache.set(m.id, m);
-      }
-    });
+      if (existing && !shouldReplaceWithNextRecord(m, existing)) return;
+      uniqueMap.set(m.id, m);
+      if (trackChange) changedMessagesToCache.set(m.id, m);
+    };
+    // Seed with initial local, then fresher local, then remote (remote may track cache writes).
+    localMsgs.forEach((m) => put(m));
+    freshLocalMsgs.forEach((m) => put(m));
+    remoteMsgs.forEach((m) => put(m, true));
 
     if (changedMessagesToCache.size > 0) {
       try {

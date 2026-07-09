@@ -13,5 +13,5 @@ export const isProduction =
 export const isDevelopment = !isProduction;
 export const getIsDesktopApp = (): boolean =>
   (typeof process !== "undefined" ? process.env?.NOLO_DESKTOP : processEnv?.NOLO_DESKTOP) === "1" ||
-  (typeof window !== "undefined" && window.__NOLO_DESKTOP__ === true);
+  (typeof window !== "undefined" && (window as Window & { __NOLO_DESKTOP__?: boolean }).__NOLO_DESKTOP__ === true);
 export const isDesktopApp = getIsDesktopApp();

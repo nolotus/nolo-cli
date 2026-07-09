@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.1.52",
+  "version": "0.1.54",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -121,14 +121,14 @@
     "processSpawn.ts",
     "oauth/apiKeyRefResolver.ts",
     "oauth/token-store.ts",
+    "oauth/flows/antigravity.ts",
     "oauth/flows/openai-codex.ts",
+    "oauth/flows/xai.ts",
     "oauth/types.ts",
     "oauth/callback-server.ts",
     "oauth/pkce.ts",
     "oauth/authCommand.ts",
     "oauth/flows/cloudflare.ts",
-    "oauth/flows/antigravity.ts",
-    "oauth/flows/xai.ts",
     "oauth/envFile.ts",
     "machineDaemonCommands.ts",
     "machineHeartbeatCommands.ts",
@@ -242,13 +242,13 @@
     "cli/tui/session.ts",
     "cli/tui/confirmDialog.ts",
     "cli/oauth/token-store.ts",
+    "cli/oauth/flows/antigravity.ts",
     "cli/oauth/flows/openai-codex.ts",
+    "cli/oauth/flows/xai.ts",
     "cli/oauth/types.ts",
     "cli/oauth/callback-server.ts",
     "cli/oauth/pkce.ts",
     "cli/oauth/flows/cloudflare.ts",
-    "cli/oauth/flows/antigravity.ts",
-    "cli/oauth/flows/xai.ts",
     "cli/oauth/envFile.ts",
     "cli/connectorRunArtifact.ts",
     "cli/machineWsPromptMaterialization.ts",
@@ -263,9 +263,11 @@
     "agent-runtime/localDialogRead.ts",
     "agent-runtime/runtimeDecision.ts",
     "agent-runtime/actionGate.ts",
+    "agent-runtime/antigravityCloudCodeProvider.ts",
+    "agent-runtime/antigravityOAuth.ts",
+    "agent-runtime/oauthTokenStore.ts",
     "agent-runtime/noloWorkspaceTools.ts",
     "agent-runtime/providerResolution.ts",
-    "agent-runtime/oauthTokenStore.ts",
     "agent-runtime/runtimeToolPolicy.ts",
     "agent-runtime/hostAdapter.ts",
     "agent-runtime/types.ts",
@@ -275,7 +277,7 @@
     "agent-runtime/agentCallPlan.ts",
     "agent-runtime/runtimeToolSurface.ts",
     "agent-runtime/thinkTagParser.ts",
-    "agent-runtime/antigravityOAuth.ts",
+    "agent-runtime/antigravityWireModel.ts",
     "agent-runtime/openAiCompatibleProvider.ts",
     "agent-runtime/openAiCompatibleProviderConfig.ts",
     "agent-runtime/platformChatProvider.ts",
@@ -773,7 +775,7 @@
     "serpapi": "^2.2.1"
   },
   "optionalDependencies": {
-    "nolo-cli-darwin-arm64": "0.1.52"
+    "nolo-cli-darwin-arm64": "0.1.54"
   },
   "devDependencies": {
     "bun-types": "latest"

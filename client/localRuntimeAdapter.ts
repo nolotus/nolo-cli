@@ -26,8 +26,11 @@ import {
   resolveRuntimeToolSurfaceForAgent,
   shouldUsePlatformChatProvider,
 } from "../agentRuntimeLocal";
-import type { AgentRuntimeChatMessage } from "../agent-runtime";
+import type { AgentRuntimeChatMessage, AgentRuntimeToolCall } from "../agent-runtime";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
+import { fetchAntigravityCloudCodeCompletion } from "../agent-runtime/antigravityCloudCodeProvider";
+import { isAntigravityOAuthAgent } from "../agent-runtime/antigravityOAuth";
+import { readOAuthCredential } from "../agent-runtime/oauthTokenStore";
 import { getDefaultCliLocalRuntimeDb } from "../localRuntimeDb";
 import { resolveAgentRuntimeConfigFromRecord } from "./agentConfigResolver";
 import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
@@ -1367,6 +1370,119 @@ export function createCliLocalRuntimeAdapter(
       }
 
       const apiKeyRefResolver = createOAuthApiKeyRefResolver();
+
+      // Antigravity (Google Cloud Code Assist) is not OpenAI-compatible: local
+      // direct `/chat/completions` against daily-cloudcode-pa returns HTTP 404.
+      // Mirror server agent-run loop: CCA wire + local oauth refresh.
+      if (isAntigravityOAuthAgent(agentConfig)) {
+        const accessToken = await apiKeyRefResolver("antigravity");
+        if (!accessToken) {
+          throw new Error(
+            'OAuth credential for "antigravity" not found locally. Run `nolo auth antigravity`.',
+          );
+        }
+        const credential = readOAuthCredential("antigravity");
+        const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
+          agentConfig,
+          deps.env,
+          buildProviderOpenAiTools,
+        );
+        logLocalRuntimeDiagnostic("provider.selected", {
+          agentKey: agentConfig.key,
+          transport: "antigravity-cloud-code",
+          apiSource: agentConfig.apiSource ?? null,
+          provider: agentConfig.provider ?? "google-antigravity",
+          model: agentConfig.model ?? null,
+          customProviderEndpoint: summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
+          hasApiKey: true,
+          hasProjectId: Boolean(credential?.metadata?.projectId),
+        });
+        return {
+          model: agentConfig.model || "gemini-3.1-pro",
+          complete: async (messages, options) => {
+            const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
+            const openAiBody: Record<string, unknown> = {
+              model: agentConfig.model || "gemini-3.1-pro",
+              messages,
+              stream: false,
+              ...(tools.length > 0 ? { tools } : {}),
+            };
+            logLocalRuntimeDiagnostic("provider.request.start", {
+              agentKey: agentConfig.key,
+              transport: "antigravity-cloud-code",
+              model: openAiBody.model,
+              messageCount: messages.length,
+              toolCount: tools.length,
+              requestedToolNames,
+              openAiToolNames: summarizeOpenAiToolNames(tools),
+              timeoutMs: options?.timeoutMs ?? null,
+            });
+            try {
+              const result = await fetchAntigravityCloudCodeCompletion({
+                agentConfig,
+                accessToken,
+                metadata: credential?.metadata ?? null,
+                openAiBody,
+                signal: timeoutSignal?.signal,
+                fetchImpl: (url, init) =>
+                  fetchWithTransientRetry(fetchImpl, url, init, {
+                    sleep: deps.sleep,
+                    loopbackRequest,
+                  }),
+              });
+              if (result.status < 200 || result.status >= 300) {
+                const errMsg =
+                  result.body &&
+                  typeof result.body === "object" &&
+                  result.body.error &&
+                  typeof (result.body.error as { message?: unknown }).message === "string"
+                    ? (result.body.error as { message: string }).message
+                    : JSON.stringify(result.body);
+                throw new Error(`local antigravity provider failed: HTTP ${result.status} ${errMsg}`);
+              }
+              const choice = Array.isArray(result.body.choices)
+                ? (result.body.choices[0] as
+                    | {
+                        message?: {
+                          content?: string | null;
+                          tool_calls?: AgentRuntimeToolCall[];
+                        };
+                      }
+                    | undefined)
+                : undefined;
+              const message = choice?.message ?? {};
+              const content =
+                typeof message.content === "string"
+                  ? message.content
+                  : message.content == null
+                    ? ""
+                    : String(message.content);
+              const tool_calls = Array.isArray(message.tool_calls)
+                ? message.tool_calls
+                : undefined;
+              if (content && options?.onTextDelta) {
+                options.onTextDelta(content);
+              }
+              logLocalRuntimeDiagnostic("provider.request.result", {
+                agentKey: agentConfig.key,
+                transport: "antigravity-cloud-code",
+                ok: true,
+                contentChars: content.length,
+                toolCallCount: tool_calls?.length ?? 0,
+              });
+              return {
+                content,
+                model: agentConfig.model || "gemini-3.1-pro",
+                provider: agentConfig.provider || "google-antigravity",
+                ...(tool_calls ? { tool_calls } : {}),
+                trace: messages,
+              };
+            } finally {
+              timeoutSignal?.clear();
+            }
+          },
+        };
+      }
 
       if (shouldUsePlatformChatProvider(deps.env, agentConfig)) {
         const providerConfig = await resolvePlatformChatProviderConfig({

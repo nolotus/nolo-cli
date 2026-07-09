@@ -42,11 +42,11 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
       return runAgentReadCommand(args, deps);
     }),
     createAgentRunCommand(["agent", "run"], "Run an agent"),
-    createEnvCommand(["agent", "ps"], "List active and recent local agent runs", async (_args, deps) => {
+    createEnvCommand(["agent", "ps"], "List active and recent local agent runs (--json for machine-readable output)", async (_args, deps) => {
       const { runAgentPsCommand } = await import("./agentRunControl");
       return runAgentPsCommand(_args, { ...deps, output: process.stdout });
     }),
-    createEnvCommand(["agent", "status"], "Show status of a local agent run", async (args, deps) => {
+    createEnvCommand(["agent", "status"], "Show status of a local agent run (--json, --watch, --interval-ms N)", async (args, deps) => {
       const { runAgentStatusCommand } = await import("./agentRunControl");
       return runAgentStatusCommand(args, { ...deps, output: process.stdout });
     }),

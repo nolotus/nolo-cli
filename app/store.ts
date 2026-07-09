@@ -34,6 +34,14 @@ export type AppExtra = {
 // incompatibility with RTK's inferred dispatch types).
 export type AppDispatch = ThunkDispatch<RootState, AppExtra, UnknownAction>;
 
+// 工作区：buildCreateSlice 生成的 async thunk 在类型推断下会被并上 `void`，
+// 导致 dispatch 无法直接调用。这里提供一个类型化入口，把 dispatch 断言为可接受
+// 任意 thunk action 并返回 `Promise<T> & { unwrap(): Promise<T> }` 的可调用对象。
+// 仅在已知调用的是 thunk 的组件里使用，避免在普通 plain action 上展开错误假设。
+export type TypedThunkDispatch = <T>(
+  action: unknown
+) => Promise<T> & { unwrap: () => Promise<T> };
+
 export type AppThunkApi = {
   dispatch: AppDispatch;
   getState: () => RootState;
@@ -69,7 +77,7 @@ export type AppStore = ReturnType<typeof createAppStore>;
 // RootState IS defined directly above — no AppStore dependency.
 
 export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
-export const useAppDispatch: () => AppDispatch = useDispatch;
+export const useAppDispatch = () => useDispatch<AppDispatch>();
 
 declare global {
   interface Window {

@@ -29,6 +29,7 @@ export type RunRecord = {
   endedAt?: string;
   logPath: string;
   dialogId?: string;
+  note?: string;
 };
 
 export type FsLike = {
@@ -49,6 +50,7 @@ export type SpawnLike = (
 
 export type KillLike = (pid: number, signal: string) => void;
 
+export type SleepLike = (ms: number) => Promise<void>;
 export type AgentRunControlDeps = {
   env?: EnvLike;
   homedir?: () => string;
@@ -57,6 +59,9 @@ export type AgentRunControlDeps = {
   kill?: KillLike;
   now?: () => Date;
   generateRunId?: () => string;
+  sleep?: SleepLike;
+  setSignalHandler?: (handler: () => void) => void;
+  clearSignalHandler?: () => void;
 };
 
 export function resolveNoloHome(env?: EnvLike, homedir = nodeHomedir): string {
@@ -94,7 +99,7 @@ export function defaultGenerateRunId(): string {
 export function writeRunRecord(record: RunRecord, deps: AgentRunControlDeps = {}): void {
   const fs = deps.fs ?? nodeFs;
   const path = resolveRunRecordPath(record.runId, deps.env, deps.homedir);
-  fs.mkdirSync(join(path, ".."), { recursive: true });
+  fs.mkdirSync(resolveRunsDir(deps.env, deps.homedir), { recursive: true });
   fs.writeFileSync(path, JSON.stringify(record, null, 2));
 }
 
@@ -258,6 +263,45 @@ export function finalizeRunRecord(
   writeRunRecord(record, deps);
 }
 
+/**
+ * Returns true when `pid` no longer exists, as reported by `kill(pid, 0)`
+ * throwing ESRCH. Any other throw (e.g. EPERM, meaning the process still
+ * exists but is owned by another user) is treated as "still running".
+ */
+export function isPidGone(pid: number, deps: AgentRunControlDeps = {}): boolean {
+  const kill = deps.kill ?? ((p, s) => process.kill(p, s as NodeJS.Signals));
+  try {
+    kill(pid, "0");
+    return false;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    return code === "ESRCH";
+  }
+}
+
+/**
+ * If a run record claims to be running and carries a pid, verify the pid is
+ * still alive via `kill(pid, 0)`. When the pid is gone (ESRCH), mark the
+ * record as `failed` and record a note explaining the process disappeared.
+ * Returns the (possibly refreshed) record.
+ */
+export function checkStaleRun(
+  runId: string,
+  deps: AgentRunControlDeps = {}
+): RunRecord | null {
+  const record = readRunRecord(runId, deps);
+  if (!record) return null;
+  if (record.status !== "running") return record;
+  if (typeof record.pid !== "number") return record;
+  if (!isPidGone(record.pid, deps)) return record;
+  const now = deps.now ?? (() => new Date());
+  record.status = "failed";
+  record.note = "process gone: pid no longer exists";
+  record.endedAt = now().toISOString();
+  writeRunRecord(record, deps);
+  return record;
+}
+
 function formatDuration(startedAt: string, endedAt?: string): string {
   const start = new Date(startedAt).getTime();
   const end = endedAt ? new Date(endedAt).getTime() : Date.now();
@@ -302,17 +346,60 @@ function readLogContent(logPath: string, tailCount: number | undefined, deps: Ag
   }
 }
 
+const RUNNING_STATUSES: ReadonlySet<RunRecord["status"]> = new Set(["running"]);
+
+function isRunningStatus(status: RunRecord["status"]): boolean {
+  return RUNNING_STATUSES.has(status);
+}
+
+function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {
+  let json = false;
+  const rest: string[] = [];
+  for (const arg of args) {
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    if (arg.startsWith("--json=")) {
+      const value = arg.slice("--json=".length);
+      json = value === "" || value === "true" || value === "1";
+      continue;
+    }
+    rest.push(arg);
+  }
+  return { json, rest };
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function runAgentPsCommand(
-  _args: string[],
+  args: string[],
   deps: AgentRunControlDeps & { output: OutputLike }
 ): Promise<number> {
+  const { json } = parseJsonFlag(args);
   const records = listRunRecords(deps);
-  if (records.length === 0) {
+  // Apply stale-pid reconciliation for any running records that carry a pid.
+  for (const record of records) {
+    if (record.status === "running" && typeof record.pid === "number") {
+      checkStaleRun(record.runId, deps);
+    }
+  }
+  // Re-read after reconciliation so the printed/json state reflects any updates.
+  const refreshed = records
+    .map((r) => readRunRecord(r.runId, deps))
+    .filter(Boolean) as RunRecord[];
+  if (json) {
+    deps.output.write(JSON.stringify(refreshed) + "\n");
+    return 0;
+  }
+  if (refreshed.length === 0) {
     deps.output.write("No local runs found.\n");
     return 0;
   }
   deps.output.write("RUN ID                          STATUS   PID      AGENT\n");
-  for (const record of records) {
+  for (const record of refreshed) {
     const pid = record.pid?.toString() ?? "-";
     deps.output.write(
       `${record.runId.padEnd(32)} ${record.status.padEnd(8)} ${pid.padEnd(8)} ${record.agentKey}\n`
@@ -321,20 +408,97 @@ export async function runAgentPsCommand(
   return 0;
 }
 
+function parseStatusArgs(args: string[]): {
+  target: string;
+  json: boolean;
+  watch: boolean;
+  intervalMs: number;
+} {
+  let target = "";
+  let json = false;
+  let watch = false;
+  let intervalMs = 2000;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    if (arg.startsWith("--json=")) {
+      const value = arg.slice("--json=".length);
+      json = value === "" || value === "true" || value === "1";
+      continue;
+    }
+    if (arg === "--watch") {
+      watch = true;
+      continue;
+    }
+    if (arg.startsWith("--watch=")) {
+      const value = arg.slice("--watch=".length);
+      watch = value === "" || value === "true" || value === "1";
+      continue;
+    }
+    if (arg === "--interval-ms") {
+      const next = args[i + 1];
+      if (next && /^\d+$/.test(next)) {
+        intervalMs = Number(next);
+        i += 1;
+      }
+      continue;
+    }
+    if (arg.startsWith("--interval-ms=")) {
+      const value = arg.slice("--interval-ms=".length);
+      if (/^\d+$/.test(value)) intervalMs = Number(value);
+      continue;
+    }
+    if (!arg.startsWith("-") && !target) {
+      target = arg;
+    }
+  }
+  return { target, json, watch, intervalMs };
+}
+
+function printStatusTick(record: RunRecord, deps: AgentRunControlDeps & { output: OutputLike }): void {
+  const elapsed = formatDuration(record.startedAt, record.endedAt);
+  const note = record.note ? ` (${record.note})` : "";
+  deps.output.write(
+    `[${new Date().toISOString()}] ${record.runId} status=${record.status} elapsed=${elapsed}${note}\n`
+  );
+}
+
 export async function runAgentStatusCommand(
   args: string[],
   deps: AgentRunControlDeps & { output: OutputLike }
 ): Promise<number> {
-  const target = args[0];
+  const { target, json, watch, intervalMs } = parseStatusArgs(args);
   if (!target) {
-    deps.output.write("Usage: nolo agent status <runId|pid>\n");
+    deps.output.write("Usage: nolo agent status <runId|pid> [--json] [--watch] [--interval-ms N]\n");
     return 1;
   }
-  const record = findRunRecord(target, deps);
-  if (!record) {
+  const initial = findRunRecord(target, deps);
+  if (!initial) {
     deps.output.write(`Run not found: ${target}\n`);
     return 1;
   }
+
+  // Reconcile stale pids before producing output.
+  const reconciled = checkStaleRun(initial.runId, deps) ?? initial;
+
+  if (json) {
+    const record = readRunRecord(reconciled.runId, deps) ?? reconciled;
+    deps.output.write(JSON.stringify(record) + "\n");
+    return 0;
+  }
+
+  if (!watch) {
+    const record = readRunRecord(reconciled.runId, deps) ?? reconciled;
+    return printStatusOnce(record, deps);
+  }
+
+  return runStatusWatch(reconciled.runId, intervalMs, deps);
+}
+
+function printStatusOnce(record: RunRecord, deps: AgentRunControlDeps & { output: OutputLike }): number {
   deps.output.write(`runId:    ${record.runId}\n`);
   deps.output.write(`status:   ${record.status}\n`);
   deps.output.write(`pid:      ${record.pid ?? "-"}\n`);
@@ -345,6 +509,7 @@ export async function runAgentStatusCommand(
   if (record.endedAt) deps.output.write(`ended:    ${record.endedAt}\n`);
   if (typeof record.exitCode === "number") deps.output.write(`exitCode: ${record.exitCode}\n`);
   if (record.dialogId) deps.output.write(`dialog:   ${record.dialogId}\n`);
+  if (record.note) deps.output.write(`note:     ${record.note}\n`);
   deps.output.write(`log:      ${record.logPath}\n`);
 
   const logLines = readLastLogLines(record.logPath, 20, deps);
@@ -355,6 +520,52 @@ export async function runAgentStatusCommand(
     }
   }
   return 0;
+}
+
+async function runStatusWatch(
+  runId: string,
+  intervalMs: number,
+  deps: AgentRunControlDeps & { output: OutputLike }
+): Promise<number> {
+  const sleep = deps.sleep ?? defaultSleep;
+  const now = deps.now ?? (() => new Date());
+  let stopped = false;
+  const setSignalHandler = deps.setSignalHandler ?? ((handler: () => void) => {
+    process.once("SIGINT" as NodeJS.Signals, handler);
+  });
+  const clearSignalHandler = deps.clearSignalHandler ?? (() => {
+    process.removeAllListeners("SIGINT");
+  });
+
+  setSignalHandler(() => {
+    stopped = true;
+  });
+
+  try {
+    let record = readRunRecord(runId, deps);
+    if (!record) {
+      deps.output.write(`Run not found: ${runId}\n`);
+      return 1;
+    }
+    // Initial tick.
+    printStatusTick(record, deps);
+    while (!stopped && isRunningStatus(record.status)) {
+      await sleep(intervalMs);
+      if (stopped) break;
+      record = checkStaleRun(runId, deps);
+      if (!record) {
+        deps.output.write(`Run not found: ${runId}\n`);
+        return 1;
+      }
+      printStatusTick(record, deps);
+    }
+    if (stopped) {
+      deps.output.write(`watch stopped by signal\n`);
+    }
+    return 0;
+  } finally {
+    clearSignalHandler();
+  }
 }
 
 function parseLogsArgs(

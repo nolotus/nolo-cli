@@ -45,5 +45,5 @@ export function buildMemorySubjectsForAgent(input: {
       ? { subjectType: "user" as const, subjectId: input.userId }
       : null,
     input.spaceId ? { subjectType: "space" as const, subjectId: input.spaceId } : null,
-  ].filter((value): value is MemorySubjectRef => !!value);
+  ].filter(Boolean) as MemorySubjectRef[];
 }

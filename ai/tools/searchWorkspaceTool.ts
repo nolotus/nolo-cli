@@ -118,8 +118,8 @@ const toSearchResultItem = (
   ...(item.spaceName ? { spaceName: item.spaceName } : {}),
   ...(item.createdAt !== undefined ? { createdAt: item.createdAt } : {}),
   ...(item.updatedAt !== undefined ? { updatedAt: item.updatedAt } : {}),
-  ...(typeof item.serverOrigin === "string" && item.serverOrigin.trim().length > 0
-    ? { serverOrigin: item.serverOrigin }
+  ...("serverOrigin" in item && typeof (item as any).serverOrigin === "string" && (item as any).serverOrigin.trim().length > 0
+    ? { serverOrigin: (item as any).serverOrigin }
     : {}),
 });
 
@@ -236,7 +236,7 @@ export async function searchWorkspaceFunc(
     spaceName: currentSpace.name,
   });
 
-  const rawData = { success: true, contents: results };
+  const rawData = { success: true, contents: results } as { success: true; contents: SearchWorkspaceResultItem[] };
   const displayData = buildScopedDisplayData(args.query, results, "当前空间");
 
   return { rawData, displayData };
@@ -253,7 +253,7 @@ export async function searchAllSpacesFunc(
     .map((item) => toSearchResultItem(item));
 
   return {
-    rawData: { success: true, contents: results },
+    rawData: { success: true, contents: results } as { success: true; contents: SearchWorkspaceResultItem[] },
     displayData: buildScopedDisplayData(args.query, results, "已同步的全部内容"),
   };
 }

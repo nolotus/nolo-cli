@@ -85,7 +85,7 @@ export async function importDataFunc(
     );
 
     // [关键修复] 步骤 3: 准备基于真实数据库列名的 INSERT 语句
-    const columnNamesForSql = dbColumns.map((col) => `"${col}"`).join(", ");
+    const columnNamesForSql = dbColumns.map((col: any) => `"${col}"`).join(", ");
     const valuePlaceholders = `(${dbColumns.map(() => "?").join(", ")})`;
     const insertQueryTemplate = `INSERT INTO "${tableName}" (${columnNamesForSql}) VALUES ${valuePlaceholders};`;
 
@@ -95,7 +95,7 @@ export async function importDataFunc(
     try {
       for (const row of jsonData) {
         // [关键修复] 步骤 4: 按数据库列的顺序，不区分大小写地从数据行中提取值
-        const params = dbColumns.map((dbCol) => {
+        const params = dbColumns.map((dbCol: any) => {
           const originalInputKey = inputKeyMap.get(dbCol.toLowerCase());
           // 如果在输入数据中找到了匹配的列（忽略大小写），则使用其值
           if (originalInputKey) {

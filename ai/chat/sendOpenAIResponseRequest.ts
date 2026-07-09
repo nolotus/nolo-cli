@@ -458,7 +458,7 @@ export const sendOpenAIResponseRequest = async ({
         bodyData: requestBody,
         currentServer: selectRuntimeCurrentServer(getState() as RootState),
         signal,
-        token,
+        token: token ?? "",
       });
       logQuickChatPerfStage(quickChatPerfStartedAt, "openai-response-fetch-response", {
         ok: response.ok,
@@ -699,6 +699,7 @@ export const sendOpenAIResponseRequest = async ({
         throw error;
       }
     }
+    return buildMeta(false, false, null);
   } catch (error: any) {
     state.content +=
       error?.name === "AbortError"

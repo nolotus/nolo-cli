@@ -126,7 +126,7 @@ export async function addTableRowFunc(
     // 兜底：禁止传空对象 {}，要求至少提供一个字段
     if (Object.keys(values).length === 0) {
         const knownCols = currentTable
-            ? currentTable.columns.map((c) => c.name).join(", ") || "(无列定义)"
+            ? currentTable.columns.map((c: any) => c.name).join(", ") || "(无列定义)"
             : "(当前表字段未知)";
 
         throw new Error(
@@ -143,7 +143,7 @@ export async function addTableRowFunc(
         currentTable.tenantId === tenantId &&
         currentTable.tableId === tableId
     ) {
-        const allowedColumns = new Set(currentTable.columns.map((c) => c.name));
+        const allowedColumns = new Set(currentTable.columns.map((c: any) => c.name));
 
         sanitizedValues = {};
         ignoredColumns = [];
@@ -161,7 +161,7 @@ export async function addTableRowFunc(
             Object.keys(values).length > 0
         ) {
             const knownCols =
-                currentTable.columns.map((c) => c.name).join(", ") || "(无列定义)";
+                currentTable.columns.map((c: any) => c.name).join(", ") || "(无列定义)";
 
             throw new Error(
                 `addTableRow 失败：提供的字段名都不在当前表中。\n` +

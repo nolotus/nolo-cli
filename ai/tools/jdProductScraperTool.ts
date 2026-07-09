@@ -513,7 +513,7 @@ function collectDesktopDetailSpecifications(html: string): Record<string, string
   for (const match of html.matchAll(
     /<strong[^>]*>([\s\S]*?)<\/strong>\s*<span[^>]*>([\s\S]*?)<\/span>/gi
   )) {
-    addSpec(specs, htmlToText(match[2]), htmlToText(match[1]));
+    addSpec(specs, htmlToText(match[2]) ?? "", htmlToText(match[1]));
   }
 
   for (const row of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
@@ -775,13 +775,13 @@ function decodeHtmlEntities(value: string): string | undefined {
 }
 
 function collectImages(product: any, item: any): string[] {
-  const values = [
+  const values: string[] = [
     product.imageurl,
     ...(Array.isArray(item.image) ? item.image : []),
     ...(Array.isArray(product.image) ? product.image : []),
   ];
 
-  return [...new Set(values.filter(Boolean).map(toJdImageUrl).filter(Boolean))];
+  return [...new Set(values.filter(Boolean).map(toJdImageUrl).filter(Boolean))] as string[];
 }
 
 function normalizeVariants(value: unknown): JdProductParsedData["variants"] {

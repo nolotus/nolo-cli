@@ -239,7 +239,7 @@ export const selectCurrentStepId = (state: RootState): string | null =>
 export const selectCurrentStepDetails = (state: RootState): Step | null => {
   if (!state.plan.currentStep) return null;
   return (
-    state.plan.steps.find((step) => step.id === state.plan.currentStep) || null
+    state.plan.steps.find((step: Step) => step.id === state.plan.currentStep) || null
   );
 };
 
@@ -252,8 +252,8 @@ export const selectPlanStats = (state: RootState): PlanSliceState["stats"] =>
 
 // 新增：获取待执行的步骤
 export const selectPendingSteps = (state: RootState): Step[] =>
-  state.plan.steps.filter((s) => s.status === "pending");
+  state.plan.steps.filter((s: Step) => s.status === "pending");
 
 // 新增：获取已完成的步骤
 export const selectCompletedSteps = (state: RootState): Step[] =>
-  state.plan.steps.filter((s) => s.status === "completed");
+  state.plan.steps.filter((s: Step) => s.status === "completed");

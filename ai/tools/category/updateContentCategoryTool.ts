@@ -53,7 +53,7 @@ export async function updateContentCategoryFunc(
   }
 
   try {
-    const updatedId = await dispatch(
+    const updatedId = await (dispatch as any)(
       updateContentCategory({
         spaceId,
         contentId: args.contentId,
@@ -61,11 +61,7 @@ export async function updateContentCategoryFunc(
       })
     ).unwrap();
 
-    const rawData = {
-      success: true,
-      id: updatedId,
-      categoryId: args.categoryId || undefined,
-    };
+    const rawData = { success: true as const, id: updatedId, categoryId: args.categoryId || undefined };
     const displayData = `内容 ${updatedId} 的分类已更新为「${args.categoryId ?? "未分类"}」。`;
     return { rawData, displayData };
   } catch (err: any) {

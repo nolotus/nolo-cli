@@ -66,8 +66,8 @@ export const selectWorkflowSteps = (state: RootState) => state.workflow.steps;
 export const selectWorkflowTitle = (state: RootState) => state.workflow.title;
 export const selectWorkflowStats = (state: RootState) => state.workflow.stats;
 export const selectPendingSteps = (state: RootState) =>
-  state.workflow.steps.filter((s) => s.status === "pending");
+  state.workflow.steps.filter((s: WorkflowStepState) => s.status === "pending");
 export const selectCompletedSteps = (state: RootState) =>
-  state.workflow.steps.filter((s) => s.status === "completed");
+  state.workflow.steps.filter((s: WorkflowStepState) => s.status === "completed");
 
 export default workflowSlice.reducer;

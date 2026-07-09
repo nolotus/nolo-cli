@@ -41,13 +41,13 @@ export interface ToolRun {
   input?: any;
 }
 
-const toolRunAdapter = createEntityAdapter<ToolRun>({
-  selectId: (run) => run.id,
+const toolRunAdapter = createEntityAdapter<ToolRun, string>({
+  selectId: (run: ToolRun) => run.id,
   sortComparer: (a, b) => a.startedAt - b.startedAt,
 });
 
 export interface ToolRunSliceState {
-  runs: EntityState<ToolRun>;
+  runs: EntityState<ToolRun, string>;
 }
 
 const initialState: ToolRunSliceState = {
@@ -277,6 +277,7 @@ export const executeToolRun = createAsyncThunk(
         const userId = latestState.auth?.currentUser?.userId;
         if (userId) {
           const { fetchUserSpaceMemberships } = await import("../../create/space/spaceSlice");
+          // @ts-expect-error dynamic import callability
           await thunkApi.dispatch(fetchUserSpaceMemberships(userId) as any);
         }
       }

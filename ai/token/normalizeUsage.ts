@@ -32,27 +32,40 @@ const readNestedTokenCount = (
   return finiteTokenCount(cursor);
 };
 
-/**
- * 规范化 usage 数据
- */
+const readFiniteNumberField = (
+  usage: unknown,
+  field: string
+): number | undefined => {
+  if (!usage || typeof usage !== "object") return undefined;
+  if (!(field in usage)) return undefined;
+  const candidate = (usage as Record<string, unknown>)[field];
+  if (typeof candidate !== "number" || !Number.isFinite(candidate)) {
+    return undefined;
+  }
+  return candidate;
+};
+
+const readCostInUsdTicks = (usage: unknown): number | undefined =>
+  readFiniteNumberField(usage, "cost_in_usd_ticks");
+
 export const normalizeUsage = (usage: RawUsage): NormalizedUsage => {
   const inputTokens =
     "input_tokens" in usage
-      ? usage.input_tokens
+      ? (usage.input_tokens ?? 0)
       : "prompt_tokens" in usage
         ? usage.prompt_tokens
         : 0;
 
   const outputTokens =
     "output_tokens" in usage
-      ? usage.output_tokens
+      ? (usage.output_tokens ?? 0)
       : "completion_tokens" in usage
         ? usage.completion_tokens
         : 0;
 
   const cacheCreationInputTokens =
     "cache_creation_input_tokens" in usage
-      ? usage.cache_creation_input_tokens
+      ? (usage.cache_creation_input_tokens ?? 0)
       : "prompt_cache_miss_tokens" in usage
         ? usage.prompt_cache_miss_tokens
         : 0;
@@ -67,8 +80,19 @@ export const normalizeUsage = (usage: RawUsage): NormalizedUsage => {
   // ✅ 如果 provider 返回 usage.cost，则先原样透传；
   // 后续由 calculatePrice 按各 provider 的账单单位再做换算。
   let cost = 0;
-  if ("cost" in usage && typeof (usage as any).cost === "number") {
-    cost = (usage as any).cost;
+  const providedCost = readFiniteNumberField(usage, "cost");
+  if (providedCost !== undefined) {
+    cost = providedCost;
+  }
+
+  // xAI returns cost_in_usd_ticks (1 tick = 1e-10 USD). It reflects the
+  // actual billed amount (includes reasoning tokens and any cache
+  // discounts). Only apply it when the caller did not already supply a
+  // `cost` value, to avoid silently overwriting a caller-converted value
+  // in a different unit (e.g. credits).
+  const xaiTicks = readCostInUsdTicks(usage);
+  if (xaiTicks !== undefined && providedCost === undefined) {
+    cost = xaiTicks / 1e10;
   }
 
   const billingProvider =
@@ -120,5 +144,6 @@ export const normalizeUsage = (usage: RawUsage): NormalizedUsage => {
       ? { billing_service_tier: billingServiceTier }
       : {}),
     ...(billingEstimated ? { billing_estimated: true } : {}),
+    ...(xaiTicks !== undefined ? { cost_in_usd_ticks: xaiTicks } : {}),
   };
 };

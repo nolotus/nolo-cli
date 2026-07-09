@@ -6,7 +6,7 @@ import { openAIModels } from "../../integrations/openai/models";
 import { openrouterModels } from "../llm/openrouterModels";
 import { deepinfraModels } from "../llm/deepinfra";
 import { vultrModels } from "../llm/vultr";
-// import { xaiModels } from "../../integrations/xai/models";
+import { xaiModels } from "../../integrations/xai/models";
 import './fireworks'
 import type { Model } from "./types";
 import type { Agent } from "../../app/types";
@@ -49,6 +49,7 @@ const MODEL_MAP = {
 
 const MODEL_LOOKUP_MAP = {
   anthropic: anthropicModels,
+  xai: xaiModels,
   ...MODEL_MAP,
 } as const;
 

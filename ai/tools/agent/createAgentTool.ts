@@ -375,7 +375,7 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
         frequency_penalty,
         presence_penalty,
         max_tokens,
-        reasoning_effort,
+        reasoning_effort: reasoning_effort ?? undefined,
 
         whitelist: [],
     };
@@ -455,7 +455,7 @@ export async function createAgentToolFunc(
         if (notFound.length > 0) {
             // 如果有找不到的 Space，生成详细错误提示，列出可用 Space
             const availableList = allSpaces
-                .map((s) => `- ${s.spaceName} (ID: ${s.spaceId})`)
+                .map((s: any) => `- ${s.spaceName} (ID: ${s.spaceId})`)
                 .join("\n");
             throw new Error(
                 `无法找到以下 Space: ${notFound.join(", ")}。\n` +

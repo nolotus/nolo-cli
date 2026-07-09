@@ -350,26 +350,30 @@ const calculateOpenRouterFallbackCost = (
   return calculateSimpleCost(resolvedPrice, usage, externalPrice);
 };
 
-// OpenRouter usage.cost 是按其账户 credit（USD 基准）返回，
-// OpenRouter belongs to the non-GPT/non-Claude bucket: 1 USD = 7 credits.
-const OPENROUTER_COST_MULTIPLIER = 7;
+// Both OpenRouter and xAI report per-request cost in their usage payload.
+// OpenRouter usage.cost is in USD; xAI usage.cost is converted from
+// cost_in_usd_ticks in normalizeUsage. In this billing bucket
+// (non-GPT / non-Claude) 1 USD = 7 credits. If either provider's
+// multiplier diverges, split this into OPENROUTER_COST_MULTIPLIER and
+// XAI_COST_MULTIPLIER and add a per-case switch before the helper call.
+const API_REPORTED_COST_MULTIPLIER = 7;
 
-const calculateOpenRouterCost = (usage: Usage): CostBreakdown => {
+const zeroCostBreakdown = (): CostBreakdown => ({
+  regular: 0,
+  charge: 0,
+  details: {
+    inputCost: 0,
+    outputCost: 0,
+    cachingWriteCost: 0,
+    cachingReadCost: 0,
+  },
+});
+
+const calculateApiReportedCost = (usage: Usage): CostBreakdown => {
   if (!usage || typeof usage.cost !== "number" || usage.cost <= 0) {
-    return {
-      regular: 0,
-      charge: 0,
-      details: {
-        inputCost: 0,
-        outputCost: 0,
-        cachingWriteCost: 0,
-        cachingReadCost: 0,
-      },
-    };
+    return zeroCostBreakdown();
   }
-
-  const regular = usage.cost * OPENROUTER_COST_MULTIPLIER;
-
+  const regular = usage.cost * API_REPORTED_COST_MULTIPLIER;
   return {
     regular,
     charge: regular,
@@ -428,25 +432,29 @@ const calculateBasicCost = (
 
     case "anthropic":
       return calculateAnthropicCost(resolvedPrice, usage, externalPrice);
-
     case "google":
       if (model.name.includes("gemini-3")) {
         return calculateAnthropicCost(resolvedPrice, usage, externalPrice);
       }
       return calculateSimpleCost(resolvedPrice, usage, externalPrice);
-
     case "openrouter": {
-      const orCost = calculateOpenRouterCost(usage);
-      if (orCost.regular > 0) return orCost;
+      const reported = calculateApiReportedCost(usage);
+      if (reported.regular > 0) return reported;
       return calculateOpenRouterFallbackCost(
         resolvedPrice,
         usage,
         externalPrice
       );
     }
-
+    case "xai": {
+      // xAI returns cost_in_usd_ticks in usage. normalizeUsage already
+      // converted to USD and stored it in usage.cost (same multiplier as
+      // OpenRouter: 1 USD = 7 credits in this bucket).
+      const reported = calculateApiReportedCost(usage);
+      if (reported.regular > 0) return reported;
+      return calculateSimpleCost(resolvedPrice, usage, externalPrice);
+    }
     case "mistral":
-    case "xai":
     case "fireworks":
     default:
       return calculateSimpleCost(resolvedPrice, usage, externalPrice);
@@ -456,7 +464,7 @@ const calculateBasicCost = (
 const calculatePayDistribution = (
   costs: CostBreakdown,
   externalPrice?: ExternalPrice,
-  sharingLevel: "default" | "split" | "full"
+  sharingLevel: "default" | "split" | "full" = "default"
 ): Record<string, number> => {
   const pay: Record<string, number> = {};
 
@@ -508,7 +516,7 @@ export const calculatePrice = ({
   // 用零成本的虚拟 model 代替，让 calculateBasicCost 正常走 externalPrice 分支。
   let model: ReturnType<typeof getModelConfig>;
   try {
-    model = getModelConfig(provider, modelName);
+    model = getModelConfig(provider as any, modelName);
   } catch {
     const zeroCostModel: Model = {
       name: modelName,
@@ -529,7 +537,7 @@ export const calculatePrice = ({
   const costs = calculateBasicCost(
     model,
     usage,
-    provider,
+    provider || "custom",
     externalPrice,
     billingServiceTier
   );

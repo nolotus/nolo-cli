@@ -55,7 +55,7 @@ async function readRemoteRecord(args: {
   const query = args.includeDeleted ? "?includeDeleted=true" : "";
   const response = await fetch(
     `${serverBase}/api/v1/db/read/${encodeURIComponent(args.dbKey)}${query}`,
-    { headers: authHeaders(args.token) }
+    { headers: authHeaders(args.token) } as RequestInit
   );
   if (!response.ok) return null;
   const payload = await response.json().catch(() => null);
@@ -84,7 +84,7 @@ async function queryRemoteUserRecords(args: {
         type: args.type,
         ...(args.subjectRef ? { subjectRef: args.subjectRef } : {}),
       }),
-    }
+    } as RequestInit
   );
   if (!response.ok) return [];
   const payload = await response.json().catch(() => null);
@@ -307,7 +307,7 @@ export async function readDialogFunc(args: any, thunkApi: any): Promise<ToolResu
         ...authHeaders(runtime.currentToken),
       },
       body: JSON.stringify({ dialogId: resolved.dialogId, limit }),
-    }).catch(() => null);
+    } as RequestInit).catch(() => null);
     if (response?.ok) {
       const payload = await response.json().catch(() => []);
       messages = Array.isArray(payload) ? payload : [];
@@ -549,7 +549,7 @@ export async function listSpacesFunc(_args: any, thunkApi: any): Promise<ToolRes
         ...authHeaders(runtime.currentToken),
       },
       body: JSON.stringify({ userId: runtime.currentUserId }),
-    }).catch(() => null);
+    } as RequestInit).catch(() => null);
     if (response?.ok) {
       const memberships = await response.json().catch(() => []);
       if (Array.isArray(memberships)) {

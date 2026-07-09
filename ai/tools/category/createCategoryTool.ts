@@ -46,7 +46,7 @@ export async function createCategoryFunc(
   const name = args.name.trim() || "新分类";
 
   try {
-    const { updatedSpaceData } = await dispatch(
+    const { updatedSpaceData } = await (dispatch as any)(
       addCategory({ spaceId, name })
     ).unwrap();
 
@@ -56,7 +56,7 @@ export async function createCategoryFunc(
         (id) => updatedSpaceData.categories[id]?.name === name
       ) || "";
 
-    const rawData = { success: true, id: newCategoryId, name };
+    const rawData = { success: true as const, id: newCategoryId, name };
     const displayData = `分类「${name}」已成功创建。`;
     return { rawData, displayData };
   } catch (error: any) {

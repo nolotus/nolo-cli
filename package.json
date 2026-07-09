@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.1.51",
+  "version": "0.1.52",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -24,6 +24,10 @@
     "agentRecordCommands.ts",
     "agentRecordHelpers.ts",
     "agentRunCommand.ts",
+    "agentRunArgs.ts",
+    "agentRunControl.ts",
+    "agentRunLocalWorkspace.ts",
+    "agentRunPrompts.ts",
     "authCommands.ts",
     "cliCommandAdapters.ts",
     "cliCommandFactories.ts",
@@ -144,11 +148,7 @@
     "docCommandShared.ts",
     "dialogAttachmentCleanup.ts",
     "agentEmailCommands.ts",
-    "agentRunControl.ts",
     "agentEmailRpc.ts",
-    "agentRunArgs.ts",
-    "agentRunPrompts.ts",
-    "agentRunLocalWorkspace.ts",
     "localRuntimeAuthority.ts",
     "cli/commandRegistry.ts",
     "cli/client/profileConfig.ts",
@@ -773,7 +773,7 @@
     "serpapi": "^2.2.1"
   },
   "optionalDependencies": {
-    "nolo-cli-darwin-arm64": "0.1.51"
+    "nolo-cli-darwin-arm64": "0.1.52"
   },
   "devDependencies": {
     "bun-types": "latest"

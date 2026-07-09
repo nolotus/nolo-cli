@@ -307,16 +307,16 @@ export const startPersonalizationDialog = async ({
   );
 
   await dispatch(
-    prepareAndPersistMessage({
+    (prepareAndPersistMessage as any)({
       message: {
         role: "tool",
         toolName: uiAskChoiceFunctionSchema.name,
         cybotKey: noloAgentId,
-        content: toolResult.rawData,
+        content: toolResult.rawData as any,
         displayData: toolResult.displayData,
       },
       dialogConfig: {
-        id: dialogKey.split("-").at(-1),
+        id: dialogKey.split("-").at(-1) ?? "",
         dbKey: dialogKey,
       },
     })

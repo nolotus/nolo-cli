@@ -70,7 +70,8 @@ export async function createDocFunc(
   args: CreateDocToolArgs,
   thunkApi: any
 ): Promise<{ rawData: unknown; displayData: string }> {
-  const { dispatch, getState } = thunkApi;
+  const { getState } = thunkApi;
+  const dispatch = thunkApi.dispatch.bind(thunkApi) as any;
   const state = getState() as RootState;
 
   console.log("[createDocTool] Received args:", args);
@@ -97,8 +98,8 @@ export async function createDocFunc(
       categoryId,
       content,
     });
-    const id = await (dispatch as any)(
-      createDoc({ title, spaceId, categoryId, content })
+    const id = await dispatch(
+      (createDoc as any)({ title, spaceId, categoryId, content })
     ).unwrap();
 
     console.log("[createDocTool] createDoc success, id:", id);

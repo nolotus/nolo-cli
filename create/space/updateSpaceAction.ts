@@ -1,7 +1,11 @@
 import { selectUserId } from "../../auth/authSlice";
 import { read, patch } from "../../database/dbSlice";
 import { createSpaceKey } from "../space/spaceKeys";
-import type { SpaceMember, SpaceVisibility, SpaceData } from "../../app/types";
+import type {
+  SpaceMember,
+  SpaceVisibility,
+  SpaceData,
+} from "../../app/types";
 import type { AppDispatch, RootState } from "../../app/store";
 
 export const updateSpaceAction = async (
@@ -27,8 +31,16 @@ export const updateSpaceAction = async (
     })).unwrap();
   } catch (readError) {
     throw new Error(
-      `无法加载空间数据: ${spaceId}, 原因: ${readError.message || "未知错误"}`
+      `无法加载空间数据: ${spaceId}, 原因: ${readError instanceof Error ? readError.message : String(readError)}`
     );
+  }
+
+  if (!spaceData) {
+    throw new Error(`空间不存在: ${spaceId}`);
+  }
+
+  if (!userId) {
+    throw new Error("用户未登录，无法更新空间设置。");
   }
 
   if (!spaceData.members || !spaceData.members.includes(userId)) {
@@ -71,7 +83,7 @@ export const updateSpaceAction = async (
       })
     ).unwrap();
   } catch (patchError) {
-    throw new Error(`更新空间设置失败: ${patchError.message || "未知错误"}`);
+    throw new Error(`更新空间设置失败: ${patchError instanceof Error ? patchError.message : String(patchError)}`);
   }
 
   // 如果更新了名称，同步更新当前用户的 space-member 数据

@@ -1,5 +1,5 @@
 import type { ULID } from "../../../app/types";
-import type { MemberRole } from "../../../app/types";
+import { MemberRole } from "../../../app/types";
 import type { SpaceData } from "../../../app/types";
 import { selectUserId } from "../../../auth/authSlice";
 import { createSpaceKey } from "../../space/spaceKeys";
@@ -31,6 +31,9 @@ export const addMemberAction = async (
 
   if (!spaceData) {
     throw new Error("Space not found");
+  }
+  if (!currentUserId) {
+    throw new Error("User is not logged in.");
   }
   // 检查当前用户是否为该空间的成员
   if (!spaceData.members.includes(currentUserId)) {

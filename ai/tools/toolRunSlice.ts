@@ -7,7 +7,7 @@ import {
   createAsyncThunk,
   createSelector,
 } from "@reduxjs/toolkit";
-import type { RootState } from "../../app/store";
+
 import type { ToolBehavior, ToolInteraction } from ".";
 import { getToolResultErrorData } from "./toolResultError";
 
@@ -211,20 +211,20 @@ export const {
 export default toolRunSlice.reducer;
 
 // ===== selectors =====
-const selectors = toolRunAdapter.getSelectors<RootState>(
+const selectors = toolRunAdapter.getSelectors<any>(
   (state) => state.toolRun.runs
 );
 
 export const selectAllToolRuns = selectors.selectAll;
 
 export const selectToolRunsByMessageId = createSelector(
-  [selectors.selectAll, (_state: RootState, messageId: string) => messageId],
+  [selectors.selectAll, (_state: any, messageId: string) => messageId],
   (runs, messageId) => runs.filter((run) => run.messageId === messageId)
 );
 
 // 按 id 精确获取（导出给组件用）
 export const selectToolRunById = (
-  state: RootState,
+  state: any,
   id: string
 ): ToolRun | undefined => selectors.selectById(state, id);
 
@@ -232,7 +232,7 @@ export const selectToolRunById = (
 export const executeToolRun = createAsyncThunk(
   "toolRun/executeToolRun",
   async ({ id, inputOverride }: { id: string; inputOverride?: Record<string, unknown> }, thunkApi) => {
-    const state = thunkApi.getState() as RootState;
+    const state = thunkApi.getState() as any;
     const run = selectToolRunById(state, id);
 
     if (!run) {
@@ -273,7 +273,7 @@ export const executeToolRun = createAsyncThunk(
       );
 
       if (run.toolName === "deleteSpaces") {
-        const latestState = thunkApi.getState() as RootState;
+        const latestState = thunkApi.getState() as any;
         const userId = latestState.auth?.currentUser?.userId;
         if (userId) {
           const { fetchUserSpaceMemberships } = await import("../../create/space/spaceSlice");

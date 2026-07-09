@@ -15,9 +15,8 @@ import {
   type EntityState,
 } from "@reduxjs/toolkit";
 import { addReferenceKeysAction } from "../dialog/actions/addReferenceKeysAction";
-import type { RootState } from "../../app/store";
-import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import { DataType } from "../../create/types";
+import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import { remove, write, patch, selectById as selectDbRecordById } from "../../database/dbSlice";
 import type { Message } from "./types";
 import { selectUserId } from "../../auth/authSlice";
@@ -56,7 +55,7 @@ export interface MessageSliceState {
 }
 
 export interface MessageDialogState {
-  msgs: EntityState<Message>;
+  msgs: EntityState<Message, string>;
   firstStreamProcessed: boolean;
   isLoadingInitial: boolean;
   isLoadingOlder: boolean;
@@ -71,7 +70,7 @@ const createSliceWithThunks = buildCreateSlice({
   creators: { asyncThunk: asyncThunkCreator },
 });
 
-const messagesAdapter = createEntityAdapter<Message>({
+const messagesAdapter = createEntityAdapter<Message, string>({
   selectId: (message) => message.id,
   sortComparer: (a, b) => a.id.localeCompare(b.id),
 });
@@ -79,7 +78,7 @@ const messagesAdapter = createEntityAdapter<Message>({
 const GLOBAL_MESSAGE_DIALOG_ID = "__global__";
 
 const createEmptyMessageDialogState = (): MessageDialogState => ({
-  msgs: messagesAdapter.getInitialState(),
+  msgs: messagesAdapter.getInitialState() as EntityState<Message, string>,
   firstStreamProcessed: false,
   isLoadingInitial: false,
   isLoadingOlder: false,
@@ -128,7 +127,7 @@ type DialogScopedStreamingMessage = Partial<Message> & {
 type MessageScopePayload = { dialogId?: string; dialogKey?: string; all?: boolean };
 
 const getLatestUserInputForUnderstanding = (
-  state: RootState,
+  state: any,
   dialogId: string
 ): string | null => {
   const messages = selectAllMsgs(state, dialogId);
@@ -142,7 +141,7 @@ const getLatestUserInputForUnderstanding = (
 };
 
 const getDialogSpaceIdForUnderstanding = (
-  state: RootState,
+  state: any,
   dialogKey?: string
 ): string | undefined => {
   if (!dialogKey) return undefined;
@@ -151,7 +150,7 @@ const getDialogSpaceIdForUnderstanding = (
 };
 
 export const captureUnderstandingFromCompletedUiTurn = async (input: {
-  state: RootState;
+  state: any;
   db?: any;
   agentKey?: string | null;
   dialogId: string;
@@ -184,7 +183,7 @@ export const captureUnderstandingFromCompletedUiTurn = async (input: {
       {
         role: "assistant",
         content: input.assistantText,
-      } as Message,
+      } as any,
     ],
   });
 };
@@ -350,6 +349,12 @@ const setAllMessages = (dialogState: MessageDialogState, messages: Message[]) =>
   dialogState.msgs = messagesAdapter.setAll(dialogState.msgs, messages);
 };
 
+// Lazy accessor for this slice's own actions, used inside thunk bodies below.
+// Referencing `messageSlice` directly in its own initializer creates a type
+// inference cycle (TS7022); this indirection breaks the cycle while thunks
+// still run after the slice is fully constructed.
+let messageActions: any;
+
 export const messageSlice = createSliceWithThunks({
   name: "message",
   initialState,
@@ -378,7 +383,7 @@ export const messageSlice = createSliceWithThunks({
           content: "",
           thinkContent: "",
           ...message,
-        });
+        } as Message);
         dialogState.firstStreamProcessed = true;
         dialogState.lastStreamTimestamp = Date.now();
       }
@@ -542,7 +547,7 @@ export const messageSlice = createSliceWithThunks({
       ) => {
         const { message, dialogConfig } = args;
         const { getState, dispatch, rejectWithValue } = thunkApi;
-        const state = getState() as RootState;
+        const state = getState() as any;
 
         if (!dialogConfig) {
           return rejectWithValue("Missing dialogConfig");
@@ -570,7 +575,7 @@ export const messageSlice = createSliceWithThunks({
           })
         ).catch((err) => console.error("Failed to add refs:", err));
 
-        dispatch(messageSlice.actions.addUserMessage({ ...fullMessage, dialogId }));
+        dispatch(messageActions.addUserMessage({ ...fullMessage, dialogId }));
 
         const { controller, ...messageToWrite } = fullMessage;
         dispatch(
@@ -593,7 +598,7 @@ export const messageSlice = createSliceWithThunks({
         const { dispatch } = thunkApi;
 
         return dispatch(
-          messageSlice.actions.prepareAndPersistMessage({
+          messageActions.prepareAndPersistMessage({
             message: {
               role: "user",
               content: userInput,
@@ -622,10 +627,10 @@ export const messageSlice = createSliceWithThunks({
         },
         thunkApi
       ): Promise<Message[]> => {
-        const { db } = thunkApi.extra;
+        const { db } = (thunkApi.extra as { db: any });
         const { getState, signal, dispatch } = thunkApi;
 
-        const state = getState() as RootState;
+        const state = getState() as any;
         const { currentToken: token, remoteServers } =
           getRuntimeServerContext(state);
 
@@ -644,7 +649,7 @@ export const messageSlice = createSliceWithThunks({
 
         if (earlyReturned) {
           dispatch(
-            messageSlice.actions.setMessages({
+            messageActions.setMessages({
               dialogId,
               messages: validLocalMessages,
               isLoadingInitial: false,
@@ -656,7 +661,7 @@ export const messageSlice = createSliceWithThunks({
           remotePromise
             .then((finalMessages) => {
               dispatch(
-                messageSlice.actions.setMessages({
+                messageActions.setMessages({
                   dialogId,
                   messages: finalMessages.filter(isValidMessage),
                 })
@@ -673,7 +678,7 @@ export const messageSlice = createSliceWithThunks({
 
         // --- Post-fetch check: Resume suspended summary tasks ---
         try {
-          const rootState = getState() as RootState;
+          const rootState = getState() as any;
           const { entities } = rootState.db;
 
           const dialogConfig = Object.values(entities).find(
@@ -783,9 +788,9 @@ export const messageSlice = createSliceWithThunks({
         thunkApi
       ): Promise<{ messages: Message[]; limit: number }> => {
         const { getState, extra, signal } = thunkApi;
-        const { db } = extra;
+        const { db } = extra as { db: any };
 
-        const state = getState() as RootState;
+        const state = getState() as any;
         const { currentToken: token, remoteServers } =
           getRuntimeServerContext(state);
         const messages = (
@@ -851,7 +856,7 @@ export const messageSlice = createSliceWithThunks({
      * 一条流式回复结束
      */
     messageStreamEnd: create.asyncThunk(
-      async (payload: MessageStreamEndPayload, { dispatch, getState, extra }) => {
+      async (payload: MessageStreamEndPayload, { dispatch, getState, extra }: any) => {
         const {
           finalContentBuffer,
           totalUsage,
@@ -922,7 +927,7 @@ export const messageSlice = createSliceWithThunks({
           (!toolCalls || toolCalls.length === 0);
         const inferredActivityCompletionMetadata = shouldInferActivityCompletion
           ? inferAssistantActivityCompletionMetadata({
-              messages: selectAllMsgs(getState() as RootState, dialogId),
+              messages: selectAllMsgs(getState() as any, dialogId) as any,
               finalContent: finalVisibleContent,
             })
           : undefined;
@@ -960,7 +965,7 @@ export const messageSlice = createSliceWithThunks({
 
         if (totalUsage) {
           dispatch(
-            updateTokens({
+            (updateTokens as any)({
               dialogId,
               dialogKey,
               usage: billedUsage,
@@ -969,7 +974,7 @@ export const messageSlice = createSliceWithThunks({
           );
         } else if (agentConfig?.provider && agentConfig.provider !== "custom") {
           dispatch(
-            updateTokens({
+            (updateTokens as any)({
               dialogId,
               dialogKey,
               usage: billedEstimatedUsage,
@@ -989,12 +994,12 @@ export const messageSlice = createSliceWithThunks({
           serializeMessageContent(finalVisibleContent, "[图片]") ?? "";
 
         if (titleEligibleContent.trim() !== "") {
-          dispatch(updateDialogTitle({ dialogKey, agentConfig }));
+          dispatch((updateDialogTitle as any)({ dialogKey, agentConfig }));
         }
 
         if (textContent.trim() !== "") {
           const messagesForSummary = [
-            ...selectAllMsgs(getState() as RootState, dialogId),
+            ...selectAllMsgs(getState() as any, dialogId),
             finalMessage,
           ];
 
@@ -1017,11 +1022,11 @@ export const messageSlice = createSliceWithThunks({
           dispatch(addReferenceKeysAction({
             content: finalVisibleContent,
             dialogKey
-          })).catch(err => console.error("Failed to add assistant refs:", err));
+          })).catch((err: unknown) => console.error("Failed to add assistant refs:", err));
         }
 
         await captureUnderstandingFromCompletedUiTurn({
-          state: getState() as RootState,
+          state: getState() as any,
           db: extra?.db,
           agentKey: agentConfig?.dbKey,
           dialogId,
@@ -1084,12 +1089,12 @@ export const messageSlice = createSliceWithThunks({
 
     deleteMessage: create.asyncThunk(
       async (dbKey: string, { dispatch, getState }) => {
-        const state = getState() as RootState;
+        const state = getState() as any;
         const dialogId = findDialogIdByMessageDbKey(state.message, dbKey);
         const dialogState = dialogId
           ? state.message.dialogStateById[dialogId]
           : undefined;
-        const entities = dialogState?.msgs.entities ?? {};
+        const entities = (dialogState?.msgs.entities ?? {}) as Record<string, Message | undefined>;
 
         // 找到被删除的这条 message
         const msg = Object.values(entities).find((m) => m?.dbKey === dbKey);
@@ -1178,7 +1183,7 @@ export const messageSlice = createSliceWithThunks({
         const { dispatch, getState, rejectWithValue } = thunkApi;
 
         try {
-          const state = getState() as RootState;
+          const state = getState() as any;
           const dialogKey = args.dialogKey ?? state.dialog?.currentDialogKey;
           if (!dialogKey) {
             throw new Error("editUserMessageAndReplay: dialogKey is required.");
@@ -1212,7 +1217,7 @@ export const messageSlice = createSliceWithThunks({
           const trailingMessages = messages.slice(targetIndex + 1);
 
           dispatch(
-            messageSlice.actions.updateToolMessage({
+            messageActions.updateToolMessage({
               id: targetMessage.id,
               dialogId,
               changes: {
@@ -1223,7 +1228,7 @@ export const messageSlice = createSliceWithThunks({
 
           if (trailingMessages.length > 0) {
             dispatch(
-              messageSlice.actions.removeMessagesByIds({
+              messageActions.removeMessagesByIds({
                 dialogId,
                 ids: trailingMessages.map((message) => message.id),
               })
@@ -1295,16 +1300,18 @@ export const messageSlice = createSliceWithThunks({
   },
 });
 
+messageActions = messageSlice.actions;
+
 const dialogMessageSelectors = messagesAdapter.getSelectors<MessageDialogState>(
   (dialogState) => dialogState.msgs
 );
 
 export const { selectCurrentDialogId } = messageSlice.selectors;
 
-export const selectMessageState = (state: RootState) => state.message;
+export const selectMessageState = (state: any) => state.message;
 
 export const selectMessageDialogState = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => getMessageDialogState(state.message, dialogId);
 
@@ -1312,14 +1319,14 @@ export const selectMessageDialogState = (
 // 导致 useSelector 检测到引用变化而无限重渲染
 export const selectAllMsgs = createSelector(
   [
-    (state: RootState, dialogId?: string | null) =>
+    (state: any, dialogId?: string | null) =>
       selectMessageDialogState(state, dialogId),
   ],
   (dialogState) => dialogMessageSelectors.selectAll(dialogState)
 );
 
 export const selectMsgById = (
-  state: RootState,
+  state: any,
   messageId: string,
   dialogId?: string | null
 ) => dialogMessageSelectors.selectById(
@@ -1327,42 +1334,42 @@ export const selectMsgById = (
   messageId
 );
 
-export const selectTotalMsgs = (state: RootState, dialogId?: string | null) =>
+export const selectTotalMsgs = (state: any, dialogId?: string | null) =>
   dialogMessageSelectors.selectTotal(selectMessageDialogState(state, dialogId));
 
 export const selectFirstStreamProcessed = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => selectMessageDialogState(state, dialogId).firstStreamProcessed;
 
 export const selectIsLoadingInitial = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => selectMessageDialogState(state, dialogId).isLoadingInitial;
 
 export const selectIsLoadingOlder = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => selectMessageDialogState(state, dialogId).isLoadingOlder;
 
 export const selectHasMoreOlder = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => selectMessageDialogState(state, dialogId).hasMoreOlder;
 
 export const selectMessageError = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => selectMessageDialogState(state, dialogId).error;
 
 export const selectLastStreamTimestamp = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => selectMessageDialogState(state, dialogId).lastStreamTimestamp;
 
 export const selectMessagesLoadingState = createSelector(
   [
-    (state: RootState, dialogId?: string | null) =>
+    (state: any, dialogId?: string | null) =>
       selectMessageDialogState(state, dialogId),
   ],
   (dialogState) => ({
@@ -1377,7 +1384,7 @@ export const selectMessagesLoadingState = createSelector(
  * 是否存在正在流式生成的消息（用于标题 / 状态展示）
  */
 export const selectHasStreamingMessage = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => selectAllMsgs(state, dialogId).some((m) => m.isStreaming);
 
@@ -1385,7 +1392,7 @@ export const selectHasStreamingMessage = (
  * 最后一条 assistant 消息（用于通知）
  */
 export const selectLastAssistantMessage = (
-  state: RootState,
+  state: any,
   dialogId?: string | null
 ) => {
   const msgs = selectAllMsgs(state, dialogId);

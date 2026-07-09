@@ -32,7 +32,7 @@ const referencesArray = (value: unknown): GuidedAgentReferenceChoice[] =>
         .filter((item): item is Record<string, unknown> =>
           !!item && typeof item === "object" && !Array.isArray(item)
         )
-        .map((item) => ({
+        .map((item): GuidedAgentReferenceChoice => ({
           dbKey: trim(item.dbKey),
           title: trim(item.title),
           type: item.type === "instruction" ? "instruction" : "knowledge",
@@ -161,7 +161,8 @@ export const prepareAgentDraftToolFunctionSchema = {
 };
 
 export async function prepareAgentDraftToolFunc(
-  args: PrepareAgentDraftToolArgs
+  args: PrepareAgentDraftToolArgs,
+  _thunkApi?: any
 ): Promise<{
   rawData: { draft: GuidedAgentDraft; createUrl: string };
   displayData: string;

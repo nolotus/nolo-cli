@@ -63,7 +63,7 @@ export async function queryContentsByCategoryFunc(
     list = list.filter((c: any) => (c.title ?? "").toLowerCase().includes(kw));
   }
 
-  const rawData = { success: true, contents: list };
+  const rawData = { success: true as const, contents: list };
   const displayData = `共查询到 ${list.length} 条内容。`;
   return { rawData, displayData };
 }

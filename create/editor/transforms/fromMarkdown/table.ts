@@ -60,7 +60,7 @@ function createSlateCell(
   const slateCell: SlateTableCell = {
     type: "table-cell",
     children: slateCellChildren,
-  };
+  } as SlateTableCell;
 
   if (isHeader) {
     slateCell.header = true;
@@ -126,5 +126,5 @@ export function transformTable(node: MdastTable): SlateTable | null {
     type: "table",
     columns,
     children: slateRows,
-  };
+  } as SlateTable;
 }

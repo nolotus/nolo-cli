@@ -39,7 +39,7 @@ export const syncAppRecord =
     // Keep this separate from generic content CRUD until app local-dev/deploy
     // ownership is redesigned in the later app phase.
 
-    const normalizedRecord = {
+    const normalizedRecord: Record<string, any> = {
       ...appRecord,
       dbKey: appKey,
       type: DataType.APP,

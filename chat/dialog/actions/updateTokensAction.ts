@@ -64,7 +64,7 @@ const updateStats = async (
   data: TokenUsageData,
   existingStats: DayStats | null,
   key: string,
-  thunkApi
+  thunkApi: any
 ) => {
   try {
     const stats = existingStats ?? {
@@ -90,11 +90,11 @@ const updateStats = async (
       total: updateStatsCounter(data, stats.total),
       models: {
         ...cleanModels,
-        [modelName]: updateStatsCounter(data, cleanModels[modelName]),
+        [modelName]: updateStatsCounter(data, (cleanModels as any)[modelName]),
       },
       providers: {
         ...stats.providers,
-        [providerName]: updateStatsCounter(data, stats.providers[providerName]),
+        [providerName]: updateStatsCounter(data, (stats.providers as any)[providerName]),
       },
     };
 
@@ -108,7 +108,7 @@ const updateStats = async (
     return updatedStats;
   } catch (error) {
     logger.error(
-      { key, userId: data.userId, error: error.message },
+      { key, userId: data.userId, error: (error as any).message },
       "Failed to update token stats"
     );
     toast.error("Failed to update token stats");
@@ -116,9 +116,9 @@ const updateStats = async (
   }
 };
 
-export const saveTokenUsage = async (data: TokenUsageData, thunkApi) => {
+export const saveTokenUsage = async (data: TokenUsageData, thunkApi: any) => {
   const dateKey = format(Date.now(), "yyyy-MM-dd");
-  const tokenDayStatsKey = createTokenStatsKey(data.userId, dateKey);
+  const tokenDayStatsKey = createTokenStatsKey(data.userId ?? "", dateKey);
   try {
     let currentStats = null;
     try {
@@ -141,10 +141,10 @@ export const saveTokenUsage = async (data: TokenUsageData, thunkApi) => {
       id: ulid(Date.now()),
       record: updatedStats,
     };
-  } catch (error) {
+  } catch (error: any) {
     logger.error(
       {
-        key,
+        key: tokenDayStatsKey,
         userId: data.userId,
         error: error.message,
         tokenData: {
@@ -162,8 +162,8 @@ export const saveTokenUsage = async (data: TokenUsageData, thunkApi) => {
 };
 
 export const updateTokensAction = async (
-  { dialogId, dialogKey, usage: usageRaw, agentConfig },
-  thunkApi
+  { dialogId, dialogKey, usage: usageRaw, agentConfig }: any,
+  thunkApi: any
 ) => {
   const { currentUser } = thunkApi.getState().auth;
   const timestamp = Date.now();
@@ -179,12 +179,12 @@ export const updateTokensAction = async (
   const { usage, tokenData } = prepared;
   const result = { cost: tokenData.cost, pay: tokenData.pay };
 
-  const persistedTokenData: TokenUsageData = {
+  const persistedTokenData = {
     ...tokenData,
     type: DataType.TOKEN,
     id: ulid(timestamp),
     dateKey: format(timestamp, "yyyy-MM-dd"),
-  };
+  } as TokenUsageData;
 
   const record = createTokenRecord(persistedTokenData, {
     cost: result.cost,
@@ -193,7 +193,7 @@ export const updateTokensAction = async (
   });
 
 
-  await saveTokenRecord(persistedTokenData, record, thunkApi);
+  await saveTokenRecord(persistedTokenData, record as any, thunkApi);
   await saveTokenUsage(persistedTokenData, thunkApi);
 
   if (result.cost > 0) {

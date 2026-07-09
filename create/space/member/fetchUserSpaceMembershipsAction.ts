@@ -1,7 +1,7 @@
 // 文件路径: app/spaces/fetchUserSpaceMembershipsAction.ts
 
 import type { AppThunkApi } from "../../../app/store";
-import type { SpaceMemberWithSpaceInfo } from "../../../app/types";
+import { MemberRole, type SpaceMemberWithSpaceInfo } from "../../../app/types";
 import { createSpaceKey, normalizeSpaceId } from "../../space/spaceKeys";
 import {
   fetchRemoteSpace,
@@ -174,13 +174,16 @@ const recoverMembershipsFromContentSpaces = async ({
           typeof remoteSpace?.name === "string" && remoteSpace.name.trim()
             ? remoteSpace.name
             : spaceId,
-        role: remoteSpace?.ownerId === userId ? "owner" : "member",
+        role:
+          remoteSpace?.ownerId === userId
+            ? MemberRole.OWNER
+            : MemberRole.MEMBER,
         joinedAt:
           remoteSpace?.updatedAt ??
           remoteSpace?.createdAt ??
           Date.now(),
         sourceServer: server,
-      } as MembershipWithSource);
+      } as unknown as MembershipWithSource);
       break;
     }
   }

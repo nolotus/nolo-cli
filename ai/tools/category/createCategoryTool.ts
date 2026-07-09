@@ -35,7 +35,8 @@ export async function createCategoryFunc(
   rawData: { success: true; id: string; name: string };
   displayData: string;
 }> {
-  const { dispatch, getState } = thunkApi;
+  const { getState } = thunkApi;
+  const dispatch = thunkApi.dispatch.bind(thunkApi) as any;
   const state = getState() as RootState;
   const spaceId = selectCurrentSpaceId(state);
 
@@ -47,7 +48,7 @@ export async function createCategoryFunc(
 
   try {
     const { updatedSpaceData } = await (dispatch as any)(
-      addCategory({ spaceId, name })
+      (addCategory as any)({ spaceId, name })
     ).unwrap();
 
     // 从 updatedSpaceData 中找到新分类的 ID

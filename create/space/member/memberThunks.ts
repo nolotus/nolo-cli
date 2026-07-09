@@ -1,11 +1,13 @@
 // create/space/member/memberThunks.ts
-import { asyncThunkCreator } from "@reduxjs/toolkit";
-import type { SpaceState } from "../spaceSlice"; // Adjust path
+import type { SpaceState } from "../types";
 import { fetchUserSpaceMembershipsAction } from "./fetchUserSpaceMembershipsAction";
 import { addMemberAction } from "./addMemberAction";
 import { removeMemberAction } from "./removeMemberAction";
 
-type Create = ReturnType<typeof asyncThunkCreator<SpaceState>>;
+type Create = {
+  asyncThunk: (...args: any[]) => any;
+  reducer: (...args: any[]) => any;
+};
 
 /**
  * 创建与成员相关的 Async Thunks
@@ -15,14 +17,14 @@ export const createMemberThunks = (create: Create) => ({
   fetchUserSpaceMemberships: create.asyncThunk(
     fetchUserSpaceMembershipsAction,
     {
-      pending: (state) => {
+      pending: (state: SpaceState) => {
         state.loading = true;
       },
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         state.memberSpaces = action.payload;
         state.loading = false;
       },
-      rejected: (state, action) => {
+      rejected: (state: SpaceState, action: any) => {
         state.loading = false;
         state.error = action.error.message;
       },
@@ -30,7 +32,7 @@ export const createMemberThunks = (create: Create) => ({
   ),
 
   addMember: create.asyncThunk(addMemberAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       if (state.currentSpaceId === action.payload.spaceId) {
         state.currentSpace = action.payload.updatedSpaceData;
       }
@@ -38,7 +40,7 @@ export const createMemberThunks = (create: Create) => ({
   }),
 
   removeMember: create.asyncThunk(removeMemberAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       if (state.currentSpaceId === action.payload.spaceId) {
         state.currentSpace = action.payload.updatedSpaceData;
       }

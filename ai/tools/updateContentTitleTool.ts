@@ -32,7 +32,7 @@ export const updateContentTitleTool = {
  */
 export const updateContentTitleFunc = async (
   args: { contentId: string; title: string },
-  thunkApi: any /* Replace 'any' with your actual ThunkApi type */
+  thunkApi: { dispatch: any; getState: () => any }
 ) => {
   const { dispatch, getState } = thunkApi;
   const state = getState(); // Assuming getState returns RootState
@@ -58,13 +58,13 @@ export const updateContentTitleFunc = async (
     console.log(
       "[updateContentTitleFunc] Dispatching updateContentTitle action..."
     );
-    const updatedContentId = await dispatch(
-      updateContentTitle({
+    const updatedContentId = await (dispatch as (action: any) => { unwrap: () => Promise<any> })(
+      (updateContentTitle as any)({
         spaceId,
         contentId,
-        title: title.trim(), // 确保标题去除首尾空格
+        title: title.trim(),
       })
-    ).unwrap(); // unwrap 会在失败时抛出错误
+    ).unwrap();
 
     console.log(
       `[updateContentTitleFunc] Content title updated successfully. contentId: ${updatedContentId}`

@@ -1,6 +1,6 @@
 // 文件路径: database/actions/readAndWait.ts
 
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 import { fetchFromClientDb, fetchFromServer } from "./common";
 import { readRequestManager } from "./readRequestManager";
 import { scheduleExistingRecordReplication } from "./replication";
@@ -144,12 +144,12 @@ export const readAndWaitAction = async (
         dbKey: string;
         preferredServerOrigin?: string | null;
       },
-  thunkApi: AppThunkApi
+  thunkApi: DbThunkApi
 ): Promise<any> => {
   const dbKey = typeof payload === "string" ? payload : payload.dbKey;
   const preferredServerOrigin =
     typeof payload === "string" ? undefined : payload.preferredServerOrigin;
-  const { db } = thunkApi.extra;
+  const { db } = thunkApi.extra as import("../../app/store").AppExtra;
 
   if (!db) {
     throw new Error(
@@ -157,7 +157,7 @@ export const readAndWaitAction = async (
     );
   }
 
-  const state = thunkApi.getState();
+  const state = thunkApi.getState() as import("../../app/store").RootState;
   const {
     currentToken,
     remoteServers: configuredServers,

@@ -2,6 +2,7 @@ import type {
   AgentRuntimeMessageContent,
   LocalAgentTurnResult,
 } from "../../agent-runtime";
+import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 
 export type DesktopAgentRuntimeTurnResult =
   | {
@@ -47,7 +48,7 @@ function normalizeDesktopAgentRuntimeTurnError(data: any) {
 
 export type DesktopStreamEvent =
   | { type: "delta"; text: string }
-  | { type: "tool"; event: import("../../agent-runtime").LocalAgentToolEvent }
+  | { type: "tool"; event: LocalAgentToolEvent }
   | { type: "done"; result: LocalAgentTurnResult }
   | { type: "error"; error: string };
 

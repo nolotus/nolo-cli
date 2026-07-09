@@ -74,7 +74,7 @@ export const uiAskChoiceFunctionSchema = {
 };
 export async function uiAskChoiceFunc(
     args: any,
-    _thunkApi: AppThunkApi
+    _thunkApi: any
 ): Promise<{
     rawData: {
         type: "ui_ask_choice";

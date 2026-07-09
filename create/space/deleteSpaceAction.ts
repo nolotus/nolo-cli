@@ -35,7 +35,7 @@ type DeleteSpaceArgs =
       strategy?: DeleteSpaceStrategy;
     };
 
-const getCurrentUserId = (state: any): string => selectUserId(state);
+const getCurrentUserId = (state: any): string => selectUserId(state) as string;
 
 const fetchSpaceData = async (
   spaceId: string,
@@ -80,7 +80,7 @@ const deleteAllMembers = async (
       const memberKey = createSpaceKey.member(memberId, spaceId);
       await dispatch(remove(memberKey))
         .unwrap()
-        .catch((err) =>
+        .catch((err: unknown) =>
           console.warn(
             `Failed to delete member ${memberId} for space ${spaceId}:`,
             err
@@ -98,7 +98,7 @@ const deleteCurrentUserMember = async (
   const currentUserMemberKey = createSpaceKey.member(userId, spaceId);
   await dispatch(remove(currentUserMemberKey))
     .unwrap()
-    .catch((err) =>
+    .catch((err: unknown) =>
       console.warn(
         `Failed to delete member key for user ${userId} in space ${spaceId}:`,
         err
@@ -242,6 +242,9 @@ export const deleteSpaceAction = async (
   const { dispatch, getState } = thunkAPI;
   const { spaceId, strategy } = resolveDeleteArgs(input);
   const userId = getCurrentUserId(getState());
+  if (!userId) {
+    throw new Error("User is not logged in.");
+  }
   const spaceData = await fetchSpaceData(spaceId, dispatch);
 
   checkOwnerPermission(spaceData, userId);

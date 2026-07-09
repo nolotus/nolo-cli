@@ -8,7 +8,6 @@ import {
   createSelector,
 } from "@reduxjs/toolkit";
 import { ulid } from "ulid";
-import type { RootState } from "../../app/store";
 import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 
 import {
@@ -174,7 +173,7 @@ export const tableSlice = createSliceWithThunks({
      * 1. 创建表：createTable
      * ------------------------------------*/
     createTable: create.asyncThunk<string, CreateTableArgs | undefined>(
-      createTableAction
+      createTableAction as any
     ),
 
     /* --------------------------------------
@@ -236,7 +235,7 @@ export const tableSlice = createSliceWithThunks({
         const { db } = extra as { db: any };
 
         try {
-          const state = getState() as RootState;
+          const state = getState() as any;
           const { currentToken: token, remoteServers } =
             getRuntimeServerContext(state);
           return await fetchAndCacheTableRows({
@@ -330,10 +329,10 @@ export const tableSlice = createSliceWithThunks({
      * 3.1 删除一行：deleteRow
      * ------------------------------------*/
     deleteRow: create.asyncThunk(
-      async (dbKey: string, { dispatch, getState, rejectWithValue, extra }) => {
+      async (dbKey: string, { dispatch, getState, rejectWithValue, extra }: any) => {
         try {
-          const state = getState() as RootState;
-          const row = state.table.rows.find((item) => item?.dbKey === dbKey);
+          const state = getState() as any;
+          const row = (state.table.rows as any[]).find((item: any) => item?.dbKey === dbKey);
 
           if (!row) {
             return rejectWithValue(`当前表中找不到要删除的行：${dbKey}`);
@@ -374,7 +373,7 @@ export const tableSlice = createSliceWithThunks({
         },
         fulfilled: (state, action: PayloadAction<string>) => {
           const dbKey = action.payload;
-          state.rows = state.rows.filter((row) => row.dbKey !== dbKey);
+          state.rows = state.rows.filter((row: any) => row.dbKey !== dbKey);
         },
         rejected: (state, action) => {
           state.error =
@@ -389,7 +388,7 @@ export const tableSlice = createSliceWithThunks({
      * 3.2 删除整张表：deleteTable
      * ------------------------------------*/
     deleteTable: create.asyncThunk<string, DeleteTableArgs>(
-      deleteTableAction,
+      deleteTableAction as any,
       {
         pending: (state) => {
           state.error = null;
@@ -423,14 +422,14 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("字段名不能为空");
         }
 
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        if (meta.columns.some((c) => c.name === columnName)) {
+        if (meta.columns.some((c: TableColumn) => c.name === columnName)) {
           return rejectWithValue(`字段 ${columnName} 已存在`);
         }
 
@@ -494,31 +493,31 @@ export const tableSlice = createSliceWithThunks({
       ) => {
         const { tenantId, tableId, columnName } = args;
 
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        if (!meta.columns.some((c) => c.name === columnName)) {
+        if (!meta.columns.some((c: TableColumn) => c.name === columnName)) {
           return rejectWithValue(`字段 ${columnName} 不存在`);
         }
 
         const nowIso = formatISO(new Date());
         const newColumns: TableColumn[] = meta.columns.filter(
-          (c) => c.name !== columnName
+          (c: TableColumn) => c.name !== columnName
         );
         const rows = state.rows;
 
         try {
           // 1) 删除所有行上的该字段（利用 patch 的 null -> 删除语义）
-          const rowsWithField = rows.filter((row) =>
+          const rowsWithField = rows.filter((row: any) =>
             Object.prototype.hasOwnProperty.call(row, columnName)
           );
 
           await Promise.all(
-            rowsWithField.map((row) =>
+            rowsWithField.map((row: any) =>
               dispatch(
                 patch({
                   dbKey: row.dbKey,
@@ -543,7 +542,7 @@ export const tableSlice = createSliceWithThunks({
           ).unwrap();
 
           // 3) 生成新的 rows（内存态）
-          const newRows = rows.map((row) => {
+          const newRows = rows.map((row: any) => {
             if (!Object.prototype.hasOwnProperty.call(row, columnName)) {
               return row;
             }
@@ -596,7 +595,7 @@ export const tableSlice = createSliceWithThunks({
         { dispatch, getState, rejectWithValue }
       ) => {
         const { tenantId, tableId, fromIndex, toIndex } = args;
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
@@ -677,36 +676,36 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("新的字段名不能为空");
         }
 
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        if (!meta.columns.some((c) => c.name === oldName)) {
+        if (!meta.columns.some((c: TableColumn) => c.name === oldName)) {
           return rejectWithValue(`字段 ${oldName} 不存在`);
         }
 
-        if (meta.columns.some((c) => c.name === trimmedNewName)) {
+        if (meta.columns.some((c: TableColumn) => c.name === trimmedNewName)) {
           return rejectWithValue(`字段 ${trimmedNewName} 已存在`);
         }
 
         const nowIso = formatISO(new Date());
         const rows = state.rows;
 
-        const newColumns: TableColumn[] = meta.columns.map((c) =>
+        const newColumns: TableColumn[] = meta.columns.map((c: TableColumn) =>
           c.name === oldName ? { ...c, name: trimmedNewName } : c
         );
 
         try {
           // 1) 遍历所有行，把 oldName -> newName，并删除 oldName
-          const rowsWithOldField = rows.filter((row) =>
+          const rowsWithOldField = rows.filter((row: any) =>
             Object.prototype.hasOwnProperty.call(row, oldName)
           );
 
           await Promise.all(
-            rowsWithOldField.map((row) => {
+            rowsWithOldField.map((row: any) => {
               const changes: Record<string, any> = {
                 [trimmedNewName]: row[oldName],
                 [oldName]: null,
@@ -734,7 +733,7 @@ export const tableSlice = createSliceWithThunks({
           ).unwrap();
 
           // 3) 内存态 rows 同步字段名
-          const newRows = rows.map((row) => {
+          const newRows = rows.map((row: any) => {
             if (!Object.prototype.hasOwnProperty.call(row, oldName)) {
               return row;
             }
@@ -796,21 +795,21 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("字段显示名不能为空");
         }
 
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        const column = meta.columns.find((c) => c.id === columnId);
+        const column = meta.columns.find((c: TableColumn) => c.id === columnId);
         if (!column) {
           return rejectWithValue("要重命名的字段不存在");
         }
 
         const nowIso = formatISO(new Date());
 
-        const newColumns: TableColumn[] = meta.columns.map((c) =>
+        const newColumns: TableColumn[] = meta.columns.map((c: TableColumn) =>
           c.id === columnId ? { ...c, label: trimmedLabel } : c
         );
 
@@ -864,14 +863,14 @@ export const tableSlice = createSliceWithThunks({
       ) => {
         const { tenantId, tableId, columnId, width } = args;
 
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        const column = meta.columns.find((c) => c.id === columnId);
+        const column = meta.columns.find((c: TableColumn) => c.id === columnId);
         if (!column) {
           return rejectWithValue("要调整宽度的字段不存在");
         }
@@ -881,7 +880,7 @@ export const tableSlice = createSliceWithThunks({
 
         const nowIso = formatISO(new Date());
 
-        const newColumns: TableColumn[] = meta.columns.map((c) =>
+        const newColumns: TableColumn[] = meta.columns.map((c: TableColumn) =>
           c.id === columnId ? { ...c, width: normalizedWidth } : c
         );
 
@@ -939,7 +938,7 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("表名不能为空");
         }
 
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
@@ -992,7 +991,7 @@ export const tableSlice = createSliceWithThunks({
         { dispatch, getState, rejectWithValue }
       ) => {
         const { tenantId, tableId, icon } = args;
-        const state = (getState() as RootState).table;
+        const state = (getState() as any).table;
         const meta = state.currentTable;
 
         if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
@@ -1125,7 +1124,7 @@ export const tableSlice = createSliceWithThunks({
 
 export const makeSelectRowsByTable = (tenantId: string, tableId: string) =>
   createSelector(
-    (state: RootState) => selectAllDb(state),
+    (state: any) => selectAllDb(state),
     (entities) =>
       entities.filter((e) => e.tableId === tableId && e.tenantId === tenantId)
   );

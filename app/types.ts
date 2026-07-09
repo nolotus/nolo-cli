@@ -300,7 +300,7 @@ export interface SpaceContent {
   originalName?: string;
 
   // --- 修改: categoryId 变为可选 ---
-  categoryId?: string; // 属性不存在或值为 undefined 代表未分类
+  categoryId?: string | null; // 属性不存在或值为 undefined/null 代表未分类
 
   pinned: boolean;
   createdAt: number; // 时间戳 (number)
@@ -308,6 +308,8 @@ export interface SpaceContent {
   order?: number; // 分类内排序
   tags?: string[]; // 保留 tags 字段
   triggerType?: string;
+  parentTaskKey?: string;
+  parentAutomationKey?: string;
   skillSummary?: {
     isSkill: true;
     skillId?: string;
@@ -330,6 +332,7 @@ export interface SpaceData {
   boundFolder?: string;
   createdAt: number;
   updatedAt: number;
+  type?: DataType;
 }
 export enum ContentType {
   DIALOG = "dialog",
@@ -361,7 +364,7 @@ export type Categories = Record<string, Category | null>; // --- 分类相关 (C
 export interface Category {
   name: string;
   order: number;
-  updatedAt: number;
+  updatedAt: number | string;
 } // --- 成员相关 (SpaceMember, SpaceMemberWithSpaceInfo 保持不变) ---
 
 export interface SpaceMember {
@@ -373,15 +376,19 @@ export interface SpaceMember {
 } // Contents 类型保持不变 (Record<string, SpaceContent | null>)
 export type Contents = Record<string, SpaceContent | null>;
 export interface SpaceMemberWithSpaceInfo {
+  userId: string;
   role: MemberRole;
   joinedAt: number;
-  memberUpdatedAt?: number;
+  memberUpdatedAt?: number | string;
+  dbKey?: string;
   spaceId: string;
   spaceName: string;
   ownerId: string;
   visibility: SpaceVisibility;
-  spaceCreatedAt: number;
-  spaceUpdatedAt: number;
+  spaceCreatedAt?: number | string;
+  spaceUpdatedAt?: number | string;
+  createdAt?: number | string;
+  updatedAt?: number | string;
   type?: DataType;
 }
 

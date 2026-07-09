@@ -17,12 +17,18 @@ import {
   isLocalCliAgentKey,
   isFullstackCodingAgentRef,
   parseAgentRunArgs,
+  readFlagValue,
   resolveRawAgentInput,
   resolveServerUrl,
   writeUsage,
   type ParseAgentRunArgsOptions,
   type ParsedAgentRunArgs,
 } from "./agentRunArgs";
+import {
+  finalizeRunRecord,
+  spawnLocalBackgroundRun,
+  type AgentRunControlDeps,
+} from "./agentRunControl";
 import {
   normalizeCliImageInput,
   prependFeatureWorktreeInstruction,
@@ -69,12 +75,15 @@ export type AgentRunCommandDeps = {
   scriptDir: string;
   output?: OutputLike;
   commandPath?: string[];
+  cliEntrypointPath?: string;
   runner?: typeof runAgentTurn;
   localRuntimeAdapterFactory?: (env: EnvLike, options?: { cwd?: string }) => AgentRuntimeHostAdapter;
   inspectLocalRunWorkspace?: typeof inspectLocalRunWorkspace;
   resolveWorkflowReference?: typeof resolveWorkflowReference;
   resolveAgentRunAgentKey?: typeof resolveAgentRunAgentKey;
-};
+  spawnLocalBackgroundRun?: typeof spawnLocalBackgroundRun;
+  finalizeRunRecord?: typeof finalizeRunRecord;
+} & Pick<AgentRunControlDeps, "homedir" | "spawn" | "fs" | "now" | "generateRunId">;
 
 async function resolveAgentRunAgentKey(args: {
   agentInput: string;
@@ -166,15 +175,36 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     allowShell: parsed.allowShell,
   });
 
-  // --bg has no effect on local CLI runs: the local provider loop runs
-  // synchronously in-process and never detaches into a background dialog
-  // (background is only honored by the server runtime, which streams via
-  // /api/agent/run with background:true). Surface this explicitly instead of
-  // silently ignoring the flag so users do not expect detached behavior.
+  // Local background runs: detach a child process, write a registry record,
+  // and return immediately. The child re-invokes this same CLI without --bg
+  // and finalizes the registry record on exit.
   if (parsed.background && isLocalRun) {
-    output.write(
-      "[nolo] --bg is not supported for local runs; the local CLI runtime runs synchronously in-process and does not detach into a background dialog. Ignoring --bg for this run.\n"
+    const { runId, pid, logPath } = await (deps.spawnLocalBackgroundRun ?? spawnLocalBackgroundRun)(
+      {
+        rawArgs: args,
+        commandPath: deps.commandPath,
+        cliEntrypointPath: deps.cliEntrypointPath,
+        agentKey,
+        cwd: parsed.cwd,
+        msgFile: readFlagValue(args, "--msg-file"),
+        timeoutMs: parsed.timeoutMs,
+        output,
+      },
+      {
+        env,
+        homedir: deps.homedir,
+        spawn: deps.spawn,
+        fs: deps.fs,
+        now: deps.now,
+        generateRunId: deps.generateRunId,
+      }
     );
+    output.write(`[nolo] runId=${runId}\n`);
+    output.write(`[nolo] pid=${pid ?? "-"}\n`);
+    output.write(`[nolo] log=${logPath}\n`);
+    output.write(`[nolo] status: nolo agent status ${runId}\n`);
+    output.write(`[nolo] stop: nolo agent stop ${runId}\n`);
+    return 0;
   }
 
   // Build the runner options once; the same options (message, cwd,
@@ -281,6 +311,25 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
       );
     }
   }
+
+  // If this process was spawned as a local background child, finalize the
+  // registry record so the parent `nolo agent ps/status` sees the outcome.
+  const childRunId = env.NOLO_AGENT_RUN_ID;
+  if (typeof childRunId === "string" && childRunId.length > 0) {
+    const finalStatus = result.exitCode === 0 ? "done" : "failed";
+    await (deps.finalizeRunRecord ?? finalizeRunRecord)(childRunId, {
+      status: finalStatus,
+      exitCode: result.exitCode,
+      dialogId: result.dialogId,
+    },
+    {
+      env,
+      homedir: deps.homedir,
+      fs: deps.fs,
+      now: deps.now,
+    });
+  }
+
   return result.exitCode;
 }
 

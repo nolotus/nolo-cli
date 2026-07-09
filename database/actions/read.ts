@@ -1,6 +1,6 @@
 // 文件路径: database/actions/read.ts
 
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 import { getRuntimeServerContext } from "../runtimeServerContext";
 import {
   fetchFromClientDb,
@@ -167,7 +167,7 @@ export const readAction = async (
     signal?: AbortSignal;
     preferredServerOrigin?: string | null;
   },
-  thunkApi: AppThunkApi,
+  thunkApi: DbThunkApi,
 ): Promise<any> => {
   const dbKey = payload.dbKey;
   const signal = payload.signal;
@@ -182,7 +182,7 @@ export const readAction = async (
     throw new DOMException("Aborted", "AbortError");
   }
 
-  const { db: clientDb } = thunkApi.extra;
+  const { db: clientDb } = thunkApi.extra as import("../../app/store").AppExtra;
   if (!clientDb) {
     throw new Error("Client database is not available.");
   }
@@ -190,7 +190,7 @@ export const readAction = async (
   const executeRead = async (): Promise<any> => {
     const isDialogKey = dbKey.startsWith("dialog-") && !dbKey.includes("-msg-");
     const readStartedAt = isDialogKey ? Date.now() : 0;
-    const state = thunkApi.getState();
+    const state = thunkApi.getState() as import("../../app/store").RootState;
     const {
       currentToken,
       remoteServers: configuredServers,

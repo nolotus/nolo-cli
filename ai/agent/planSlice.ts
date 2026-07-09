@@ -3,7 +3,7 @@
 // 支持普通步骤和反思步骤（reflect step）
 
 import { type PayloadAction, createSlice } from "@reduxjs/toolkit";
-import type { RootState } from "../../app/store";
+
 
 // --- Interfaces ---
 
@@ -228,15 +228,15 @@ export const {
 export default planSlice.reducer;
 
 // Selectors
-export const selectPlan = (state: RootState): PlanState | null =>
+export const selectPlan = (state: any): PlanState | null =>
   state.plan.plan;
 
-export const selectSteps = (state: RootState): Step[] => state.plan.steps;
+export const selectSteps = (state: any): Step[] => state.plan.steps;
 
-export const selectCurrentStepId = (state: RootState): string | null =>
+export const selectCurrentStepId = (state: any): string | null =>
   state.plan.currentStep;
 
-export const selectCurrentStepDetails = (state: RootState): Step | null => {
+export const selectCurrentStepDetails = (state: any): Step | null => {
   if (!state.plan.currentStep) return null;
   return (
     state.plan.steps.find((step: Step) => step.id === state.plan.currentStep) || null
@@ -244,16 +244,16 @@ export const selectCurrentStepDetails = (state: RootState): Step | null => {
 };
 
 export const selectExecutionConfig = (
-  state: RootState
+  state: any
 ): PlanExecutionConfig | null => state.plan.executionConfig;
 
-export const selectPlanStats = (state: RootState): PlanSliceState["stats"] =>
+export const selectPlanStats = (state: any): PlanSliceState["stats"] =>
   state.plan.stats;
 
 // 新增：获取待执行的步骤
-export const selectPendingSteps = (state: RootState): Step[] =>
+export const selectPendingSteps = (state: any): Step[] =>
   state.plan.steps.filter((s: Step) => s.status === "pending");
 
 // 新增：获取已完成的步骤
-export const selectCompletedSteps = (state: RootState): Step[] =>
+export const selectCompletedSteps = (state: any): Step[] =>
   state.plan.steps.filter((s: Step) => s.status === "completed");

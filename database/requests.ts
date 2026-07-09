@@ -42,7 +42,7 @@ export const noloRequest = async (
   state: any,
   signal?: AbortSignal
 ): Promise<Response> => {
-  const headers: HeadersInit = config.headers || {
+  const headers: Record<string, string> = (config.headers as Record<string, string>) || {
     "Content-Type": "application/json",
   };
   // 从 state 中安全地获取 token
@@ -225,12 +225,12 @@ export const noloUploadRequest = async (
     const formData = new FormData();
 
     if (isRNFile(file)) {
-      // @ts-ignore - RN 的 FormData append 允许传对象，但 TS 定义可能不匹配
+      // RN 的 FormData append 允许传对象，但 TS 定义可能不匹配
       formData.append("file", {
         uri: (file as any).uri,
         type: (file as any).type,
         name: (file as any).name,
-      });
+      } as any);
     } else {
       // Web 环境：直接 append File 对象
       formData.append("file", file);

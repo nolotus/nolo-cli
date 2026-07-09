@@ -33,6 +33,9 @@ export interface InternalMessage extends Omit<Partial<OpenAIMessage>, "content">
   toolPayload?: {
     toolName?: string;
     rawToolCall?: ToolCall & { id: string };
+    llmContext?: string;
+    summary?: string;
+    [key: string]: any;
   };
   [key: string]: any;
 }

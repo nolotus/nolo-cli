@@ -11,7 +11,7 @@ export const normalizeChatCompletionsBodyForProvider = ({
   provider,
   model,
 }: NormalizeChatCompletionsBodyArgs): Record<string, any> => {
-  const nextBody = { ...body, model };
+  const nextBody: Record<string, any> = { ...body, model };
   const normalizedProvider = provider.trim().toLowerCase();
 
   if (normalizedProvider === "fireworks" && isFireworksKimiModel(model)) {

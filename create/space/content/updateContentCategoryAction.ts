@@ -1,7 +1,7 @@
 // 文件路径: create/space/actions/updateContentCategoryAction.ts (或你的实际路径)
 
 import type { SpaceId } from "../../space/types"; // 确认类型路径
-import type { SpaceData } from "../../../app/types";
+import type { Contents, SpaceData } from "../../../app/types";
 import { selectUserId } from "../../../auth/authSlice"; // 确认导入路径
 import { createSpaceKey } from "../../space/spaceKeys"; // 确认导入路径
 import { read, patch } from "../../../database/dbSlice"; // 确认导入路径
@@ -62,13 +62,17 @@ export const updateContentCategoryAction = async (
   }
 
   // --- 权限和存在性检查 ---
+  if (!spaceData) {
+    throw new Error(`空间不存在: ${spaceId}`);
+  }
+
   try {
     checkSpaceMembership(spaceData, userId); // 使用权限检查函数
   } catch (permissionError: any) {
     throw new Error(`权限不足，无法修改内容分类: ${permissionError.message}`);
   }
 
-  const currentContent = spaceData?.contents?.[contentKey]; // 获取当前内容
+  const currentContent = spaceData.contents?.[contentKey]; // 获取当前内容
   if (!currentContent) {
     console.warn(
       `[updateContentCategoryAction] Content ${contentKey} not found in space ${spaceId}.`
@@ -79,7 +83,7 @@ export const updateContentCategoryAction = async (
   // --- 检查目标分类的有效性 (如果不是移到未分类) ---
   // 仅当目标不是 UNCATEGORIZED_ID 常量时，才需要验证目标分类是否存在
   if (targetContainerId !== UNCATEGORIZED_ID) {
-    if (!spaceData.categories?.[targetContainerId]) {
+    if (!spaceData.categories[targetContainerId]) {
       // 目标分类不存在或无效 (值为 null)
       console.warn(
         `[updateContentCategoryAction] Target category ${targetContainerId} not found or invalid in space ${spaceId}. Cannot move content.`
@@ -123,7 +127,7 @@ export const updateContentCategoryAction = async (
           categoryId: categoryIdValueForPatch, // null 或 目标分类 ID
           updatedAt: now, // 更新内容的 updatedAt
         },
-      },
+      } as Contents,
       updatedAt: now, // 更新顶层的 updatedAt
     };
   } else {

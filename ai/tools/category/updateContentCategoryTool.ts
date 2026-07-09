@@ -41,7 +41,8 @@ export async function updateContentCategoryFunc(
   rawData: { success: true; id: string; categoryId?: string };
   displayData: string;
 }> {
-  const { dispatch, getState } = thunkApi;
+  const { getState } = thunkApi;
+  const dispatch = thunkApi.dispatch.bind(thunkApi) as any;
   const state = getState() as RootState;
   const spaceId = selectCurrentSpaceId(state);
 
@@ -54,12 +55,12 @@ export async function updateContentCategoryFunc(
 
   try {
     const updatedId = await (dispatch as any)(
-      updateContentCategory({
+      (updateContentCategory as any)({
         spaceId,
         contentId: args.contentId,
         categoryId: args.categoryId || undefined,
       })
-    ).unwrap();
+    ).unwrap() as string;
 
     const rawData = { success: true as const, id: updatedId, categoryId: args.categoryId || undefined };
     const displayData = `内容 ${updatedId} 的分类已更新为「${args.categoryId ?? "未分类"}」。`;

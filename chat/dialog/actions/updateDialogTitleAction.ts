@@ -70,7 +70,7 @@ const getMessageContextForTitle = (
         content: textContent as string, // 之后只会用到 role + content
       };
     })
-    .filter(Boolean) as Array<{ role: any; content: string }>;
+    .filter(Boolean) as Array<{ id?: string; role: any; content: string }>;
 
   const earlyUserTurns = normalized.filter((msg) => msg.role === "user").slice(0, 3);
   const recentTurns = normalized.slice(-12);
@@ -91,8 +91,8 @@ type UpdateDialogTitleDeps = {
 
 // --- 异步 Thunk Action ---
 export const updateDialogTitleActionWithDeps = async (
-  args,
-  thunkApi,
+  args: { dialogKey: string },
+  thunkApi: { dispatch: any; getState: () => any; extra: any },
   deps: UpdateDialogTitleDeps = {}
 ) => {
   const {
@@ -123,7 +123,7 @@ export const updateDialogTitleActionWithDeps = async (
     messageContext.map((msg) => ({ role: msg.role, content: msg.content }))
   );
 
-  const generatedTitle = await dispatch(
+  const generatedTitle = await (dispatch as any)(
     runLlmAction({
       llmConfig: BUILTIN_TITLE_LLM_CONFIG,
       content,
@@ -139,13 +139,16 @@ export const updateDialogTitleActionWithDeps = async (
   const spaceId =
     dialogConfig?.spaceId && normalizeSpaceId(dialogConfig.spaceId);
   if (spaceId) {
-    dispatch(updateSpaceContentTitle({ spaceId, contentKey: dialogKey, title }));
+    (dispatch as any)((updateSpaceContentTitle as any)({ spaceId, contentKey: dialogKey, title }));
   }
 
-  return await dispatch(
+  return await (dispatch as any)(
     patchAction({ dbKey: dialogKey, changes: { title } })
   ).unwrap();
 };
 
-export const updateDialogTitleAction = async (args, thunkApi) =>
+export const updateDialogTitleAction = async (
+  args: { dialogKey: string },
+  thunkApi: { dispatch: any; getState: () => any; extra: any }
+) =>
   updateDialogTitleActionWithDeps(args, thunkApi);

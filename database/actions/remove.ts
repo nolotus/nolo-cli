@@ -1,6 +1,6 @@
 // 文件路径: src/database/actions/delete.ts
 
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 import { getRuntimeServerContext } from "../runtimeServerContext";
 
 import { fetchFromClientDb } from "./common";
@@ -22,9 +22,9 @@ import { buildTombstoneRecord } from "../tombstones";
  */
 export const removeAction = async (
   payload: string | { dbKey: string; preferredServerOrigin?: string | null },
-  thunkApi: AppThunkApi
+  thunkApi: DbThunkApi
 ): Promise<{ dbKey: string }> => {
-  const { db: clientDb } = thunkApi.extra;
+  const { db: clientDb } = thunkApi.extra as import("../../app/store").AppExtra;
   const dbKey = typeof payload === "string" ? payload : payload.dbKey;
   const preferredServerOrigin =
     typeof payload === "string" ? undefined : payload.preferredServerOrigin;
@@ -33,7 +33,7 @@ export const removeAction = async (
     throw new Error("Client database is undefined in removeAction");
   }
 
-  const state = thunkApi.getState();
+  const state = thunkApi.getState() as import("../../app/store").RootState;
   const { currentServer, syncServers } = getRuntimeServerContext(state);
 
   console.log("[removeAction] START", {

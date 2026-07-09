@@ -1,5 +1,4 @@
 // create/space/spaceThunks.ts
-import { asyncThunkCreator } from "@reduxjs/toolkit";
 import type { SpaceContent, SpaceData } from "../../app/types";
 import { patch, read } from "../../database/dbSlice";
 import { addSpaceAction } from "./addSpaceAction";
@@ -12,7 +11,10 @@ import { fetchSpaceSidebarStateAction } from "./fetchSpaceSidebarStateAction";
 import { changeSpaceAction } from "./changeSpaceAction";
 import { type SpaceState } from "./types";
 
-type Create = ReturnType<typeof asyncThunkCreator<SpaceState>>;
+type Create = {
+  asyncThunk: (...args: any[]) => any;
+  reducer: (...args: any[]) => any;
+};
 
 const parseUpdatedAt = (value: unknown): number => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -159,10 +161,10 @@ const dedupeSpaceContents = (
 export const createSpaceThunks = (create: Create) => ({
   // --- 读取当前设备下的空间侧边栏状态 ---
   fetchSpaceSidebarState: create.asyncThunk(fetchSpaceSidebarStateAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       state.collapsedCategories = action.payload.collapsedCategories;
     },
-    rejected: (state, action) => {
+    rejected: (state: SpaceState, action: any) => {
       console.error("获取空间侧边栏状态失败:", action.error.message);
       state.collapsedCategories = {};
     },
@@ -170,7 +172,7 @@ export const createSpaceThunks = (create: Create) => ({
 
   // --- 切换空间 (核心操作) ---
   changeSpace: create.asyncThunk(changeSpaceAction, {
-    pending: (state, action) => {
+    pending: (state: SpaceState, action: any) => {
       const newSpaceId = normalizeSpaceId(action.meta.arg);
       if (state.currentSpaceId !== newSpaceId) {
         state.loading = true;
@@ -181,7 +183,7 @@ export const createSpaceThunks = (create: Create) => ({
       }
       state.error = undefined;
     },
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       state.currentSpaceId = action.payload.spaceId;
       state.currentSpace = action.payload.spaceData;
       // 原子更新：在内容显示的同一帧应用折叠状态
@@ -190,7 +192,7 @@ export const createSpaceThunks = (create: Create) => ({
       state.initialized = true;
       state.loading = false;
     },
-    rejected: (state, action) => {
+    rejected: (state: SpaceState, action: any) => {
       state.error = action.error.message || "切换空间失败";
       state.initialized = true;
       state.loading = false;
@@ -204,23 +206,23 @@ export const createSpaceThunks = (create: Create) => ({
 
   // --- 其他核心空间操作 ---
   addSpace: create.asyncThunk(addSpaceAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       state.memberSpaces = dedupeMemberSpaces([
         ...(state.memberSpaces || []),
         action.payload,
       ]);
     },
-    pending: (state) => {
+    pending: (state: SpaceState) => {
       state.loading = true;
     },
-    rejected: (state, action) => {
+    rejected: (state: SpaceState, action: any) => {
       state.loading = false;
       state.error = action.error.message;
     },
   }),
 
   deleteSpace: create.asyncThunk(deleteSpaceAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       const normalizedSpaceId = normalizeSpaceId(action.payload.spaceId);
       const normalizedCurrentSpaceId = state.currentSpaceId
         ? normalizeSpaceId(state.currentSpaceId)
@@ -240,7 +242,7 @@ export const createSpaceThunks = (create: Create) => ({
   }),
 
   updateSpace: create.asyncThunk(updateSpaceAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       const { updatedSpace, spaceId } = action.payload;
       if (spaceId === state.currentSpaceId) {
         state.currentSpace = updatedSpace;
@@ -256,12 +258,12 @@ export const createSpaceThunks = (create: Create) => ({
   }),
 
   loadDefaultSpace: create.asyncThunk(loadDefaultSpaceAction, {
-    pending: (state) => {
+    pending: (state: SpaceState) => {
       state.loading = true;
       state.initialized = false;
       state.error = undefined;
     },
-    fulfilled: (state) => {
+    fulfilled: (state: SpaceState) => {
       state.loading = false;
       // 实际状态更新由内部派发的 changeSpace Thunk 处理
       if (!state.currentSpaceId) {
@@ -269,7 +271,7 @@ export const createSpaceThunks = (create: Create) => ({
         state.collapsedCategories = {};
       }
     },
-    rejected: (state, action) => {
+    rejected: (state: SpaceState, action: any) => {
       state.loading = false;
       state.initialized = true;
       state.error = action.error.message || "加载默认空间失败";
@@ -280,7 +282,7 @@ export const createSpaceThunks = (create: Create) => ({
   }),
 
   fetchSpace: create.asyncThunk(fetchSpaceAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       const { spaceId, spaceData } = action.payload;
       // 如果当前没有空间，或者 ID 匹配，则更新当前空间
       if (!state.currentSpaceId || state.currentSpaceId === spaceId) {
@@ -292,7 +294,7 @@ export const createSpaceThunks = (create: Create) => ({
   }),
 
   fixSpace: create.asyncThunk(
-    async (spaceId: string, thunkAPI) => {
+    async (spaceId: string, thunkAPI: any) => {
       const spaceKey = createSpaceKey.space(spaceId);
       const spaceData = (await thunkAPI.dispatch(
         read({ dbKey: spaceKey })
@@ -395,7 +397,7 @@ export const createSpaceThunks = (create: Create) => ({
       };
     },
     {
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         if (state.currentSpaceId !== action.meta.arg) return;
         const nextSpace = action.payload.spaceData;
         if (!nextSpace) return;

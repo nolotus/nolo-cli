@@ -1,6 +1,6 @@
 // 文件路径: database/actions/write.ts
 
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 import { getRuntimeServerContext } from "../runtimeServerContext";
 import { DataType } from "../../create/types";
 import { normalizeTimeFields, logger } from "./common";
@@ -48,14 +48,14 @@ const saveToClientDb = async (
  */
 export const writeAction = async (
   writeConfig: { data: any; customKey: string; userId?: string },
-  thunkApi: AppThunkApi
+  thunkApi: DbThunkApi
 ): Promise<any> => {
-  const { db: clientDb } = thunkApi.extra;
+  const { db: clientDb } = thunkApi.extra as import("../../app/store").AppExtra;
   if (!clientDb) {
     throw new Error("Client database instance is required in writeAction");
   }
 
-  const state = thunkApi.getState();
+  const state = thunkApi.getState() as import("../../app/store").RootState;
   const { currentServer, syncServers, currentUserId } =
     getRuntimeServerContext(state);
 
@@ -70,7 +70,7 @@ export const writeAction = async (
   if (!data || !customKey) {
     const errorMsg =
       "Invalid arguments for writeAction: data and customKey are required.";
-    logger.error(errorMsg, { writeConfig });
+    logger.error({ writeConfig }, errorMsg);
     toast.error(errorMsg);
     throw new Error(errorMsg);
   }
@@ -130,8 +130,8 @@ export const writeAction = async (
       scheduleWriteReplication(servers, serverWriteConfig, state);
     } else {
       logger.warn(
-        "[writeAction] No available servers, data only saved locally.",
-        { customKey }
+        { customKey },
+        "[writeAction] No available servers, data only saved locally."
       );
     }
 

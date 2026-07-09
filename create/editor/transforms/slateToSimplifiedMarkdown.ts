@@ -37,7 +37,7 @@ function renderTable(node: any, listDepth: number, options: SimplifiedMarkdownOp
   );
 
   const header = renderedRows[0] || [];
-  const divider = header.map((_, index) => {
+  const divider = header.map((_: string, index: number) => {
     const align = alignments[index];
     if (align === "center") return ":---:";
     if (align === "right") return "---:";
@@ -81,8 +81,8 @@ function renderListItem(
   const [first, ...rest] = renderedSegments;
   const lines = first.split("\n");
   const firstLine = lines.shift() || "";
-  const restFirst = lines.map((line) => `${indentation}  ${line}`).join("\n");
-  const restBlocks = rest.map((block) => `${indentation}  ${block}`).join("\n");
+  const restFirst = lines.map((line: string) => `${indentation}  ${line}`).join("\n");
+  const restBlocks = rest.map((block: string) => `${indentation}  ${block}`).join("\n");
 
   return [
     `${indentation}${marker} ${firstLine}`,

@@ -68,7 +68,7 @@ const BROWSER_UNAVAILABLE_CORE_TOOLS: Record<string, true> = {
 
 const getRuntimeCoreTools = (): string[] => {
     if (typeof window === "undefined") {
-        return TOOL_PACKS.CORE;
+        return [...TOOL_PACKS.CORE];
     }
     return TOOL_PACKS.CORE.filter(
         (toolName) => !BROWSER_UNAVAILABLE_CORE_TOOLS[toolName],

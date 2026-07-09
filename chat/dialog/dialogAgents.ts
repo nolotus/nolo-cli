@@ -35,7 +35,7 @@ export const getDialogAgentIds = (
   if (primaryAgentKey) {
     return [primaryAgentKey];
   }
-  const legacyAgentId = normalizeAgentId(dialogConfig.llmId);
+  const legacyAgentId = normalizeAgentId((dialogConfig as LegacyDialogConfig).llmId);
   if (legacyAgentId) {
     return [legacyAgentId];
   }

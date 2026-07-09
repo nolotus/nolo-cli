@@ -1,6 +1,6 @@
 // 文件路径: database/actions/fileContent.ts
 
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 import { API_ENDPOINTS } from "../config";
 import { getRuntimeServerContext } from "../runtimeServerContext";
 import {
@@ -40,7 +40,7 @@ export const readFileContentAction = async (
         fileId,
         useServerFallback = true,
     }: { fileId: string; useServerFallback?: boolean },
-    thunkApi: AppThunkApi
+    thunkApi: DbThunkApi
 ): Promise<{ fileId: string; blob: Blob; source: "local" | "remote" }> => {
     if (!fileId || typeof fileId !== "string") {
         throw new Error("readFileContentAction requires a valid fileId string.");
@@ -68,7 +68,7 @@ export const readFileContentAction = async (
     }
 
     // 3. 从服务器拉取文件内容（使用原始 fileId，完整 dbKey 可直接查询）
-    const state = thunkApi.getState();
+    const state = thunkApi.getState() as import("../../app/store").RootState;
     const { currentServer, remoteServers: serversToTry } =
         getRuntimeServerContext(state);
 

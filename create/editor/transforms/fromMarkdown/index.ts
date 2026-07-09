@@ -56,7 +56,7 @@ function getPreviewFlagFromMeta(node: any): "true" | undefined {
 
   const tokens = meta.split(/\s+/);
 
-  const hasPreview = tokens.some((tok) => {
+  const hasPreview = tokens.some((tok: string) => {
     if (tok === "preview") return true;
     if (tok.startsWith("preview=")) {
       const [, value] = tok.split("=");
@@ -201,7 +201,7 @@ function convertBlockNode(node: any): SlateNode | SlateNode[] | null {
     // 表格
     case "table": {
       const tableNode = transformTable(node);
-      return tableNode || null;
+      return (tableNode || null) as SlateNode | SlateNode[] | null;
     }
 
     // 分割线

@@ -224,7 +224,7 @@ export const deleteDbKey =
                 // 但不要求等待远端强一致。
                 if (effectiveSpaceId) {
                     await (dispatch as any)(
-                        deleteContentFromSpace({
+                        (deleteContentFromSpace as any)({
                             contentKey,
                             spaceId: effectiveSpaceId,
                             ...(preferredServerOrigin

@@ -1,5 +1,5 @@
 import { type PayloadAction, createSlice } from "@reduxjs/toolkit";
-import type { RootState } from "../../app/store";
+
 import type {
   WorkflowStepState,
   WorkflowExecutionStats,
@@ -62,12 +62,12 @@ export const {
   clearWorkflow,
 } = workflowSlice.actions;
 
-export const selectWorkflowSteps = (state: RootState) => state.workflow.steps;
-export const selectWorkflowTitle = (state: RootState) => state.workflow.title;
-export const selectWorkflowStats = (state: RootState) => state.workflow.stats;
-export const selectPendingSteps = (state: RootState) =>
+export const selectWorkflowSteps = (state: any) => state.workflow.steps;
+export const selectWorkflowTitle = (state: any) => state.workflow.title;
+export const selectWorkflowStats = (state: any) => state.workflow.stats;
+export const selectPendingSteps = (state: any) =>
   state.workflow.steps.filter((s: WorkflowStepState) => s.status === "pending");
-export const selectCompletedSteps = (state: RootState) =>
+export const selectCompletedSteps = (state: any) =>
   state.workflow.steps.filter((s: WorkflowStepState) => s.status === "completed");
 
 export default workflowSlice.reducer;

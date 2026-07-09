@@ -61,11 +61,11 @@ export const createAgentAutomationAction = async (
     ...(spaceId ? { spaceId } : {}),
   };
 
-  const result = await dispatch(write({ data: automation, customKey: dbKey })).unwrap();
+  const result = await (dispatch as any)(write({ data: automation, customKey: dbKey })).unwrap();
 
   if (spaceId) {
-    await dispatch(
-      addContentToSpace({
+    await (dispatch as any)(
+      (addContentToSpace as any)({
         spaceId,
         contentKey: dbKey,
         type: DataType.AGENT_AUTOMATION,

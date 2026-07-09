@@ -1,7 +1,7 @@
 // create/space/deleteContentFromSpaceAction.ts
 import { createSpaceKey, normalizeSpaceId } from "../../space/spaceKeys";
 import { patch, read, remove } from "../../../database/dbSlice";
-import { SpaceData, Agent } from "../../../app/types";
+import { SpaceData, SpaceContent, Agent } from "../../../app/types";
 import { selectUserId } from "../../../auth/authSlice";
 import { isAgentKey, isPageKey, splitKey } from "../../../database/keys";
 import { extractUserId } from "../../../core/prefix";
@@ -25,7 +25,7 @@ const nextSpaceUpdatedAt = (value: unknown): number | string => {
 const findContentReference = (
   spaceData: SpaceData,
   requestedContentKey: string
-): { entryKey: string; contentInfo: SpaceData["contents"][string] } | null => {
+): { entryKey: string; contentInfo: SpaceContent } | null => {
   const contents = spaceData.contents ?? {};
   const directMatch = contents[requestedContentKey];
   if (directMatch) {

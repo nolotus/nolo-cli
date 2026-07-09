@@ -53,10 +53,10 @@ export type CreateAgentToolArgs = {
 };
 
 const HOSTED_EXEC_RUNTIME_TOOL_POLICY = {
-    version: 1,
-    runtimeTools: ["execShell"],
-    workspace: { mode: "lease" },
-} as const;
+    version: 1 as const,
+    runtimeTools: ["execShell"] as string[],
+    workspace: { mode: "lease" as const },
+};
 
 const toTrimmed = (v: unknown): string =>
     typeof v === "string"
@@ -343,6 +343,8 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
 
         apiSource: "platform",
         useServerProxy: true,
+        enableThinking: false,
+        defaultInteractionMode: "text",
 
         // 根据模型配置自动赋值 hasVision（支持图片 / 多模态）
         hasVision: Boolean(modelConfig?.hasVision),
@@ -375,7 +377,7 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
         frequency_penalty,
         presence_penalty,
         max_tokens,
-        reasoning_effort: reasoning_effort ?? undefined,
+        reasoning_effort: reasoning_effort ?? "medium",
 
         whitelist: [],
     };

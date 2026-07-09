@@ -1,3 +1,4 @@
+// @ts-expect-error - no types for js-yaml
 import { dump as dumpYaml, load as loadYaml } from "js-yaml";
 
 const SKILL_DOC_ENUMS = {

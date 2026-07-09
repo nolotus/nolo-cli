@@ -6,6 +6,7 @@ import {
   SpaceVisibility,
   SpaceData,
   SpaceContent,
+  ContentType,
 } from "../../app/types";
 import { selectUserId } from "../../auth/authSlice";
 import { DataType } from "../types";
@@ -13,7 +14,8 @@ import { fetchUserData } from "../../database/client/fetchUserData";
 import { ulid } from "ulid";
 import { patch, write } from "../../database/dbSlice";
 import { createSpaceKey } from "../space/spaceKeys";
-import { CreateSpaceRequest, selectAllMemberSpaces } from "./spaceSlice";
+import { selectAllMemberSpaces } from "./spaceSlice";
+import type { CreateSpaceRequest } from "./types";
 import type { AppDispatch, RootState } from "../../app/store";
 
 //
@@ -82,9 +84,9 @@ export const addSpaceAction = async (
   const {
     name,
     description = "",
-    visibility = SpaceVisibility.PRIVATE,
     boundFolder,
   } = input;
+  const visibility = (input.visibility ?? SpaceVisibility.PRIVATE) as SpaceVisibility;
   const { dispatch, getState, extra } = thunkAPI;
   const state = getState();
   const userId = selectUserId(state);
@@ -143,12 +145,12 @@ export const addSpaceAction = async (
             : item.id;
         contents[stableContentKey] = {
           title: item.title || "",
-          type: item.type,
+          type: item.type as unknown as ContentType,
           contentKey: stableContentKey,
           categoryId: "",
           pinned: false,
-          createdAt: item.createdAt ?? now,
-          updatedAt: item.updatedAt ?? now,
+          createdAt: (item.createdAt ?? now) as unknown as number,
+          updatedAt: (item.updatedAt ?? now) as unknown as number,
           order: item.order,
         };
         if (item.dbKey) {

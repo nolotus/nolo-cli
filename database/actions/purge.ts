@@ -1,6 +1,6 @@
 // 文件路径: database/actions/purge.ts
 
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 import { getRuntimeServerContext } from "../runtimeServerContext";
 import { isTombstoneRecord } from "../tombstones";
 import {
@@ -17,9 +17,9 @@ import { fetchFromClientDb } from "./common";
  */
 export const purgeAction = async (
   payload: string | { dbKey: string; preferredServerOrigin?: string | null },
-  thunkApi: AppThunkApi
+  thunkApi: DbThunkApi
 ): Promise<{ dbKey: string; servers: string[] }> => {
-  const { db: clientDb } = thunkApi.extra;
+  const { db: clientDb } = thunkApi.extra as import("../../app/store").AppExtra;
   const dbKey = typeof payload === "string" ? payload : payload.dbKey;
   const preferredServerOrigin =
     typeof payload === "string" ? undefined : payload.preferredServerOrigin;
@@ -28,7 +28,7 @@ export const purgeAction = async (
     throw new Error("Client database is undefined in purgeAction");
   }
 
-  const state = thunkApi.getState();
+  const state = thunkApi.getState() as import("../../app/store").RootState;
   const { currentServer, syncServers } = getRuntimeServerContext(state);
 
   // 1. 防御：仅 tombstone 可被 purge，活记录不要走这里。

@@ -72,7 +72,7 @@ export async function runAgentClientLoop(
 
   const api = getApiEndpoint(agentConfig);
   const currentServer = selectCurrentServer(state);
-  const token = selectCurrentToken(state);
+  const token = selectCurrentToken(state) ?? "";
 
   let finalContent = "";
   let toolCallCount = 0;

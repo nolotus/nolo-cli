@@ -88,7 +88,7 @@ const finalizeQuickChatStreamStartupFailure = async (
     agentKey: string,
 ) => {
     const dialogKey = dialogConfig.dbKey;
-    const dialogId = dialogConfig.id ?? extractCustomId(dialogKey);
+    const dialogId = dialogConfig.id ?? (dialogKey ? extractCustomId(dialogKey) : "");
     const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
 
     await dispatch(
@@ -105,7 +105,7 @@ const finalizeQuickChatStreamStartupFailure = async (
                 dbKey: agentKey,
             },
             dialogId,
-            dialogKey,
+            dialogKey: dialogKey ?? "",
             messageId,
             reasoningBuffer: "",
         })
@@ -140,7 +140,7 @@ export const handleSendMessageAction = async (
         // 步骤 1: 准备并持久化用户的消息
         await dispatch(
             prepareAndPersistUserMessage({
-                userInput: args.userInput,
+                userInput: args.userInput as string,
                 dialogConfig,
             })
         ).unwrap();

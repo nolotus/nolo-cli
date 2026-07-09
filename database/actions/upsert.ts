@@ -1,6 +1,6 @@
 // src/database/actions/upsert.ts
 import { toast } from "../../app/utils/toast";
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 
 import { patchAction } from "./patch";
 import { readAction } from "./read";
@@ -17,7 +17,7 @@ import { writeAction } from "./write";
  */
 export const upsertAction = async (
   upsertConfig: { dbKey: string; data: any },
-  thunkApi: AppThunkApi
+  thunkApi: DbThunkApi
 ): Promise<any> => {
   const { dbKey, data } = upsertConfig;
 

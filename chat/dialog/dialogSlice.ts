@@ -6,14 +6,13 @@ import {
   buildCreateSlice,
   createSelector,
 } from "@reduxjs/toolkit";
-import type { RootState } from "../../app/store";
+import type { DialogConfig } from "../../app/types";
 import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import type { Descendant } from "slate";
 import { resetMsgs, clearAllStreaming } from "../messages/messageSlice";
 import { extractCustomId } from "../../core/prefix";
 import { read, remove, selectById } from "../../database/dbSlice";
 
-import type { DialogConfig } from "../../app/types";
 import { clearPlan } from "../../ai/agent/planSlice";
 import { clearWorkflow } from "../../ai/workflow/workflowSlice";
 
@@ -352,7 +351,7 @@ const dialogSlice = createSliceWithThunks({
         try {
           const { createDoc } = await import("../../render/page/docSlice");
           const pageKey = await (dispatch as any)(
-            createDoc({ slateData, title })
+            (createDoc as any)({ slateData, title })
           ).unwrap();
 
           const newReference: PendingFile = {
@@ -389,9 +388,9 @@ const dialogSlice = createSliceWithThunks({
     deleteDialog: create.asyncThunk(
       async (payload: DeleteDialogPayload, thunkApi) => {
         const { dialogKey, includeAttachments } = normalizeDeleteDialogPayload(payload);
-        const { dispatch, getState, extra } = thunkApi;
+        const { dispatch, getState, extra } = thunkApi as any;
         const { db } = extra;
-        const state = getState() as RootState;
+        const state = getState() as any;
         const { currentServer, syncServers } = getRuntimeServerContext(state);
         const currentDialogKey = state.dialog.currentDialogKey;
         const currentDialogId = currentDialogKey
@@ -402,7 +401,7 @@ const dialogSlice = createSliceWithThunks({
 
         const isCurrentDialog =
           currentDialogId !== null && currentDialogId === targetDialogId;
-        await cleanupCliSessionForDialog({ dispatch, getState }, targetDialogConfig);
+        await cleanupCliSessionForDialog({ dispatch, getState: getState as any }, targetDialogConfig);
         // --- 无论是否是当前对话，都从当前空间删除该内容 ---
         await (dispatch as any)(remove(dialogKey));
         const prefix = createKey("dialog", targetDialogId, "msg");
@@ -460,7 +459,7 @@ const dialogSlice = createSliceWithThunks({
         dispatch(clearPlan());
         dispatch(clearWorkflow());
         const { currentServer: preferredServerOrigin } = getRuntimeServerContext(
-          getState() as RootState
+          getState() as any
         );
         return await (dispatch as any)(
           read({
@@ -512,13 +511,13 @@ const dialogSlice = createSliceWithThunks({
          * - `all: true` 仅用于 logout / 全局 reset 这类明确的系统级清理
          * - 未来桌面端若要支持“从任务中心停任意 dialog”，应在 UI 层显式传 dialogKey
          */
-        const dialogState = (getState() as RootState).dialog;
-        const runtimeStates = args?.all
+        const dialogState = (getState() as any).dialog;
+        const runtimeStates: any[] = args?.all
           ? Object.values(dialogState.dialogRuntimeByKey)
           : [getDialogRuntimeState(dialogState, args?.dialogKey)];
 
         runtimeStates.forEach((runtimeState) => {
-          Object.values(runtimeState.activeControllers).forEach((controller) =>
+          (Object.values(runtimeState.activeControllers) as any[]).forEach((controller) =>
             controller.abort()
           );
         });
@@ -802,7 +801,7 @@ export const {
 } = dialogSlice.selectors;
 
 export const selectCurrentDialogConfig = createSelector(
-  (state: RootState) => state,
+  (state: any) => state,
   selectCurrentDialogKey,
   (state, currentDialogKey) =>
     currentDialogKey
@@ -821,17 +820,17 @@ export const selectCurrentPrimaryAgentId = createSelector(
 );
 
 export const selectDialogConfigByKey = createSelector(
-  (state: RootState) => state,
-  (_: RootState, dialogKey?: string | null) => dialogKey,
+  (state: any) => state,
+  (_: any, dialogKey?: string | null) => dialogKey,
   (state, dialogKey) =>
     dialogKey ? (selectById(state, dialogKey) as DialogConfig | null) : null
 );
 
 export const selectCurrentDialogTokens = createSelector(
-  (state: RootState) => state,
+  (state: any) => state,
   selectCurrentDialogConfig,
-  (state: RootState) => selectDialogRuntimeTokens(state),
-  (_state: RootState, dialogKey?: string) => dialogKey,
+  (state: any) => selectDialogRuntimeTokens(state),
+  (_state: any, dialogKey?: string) => dialogKey,
   (state, currentDialog, currentRuntimeTokens, dialogKey) => {
     if (dialogKey) {
       const dialogConfig = selectById(state, dialogKey) as DialogConfig | null;

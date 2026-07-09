@@ -6,8 +6,6 @@ import {
   createEntityAdapter,
   type PayloadAction,
 } from "@reduxjs/toolkit";
-import type { RootState } from "../app/store";
-
 // Import actions
 import { removeAction } from "./actions/remove";
 import { readAction } from "./actions/read";
@@ -21,18 +19,19 @@ import { readFileContentAction } from "./actions/fileContent";
 import { shareResourceAction } from "../share/action";
 
 // Use dbKey as the entity's unique identifier
-export const dbAdapter = createEntityAdapter<any>({
-  selectId: (entity: any) => entity.dbKey,
+export const dbAdapter = createEntityAdapter<any, string>({
+  selectId: (entity: any) => entity.dbKey as string,
 });
 
-// Selectors
+// Selectors — inline type avoids circular RootState dependency
+type DbRootState = { db: any };
 export const {
   selectById,
   selectEntities,
   selectAll,
   selectIds,
   selectTotal,
-} = dbAdapter.getSelectors((state: RootState) => state.db);
+} = dbAdapter.getSelectors((state: DbRootState) => state.db);
 
 // Initial state
 const initialState = dbAdapter.getInitialState({});
@@ -49,33 +48,33 @@ const dbSlice = createSliceWithThunks({
   reducers: (create) => ({
     // Async Thunks
     read: create.asyncThunk(readAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<any>) => {
         if (action.payload && Object.keys(action.payload).length > 0) {
           dbAdapter.upsertOne(state, action.payload);
         }
       },
     }),
     readAndWait: create.asyncThunk(readAndWaitAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<any>) => {
         if (action.payload && Object.keys(action.payload).length > 0) {
           dbAdapter.upsertOne(state, action.payload);
         }
       },
     }),
     remove: create.asyncThunk(removeAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<{ dbKey?: string }>) => {
         const { dbKey } = action.payload;
         if (dbKey) dbAdapter.removeOne(state, dbKey);
       },
     }),
     purge: create.asyncThunk(purgeAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<{ dbKey?: string }>) => {
         const { dbKey } = action.payload;
         if (dbKey) dbAdapter.removeOne(state, dbKey);
       },
     }),
     write: create.asyncThunk(writeAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<any>) => {
         if (
           action.payload &&
           action.payload.dbKey &&
@@ -86,7 +85,7 @@ const dbSlice = createSliceWithThunks({
       },
     }),
     patch: create.asyncThunk(patchAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<any>) => {
         const { payload } = action;
         if (payload && payload.dbKey && Object.keys(payload).length > 0) {
           dbAdapter.upsertOne(state, payload);
@@ -94,7 +93,7 @@ const dbSlice = createSliceWithThunks({
       },
     }),
     upsert: create.asyncThunk(upsertAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<any>) => {
         if (
           action.payload &&
           action.payload.dbKey &&
@@ -106,7 +105,7 @@ const dbSlice = createSliceWithThunks({
     }),
     // 文件上传（avatar / Slate / Space 等统一走这里）
     upload: create.asyncThunk(uploadFileAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<any>) => {
         const payload = action.payload;
         if (payload && payload.dbKey && Object.keys(payload).length > 0) {
           dbAdapter.upsertOne(state, payload);
@@ -118,7 +117,7 @@ const dbSlice = createSliceWithThunks({
       // fulfilled 时不修改 db state；由调用方通过 unwrap() 拿返回值使用
     }),
     share: create.asyncThunk(shareResourceAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (state, action: PayloadAction<any>) => {
         if (action.payload && action.payload.key) {
           // We might want to store the shared object in local DB state too?
           // writeAction already does it. This is just for return value.

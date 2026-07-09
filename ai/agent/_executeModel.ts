@@ -98,7 +98,7 @@ export const _executeModel = async (
         api: getApiEndpoint(resolvedAgentConfig),
         bodyData,
         currentServer: selectCurrentServer(state),
-        token: selectCurrentToken(state),
+        token: selectCurrentToken(state) ?? "",
       });
       if (!response.ok) {
         let message = `Model request failed with HTTP ${response.status}`;

@@ -114,8 +114,8 @@ const defaultDeps: DeleteSpacesToolDeps = {
       detail: await res.text().catch(() => ""),
     };
   },
-  deleteOwnedSpace: async (thunkApi, input) => {
-    await thunkApi.dispatch(deleteSpace(input as any)).unwrap();
+  deleteOwnedSpace: async (thunkApi: any, input) => {
+    await (thunkApi as any).dispatch((deleteSpace as any)(input)).unwrap();
   },
 };
 

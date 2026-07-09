@@ -1,4 +1,4 @@
-import type { MessageContentPart } from "./types";
+import type { MessageContentPart, OpenAITextContent } from "./types";
 
 type MessageLike = {
   role?: string;
@@ -10,7 +10,7 @@ export function separateThinkContent(contentBuffer: MessageContentPart[]) {
   let normalContent = "";
 
   const combinedText = contentBuffer
-    .filter((c) => c.type === "text" && c.text)
+    .filter((c): c is OpenAITextContent => c.type === "text" && "text" in c && !!c.text)
     .map((c) => c.text)
     .join("");
 

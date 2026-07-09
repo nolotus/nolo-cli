@@ -1,4 +1,3 @@
-import type { RootState } from "../../app/store";
 import { asyncThunkCreator, buildCreateSlice, createSelector } from "@reduxjs/toolkit";
 import { selectEntities } from "../../database/dbSlice";
 
@@ -225,7 +224,7 @@ export const {
   hydrateMemberSpacesFromLocal,
 } = spaceSlice.actions;
 
-const selectSpaceState = (state: RootState) => state.space;
+const selectSpaceState = (state: any): SpaceState => state.space;
 
 export const selectCurrentSpaceId = createSelector(
   selectSpaceState,
@@ -235,7 +234,7 @@ export const selectCurrentSpaceId = createSelector(
 export const selectCurrentSpace = createSelector(
   [
     selectSpaceState,
-    (state: RootState) => {
+    (state: any) => {
       const spaceState = state.space;
       if (spaceState?.viewMode === "all") return undefined;
       if (!spaceState?.currentSpaceId) return undefined;
@@ -256,7 +255,7 @@ export const selectCurrentSpace = createSelector(
 
 export const selectAllMemberSpaces = createSelector(
   selectSpaceState,
-  (space) => {
+  (space): SpaceMemberWithSpaceInfo[] => {
     const memberSpaces = dedupeMemberSpacesById(space.memberSpaces || []);
     return [...memberSpaces].sort((a, b) => {
       return getMembershipUpdatedAt(b) - getMembershipUpdatedAt(a);

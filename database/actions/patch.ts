@@ -1,6 +1,6 @@
 // 文件路径: database/actions/patch.ts
 
-import type { AppThunkApi } from "../../app/store";
+import type { DbThunkApi } from "../thunkApiTypes";
 import { getRuntimeServerContext } from "../runtimeServerContext";
 import { toast } from "../../app/utils/toast";
 import {
@@ -90,10 +90,10 @@ export const patchAction = async (
     changes,
     preferredServerOrigin,
   }: { dbKey: string; changes: any; preferredServerOrigin?: string | null },
-  thunkApi: AppThunkApi
+  thunkApi: DbThunkApi
 ): Promise<any> => {
   // 1. 从 thunkApi.extra 中获取数据库实例
-  const { db } = thunkApi.extra;
+  const { db } = thunkApi.extra as import("../../app/store").AppExtra;
   if (!db) {
     const errorMsg = "Database instance is not available.";
     toast.error(errorMsg);
@@ -107,7 +107,7 @@ export const patchAction = async (
     throw new Error(errorMsg);
   }
 
-  const state = thunkApi.getState();
+  const state = thunkApi.getState() as import("../../app/store").RootState;
   const { currentServer, syncServers: configuredSyncServers } =
     getRuntimeServerContext(state);
 

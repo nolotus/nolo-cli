@@ -79,7 +79,6 @@ export const prepareTokenUsageData = ({
     tokenData: {
       ...usage,
       userId,
-      username,
       cybotId,
       model: billedModel,
       provider: recordProvider,

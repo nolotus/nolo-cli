@@ -1,4 +1,4 @@
-import type { RootState } from "../../app/store";
+import type { RootState, AppThunkApi } from "../../app/store";
 import { readDefaultSpaceIdPreference } from "../../app/settings/defaultSpacePreference";
 
 import { changeSpace } from "./spaceSlice";
@@ -6,7 +6,7 @@ import { readSpaceIfExists } from "./resolvePreferredSpaceId";
 
 export const loadDefaultSpaceAction = async (
   userId: string | undefined,
-  thunkAPI
+  thunkAPI: AppThunkApi
 ): Promise<string | null> => {
   const dispatch = thunkAPI.dispatch;
   const state = thunkAPI.getState() as RootState;
@@ -26,7 +26,7 @@ export const loadDefaultSpaceAction = async (
     const spaceIdToLoad = await readSpaceIfExists(dispatch, defaultSpaceId);
 
     if (spaceIdToLoad) {
-      await dispatch(changeSpace(spaceIdToLoad)).unwrap();
+      await dispatch((changeSpace as any)(spaceIdToLoad)).unwrap();
       return spaceIdToLoad;
     }
 
@@ -46,7 +46,7 @@ export const loadDefaultSpaceAction = async (
         console.info(
           `[Space] No register for ${userId}, falling back to member space: ${readableId}`
         );
-        await dispatch(changeSpace(readableId)).unwrap();
+        await dispatch((changeSpace as any)(readableId)).unwrap();
         return readableId;
       }
     }

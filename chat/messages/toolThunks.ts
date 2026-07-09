@@ -3,7 +3,6 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
 import { DataType } from "../../create/types";
 import { write } from "../../database/dbSlice";
-import type { AppThunkApi } from "../../app/store";
 
 import { findToolExecutor, toolDefinitionsByName } from "../../ai/tools";
 import { getToolResultErrorData } from "../../ai/tools/toolResultError";
@@ -63,7 +62,7 @@ export interface HandleToolCallsPayload {
 
 const processToolData = createAsyncThunk(
   "message/processToolData",
-  async (args: ProcessToolDataPayload, thunkApi: AppThunkApi) => {
+  async (args: ProcessToolDataPayload, thunkApi: any) => {
     const { toolCall, parentMessageId, toolRunId } = args;
     const { dispatch, rejectWithValue } = thunkApi;
 
@@ -379,7 +378,7 @@ const processToolData = createAsyncThunk(
 
 export const handleToolCalls = createAsyncThunk(
   "message/handleToolCalls",
-  async (args: HandleToolCallsPayload, thunkApi: AppThunkApi) => {
+  async (args: HandleToolCallsPayload, thunkApi: any) => {
     const {
       accumulatedCalls,
       currentContentBuffer,

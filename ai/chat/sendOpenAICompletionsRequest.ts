@@ -696,7 +696,7 @@ export const sendOpenAICompletionsRequest = async ({
     }
 
     const api = getApiEndpoint(agentConfig);
-    const token = selectCurrentToken(getState() as RootState);
+    const token = selectCurrentToken(getState() as RootState) ?? "";
     logQuickChatPerfStage(quickChatPerfStartedAt, "openai-completions-fetch-starting", {
       api,
       dialogKey,

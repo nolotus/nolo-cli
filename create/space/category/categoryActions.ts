@@ -1,22 +1,25 @@
 // store/space/actions/categoryActions.ts
 
-import { asyncThunkCreator, type PayloadAction } from "@reduxjs/toolkit";
+import { type PayloadAction } from "@reduxjs/toolkit";
 import { ulid } from "ulid";
 import type { AppDispatch, RootState } from "../../../app/store";
-import type { Category, SpaceContent, SpaceData, ULID } from "../../../app/types";
+import type { Category, Contents, SpaceContent, SpaceData, ULID } from "../../../app/types";
 import { selectUserId } from "../../../auth/authSlice";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read } from "../../../database/dbSlice";
 import { UNCATEGORIZED_ID } from "../constants";
 import { selectCurrentSpaceId } from "../spaceSlice";
-import type { SpaceState } from "../spaceSlice";
+import type { SpaceState } from "../types";
 import { checkSpaceMembership } from "../utils/permissions";
 import {
   normalizeCollapsedCategories,
   writeStoredCollapsedCategories,
 } from "../spaceCollapsedState";
 
-type Create = ReturnType<typeof asyncThunkCreator<SpaceState>>;
+type Create = {
+  asyncThunk: (...args: any[]) => any;
+  reducer: (...args: any[]) => any;
+};
 
 /**
  * 创建与分类（Category）相关的所有 Reducer 和 Async Thunks
@@ -76,14 +79,14 @@ export const createCategoryActions = (create: Create) => ({
       return collapsedCategories;
     },
     {
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         // 合并返回的折叠状态，保持与持久化一致
         state.collapsedCategories = {
           ...state.collapsedCategories,
           ...action.payload,
         };
       },
-      rejected: (state, action) => {
+      rejected: (state: SpaceState, action: any) => {
         console.error("批量切换分类折叠状态失败:", action.error.message);
       },
     }
@@ -128,13 +131,13 @@ export const createCategoryActions = (create: Create) => ({
       return collapsedCategories;
     },
     {
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         state.collapsedCategories = {
           ...state.collapsedCategories,
           ...action.payload,
         };
       },
-      rejected: (state, action) => {
+      rejected: (state: SpaceState, action: any) => {
         console.error("切换分类折叠状态失败:", action.error.message);
       },
     }
@@ -205,7 +208,7 @@ export const createCategoryActions = (create: Create) => ({
       return { spaceId, updatedSpaceData };
     },
     {
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         if (state.currentSpaceId === action.payload.spaceId) {
           state.currentSpace = action.payload.updatedSpaceData;
         }
@@ -248,7 +251,7 @@ export const createCategoryActions = (create: Create) => ({
         Pick<SpaceData, "categories" | "contents" | "updatedAt">
       > = {
         categories: { [categoryId]: null },
-        updatedAt: nowISO,
+        updatedAt: nowISO as unknown as number,
       };
 
       if (spaceData.contents) {
@@ -258,12 +261,12 @@ export const createCategoryActions = (create: Create) => ({
           if (spaceData.contents[key]?.categoryId === categoryId) {
             contentsPatch[key] = {
               categoryId: null,
-              updatedAt: nowISO,
+              updatedAt: nowISO as unknown as number,
             };
             contentsChanged = true;
           }
         }
-        if (contentsChanged) changes.contents = contentsPatch;
+        if (contentsChanged) changes.contents = contentsPatch as Contents;
       }
 
       const updatedSpaceData = await dispatch(
@@ -283,7 +286,7 @@ export const createCategoryActions = (create: Create) => ({
       return { spaceId, updatedSpaceData, collapsedCategories };
     },
     {
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         if (state.currentSpaceId === action.payload.spaceId) {
           state.currentSpace = action.payload.updatedSpaceData;
           state.collapsedCategories = action.payload.collapsedCategories;
@@ -339,7 +342,7 @@ export const createCategoryActions = (create: Create) => ({
       return { spaceId, updatedSpaceData };
     },
     {
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         if (state.currentSpaceId === action.payload.spaceId) {
           state.currentSpace = action.payload.updatedSpaceData;
         }
@@ -417,7 +420,7 @@ export const createCategoryActions = (create: Create) => ({
       return { spaceId, updatedSpaceData };
     },
     {
-      fulfilled: (state, action) => {
+      fulfilled: (state: SpaceState, action: any) => {
         if (state.currentSpaceId === action.payload.spaceId) {
           state.currentSpace = action.payload.updatedSpaceData;
         }

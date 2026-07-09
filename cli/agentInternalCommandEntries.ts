@@ -1,5 +1,6 @@
 import type { CommandEntry } from "./cliCommandTypes";
 import {
+  createContextCommand,
   createEnvCommand,
   createEnvScriptDirCommand,
 } from "./cliCommandFactories";
@@ -11,9 +12,14 @@ import {
 
 export function getAgentInternalCommandEntries(): CommandEntry[] {
   const createAgentRunCommand = (path: string[], description: string): CommandEntry =>
-    createEnvScriptDirCommand(path, description, async (args, deps) => {
+    createContextCommand(path, description, async (args, ctx) => {
       const { runAgentRunCommand } = await import("./agentRunCommand");
-      return runAgentRunCommand(args, { ...deps, commandPath: path });
+      return runAgentRunCommand(args, {
+        env: ctx.env,
+        scriptDir: ctx.scriptDir,
+        cliEntrypointPath: ctx.entrypointPath,
+        commandPath: path,
+      });
     });
 
   return [
@@ -36,6 +42,26 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
       return runAgentReadCommand(args, deps);
     }),
     createAgentRunCommand(["agent", "run"], "Run an agent"),
+    createEnvCommand(["agent", "ps"], "List active and recent local agent runs", async (_args, deps) => {
+      const { runAgentPsCommand } = await import("./agentRunControl");
+      return runAgentPsCommand(_args, { ...deps, output: process.stdout });
+    }),
+    createEnvCommand(["agent", "status"], "Show status of a local agent run", async (args, deps) => {
+      const { runAgentStatusCommand } = await import("./agentRunControl");
+      return runAgentStatusCommand(args, { ...deps, output: process.stdout });
+    }),
+    createEnvCommand(["agent", "logs"], "Show logs of a local agent run", async (args, deps) => {
+      const { runAgentLogsCommand } = await import("./agentRunControl");
+      return runAgentLogsCommand(args, { ...deps, output: process.stdout });
+    }),
+    createEnvCommand(["agent", "stop"], "Stop a local agent run", async (args, deps) => {
+      const { runAgentStopCommand } = await import("./agentRunControl");
+      return runAgentStopCommand(args, { ...deps, output: process.stdout });
+    }),
+    createEnvCommand(["agent", "kill"], "Kill a local agent run", async (args, deps) => {
+      const { runAgentKillCommand } = await import("./agentRunControl");
+      return runAgentKillCommand(args, { ...deps, output: process.stdout });
+    }),
     createEnvCommand(["agent", "setup-offline-marxists"], "Create or update the Marxists.org offline book agent", async (args, deps) => {
       const { runSetupOfflineMarxistsAgentCommand } = await import("./offlineMarxistsAgentCommand");
       return runSetupOfflineMarxistsAgentCommand(args, deps);

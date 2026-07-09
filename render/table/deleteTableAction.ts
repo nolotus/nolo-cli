@@ -119,7 +119,7 @@ export const deleteTableAction = async (
   const rowDbKeys = new Set(rowEntries.map(([key]) => key));
   const rowIds = new Set(
     rowEntries
-      .map(([, value]) => value.rowId)
+      .map(([, value]) => (value as any).rowId)
       .filter((rowId): rowId is string => typeof rowId === "string")
   );
 
@@ -165,7 +165,7 @@ export const deleteTableAction = async (
     ...rowEntries.map(([key, value]) => ({
       type: "put" as const,
       key,
-      value: buildTombstoneRecord(value, nowIso),
+      value: buildTombstoneRecord(value as Record<string, unknown>, nowIso),
     })),
   ];
 

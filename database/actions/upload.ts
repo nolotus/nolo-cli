@@ -71,7 +71,7 @@ export const uploadFileAction = async (
   if (!file) {
     const errorMsg =
       "Invalid arguments for uploadFileAction: file is required.";
-    logger.error(errorMsg, { uploadConfig });
+    logger.error({ uploadConfig }, errorMsg);
     toast.error(errorMsg);
     throw new Error(errorMsg);
   }
@@ -164,15 +164,15 @@ export const uploadFileAction = async (
 
     if (!primaryUploadServer && !serversToUse.length) {
       logger.warn(
-        "[uploadFileAction] No replication servers available, file metadata only saved locally.",
-        { finalDbKey, fileName, tenantId }
+        { finalDbKey, fileName, tenantId },
+        "[uploadFileAction] No replication servers available, file metadata only saved locally."
       );
       return fileMetadata;
     }
 
     logger.debug(
-      `[uploadFileAction] Uploaded primary copy for ${fileName} and scheduled background sync to ${serversToUse.length} additional servers.`,
-      { primaryUploadServer, currentServer, serversToUse, tenantId }
+      { primaryUploadServer, currentServer, serversToUse, tenantId },
+      `[uploadFileAction] Uploaded primary copy for ${fileName} and scheduled background sync to ${serversToUse.length} additional servers.`
     );
     // 8. 返回本地保存的元数据
     return fileMetadata;

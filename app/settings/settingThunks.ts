@@ -7,7 +7,7 @@
 // 触发的 TS 类型推断失败。
 
 import { createAsyncThunk } from "@reduxjs/toolkit";
-import type { RootState } from "../store";
+
 import { selectUserId } from "../../auth/authSlice";
 import { createUserKey, createUserPreferenceKey } from "../../database/keys";
 import {
@@ -55,9 +55,9 @@ import { SYSTEM_DEFAULT_AGENT_ID, type SettingState } from "./settingTypes";
 export const getSettings = createAsyncThunk<
   Record<string, unknown> | null,
   void,
-  { state: RootState }
+  { state: any }
 >("settings/getSettings", async (_, { dispatch, getState }) => {
-  const userId = selectUserId(getState() as RootState);
+  const userId = selectUserId(getState() as any);
   if (!userId) return null;
   const settingsKey = createUserKey.settings(userId);
   const authorityHomeKey = createUserPreferenceKey.authorityHome(userId);
@@ -106,16 +106,16 @@ export const getSettings = createAsyncThunk<
 export const setSettings = createAsyncThunk<
   Partial<SettingState>,
   Partial<SettingState>,
-  { state: RootState }
+  { state: any }
 >("settings/setSettings", async (changes, { dispatch, getState }) => {
-  const currentSettings = (getState() as RootState).settings;
+  const currentSettings = (getState() as any).settings;
   const normalizedChanges = normalizeSettingChanges(changes);
   const nextDefaultSpaceId =
     normalizeDefaultSpaceIdPreference(normalizedChanges.defaultSpaceId) ?? null;
   const previousDefaultAgentId =
     normalizeDefaultAgentIdSetting(currentSettings.defaultAgentId) ??
     SYSTEM_DEFAULT_AGENT_ID;
-  const userId = selectUserId(getState() as RootState);
+  const userId = selectUserId(getState() as any);
   if (!userId) {
     if (!isLocalFirstAppearanceChange(normalizedChanges)) {
       throw new Error("User not found for persisting settings.");
@@ -196,7 +196,7 @@ export const changeDarkMode = createAsyncThunk(
 export const toggleShowThinking = createAsyncThunk(
   "settings/toggleShowThinking",
   async (_: void, { dispatch, getState }) => {
-    const currentShowThinking = (getState() as RootState).settings.showThinking;
+    const currentShowThinking = (getState() as any).settings.showThinking;
     return dispatch(
       setSettings({ showThinking: !currentShowThinking }),
     ).unwrap();
@@ -218,7 +218,7 @@ export const setSidebarWidth = createAsyncThunk(
 export const toggleEnableReadCurrentSpace = createAsyncThunk(
   "settings/toggleEnableReadCurrentSpace",
   async (_: void, { dispatch, getState }) => {
-    const current = (getState() as RootState).settings.enableReadCurrentSpace;
+    const current = (getState() as any).settings.enableReadCurrentSpace;
     return dispatch(
       setSettings({
         enableReadCurrentSpace: !current,
@@ -262,7 +262,7 @@ export const setEditorCodeTheme = createAsyncThunk(
 export const toggleEditorWordCount = createAsyncThunk(
   "settings/toggleEditorWordCount",
   async (_: void, { dispatch, getState }) => {
-    const current = (getState() as RootState).settings.editorWordCountEnabled;
+    const current = (getState() as any).settings.editorWordCountEnabled;
     return dispatch(setSettings({ editorWordCountEnabled: !current })).unwrap();
   },
 );
@@ -270,7 +270,7 @@ export const toggleEditorWordCount = createAsyncThunk(
 export const toggleEditorShortcut = createAsyncThunk(
   "settings/toggleEditorShortcut",
   async (key: string, { dispatch, getState }) => {
-    const currentShortcuts = (getState() as RootState).settings.editorShortcuts;
+    const currentShortcuts = (getState() as any).settings.editorShortcuts;
     const newShortcuts = {
       ...currentShortcuts,
       [key]: !currentShortcuts[key],
@@ -288,7 +288,7 @@ export const setEditorFontSize = createAsyncThunk(
 export const toggleEditorAutoSave = createAsyncThunk(
   "settings/toggleEditorAutoSave",
   async (_: void, { dispatch, getState }) => {
-    const current = (getState() as RootState).settings.editorAutoSave;
+    const current = (getState() as any).settings.editorAutoSave;
     return dispatch(setSettings({ editorAutoSave: !current })).unwrap();
   },
 );

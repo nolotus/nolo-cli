@@ -108,7 +108,7 @@ export const buildBuiltinObjectAssistantAgent = (
   userId: string,
 ): Agent & { dbKey: string } => {
   const id = BUILTIN_OBJECT_ASSISTANT_IDS[kind];
-  const dbKey = createAgentKey.private(userId, id);
+  const dbKey = createAgentKey.private(userId, id) as string;
   const now = Date.now();
 
   const common = {
@@ -124,7 +124,7 @@ export const buildBuiltinObjectAssistantAgent = (
     inputPrice: 1.4 * 8,
     outputPrice: 4.4 * 8,
     createdAt: now,
-    updatedAt: now,
+    updatedAt: String(now),
     dialogCount: 0,
     messageCount: 0,
     tokenCount: 0,

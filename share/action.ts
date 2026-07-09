@@ -1,4 +1,4 @@
-import type { AppThunkApi } from "../app/store";
+import type { DbThunkApi } from "../database/thunkApiTypes";
 import { selectCurrentUser, selectUserId } from "../auth/authSlice";
 import {
   selectCurrentServer,
@@ -88,9 +88,9 @@ const resolveTableSharePayload = (
 
 export const shareResourceAction = async (
   config: ShareActionConfig,
-  thunkApi: AppThunkApi
+  thunkApi: DbThunkApi
 ): Promise<{ token: string; key: string }> => {
-  const state = thunkApi.getState();
+  const state = thunkApi.getState() as import("../app/store").RootState;
   const userId = selectUserId(state);
   const currentUser = selectCurrentUser(state);
 
@@ -112,7 +112,7 @@ export const shareResourceAction = async (
   const coverImage = extractCoverImage(config.type, snapshotData);
   const agentInfo = extractAgentInfo(config.type, snapshotData);
   const createdAt = Date.now();
-  const { db: clientDb } = thunkApi.extra;
+  const { db: clientDb } = thunkApi.extra as import("../app/store").AppExtra;
   let authorProfile: Record<string, unknown> | null = null;
 
   if (clientDb) {

@@ -1,5 +1,5 @@
 import { createSelector, createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { RootState } from "../store";
+
 import type {
   NotificationKind,
   NotificationRecord,
@@ -120,7 +120,7 @@ export const {
   markAllNotificationsRead,
 } = notificationSlice.actions;
 
-const selectNotificationState = (state: RootState) =>
+const selectNotificationState = (state: any) =>
   state.notifications ?? initialState;
 
 export const selectNotifications = createSelector(

@@ -10,7 +10,7 @@ import { format, formatISO } from "date-fns";
 import { prepareAndPersistMessage } from "../../messages/messageSlice";
 import { buildBuiltinObjectAssistantAgentFromKey } from "../objectAssistantRegistry";
 
-import type { Agent } from "../../../app/types";
+import type { Agent, DialogConfig } from "../../../app/types";
 import type { UiOption } from "../../messages/types";
 import {
   uiAskChoiceFunc,
@@ -90,9 +90,10 @@ export const createDialogAction = async (
     optimisticReturnBeforeWrite,
     preferredServerOrigin,
   } = args;
-  const { dispatch, getState, extra } = thunkApi;
+  const { dispatch: dispatchRaw, getState, extra } = thunkApi as any;
+  const dispatch = dispatchRaw as any;
   const agentKey = cybots[0];
-  const userId = selectUserId(getState());
+  const userId = selectUserId(getState()) as string;
 
   const readAgentConfig = async () => {
     const existing = (await dispatch(
@@ -154,7 +155,7 @@ export const createDialogAction = async (
           userId,
           agentKey,
           currentSpaceId: explicitSpaceId,
-        }).catch(() => ({ recap: null, reason: "no-db" as const }))
+        }).catch(() => ({ recap: null, reason: "no-db" as const, sourceDialogKey: undefined }))
       : null;
 
   if (
@@ -259,7 +260,7 @@ export const createDialogAction = async (
       dbKey: dialogPath,
       userId,
     };
-    dispatch(upsertSSREntity(optimisticDialogData));
+    dispatch((upsertSSREntity as any)(optimisticDialogData));
     notifyUserDataUpdated();
     void dispatch(write({ data: dialogData, customKey: dialogPath }))
       .unwrap()
@@ -279,7 +280,7 @@ export const createDialogAction = async (
   // 3. 将对话添加到空间
   if (spaceId) {
     await dispatch(
-      addContentToSpace({
+      (addContentToSpace as any)({
         spaceId,
         contentKey: dialogPath,
         type: DataType.DIALOG,
@@ -343,24 +344,24 @@ export const createDialogAction = async (
       );
 
       await dispatch(
-        prepareAndPersistMessage({
+        (prepareAndPersistMessage as any)({
           message: {
             role: "tool",
             toolName: uiAskChoiceFunctionSchema.name,
             cybotKey: agentKey,
-            content: toolResult.rawData,
+            content: toolResult.rawData as any,
             displayData: toolResult.displayData,
           },
           dialogConfig: {
             id: dialogId,
             dbKey: dialogPath,
-          },
+          } as DialogConfig,
         })
       );
     } else if (effectiveCfg.text) {
       // 只有文本，没有菜单：走老逻辑，发一条普通 greeting
       await dispatch(
-        prepareAndPersistMessage({
+        (prepareAndPersistMessage as any)({
           message: {
             content: effectiveCfg.text,
             role: "assistant",
@@ -369,7 +370,7 @@ export const createDialogAction = async (
           dialogConfig: {
             id: dialogId,
             dbKey: dialogPath,
-          },
+          } as DialogConfig,
         })
       );
     }

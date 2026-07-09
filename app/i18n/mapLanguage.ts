@@ -1,4 +1,4 @@
-export const languageMap = {
+export const languageMap: Record<string, string> = {
   "en-US": "English",
   "zh-CN": "Simplified Chinese",
   "zh-TW": "Traditional Chinese",

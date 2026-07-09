@@ -266,7 +266,7 @@ export const sendOpenAIResponseRequest = async ({
         id: messageId,
         dialogId,
       dbKey: msgKey,
-      content: state.contentBuffer,
+      content: state.contentBuffer as any,
       thinkContent: state.reasoning,
       role: "assistant",
       agentKey: agentConfig.dbKey,
@@ -459,7 +459,7 @@ export const sendOpenAIResponseRequest = async ({
         currentServer: selectRuntimeCurrentServer(getState() as RootState),
         signal,
         token: token ?? "",
-      });
+      } as any);
       logQuickChatPerfStage(quickChatPerfStartedAt, "openai-response-fetch-response", {
         ok: response.ok,
         status: response.status,

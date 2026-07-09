@@ -1,10 +1,15 @@
 const FETCH_TIMEOUT = 5000;
 
 export const fetchConvMsgs = async (
-  server,
-  token,
-  { dialogId, dialogKey, limit, beforeKey },
-  options = {}
+  server: string,
+  token: string,
+  {
+    dialogId,
+    dialogKey,
+    limit,
+    beforeKey,
+  }: { dialogId: string; dialogKey?: string; limit?: number; beforeKey?: string },
+  options: { signal?: AbortSignal } = {}
 ) => {
   const { signal: externalSignal } = options;
 

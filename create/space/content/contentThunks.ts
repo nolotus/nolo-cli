@@ -1,4 +1,3 @@
-import { asyncThunkCreator } from "@reduxjs/toolkit";
 import { toast } from "../../../app/utils/toast";
 import type { SpaceState } from "../types";
 import { addContentAction } from "./addContentAction";
@@ -10,7 +9,10 @@ import { deleteMultipleContentAction } from "./deleteMultipleContentAction"; // 
 import { uploadAndAddFileToSpaceAction } from "./uploadAndAddFileToSpaceAction";
 import { normalizeSpaceId } from "../spaceKeys";
 
-type Create = ReturnType<typeof asyncThunkCreator<SpaceState>>;
+type Create = {
+  asyncThunk: (...args: any[]) => any;
+  reducer: (...args: any[]) => any;
+};
 
 /**
  * 创建与内容相关的 Async Thunks
@@ -18,7 +20,7 @@ type Create = ReturnType<typeof asyncThunkCreator<SpaceState>>;
  */
 export const createContentThunks = (create: Create) => ({
   addContentToSpace: create.asyncThunk(addContentAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       const { spaceId, updatedSpaceData } = action.payload;
       const normalizedSpaceId = normalizeSpaceId(spaceId);
       const normalizedCurrentSpaceId = state.currentSpaceId
@@ -31,7 +33,7 @@ export const createContentThunks = (create: Create) => ({
   }),
 
   moveContentToSpace: create.asyncThunk(moveContentAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       const {
         sourceSpaceId,
         updatedSourceSpaceData,
@@ -48,7 +50,7 @@ export const createContentThunks = (create: Create) => ({
   }),
 
   deleteContentFromSpace: create.asyncThunk(deleteContentFromSpaceAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       const { spaceId, updatedSpaceData } = action.payload;
       const normalizedSpaceId = normalizeSpaceId(spaceId);
       const normalizedCurrentSpaceId = state.currentSpaceId
@@ -62,7 +64,7 @@ export const createContentThunks = (create: Create) => ({
 
   // --- 新增: 批量删除内容的 Thunk ---
   deleteMultipleContent: create.asyncThunk(deleteMultipleContentAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       const normalizedSpaceId = normalizeSpaceId(action.payload.spaceId);
       const normalizedCurrentSpaceId = state.currentSpaceId
         ? normalizeSpaceId(state.currentSpaceId)
@@ -74,7 +76,7 @@ export const createContentThunks = (create: Create) => ({
   }),
 
   uploadAndAddFileToSpace: create.asyncThunk(uploadAndAddFileToSpaceAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       if (state.currentSpaceId === action.payload.spaceId) {
         state.currentSpace = action.payload.updatedSpaceData;
       }
@@ -83,18 +85,18 @@ export const createContentThunks = (create: Create) => ({
   // --- 结束新增 ---
 
   updateContentTitle: create.asyncThunk(updateContentTitleAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       if (state.currentSpaceId === action.payload.spaceId) {
         state.currentSpace = action.payload.updatedSpaceData;
       }
     },
-    rejected: (_state, action) => {
+    rejected: (_state: SpaceState, action: any) => {
       toast.error(action.error.message || "标题保存失败");
     },
   }),
 
   updateContentCategory: create.asyncThunk(updateContentCategoryAction, {
-    fulfilled: (state, action) => {
+    fulfilled: (state: SpaceState, action: any) => {
       if (state.currentSpaceId === action.payload.spaceId) {
         state.currentSpace = action.payload.updatedSpaceData;
       }

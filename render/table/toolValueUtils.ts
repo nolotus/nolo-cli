@@ -295,7 +295,7 @@ export const applyRowFilters = (rows: any[], filters?: RowFilters): any[] => {
         if (Array.isArray(actual)) {
           return expected.every((item) => actual.includes(item));
         }
-        return expected.includes(actual);
+        return (expected as unknown as string).includes(actual as string);
       }
       if (Array.isArray(actual)) {
         return actual.includes(expected);

@@ -10,6 +10,16 @@ import { createSpaceThunks } from "./spaceThunks";
 import { SpaceState, type SpaceViewMode } from "./types";
 import { UNCATEGORIZED_ID } from "./constants";
 
+/**
+ * 折叠态隐式默认:当 collapsedCategories map 里没有某个 categoryId 时,
+ * 用这份常量作为回退。UNCATEGORIZED 系统桶默认展开,普通分类默认折叠。
+ * 任何"创建新分类"的 reducer 必须显式把 [newCategoryId]: false 写入 map,
+ * 此常量只用于"未登记"场景的回退(用户从未 toggle 过的 id)。
+ */
+export const DEFAULT_COLLAPSED_CATEGORIES: Record<string, boolean> = {
+  [UNCATEGORIZED_ID]: false,
+};
+
 import { createSpaceKey } from "./spaceKeys";
 
 const createSliceWithThunks = buildCreateSlice({
@@ -292,7 +302,9 @@ export const selectCollapsedCategories = createSelector(
 export const selectIsCategoryCollapsed = (categoryId: string) =>
   createSelector(
     selectCollapsedCategories,
-    (collapsed) => collapsed[categoryId] ?? categoryId !== UNCATEGORIZED_ID
+    (collapsed) =>
+      collapsed[categoryId] ??
+      (DEFAULT_COLLAPSED_CATEGORIES[categoryId] ?? true)
   );
 
 export const selectDialogStatuses = createSelector(

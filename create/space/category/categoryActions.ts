@@ -8,7 +8,7 @@ import { selectUserId } from "../../../auth/authSlice";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read } from "../../../database/dbSlice";
 import { UNCATEGORIZED_ID } from "../constants";
-import { selectCurrentSpaceId } from "../spaceSlice";
+import { selectCurrentSpaceId, DEFAULT_COLLAPSED_CATEGORIES } from "../spaceSlice";
 import type { SpaceState } from "../types";
 import { checkSpaceMembership } from "../utils/permissions";
 import {
@@ -111,7 +111,8 @@ export const createCategoryActions = (create: Create) => ({
       if (!categoryId) throw new Error("无效的分类ID。");
 
       // 计算新的折叠状态
-      const defaultCollapsed = categoryId !== UNCATEGORIZED_ID;
+      const defaultCollapsed =
+        DEFAULT_COLLAPSED_CATEGORIES[categoryId] ?? true;
       const isCurrentlyCollapsed =
         rootState.space.collapsedCategories[categoryId] ?? defaultCollapsed;
       const newCollapsedState = !isCurrentlyCollapsed;
@@ -155,7 +156,7 @@ export const createCategoryActions = (create: Create) => ({
         order?: number;
       },
       thunkAPI: { dispatch: AppDispatch; getState: () => RootState }
-    ): Promise<{ spaceId: ULID; updatedSpaceData: SpaceData }> => {
+    ): Promise<{ spaceId: ULID; updatedSpaceData: SpaceData; newCategoryId: string }> => {
       const { spaceId: inputSpaceId, name, categoryId, order } = input;
       const { dispatch, getState } = thunkAPI;
       const rootState = getState();
@@ -205,12 +206,15 @@ export const createCategoryActions = (create: Create) => ({
         })
       ).unwrap();
 
-      return { spaceId, updatedSpaceData };
+      return { spaceId, updatedSpaceData, newCategoryId };
     },
     {
       fulfilled: (state: SpaceState, action: any) => {
         if (state.currentSpaceId === action.payload.spaceId) {
           state.currentSpace = action.payload.updatedSpaceData;
+          if (action.payload.newCategoryId) {
+            state.collapsedCategories[action.payload.newCategoryId] = false;
+          }
         }
       },
     }

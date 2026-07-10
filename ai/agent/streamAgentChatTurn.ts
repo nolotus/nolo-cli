@@ -1331,6 +1331,7 @@ export const streamAgentChatTurnHandler = async (
                     continueDialogId: dialogId,
                     cwd: runtimeOptions?.cwd,
                     restrictShellToWorkspace: runtimeOptions?.restrictShellToWorkspace === true,
+                    llmConfigOverride: runtimeOptions?.llmConfigOverride,
                 });
 
                 for await (const event of eventStream) {

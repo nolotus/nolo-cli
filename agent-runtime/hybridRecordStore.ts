@@ -19,6 +19,9 @@ type HybridRecordStoreDeps = {
   fallbackServers?: string[];
   authToken?: string;
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  /** Per-remote-read timeout in ms. Prevents a slow/dead cluster server from
+   * blocking the whole read for minutes. Defaults to undefined (no timeout). */
+  requestTimeoutMs?: number;
 };
 
 function normalizeHybridServer(value: string) {
@@ -98,6 +101,7 @@ async function fetchHybridRemoteRecord(args: {
   server: string;
   authToken?: string;
   fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  signal?: AbortSignal;
 }) {
   const response = await args.fetchImpl(
     `${args.server}/api/v1/db/read/${encodeURIComponent(args.dbKey)}`,
@@ -106,6 +110,7 @@ async function fetchHybridRemoteRecord(args: {
         "Content-Type": "application/json",
         ...(args.authToken ? { Authorization: `Bearer ${args.authToken}` } : {}),
       },
+      ...(args.signal ? { signal: args.signal } : {}),
     }
   );
   if (!response.ok) return null;
@@ -143,8 +148,12 @@ export function createHybridRecordStore(
             server,
             authToken: deps.authToken,
             fetchImpl,
+            ...(deps.requestTimeoutMs
+              ? { signal: AbortSignal.timeout(deps.requestTimeoutMs) }
+              : {}),
           });
         } catch {
+          // network error or timeout: advance to the next server sequentially
           continue;
         }
         if (!remoteRecord) continue;

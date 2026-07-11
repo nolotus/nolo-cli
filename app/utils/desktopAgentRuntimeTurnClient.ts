@@ -14,12 +14,6 @@ export type DesktopAgentRuntimeTurnResult =
       error: string;
     };
 
-type LlmConfigOverride = {
-  provider?: string;
-  model?: string;
-  reasoningEffort?: string;
-};
-
 type RunDesktopAgentRuntimeTurnArgs = {
   agentRef: string;
   input: AgentRuntimeMessageContent;
@@ -27,8 +21,8 @@ type RunDesktopAgentRuntimeTurnArgs = {
   continueDialogId?: string;
   cwd?: string;
   restrictShellToWorkspace?: boolean;
+  workspaceToolsHint?: boolean;
   fetchImpl?: typeof fetch;
-  llmConfigOverride?: LlmConfigOverride;
 };
 
 function buildDesktopAgentRuntimeTurnBody(args: RunDesktopAgentRuntimeTurnArgs) {
@@ -44,7 +38,7 @@ function buildDesktopAgentRuntimeTurnBody(args: RunDesktopAgentRuntimeTurnArgs) 
     ...(continueDialogId ? { continueDialogId } : {}),
     ...(args.cwd ? { cwd: args.cwd } : {}),
     ...(args.restrictShellToWorkspace ? { restrictShellToWorkspace: true } : {}),
-    ...(args.llmConfigOverride ? { llmConfigOverride: args.llmConfigOverride } : {}),
+    ...(args.workspaceToolsHint ? { workspaceToolsHint: true } : {}),
   };
 }
 

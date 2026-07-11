@@ -77,18 +77,6 @@ export interface SettingState {
   // 默认启动的智能体 ID
   defaultAgentId?: string;
 
-  // 快速对话「快速」档使用的智能体 ID;SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
-  flashAgentId?: string;
-
-  // 快速对话「平衡」档使用的智能体 ID;SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
-  balancedAgentId?: string;
-
-  // 快速对话「质量」档使用的智能体 ID;SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
-  qualityAgentId?: string;
-
-  // 快速对话「图片」档使用的智能体 ID;SYSTEM_DEFAULT_AGENT_ID 表示回退到 nolo
-  imageAgentId?: string;
-
   // PDF OCR 模型选择("none" 表示不使用 OCR,用 pdf.js 提取文本)
   ocrModel: "none" | "google_document_ocr" | "olm_ocr";
 

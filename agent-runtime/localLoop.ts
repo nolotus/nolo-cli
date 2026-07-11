@@ -26,6 +26,9 @@ export type LocalAgentTurnInput = {
   onToolEvent?: (event: LocalAgentToolEvent) => void;
   onActionGate?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   onTextDelta?: (chunk: string) => void;
+  onLoopEvent?: (event: LocalAgentLoopEvent) => void;
+  /** 单次 provider.complete 的硬超时；默认 120_000ms。超时重试一次，再超时抛错结束回合。 */
+  llmRequestTimeoutMs?: number;
 };
 
 export type LocalAgentTurnResult = AgentRuntimeResult & {
@@ -44,6 +47,12 @@ export type LocalAgentToolEvent = {
   message?: string;
   metadata?: Record<string, unknown>;
 };
+
+export type LocalAgentLoopEvent =
+  | { kind: "llm-start"; round: number; atMs: number }
+  | { kind: "llm-end"; round: number; atMs: number; ok: boolean }
+  | { kind: "tool-start"; name: string; atMs: number }
+  | { kind: "tool-end"; name: string; atMs: number; ok: boolean };
 
 export type LocalAgentActionGate = ActionGate & {
   toolName: string;
@@ -96,6 +105,72 @@ function emitToolEvent(
   event: LocalAgentToolEvent
 ) {
   input.onToolEvent?.(event);
+}
+
+const DEFAULT_LLM_REQUEST_TIMEOUT_MS = 120_000;
+
+function emitLoopEvent(input: LocalAgentTurnInput, event: LocalAgentLoopEvent) {
+  if (!input.onLoopEvent) return;
+  try {
+    input.onLoopEvent(event);
+  } catch {
+    // 观测方回调异常必须被吞掉，不允许影响 loop 正确性
+  }
+}
+
+const LLM_TIMEOUT_RETRY_EXHAUSTED = "LLM_TIMEOUT_RETRY_EXHAUSTED";
+
+async function runCompleteWithTimeout(args: {
+  provider: { complete(messages: AgentRuntimeChatMessage[], options?: any): Promise<AgentRuntimeResult> };
+  messages: AgentRuntimeChatMessage[];
+  options: Record<string, unknown>;
+  timeoutMs: number;
+  round: number;
+  input: LocalAgentTurnInput;
+}): Promise<AgentRuntimeResult> {
+  const { provider, messages, options, timeoutMs, round, input } = args;
+
+  const attempt = async (): Promise<AgentRuntimeResult> => {
+    emitLoopEvent(input, { kind: "llm-start", round, atMs: Date.now() });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutReject = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`__llm_timeout__:${timeoutMs}`));
+      }, timeoutMs);
+    });
+    const complete = provider.complete(messages, options);
+    let ok = false;
+    try {
+      const result = await Promise.race([complete, timeoutReject]);
+      ok = true;
+      return result;
+    } finally {
+      if (timer) clearTimeout(timer);
+      emitLoopEvent(input, { kind: "llm-end", round, atMs: Date.now(), ok });
+    }
+  };
+
+  try {
+    return await attempt();
+  } catch (error) {
+    const isTimeout =
+      error instanceof Error && error.message.startsWith("__llm_timeout__:");
+    if (!isTimeout) throw error;
+    // 第一次超时 → 重试一次（发新的 llm-start/llm-end）
+    try {
+      return await attempt();
+    } catch (retryError) {
+      const retryIsTimeout =
+        retryError instanceof Error &&
+        retryError.message.startsWith("__llm_timeout__:");
+      if (!retryIsTimeout) throw retryError;
+      const exhausted = new Error(
+        `LLM request timed out after ${timeoutMs}ms (round ${round}, retry exhausted)`,
+      ) as Error & { code?: string };
+      exhausted.code = LLM_TIMEOUT_RETRY_EXHAUSTED;
+      throw exhausted;
+    }
+  }
 }
 
 function compactWhitespace(value: string) {
@@ -331,9 +406,16 @@ export async function runLocalAgentTurn(
   let round = 0;
   try {
     while (true) {
-      result = await provider.complete(prepareMessagesForProviderCall(messages), {
-        ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
-        ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
+      result = await runCompleteWithTimeout({
+        provider,
+        messages: prepareMessagesForProviderCall(messages),
+        options: {
+          ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
+          ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
+        },
+        timeoutMs: input.llmRequestTimeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+        round,
+        input,
       });
       turnUsage = mergeTurnUsage(turnUsage, result.usage);
       const toolCalls = result.tool_calls ?? [];
@@ -349,6 +431,7 @@ export async function runLocalAgentTurn(
         const toolName = toolCall.function.name;
         let toolResult;
         const startedAt = Date.now();
+        emitLoopEvent(input, { kind: "tool-start", name: toolName, atMs: Date.now() });
         emitToolEvent(input, {
           type: "tool-call",
           round,
@@ -374,6 +457,7 @@ export async function runLocalAgentTurn(
               toolResult = replacement;
             }
           }
+          emitLoopEvent(input, { kind: "tool-end", name: toolName, atMs: Date.now(), ok: true });
           emitToolEvent(input, {
             type: "tool-result",
             round,
@@ -384,6 +468,7 @@ export async function runLocalAgentTurn(
             metadata: toolResult.metadata,
           });
         } catch (error) {
+          emitLoopEvent(input, { kind: "tool-end", name: toolName, atMs: Date.now(), ok: false });
           if (!shouldReturnToolExecutionErrors(input.adapter)) throw error;
           emitToolEvent(input, {
             type: "tool-error",

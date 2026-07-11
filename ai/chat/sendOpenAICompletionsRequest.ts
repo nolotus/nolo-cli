@@ -346,6 +346,34 @@ async function finalizeStream(
 }
 
 /**
+ * 把流式消息标记为"异常终止"(截断 / 超时 / 连接中断),而不是当成正常完成。
+ *
+ * 与 streamAgentChatTurn 里 `finalizeTransientMessageOnError` 的语义对齐:
+ * 保留已累积的部分内容(并附带错误说明),但在持久化元数据上打上
+ * `metadata.error` 标记,让 UI 渲染出错误状态,而不是显示成"正常说完"。
+ *
+ * 注意:用户主动中断(AbortError)不算截断,不应当作异常终止处理。
+ */
+function markStreamMessageAborted(
+  ctx: FinalizeContext,
+  errorMessage: string,
+): void {
+  const base = ctx.messageMetadata ?? {};
+  const previousMetadata =
+    (base as any).metadata && typeof (base as any).metadata === "object"
+      ? (base as any).metadata
+      : {};
+  ctx.messageMetadata = {
+    ...base,
+    metadata: {
+      ...previousMetadata,
+      error: true,
+      message: errorMessage,
+    },
+  } as Partial<Message>;
+}
+
+/**
  * 累积 usage
  */
 function applyUsage(state: StreamState, data: any): StreamState {
@@ -915,7 +943,8 @@ export const sendOpenAICompletionsRequest = async ({
     }
   } catch (error: any) {
     let errorText: string;
-    if (error?.name === "AbortError") {
+    const isAbort = error?.name === "AbortError";
+    if (isAbort) {
       errorText = "\n[用户中断]";
     } else {
       errorText = `\n[错误: ${error?.message || String(error)}]`;
@@ -927,6 +956,16 @@ export const sendOpenAICompletionsRequest = async ({
       ...streamState,
       contentBuffer: appendTextChunk(streamState.contentBuffer, errorText),
     };
+    // 用户主动中断(AbortError)不算截断,按原行为落库即可;
+    // 其它错误(流读取超时 / 连接被静默中断等)属于"异常终止",
+    // 在持久化元数据上打 error 标记,与 streamAgentChatTurn 的截断处理语义对齐,
+    // 避免 UI 把被截断的内容显示成"正常说完"。
+    if (!isAbort) {
+      markStreamMessageAborted(
+        finalizeCtx,
+        error?.message || String(error),
+      );
+    }
     streamState = await finalizeStream(streamState, finalizeCtx);
   } finally {
     logQuickChatPerfStage(quickChatPerfStartedAt, "openai-completions-stream-finished", {

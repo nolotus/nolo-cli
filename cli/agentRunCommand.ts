@@ -25,6 +25,7 @@ import {
   type ParsedAgentRunArgs,
 } from "./agentRunArgs";
 import {
+  createRunActivityTracker,
   finalizeRunRecord,
   spawnLocalBackgroundRun,
   type AgentRunControlDeps,
@@ -83,7 +84,21 @@ export type AgentRunCommandDeps = {
   resolveAgentRunAgentKey?: typeof resolveAgentRunAgentKey;
   spawnLocalBackgroundRun?: typeof spawnLocalBackgroundRun;
   finalizeRunRecord?: typeof finalizeRunRecord;
+  /** Override for tests; defaults to `process.exit`. */
+  processExit?: (code: number) => never;
+  /** Override for tests; defaults to `NOLO_LOCAL_RUN_STALL_TIMEOUT_MS` env or 5 min. */
+  stallTimeoutMs?: number;
 } & Pick<AgentRunControlDeps, "homedir" | "spawn" | "fs" | "now" | "generateRunId">;
+
+function resolvePositiveMs(value: unknown, fallback: number): number {
+  const n =
+    typeof value === "string"
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 async function resolveAgentRunAgentKey(args: {
   agentInput: string;
@@ -119,6 +134,105 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
 
   const runner = deps.runner ?? runAgentTurn;
+
+  // Watchdogs for local background child runs: an overall --timeout-ms and a
+  // "no progress" stall timeout. They are only armed when this process is
+  // responsible for a registry record (NOLO_AGENT_RUN_ID), so interactive
+  // foreground runs are unaffected.
+  const nowMs = () => (deps.now ? deps.now().getTime() : Date.now());
+  const childRunId = env.NOLO_AGENT_RUN_ID;
+  const hasRegistry = typeof childRunId === "string" && childRunId.length > 0;
+  const processExit = deps.processExit ?? ((code: number) => process.exit(code));
+  const stallTimeoutMs = resolvePositiveMs(
+    deps.stallTimeoutMs ?? env.NOLO_LOCAL_RUN_STALL_TIMEOUT_MS,
+    5 * 60_000,
+  );
+  let timedOut = false;
+  let stalled = false;
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let stallTimer: ReturnType<typeof setInterval> | undefined;
+  const activityTracker = hasRegistry
+    ? createRunActivityTracker(childRunId, {
+        env,
+        homedir: deps.homedir,
+        fs: deps.fs,
+        now: deps.now,
+      })
+    : undefined;
+  const clearWatchdogs = () => {
+    if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+    if (stallTimer !== undefined) clearInterval(stallTimer);
+    activityTracker?.flush();
+    activityTracker?.dispose();
+  };
+  // Watchdog failures also reject this deferred so the command promise settles
+  // even when process.exit is stubbed (tests). In production process.exit
+  // terminates first and the rejection is moot.
+  let rejectOnWatchdogFailure: ((error: Error) => void) | undefined;
+  const watchdogFailure: Promise<never> | undefined = hasRegistry
+    ? new Promise<never>((_, reject) => {
+        rejectOnWatchdogFailure = reject;
+      })
+    : undefined;
+  const raceWithWatchdog = <T>(work: Promise<T>): Promise<T> =>
+    watchdogFailure ? Promise.race([work, watchdogFailure]) : work;
+  const exitFromWatchdog = (code: number) => {
+    try {
+      processExit(code);
+    } catch {
+      // Test stubs may throw instead of exiting; the watchdogFailure rejection
+      // already carries the outcome, so swallow it here (a real process.exit
+      // never returns).
+    }
+  };
+  if (hasRegistry) {
+    stallTimer = setInterval(() => {
+      if (timedOut || stalled) return;
+      const activity = activityTracker?.getActivity();
+      const lastEventAtMs = activity
+        ? new Date(activity.lastEventAt).getTime()
+        : nowMs();
+      const elapsedSinceEvent = nowMs() - lastEventAtMs;
+      // Long-running tools (e.g. compilation) are allowed to exceed the stall
+      // timeout; only declare a stall when nothing is in flight.
+      if (activity?.inFlight?.kind === "tool") {
+        return;
+      }
+      // An LLM request that hangs without completing is the stall scenario we
+      // want to catch, even though it is technically "in flight".
+      if (activity?.inFlight?.kind === "llm" && elapsedSinceEvent < stallTimeoutMs) {
+        return;
+      }
+      if (elapsedSinceEvent >= stallTimeoutMs) {
+        stalled = true;
+        clearWatchdogs();
+        const note = `stalled: no progress for ${stallTimeoutMs}ms`;
+        output.write(`[nolo] local run ${note}\n`);
+        (deps.finalizeRunRecord ?? finalizeRunRecord)(
+          childRunId,
+          { status: "failed", note },
+          { env, homedir: deps.homedir, fs: deps.fs, now: deps.now },
+        );
+        rejectOnWatchdogFailure?.(new Error(`[nolo] local run ${note}`));
+        exitFromWatchdog(1);
+      }
+    }, Math.min(stallTimeoutMs, 10_000));
+    if (typeof parsed.timeoutMs === "number" && parsed.timeoutMs > 0) {
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        clearWatchdogs();
+        const note = `timed out after ${parsed.timeoutMs}ms`;
+        output.write(`[nolo] local run ${note}\n`);
+        (deps.finalizeRunRecord ?? finalizeRunRecord)(
+          childRunId,
+          { status: "timeout", note },
+          { env, homedir: deps.homedir, fs: deps.fs, now: deps.now },
+        );
+        rejectOnWatchdogFailure?.(new Error(`[nolo] local run ${note}`));
+        exitFromWatchdog(124);
+      }, parsed.timeoutMs);
+    }
+  }
 
   // Support providing fallback suggestions for the orchestrating agent to decide.
   // No automatic switching here: the agent (via its prompt) decides if/which next to use
@@ -243,6 +357,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(parsed.subjectRefs?.length ? { subjectRefs: parsed.subjectRefs } : {}),
     ...(parsed.allowedChildAgentKeys?.length ? { allowedChildAgentKeys: parsed.allowedChildAgentKeys } : {}),
     ...(parsed.allowedToolNames?.length ? { allowedToolNames: parsed.allowedToolNames } : {}),
+    ...(activityTracker ? { onLoopEvent: activityTracker.onLoopEvent } : {}),
     background: parsed.background,
     noStream: parsed.noStream,
     ...(typeof parsed.timeoutMs === "number" ? { timeoutMs: parsed.timeoutMs } : {}),
@@ -251,7 +366,8 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(parsed.taskEvidence ? { taskEvidence: parsed.taskEvidence } : {}),
   });
 
-  let result: RunAgentTurnResult = await runner(buildRunOptions(agentKey));
+  let result: RunAgentTurnResult = await raceWithWatchdog(runner(buildRunOptions(agentKey)));
+  clearWatchdogs();
 
   // Quota auto-fallback: when a run fails because the provider reports a
   // quota/limit (HTTP 429 or CliProviderQuotaError, or an error message that
@@ -263,7 +379,8 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     output.write(
       `[nolo] quota exhausted on ${agentKey}, falling back to ${fallbackAgentKey}\n`
     );
-    const fallbackResult: RunAgentTurnResult = await runner(buildRunOptions(fallbackAgentKey));
+    const fallbackResult: RunAgentTurnResult = await raceWithWatchdog(runner(buildRunOptions(fallbackAgentKey)));
+    clearWatchdogs();
     if (fallbackResult.exitCode === 0) {
       result = fallbackResult;
     } else {
@@ -314,7 +431,6 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
 
   // If this process was spawned as a local background child, finalize the
   // registry record so the parent `nolo agent ps/status` sees the outcome.
-  const childRunId = env.NOLO_AGENT_RUN_ID;
   if (typeof childRunId === "string" && childRunId.length > 0) {
     const finalStatus = result.exitCode === 0 ? "done" : "failed";
     await (deps.finalizeRunRecord ?? finalizeRunRecord)(childRunId, {

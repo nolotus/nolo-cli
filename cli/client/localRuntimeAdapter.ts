@@ -5,7 +5,7 @@ import type {
 } from "../agentRuntimeLocal";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildLocalWorkspacePolicyToolNames,
@@ -105,9 +105,12 @@ const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
 export const BUILTIN_NOLO_AGENT_KEY = NOLO_DEFAULT_AGENT_KEY;
 const SOURCE_CLI_DIR = dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = isCompiledBinary() ? dirname(process.execPath) : SOURCE_CLI_DIR;
+// Mirror the source/compiled extension so workspace tools can re-launch the
+// same CLI entrypoint in both repo development (bun + .ts) and published
+// packages (node + .js). Using a hardcoded .ts breaks installed packages.
 const CLI_ENTRYPOINT = isCompiledBinary()
   ? process.execPath
-  : join(SOURCE_CLI_DIR, "..", "index.ts");
+  : join(SOURCE_CLI_DIR, "..", `index${extname(fileURLToPath(import.meta.url)) || ".ts"}`);
 const LOCAL_SERVER_TABLE_TOOL_NAMES = [
   "createTable",
   "addTableRow",
@@ -327,20 +330,6 @@ async function fetchWithTransientRetry(
     }
   }
   throw lastError;
-}
-
-function buildRequestTimeoutSignal(timeoutMs?: number) {
-  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return undefined;
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
-  }, timeoutMs);
-  return {
-    signal: controller.signal,
-    clear: () => clearTimeout(timeout),
-  };
 }
 
 function summarizeEndpoint(value: unknown) {
@@ -1344,7 +1333,6 @@ export function createCliLocalRuntimeAdapter(
               const result = await executeCli(provider, prompt, {
                 ...(agentConfig.model ? { model: agentConfig.model } : {}),
                 ...(reasoningEffort ? { reasoningEffort } : {}),
-                ...(options?.timeoutMs ? { timeout: options.timeoutMs } : {}),
                 cwd: workspaceRoot,
                 yolo: true,
                 env: deps.env,
@@ -1400,7 +1388,6 @@ export function createCliLocalRuntimeAdapter(
         return {
           model: agentConfig.model || "gemini-3.1-pro",
           complete: async (messages, options) => {
-            const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
             const openAiBody: Record<string, unknown> = {
               model: agentConfig.model || "gemini-3.1-pro",
               messages,
@@ -1415,71 +1402,65 @@ export function createCliLocalRuntimeAdapter(
               toolCount: tools.length,
               requestedToolNames,
               openAiToolNames: summarizeOpenAiToolNames(tools),
-              timeoutMs: options?.timeoutMs ?? null,
             });
-            try {
-              const result = await fetchAntigravityCloudCodeCompletion({
-                agentConfig,
-                accessToken,
-                metadata: credential?.metadata ?? null,
-                openAiBody,
-                signal: timeoutSignal?.signal,
-                fetchImpl: (url, init) =>
-                  fetchWithTransientRetry(fetchImpl, url, init, {
-                    sleep: deps.sleep,
-                    loopbackRequest,
-                  }),
-              });
-              if (result.status < 200 || result.status >= 300) {
-                const errMsg =
-                  result.body &&
-                  typeof result.body === "object" &&
-                  result.body.error &&
-                  typeof (result.body.error as { message?: unknown }).message === "string"
-                    ? (result.body.error as { message: string }).message
-                    : JSON.stringify(result.body);
-                throw new Error(`local antigravity provider failed: HTTP ${result.status} ${errMsg}`);
-              }
-              const choice = Array.isArray(result.body.choices)
-                ? (result.body.choices[0] as
-                    | {
-                        message?: {
-                          content?: string | null;
-                          tool_calls?: AgentRuntimeToolCall[];
-                        };
-                      }
-                    | undefined)
-                : undefined;
-              const message = choice?.message ?? {};
-              const content =
-                typeof message.content === "string"
-                  ? message.content
-                  : message.content == null
-                    ? ""
-                    : String(message.content);
-              const tool_calls = Array.isArray(message.tool_calls)
-                ? message.tool_calls
-                : undefined;
-              if (content && options?.onTextDelta) {
-                options.onTextDelta(content);
-              }
-              logLocalRuntimeDiagnostic("provider.request.result", {
-                agentKey: agentConfig.key,
-                transport: "antigravity-cloud-code",
-                ok: true,
-                contentChars: content.length,
-                toolCallCount: tool_calls?.length ?? 0,
-              });
-              return {
-                content,
-                model: agentConfig.model || "gemini-3.1-pro",
-                provider: agentConfig.provider || "google-antigravity",
-                ...(tool_calls ? { tool_calls } : {}),
-                trace: messages,
-              };
-            } finally {
-              timeoutSignal?.clear();
+            const result = await fetchAntigravityCloudCodeCompletion({
+              agentConfig,
+              accessToken,
+              metadata: credential?.metadata ?? null,
+              openAiBody,
+              fetchImpl: (url, init) =>
+                fetchWithTransientRetry(fetchImpl, url, init, {
+                  sleep: deps.sleep,
+                  loopbackRequest,
+                }),
+            });
+            if (result.status < 200 || result.status >= 300) {
+              const errMsg =
+                result.body &&
+                typeof result.body === "object" &&
+                result.body.error &&
+                typeof (result.body.error as { message?: unknown }).message === "string"
+                  ? (result.body.error as { message: string }).message
+                  : JSON.stringify(result.body);
+              throw new Error(`local antigravity provider failed: HTTP ${result.status} ${errMsg}`);
             }
+            const choice = Array.isArray(result.body.choices)
+              ? (result.body.choices[0] as
+                  | {
+                      message?: {
+                        content?: string | null;
+                        tool_calls?: AgentRuntimeToolCall[];
+                      };
+                    }
+                  | undefined)
+              : undefined;
+            const message = choice?.message ?? {};
+            const content =
+              typeof message.content === "string"
+                ? message.content
+                : message.content == null
+                  ? ""
+                  : String(message.content);
+            const tool_calls = Array.isArray(message.tool_calls)
+              ? message.tool_calls
+              : undefined;
+            if (content && options?.onTextDelta) {
+              options.onTextDelta(content);
+            }
+            logLocalRuntimeDiagnostic("provider.request.result", {
+              agentKey: agentConfig.key,
+              transport: "antigravity-cloud-code",
+              ok: true,
+              contentChars: content.length,
+              toolCallCount: tool_calls?.length ?? 0,
+            });
+            return {
+              content,
+              model: agentConfig.model || "gemini-3.1-pro",
+              provider: agentConfig.provider || "google-antigravity",
+              ...(tool_calls ? { tool_calls } : {}),
+              trace: messages,
+            };
           },
         };
       }
@@ -1512,7 +1493,6 @@ export function createCliLocalRuntimeAdapter(
         return {
           model: providerConfig.model,
           complete: async (messages, options) => {
-            const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
             const usesResponsesApi = providerConfig.endpoint.includes("/responses");
             const stream = Boolean(options?.onTextDelta) && !usesResponsesApi;
             const request = buildPlatformChatCompletionRequest({
@@ -1531,66 +1511,60 @@ export function createCliLocalRuntimeAdapter(
               toolCount: tools.length,
               requestedToolNames,
               openAiToolNames: summarizeOpenAiToolNames(tools),
-              timeoutMs: options?.timeoutMs ?? null,
               stream,
             });
-            try {
-              const res = await fetchWithTransientRetry(fetchImpl, request.url, {
-                ...request.init,
-                ...(timeoutSignal ? { signal: timeoutSignal.signal } : {}),
-              }, {
-                sleep: deps.sleep,
-                loopbackRequest,
-              });
-              if (!res.ok) {
-                const raw = await res.text().catch(() => "");
-                const data = parsePlatformChatCompletionData(raw);
-                throw new Error(`platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
-              }
-              const contentType = res.headers.get("content-type") ?? "";
-              const shouldStream =
-                Boolean(stream && options?.onTextDelta) &&
-                contentType.includes("text/event-stream");
-              if (shouldStream && options?.onTextDelta) {
-                const streamed = await readOpenAiCompatibleSseCompletion({
-                  response: res,
-                  onTextDelta: options.onTextDelta,
-                });
-                logLocalRuntimeDiagnostic("provider.request.result", {
-                  agentKey: agentConfig.key,
-                  transport: "platform-proxy",
-                  ok: true,
-                  stream: true,
-                  contentChars: streamed.content.length,
-                  toolCallCount: streamed.tool_calls?.length ?? 0,
-                });
-                return {
-                  content: streamed.content,
-                  model: providerConfig.model,
-                  provider: providerConfig.provider,
-                  ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
-                  ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
-                  ...(streamed.usage ? { usage: streamed.usage } : {}),
-                  trace: messages,
-                };
-              }
+            const res = await fetchWithTransientRetry(fetchImpl, request.url, {
+              ...request.init,
+            }, {
+              sleep: deps.sleep,
+              loopbackRequest,
+            });
+            if (!res.ok) {
               const raw = await res.text().catch(() => "");
+              const data = parsePlatformChatCompletionData(raw);
+              throw new Error(`platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
+            }
+            const contentType = res.headers.get("content-type") ?? "";
+            const shouldStream =
+              Boolean(stream && options?.onTextDelta) &&
+              contentType.includes("text/event-stream");
+            if (shouldStream && options?.onTextDelta) {
+              const streamed = await readOpenAiCompatibleSseCompletion({
+                response: res,
+                onTextDelta: options.onTextDelta,
+              });
               logLocalRuntimeDiagnostic("provider.request.result", {
                 agentKey: agentConfig.key,
                 transport: "platform-proxy",
-                status: res.status,
-                ok: res.ok,
-                responseBytes: raw.length,
+                ok: true,
+                stream: true,
+                contentChars: streamed.content.length,
+                toolCallCount: streamed.tool_calls?.length ?? 0,
               });
-              const data = parsePlatformChatCompletionData(raw);
-              return parsePlatformChatCompletionResponse({
-                providerConfig,
-                data,
+              return {
+                content: streamed.content,
+                model: providerConfig.model,
+                provider: providerConfig.provider,
+                ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
+                ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
+                ...(streamed.usage ? { usage: streamed.usage } : {}),
                 trace: messages,
-              });
-            } finally {
-              timeoutSignal?.clear();
+              };
             }
+            const raw = await res.text().catch(() => "");
+            logLocalRuntimeDiagnostic("provider.request.result", {
+              agentKey: agentConfig.key,
+              transport: "platform-proxy",
+              status: res.status,
+              ok: res.ok,
+              responseBytes: raw.length,
+            });
+            const data = parsePlatformChatCompletionData(raw);
+            return parsePlatformChatCompletionResponse({
+              providerConfig,
+              data,
+              trace: messages,
+            });
           },
         };
       }
@@ -1620,7 +1594,6 @@ export function createCliLocalRuntimeAdapter(
       return {
         model: providerConfig.model,
         complete: async (messages, options) => {
-          const timeoutSignal = buildRequestTimeoutSignal(options?.timeoutMs);
           const stream = Boolean(options?.onTextDelta);
           logLocalRuntimeDiagnostic("provider.request.start", {
             agentKey: agentConfig.key,
@@ -1631,35 +1604,29 @@ export function createCliLocalRuntimeAdapter(
             toolCount: tools.length,
             requestedToolNames,
             openAiToolNames: summarizeOpenAiToolNames(tools),
-            timeoutMs: options?.timeoutMs ?? null,
             stream,
           });
-          try {
-            const result = await executeOpenAiCompatibleChatCompletion({
-              providerConfig,
-              messages,
-              tools,
-              fetchImpl: (url, init) =>
-                fetchWithTransientRetry(fetchImpl, url, init, {
-                  sleep: deps.sleep,
-                  loopbackRequest,
-                }),
-              stream,
-              onTextDelta: options?.onTextDelta,
-              signal: timeoutSignal?.signal,
-            });
-            logLocalRuntimeDiagnostic("provider.request.result", {
-              agentKey: agentConfig.key,
-              transport: "direct-openai-compatible",
-              ok: true,
-              stream,
-              contentChars: result.content.length,
-              toolCallCount: result.tool_calls?.length ?? 0,
-            });
-            return result;
-          } finally {
-            timeoutSignal?.clear();
-          }
+          const result = await executeOpenAiCompatibleChatCompletion({
+            providerConfig,
+            messages,
+            tools,
+            fetchImpl: (url, init) =>
+              fetchWithTransientRetry(fetchImpl, url, init, {
+                sleep: deps.sleep,
+                loopbackRequest,
+              }),
+            stream,
+            onTextDelta: options?.onTextDelta,
+          });
+          logLocalRuntimeDiagnostic("provider.request.result", {
+            agentKey: agentConfig.key,
+            transport: "direct-openai-compatible",
+            ok: true,
+            stream,
+            contentChars: result.content.length,
+            toolCallCount: result.tool_calls?.length ?? 0,
+          });
+          return result;
         },
       };
     },

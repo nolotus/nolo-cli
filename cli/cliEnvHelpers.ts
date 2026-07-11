@@ -1,6 +1,8 @@
 import { DEFAULT_LOCAL_API_ORIGIN } from "../core/localOrigins";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { NOLO_CLUSTER_SERVERS } from "../database/config";
+import { dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export type EnvLike = Record<string, string | undefined>;
 
@@ -169,4 +171,21 @@ export function isCompiledBinary(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolve the CLI entrypoint script that should be passed to child processes.
+ *
+ * - In a Bun `--compile` binary the executable itself is the entrypoint.
+ * - In source/installed runs we derive the sibling `index.{ext}` from the
+ *   current module's extension, so both repo development (.ts) and published
+ *   npm packages (.js) spawn the correct script.
+ */
+export function resolveCliEntrypointPath(fromModuleUrl = import.meta.url): string {
+  if (isCompiledBinary()) {
+    return process.execPath;
+  }
+  const sourcePath = fileURLToPath(fromModuleUrl);
+  const ext = extname(sourcePath) || ".ts";
+  return join(dirname(sourcePath), "..", `index${ext}`);
 }

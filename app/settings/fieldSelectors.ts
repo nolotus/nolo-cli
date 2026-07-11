@@ -105,33 +105,12 @@ export const selectAutoApproveSelfUpdateFields = createSelector(
 export const selectAiRecentContentLimit = (state: RootState): number =>
   state.settings.aiRecentContentLimit ?? 50;
 
-// --- 快速对话 agent id 偏好(每个档位一对:preference 是 raw stored,sentinel 留原值;
-//     id 是运行时回退后的 nolo agent) ---
+// --- 默认启动智能体(preference 是 raw stored,sentinel 留原值;id 是运行时回退后的 nolo agent) ---
 
 export const selectDefaultAgentPreference = (state: RootState): string =>
   resolveDefaultAgentIdSetting(state.settings.defaultAgentId);
 export const selectDefaultAgentId = (state: RootState): string =>
   selectResolvedDefaultAgentId(state.settings.defaultAgentId);
-
-export const selectFlashAgentPreference = (state: RootState): string =>
-  resolveDefaultAgentIdSetting(state.settings.flashAgentId);
-export const selectFlashAgentId = (state: RootState): string =>
-  selectResolvedDefaultAgentId(state.settings.flashAgentId);
-
-export const selectBalancedAgentPreference = (state: RootState): string =>
-  resolveDefaultAgentIdSetting(state.settings.balancedAgentId);
-export const selectBalancedAgentId = (state: RootState): string =>
-  selectResolvedDefaultAgentId(state.settings.balancedAgentId);
-
-export const selectQualityAgentPreference = (state: RootState): string =>
-  resolveDefaultAgentIdSetting(state.settings.qualityAgentId);
-export const selectQualityAgentId = (state: RootState): string =>
-  selectResolvedDefaultAgentId(state.settings.qualityAgentId);
-
-export const selectImageAgentPreference = (state: RootState): string =>
-  resolveDefaultAgentIdSetting(state.settings.imageAgentId);
-export const selectImageAgentId = (state: RootState): string =>
-  selectResolvedDefaultAgentId(state.settings.imageAgentId);
 
 // --- 杂项 UI 偏好 ---
 

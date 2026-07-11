@@ -3,7 +3,7 @@ import { LOCAL_AGENT_CONFIG_MISSING_CODE } from "../agent-runtime/localLoop";
 import {
   NOLO_PROJECT_MANAGER_AGENT_KEY,
 } from "../agentAliases";
-import type { LocalAgentActionGate, LocalAgentToolEvent } from "../agent-runtime/localLoop";
+import type { LocalAgentActionGate, LocalAgentLoopEvent, LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
 import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode, AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
@@ -88,6 +88,8 @@ export type RunAgentTurnOptions = {
   currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
   actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  /** Local loop lifecycle events; used by the CLI runner to write heartbeat activity to the registry. */
+  onLoopEvent?: (event: LocalAgentLoopEvent) => void;
 };
 
 export type RunAgentTurnResult = {
@@ -721,6 +723,7 @@ async function runLocalAgentTurnForCli(
         : {}),
       ...(typeof options.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.actionGateHandler ? { onActionGate: options.actionGateHandler } : {}),
+      ...(options.onLoopEvent ? { onLoopEvent: options.onLoopEvent } : {}),
       ...(traceLocalTools
         ? {
             onToolEvent: (event) => {

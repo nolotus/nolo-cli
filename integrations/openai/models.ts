@@ -36,6 +36,35 @@ const GPT_5_4_PRO_LONG_CONTEXT_PRICE: ModelPrice = {
   output: 270 * 8,
   inputCacheHit: 0,
 };
+const GPT_5_6_SOL_STANDARD_PRICE: ModelPrice = {
+  input: 5 * 8,
+  output: 30 * 8,
+  inputCacheHit: 0.5 * 8,
+};
+
+const GPT_5_6_SOL_LONG_CONTEXT_PRICE: ModelPrice = {
+  input: 10 * 8,
+  output: 45 * 8,
+  inputCacheHit: 1 * 8,
+};
+
+const GPT_5_6_TERRA_STANDARD_PRICE: ModelPrice = {
+  input: 2.5 * 8,
+  output: 15 * 8,
+  inputCacheHit: 0.25 * 8,
+};
+
+const GPT_5_6_TERRA_LONG_CONTEXT_PRICE: ModelPrice = {
+  input: 5 * 8,
+  output: 22.5 * 8,
+  inputCacheHit: 0.5 * 8,
+};
+
+const GPT_5_6_LUNA_PRICE: ModelPrice = {
+  input: 1 * 8,
+  output: 6 * 8,
+  inputCacheHit: 0.1 * 8,
+};
 
 export const openAIModels: Model[] = [
   {
@@ -56,6 +85,54 @@ export const openAIModels: Model[] = [
         },
       ],
     },
+  },
+  {
+    name: "gpt-5.6-sol",
+    displayName: "GPT-5.6 Sol (Flagship)",
+    endpointKey: "responses",
+    hasVision: true,
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    supportsReasoningEffort: true,
+    price: GPT_5_6_SOL_STANDARD_PRICE,
+    pricingStrategy: {
+      type: "tiered_context",
+      tiers: [
+        {
+          minContext: 272_001,
+          price: GPT_5_6_SOL_LONG_CONTEXT_PRICE,
+        },
+      ],
+    },
+  },
+  {
+    name: "gpt-5.6-terra",
+    displayName: "GPT-5.6 Terra (Balanced)",
+    endpointKey: "responses",
+    hasVision: true,
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    supportsReasoningEffort: true,
+    price: GPT_5_6_TERRA_STANDARD_PRICE,
+    pricingStrategy: {
+      type: "tiered_context",
+      tiers: [
+        {
+          minContext: 272_001,
+          price: GPT_5_6_TERRA_LONG_CONTEXT_PRICE,
+        },
+      ],
+    },
+  },
+  {
+    name: "gpt-5.6-luna",
+    displayName: "GPT-5.6 Luna (Fast)",
+    endpointKey: "responses",
+    hasVision: true,
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    supportsReasoningEffort: true,
+    price: GPT_5_6_LUNA_PRICE,
   },
   {
     name: "gpt-5.5-pro",

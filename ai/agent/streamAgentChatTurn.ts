@@ -5,7 +5,7 @@ import { DataType } from "../../create/types";
 import { isLiveAudioOnlyAgent } from "./isLiveAudioOnlyAgent";
 
 import type { RootState } from "../../app/store";
-import { patch, read, selectById } from "../../database/dbSlice";
+import { patch, read, selectById, write } from "../../database/dbSlice";
 import { generateRequestBody } from "../llm/generateRequestBody";
 import {
     selectCurrentDialogConfig,
@@ -396,6 +396,90 @@ function appendCliCapabilityWarnings(content: string, warnings: string[]): strin
     return `${content}${warningBlock}`;
 }
 
+/**
+ * 共享的 reader 循环消费器:把 machine-bound / CLI / remote 三处几乎一样的
+ * "read chunk → 解析 → 处理 payload → 检查 abort" 循环收敛到一处。
+ *
+ * 关键修复点:当 `reader.read()` 返回 `done:true` 时,只有真正收到过完成信号
+ * (done 事件) 才算"正常结束";否则视为连接被静默中断(网络抖动 / keep-alive
+ * 超时 / 系统休眠唤醒等),由调用方走异常终止路径,而不是把已累积的截断内容
+ * 当成完整回复落库。
+ *
+ * - `onPayload` 负责副作用(累积文本、更新 usage、派发 streaming 等),
+ *   返回 `{ reject: message }` 表示这一条 payload 要求走拒绝路径,
+ *   返回 `{ abort: true }` 表示要中止(等价于在循环中检测到 abort)。
+ * - `isDoneEvent` 判断某条 payload 是否是"完成信号",用于设置 `sawDone`。
+ *   只要曾经出现过一次 done 事件,reader 自然结束时就算正常完成。
+ *
+ * 重要:abort 检测必须在判断 `done:true` **之前**做(而不是只在 payload 循环里查),
+ * 否则用户主动取消发送时,可能因为流恰好在这个时间点自然结束(reader.read() 返回
+ * done:true)而被误判成"连接异常截断"而不是正常的用户取消。
+ */
+type AgentRunStreamConsumeOutcome =
+    | { outcome: "aborted" }
+    | { outcome: "rejected"; message: string }
+    | { outcome: "streamEnded"; sawDone: boolean };
+
+interface AgentRunStreamHandlers {
+    reader: ReadableStreamDefaultReader<Uint8Array>;
+    decoder: TextDecoder;
+    /** 解码后的原始 chunk → 一组 payload(machine/remote 用 parseSSE,CLI 用手工行解析)。 */
+    parseChunk: (raw: string) => any[];
+    /** 处理单条 payload 的副作用;返回值用于控制流。可以是 async(允许 await 副作用)。 */
+    onPayload: (
+        payload: any,
+    ) =>
+        | void
+        | { reject?: string; abort?: true }
+        | Promise<void | { reject?: string; abort?: true }>;
+    /** 判断 payload 是否是"完成信号",用于区分正常结束 vs 截断。 */
+    isDoneEvent: (payload: any) => boolean;
+    /** 是否已被中止(loopController / thunkApi signal)。 */
+    isAborted: () => boolean;
+    /** 中止时要执行的清理(如持久化已累积内容)。 */
+    onAbort: () => Promise<void>;
+}
+
+async function consumeAgentRunStream(
+    handlers: AgentRunStreamHandlers,
+): Promise<AgentRunStreamConsumeOutcome> {
+    const { reader, decoder, parseChunk, onPayload, isDoneEvent, isAborted, onAbort } =
+        handlers;
+    let sawDone = false;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        // abort 检测必须在 done 判断之前:用户主动取消时,流可能恰好在此刻自然结束,
+        // 此时应当走"用户取消"分支,而不是被误判为"连接异常截断"。
+        if (isAborted()) {
+            await onAbort();
+            return { outcome: "aborted" };
+        }
+        if (done) {
+            return { outcome: "streamEnded", sawDone };
+        }
+
+        const payloads = parseChunk(decoder.decode(value, { stream: true }));
+        for (const payload of payloads) {
+            if (isAborted()) {
+                await onAbort();
+                return { outcome: "aborted" };
+            }
+            const directive = await onPayload(payload);
+            if (directive?.reject !== undefined) {
+                return { outcome: "rejected", message: directive.reject };
+            }
+            if (directive?.abort) {
+                await onAbort();
+                return { outcome: "aborted" };
+            }
+            if (isDoneEvent(payload)) {
+                sawDone = true;
+            }
+        }
+    }
+}
+
 const logQuickChatPerfStage = (
     startedAt: number | undefined,
     stage: string,
@@ -622,18 +706,6 @@ const classifyQuickChatAccessError = (accessError: string) => {
     return "unknown";
 };
 
-/** 将 QuickChat mode selector 路由出的 model 标识映射为人类可读名称 */
-const QUICK_CHAT_MODEL_NAMES: Record<string, string> = {
-    "deepseek-v4-flash": "DeepSeek V4 Flash",
-    "deepseek-v4-pro": "DeepSeek V4 Pro",
-    "zai-org/GLM-5.2": "GLM 5.2",
-    "accounts/fireworks/models/glm-5p2": "GLM 5.2",
-    "moonshotai/Kimi-K2.6": "Kimi K2.6",
-};
-
-const resolveQuickChatModelName = (model: string): string =>
-    QUICK_CHAT_MODEL_NAMES[model] ?? model;
-
 const isUsableAgentConfig = (value: unknown): value is Agent =>
     !!value &&
     typeof value === "object" &&
@@ -768,62 +840,23 @@ export const streamAgentChatTurnHandler = async (
             dialogKey: explicitDialogKey ?? null,
         });
         // 1. 读取 Agent 配置。
-        //    Quick Chat mode selector (auto/balanced/quality) 通过 llmConfigOverride
-        //    提供完整的 provider+model 路由，不再依赖 nolo 默认 agent 的 DB 记录。
-        const llmOverride = (runtimeOptions as any)?.llmConfigOverride as
-            | { provider?: string; model?: string }
-            | undefined;
         const cachedAgentConfig = selectById(
             getState() as RootState,
             agentKey,
         );
         let rawAgentConfig: Agent | null = null;
 
-        if (
-            quickChatPerfStartedAt &&
-            llmOverride?.provider &&
-            llmOverride?.model
-        ) {
-            // 模式选择器已决定模型 → 不需要读 DB，直接构造最小配置
-            logQuickChatPerfStage(
+        rawAgentConfig = isUsableAgentConfig(cachedAgentConfig)
+            ? cachedAgentConfig
+            : await readAgentConfigForTurn(
+                dispatch,
+                agentKey,
                 quickChatPerfStartedAt,
-                "stream-agent-config-synthetic",
-                {
-                    agentKey,
-                    provider: llmOverride.provider,
-                    model: llmOverride.model,
-                },
             );
-            rawAgentConfig = {
-                name: resolveQuickChatModelName(llmOverride.model),
-                dbKey: agentKey,
-                id: agentKey.replace(/^agent-pub-/, ""),
-                model: llmOverride.model,
-                provider: llmOverride.provider,
-                apiSource: "platform",
-                useServerProxy: true,
-                prompt: "",
-                tools: [],
-                references: [],
-            } as unknown as Agent;
-        } else {
-            // 正常路径：从 DB / 缓存读取 agent 配置
-            rawAgentConfig = isUsableAgentConfig(cachedAgentConfig)
-                ? cachedAgentConfig
-                : await readAgentConfigForTurn(
-                    dispatch,
-                    agentKey,
-                    quickChatPerfStartedAt,
-                );
-            if (!rawAgentConfig) {
-                return rejectWithValue(
-                    `Agent config not found for ID: ${agentKey}`,
-                );
-            }
-        }
-
         if (!rawAgentConfig) {
-            return rejectWithValue(`Agent config not found for ID: ${agentKey}`);
+            return rejectWithValue(
+                `Agent config not found for ID: ${agentKey}`,
+            );
         }
 
         // ── Live-audio-only guard ────────────────────────────────────────────
@@ -842,9 +875,7 @@ export const streamAgentChatTurnHandler = async (
             model: agentConfig.model,
             provider: agentConfig.provider,
             apiSource: agentConfig.apiSource,
-            source: rawAgentConfig === cachedAgentConfig ? "cache"
-                : quickChatPerfStartedAt && llmOverride?.provider ? "synthetic"
-                : "read",
+            source: rawAgentConfig === cachedAgentConfig ? "cache" : "read",
         });
 
         const gptProCheck = shouldBlockForGptPro(
@@ -985,26 +1016,17 @@ export const streamAgentChatTurnHandler = async (
                 };
 
                 try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                            await abortMachineStream();
-                            return;
-                        }
-
-                        const payloads = parseSSE(
-                            decoder.decode(value, { stream: true }),
-                        );
-                        for (const payload of payloads) {
-                            if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                                await abortMachineStream();
-                                return;
-                            }
+                    const result = await consumeAgentRunStream({
+                        reader,
+                        decoder,
+                        parseChunk: (raw) => parseSSE(raw),
+                        isAborted: () =>
+                            loopController.signal.aborted || thunkApi.signal.aborted,
+                        onAbort: abortMachineStream,
+                        isDoneEvent: (payload) => payload?.type === "done",
+                        onPayload: (payload) => {
                             if (payload.type === "error") {
-                                return await rejectMachineStream(
-                                    payload.message || "电脑端 Agent 执行失败",
-                                );
+                                return { reject: payload.message || "电脑端 Agent 执行失败" };
                             }
                             if (payload.type === "text" && typeof payload.content === "string") {
                                 accumulated += payload.content;
@@ -1020,16 +1042,33 @@ export const streamAgentChatTurnHandler = async (
                             if (payload.type === "done") {
                                 totalTurnUsage = payload.usage;
                             }
-                        }
-                    }
+                        },
+                    });
 
-                    if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                        await abortMachineStream();
+                    if (result.outcome === "rejected") {
+                        return await rejectMachineStream(result.message);
+                    }
+                    if (result.outcome === "aborted") {
+                        // onAbort 已完成清理/持久化;保持和原实现一致的提前退出。
                         return;
                     }
-
-                    await persistMessageWithFixedId(dispatch, buildMachineAssistantMessage());
-                    remoteTransientMessageFinalized = true;
+                    if (result.outcome === "streamEnded") {
+                        if (!result.sawDone) {
+                            // 连接被静默中断:没有收到完成信号,视为异常终止,
+                            // 保留已累积内容并标记错误,而不是当成完整回复落库。
+                            dispatch(finalizeTransientMessageOnError({
+                                id: messageId,
+                                error: "电脑端 Agent 流式响应被中断,未收到完成信号",
+                            }));
+                            remoteTransientMessageFinalized = true;
+                            setLoopStopReason("error");
+                            return rejectWithValue(
+                                "电脑端 Agent 流式响应被中断,未收到完成信号",
+                            );
+                        }
+                        await persistMessageWithFixedId(dispatch, buildMachineAssistantMessage());
+                        remoteTransientMessageFinalized = true;
+                    }
                 } finally {
                     try {
                         await reader.cancel();
@@ -1192,79 +1231,86 @@ export const streamAgentChatTurnHandler = async (
             };
 
             try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                        await abortCliStream();
-                        return;
-                    }
+                const result = await consumeAgentRunStream({
+                    reader,
+                    decoder,
+                    parseChunk: (raw) => {
+                        // 解析 SSE 格式 "data: {...}\n\n";逐行尝试解析,失败行忽略。
+                        const parsed: any[] = [];
+                        for (const line of raw.split("\n")) {
+                            if (!line.startsWith("data: ")) continue;
+                            try {
+                                parsed.push(JSON.parse(line.slice(6)));
+                            } catch {
+                                // 忽略解析失败的行
+                            }
+                        }
+                        return parsed;
+                    },
+                    isAborted: () =>
+                        loopController.signal.aborted || thunkApi.signal.aborted,
+                    onAbort: abortCliStream,
+                    isDoneEvent: (payload) => payload?.done === true,
+                    onPayload: (payload) => {
+                        if (payload.error) {
+                            return { reject: payload.error };
+                        }
+                        if (payload.chunk) {
+                            accumulated += payload.chunk;
+                            dispatch(messageStreaming({
+                                id: messageId,
+                                dialogId,
+                                dbKey: msgKey,
+                                content: accumulated,
+                                role: "assistant",
+                                ...cliMessageMetadata,
+                            }));
+                        }
+                        if (payload.done && Array.isArray(payload.warnings)) {
+                            cliCapabilityWarnings = payload.warnings.filter(
+                                (warning: unknown): warning is string =>
+                                    typeof warning === "string" && warning.trim().length > 0
+                            );
+                        }
+                    },
+                });
 
-                    const raw = decoder.decode(value, { stream: true });
-                    // 解析 SSE 格式 "data: {...}\n\n"
-                    const lines = raw.split("\n");
-                    for (const line of lines) {
-                        if (!line.startsWith("data: ")) continue;
-                        if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                            await abortCliStream();
-                            return;
-                        }
-                        try {
-                            const payload = JSON.parse(line.slice(6));
-                            if (payload.error) {
-                                return await rejectCliStream(payload.error);
-                            }
-                            if (payload.chunk) {
-                                if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                                    await abortCliStream();
-                                    return;
-                                }
-                                accumulated += payload.chunk;
-                                if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                                    await abortCliStream();
-                                    return;
-                                }
-                                dispatch(messageStreaming({
-                                    id: messageId,
-                                    dialogId,
-                                    dbKey: msgKey,
-                                    content: accumulated,
-                                    role: "assistant",
-                                    ...cliMessageMetadata,
-                                }));
-                            }
-                            if (payload.done && Array.isArray(payload.warnings)) {
-                                cliCapabilityWarnings = payload.warnings.filter(
-                                    (warning: unknown): warning is string =>
-                                        typeof warning === "string" && warning.trim().length > 0
-                                );
-                            }
-                        } catch {
-                            // 忽略解析失败的行
-                        }
-                    }
+                if (result.outcome === "rejected") {
+                    return await rejectCliStream(result.message);
                 }
-
-                if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                    await abortCliStream();
+                if (result.outcome === "aborted") {
+                    // onAbort 已完成清理/持久化;保持和原实现一致的提前退出。
                     return;
                 }
+                if (result.outcome === "streamEnded") {
+                    if (!result.sawDone) {
+                        // 连接被静默中断:未收到完成信号,视为异常终止,
+                        // 保留已累积内容并标记错误,而不是当成完整回复落库。
+                        dispatch(finalizeTransientMessageOnError({
+                            id: messageId,
+                            error: "CLI 流式响应被中断,未收到完成信号",
+                        }));
+                        remoteTransientMessageFinalized = true;
+                        setLoopStopReason("error");
+                        return rejectWithValue("CLI 流式响应被中断,未收到完成信号");
+                    }
 
-                if (cliCapabilityWarnings.length > 0) {
-                    accumulated = appendCliCapabilityWarnings(accumulated, cliCapabilityWarnings);
-                    dispatch(messageStreaming({
-                        id: messageId,
-                        dialogId,
-                        dbKey: msgKey,
-                        content: accumulated,
-                        role: "assistant",
-                        ...cliMessageMetadata,
-                    }));
+                    if (cliCapabilityWarnings.length > 0) {
+                        accumulated = appendCliCapabilityWarnings(accumulated, cliCapabilityWarnings);
+                        dispatch(messageStreaming({
+                            id: messageId,
+                            dialogId,
+                            dbKey: msgKey,
+                            content: accumulated,
+                            role: "assistant",
+                            ...cliMessageMetadata,
+                        }));
+                    }
+
+                    // 持久化最终消息：用已有 ID，避免 prepareAndPersistMessage 重新生成 ID 导致重复
+                    await persistMessageWithFixedId(dispatch, buildCliAssistantMessage());
+                    remoteTransientMessageFinalized = true;
                 }
-
-                // 持久化最终消息：用已有 ID，避免 prepareAndPersistMessage 重新生成 ID 导致重复
-                await persistMessageWithFixedId(dispatch, buildCliAssistantMessage());
-                remoteTransientMessageFinalized = true;
             } finally {
                 try {
                     await reader.cancel();
@@ -1299,6 +1345,21 @@ export const streamAgentChatTurnHandler = async (
             dispatch(addActiveController({ messageId: loopKey, controller: loopController, dialogKey }));
 
             let currentContent = "";
+            // List of all assistant text messages created during this turn.
+            // Each entry records the segment's finalized content + ids. The last
+            // entry is the currently-streaming segment; when a tool call
+            // interrupts the stream we finalize it (stop appending deltas) and
+            // start a fresh segment so the new text lands *after* the tool card
+            // in message-record order. ULID ids are monotonically increasing,
+            // and the entity adapter sorts by `id` (`localeCompare`), so a
+            // newly created assistant message id is always greater than the
+            // preceding tool message id — preserving the true timeline.
+            const assistantSegments: {
+                key: string;
+                messageId: string;
+                content: string;
+                finalized: boolean;
+            }[] = [];
             let assistantMessageKeys: { key: string; messageId: string } | null = null;
             let streamResult: any = null;
             let streamError: string | null = null;
@@ -1306,6 +1367,12 @@ export const streamAgentChatTurnHandler = async (
             const ensureAssistantMessageKeys = () => {
                 if (!assistantMessageKeys) {
                     assistantMessageKeys = createDialogMessageKeyAndId(dialogId);
+                    assistantSegments.push({
+                        key: assistantMessageKeys.key,
+                        messageId: assistantMessageKeys.messageId,
+                        content: "",
+                        finalized: false,
+                    });
                     remoteTransientMessageId = assistantMessageKeys.messageId;
                 }
                 return assistantMessageKeys;
@@ -1313,6 +1380,8 @@ export const streamAgentChatTurnHandler = async (
             const streamDesktopAssistantText = (text: string) => {
                 currentContent += text;
                 const { key: msgKey, messageId } = ensureAssistantMessageKeys();
+                const segment = assistantSegments[assistantSegments.length - 1];
+                segment.content = currentContent;
                 dispatch(messageStreaming({
                     id: messageId,
                     dialogId,
@@ -1323,6 +1392,34 @@ export const streamAgentChatTurnHandler = async (
                     ...desktopMessageMetadata,
                 }));
             };
+            // When a tool call arrives and the current assistant text segment is
+            // non-empty, finalize that segment so the tool card renders in its
+            // true position: the running segment stops accepting deltas, and the
+            // next delta starts a brand-new assistant message (new id) whose
+            // record-order position follows the tool message. An empty segment
+            // (tool called before any text) is reused to avoid an empty bubble.
+            const finalizeCurrentAssistantSegmentForTool = () => {
+                if (currentContent.length === 0) return;
+                const segment = assistantSegments[assistantSegments.length - 1];
+                segment.content = currentContent;
+                segment.finalized = true;
+                // Mark the just-streamed segment as no longer streaming so the UI
+                // stops showing the spinner on it; drop the reference so the next
+                // delta mints a new id. currentContent is reset for the next segment.
+                if (assistantMessageKeys) {
+                    dispatch(messageStreaming({
+                        id: assistantMessageKeys.messageId,
+                        dialogId,
+                        dbKey: assistantMessageKeys.key,
+                        content: currentContent,
+                        role: "assistant",
+                        isStreaming: false,
+                        ...desktopMessageMetadata,
+                    }));
+                }
+                assistantMessageKeys = null;
+                currentContent = "";
+            };
 
             try {
                 const eventStream = runDesktopAgentRuntimeTurnStream({
@@ -1331,7 +1428,7 @@ export const streamAgentChatTurnHandler = async (
                     continueDialogId: dialogId,
                     cwd: runtimeOptions?.cwd,
                     restrictShellToWorkspace: runtimeOptions?.restrictShellToWorkspace === true,
-                    llmConfigOverride: runtimeOptions?.llmConfigOverride,
+                    workspaceToolsHint: runtimeOptions?.workspaceToolsHint === true,
                 });
 
                 for await (const event of eventStream) {
@@ -1343,6 +1440,10 @@ export const streamAgentChatTurnHandler = async (
                         if (!callId) continue;
 
                         if (toolEvent.type === "tool-call") {
+                            // Finalize the running assistant text segment before the
+                            // tool card is created, so the next text segment lands
+                            // after this tool message in record order.
+                            finalizeCurrentAssistantSegmentForTool();
                             const { key: dbKey, messageId: toolMsgId } = createDialogMessageKeyAndId(dialogId);
                             const toolMsg = {
                                 id: toolMsgId,
@@ -1387,10 +1488,14 @@ export const streamAgentChatTurnHandler = async (
             // non-empty transients (assistant text + executed tool messages)
             // with an error marker instead of wiping the whole trace down to a
             // single error badge. Empty transients are still removed.
+            // Note: every assistant text segment created this turn must be
+            // finalized — earlier segments were already detached from the
+            // stream when their following tool call arrived, so they are still
+            // flagged isStreaming unless we finalize them here.
             const finalizeDesktopTurnOnError = (errorText: string) => {
-                if (assistantMessageKeys) {
+                for (const segment of assistantSegments) {
                     dispatch(finalizeTransientMessageOnError({
-                        id: assistantMessageKeys.messageId,
+                        id: segment.messageId,
                         error: errorText,
                     }));
                 }
@@ -1422,12 +1527,40 @@ export const streamAgentChatTurnHandler = async (
                 }
             }
 
+            // Persist earlier assistant text segments that were finalized when
+            // their following tool call interrupted the stream. These are no
+            // longer streaming (marked isStreaming:false above) but were never
+            // written to the database, so persist them now with fixed ids so
+            // history reload preserves the [A, tool, B] ordering. The final
+            // segment is persisted below via messageStreamEnd.
+            const earlierFinalizedSegments = assistantSegments.filter(
+                (segment) => segment.finalized && segment.content.length > 0
+            );
+            for (const segment of earlierFinalizedSegments) {
+                dispatch(write({
+                    data: {
+                        id: segment.messageId,
+                        dbKey: segment.key,
+                        dialogId,
+                        content: segment.content,
+                        role: "assistant",
+                        isStreaming: false,
+                        type: DataType.MSG,
+                        ...desktopMessageMetadata,
+                    },
+                    customKey: segment.key,
+                }));
+            }
+
             const { key: msgKey, messageId } = ensureAssistantMessageKeys();
+            const lastSegmentContent = streamResult.content || currentContent || "";
+            const segment = assistantSegments[assistantSegments.length - 1];
+            segment.content = lastSegmentContent;
             dispatch(messageStreaming({
                 id: messageId,
                 dialogId,
                 dbKey: msgKey,
-                content: streamResult.content || "",
+                content: lastSegmentContent,
                 role: "assistant",
                 isStreaming: false,
                 ...desktopMessageMetadata,
@@ -1437,7 +1570,7 @@ export const streamAgentChatTurnHandler = async (
                 finalContentBuffer: [
                     {
                         type: "text",
-                        text: streamResult.content || "",
+                        text: lastSegmentContent,
                     },
                 ],
                 totalUsage: streamResult.usage ?? undefined,
@@ -1579,22 +1712,17 @@ export const streamAgentChatTurnHandler = async (
                 };
 
                 try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        if (loopController.signal.aborted || thunkApi.signal.aborted) {
-                            await abortRemoteStream();
-                            return;
-                        }
-
-                        const payloads = parseSSE(
-                            decoder.decode(value, { stream: true }),
-                        );
-                        for (const payload of payloads) {
+                    const result = await consumeAgentRunStream({
+                        reader,
+                        decoder,
+                        parseChunk: (raw) => parseSSE(raw),
+                        isAborted: () =>
+                            loopController.signal.aborted || thunkApi.signal.aborted,
+                        onAbort: abortRemoteStream,
+                        isDoneEvent: (payload) => payload?.type === "done",
+                        onPayload: async (payload) => {
                             if (payload.type === "error") {
-                                return await rejectRemoteStream(
-                                    payload.message || "远端 Agent 执行失败",
-                                );
+                                return { reject: payload.message || "远端 Agent 执行失败" };
                             }
                             if (payload.type === "agent_handoff") {
                                 await patchDialogThreadMetadata(
@@ -1622,7 +1750,32 @@ export const streamAgentChatTurnHandler = async (
                             if (payload.type === "done") {
                                 totalTurnUsage = payload.usage;
                             }
+                        },
+                    });
+
+                    if (result.outcome === "rejected") {
+                        return await rejectRemoteStream(result.message);
+                    }
+                    if (result.outcome === "aborted") {
+                        // onAbort 已完成清理/持久化;保持和原实现一致的提前退出。
+                        return;
+                    }
+                    if (result.outcome === "streamEnded") {
+                        if (!result.sawDone) {
+                            // 连接被静默中断:没有收到完成信号,视为异常终止,
+                            // 保留已累积内容并标记错误,而不是当成完整回复落库。
+                            dispatch(finalizeTransientMessageOnError({
+                                id: messageId,
+                                error: "远端 Agent 流式响应被中断,未收到完成信号",
+                            }));
+                            remoteTransientMessageFinalized = true;
+                            setLoopStopReason("error");
+                            return rejectWithValue(
+                                "远端 Agent 流式响应被中断,未收到完成信号",
+                            );
                         }
+                        await persistMessageWithFixedId(dispatch, buildRemoteAssistantMessage());
+                        remoteTransientMessageFinalized = true;
                     }
                 } finally {
                     try {
@@ -1632,8 +1785,6 @@ export const streamAgentChatTurnHandler = async (
                     }
                 }
 
-                await persistMessageWithFixedId(dispatch, buildRemoteAssistantMessage());
-                remoteTransientMessageFinalized = true;
                 return {
                     usage: totalTurnUsage ?? undefined,
                 };
@@ -1737,18 +1888,7 @@ export const streamAgentChatTurnHandler = async (
             runtimeOptions,
         );
 
-        let effectiveAgentConfig = agentConfigForCall;
-
-        // 应用 runtimeOptions.llmConfigOverride
-        // 覆盖 provider/model/reasoningEffort，仅本轮生效（CLI/desktop 路径已提前 return）
-        if (runtimeOptions?.llmConfigOverride) {
-            const { provider, model, reasoningEffort } = runtimeOptions.llmConfigOverride;
-            if (provider) effectiveAgentConfig.provider = provider;
-            if (model) effectiveAgentConfig.model = model;
-            if (reasoningEffort) {
-                effectiveAgentConfig.reasoning_effort = reasoningEffort;
-            }
-        }
+        const effectiveAgentConfig = agentConfigForCall;
         const initialImageGenerationState = resolveImageGenerationStreamingState(
             effectiveAgentConfig,
         );

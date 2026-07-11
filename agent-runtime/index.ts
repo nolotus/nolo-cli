@@ -41,9 +41,12 @@ export {
 export {
   buildPlatformChatCompletionRequest,
   canUsePlatformChatProvider,
+  executePlatformChatCompletion,
+  executePlatformChatCompletionWithFallback,
   hasDirectOpenAiCompatibleProvider,
   parsePlatformChatCompletionData,
   parsePlatformChatCompletionResponse,
+  readPlatformChatSseCompletion,
   resolvePlatformChatProviderConfig,
   shouldUsePlatformChatProvider,
 } from "./platformChatProvider";

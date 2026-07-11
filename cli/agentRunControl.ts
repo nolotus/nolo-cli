@@ -7,14 +7,27 @@
 
 import { homedir as nodeHomedir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import * as nodeFs from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
-import { isCompiledBinary } from "./cliEnvHelpers";
+import { isCompiledBinary, resolveCliEntrypointPath } from "./cliEnvHelpers";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
+
+export type LocalAgentLoopEvent =
+  | { kind: "llm-start"; round: number; atMs: number }
+  | { kind: "llm-end"; round: number; atMs: number; ok: boolean }
+  | { kind: "tool-start"; name: string; atMs: number }
+  | { kind: "tool-end"; name: string; atMs: number; ok: boolean };
+
+export type RunActivity = {
+  lastEventAt: string;
+  inFlight: { kind: "llm" | "tool"; name: string; sinceMs: number } | null;
+  counters: { llmCalls: number; toolCalls: number; fileEdits: number };
+  updatedAt: string;
+};
 
 export type RunRecord = {
   runId: string;
@@ -30,6 +43,7 @@ export type RunRecord = {
   logPath: string;
   dialogId?: string;
   note?: string;
+  activity?: RunActivity;
 };
 
 export type FsLike = {
@@ -103,6 +117,113 @@ export function writeRunRecord(record: RunRecord, deps: AgentRunControlDeps = {}
   fs.writeFileSync(path, JSON.stringify(record, null, 2));
 }
 
+const FILE_EDIT_TOOL_NAMES = new Set(["writeFile", "editFile"]);
+const DEFAULT_ACTIVITY_WRITE_INTERVAL_MS = 2000;
+
+type InFlightState = {
+  kind: "llm" | "tool";
+  name: string;
+  startMs: number;
+};
+
+export type RunActivityTracker = {
+  onLoopEvent: (event: LocalAgentLoopEvent) => void;
+  getActivity: () => RunActivity;
+  flush: () => void;
+  dispose: () => void;
+};
+
+export function createRunActivityTracker(
+  runId: string,
+  deps: AgentRunControlDeps = {},
+  options: { minWriteIntervalMs?: number } = {}
+): RunActivityTracker {
+  const fs = deps.fs ?? nodeFs;
+  const now = deps.now ?? (() => new Date());
+  const minWriteIntervalMs =
+    options.minWriteIntervalMs ?? DEFAULT_ACTIVITY_WRITE_INTERVAL_MS;
+
+  let lastEventAt = now().toISOString();
+  let inFlight: InFlightState | null = null;
+  const counters = { llmCalls: 0, toolCalls: 0, fileEdits: 0 };
+  let writeTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastWriteAt = 0;
+
+  function serializeActivity(): RunActivity {
+    const nowDate = now();
+    const nowMs = nowDate.getTime();
+    return {
+      lastEventAt,
+      inFlight: inFlight
+        ? {
+            kind: inFlight.kind,
+            name: inFlight.name,
+            sinceMs: Math.max(0, nowMs - inFlight.startMs),
+          }
+        : null,
+      counters: { ...counters },
+      updatedAt: nowDate.toISOString(),
+    };
+  }
+
+  function doWrite() {
+    writeTimer = undefined;
+    const record = readRunRecord(runId, deps);
+    if (!record) return;
+    const activity = serializeActivity();
+    writeRunRecord({ ...record, activity }, deps);
+    lastWriteAt = now().getTime();
+  }
+
+  function scheduleWrite() {
+    if (writeTimer !== undefined) return;
+    const elapsed = now().getTime() - lastWriteAt;
+    const delay = Math.max(0, minWriteIntervalMs - elapsed);
+    writeTimer = setTimeout(doWrite, delay);
+  }
+
+  function onLoopEvent(event: LocalAgentLoopEvent) {
+    lastEventAt = new Date(event.atMs).toISOString();
+    switch (event.kind) {
+      case "llm-start":
+        inFlight = { kind: "llm", name: "llm", startMs: event.atMs };
+        break;
+      case "llm-end":
+        inFlight = null;
+        counters.llmCalls += 1;
+        break;
+      case "tool-start":
+        inFlight = { kind: "tool", name: event.name, startMs: event.atMs };
+        break;
+      case "tool-end":
+        inFlight = null;
+        counters.toolCalls += 1;
+        if (FILE_EDIT_TOOL_NAMES.has(event.name)) {
+          counters.fileEdits += 1;
+        }
+        break;
+    }
+    scheduleWrite();
+  }
+
+  function getActivity() {
+    return serializeActivity();
+  }
+
+  function flush() {
+    doWrite();
+  }
+
+  function dispose() {
+    if (writeTimer !== undefined) {
+      clearTimeout(writeTimer);
+      writeTimer = undefined;
+    }
+  }
+
+  return { onLoopEvent, getActivity, flush, dispose };
+}
+
 export function readRunRecord(runId: string, deps: AgentRunControlDeps = {}): RunRecord | null {
   const fs = deps.fs ?? nodeFs;
   const path = resolveRunRecordPath(runId, deps.env, deps.homedir);
@@ -168,7 +289,7 @@ function buildAgentRunChildCommand(options: {
   cliEntrypointPath?: string;
 }): { execPath: string; childArgs: string[] } {
   const execPath = process.execPath;
-  const entrypoint = options.cliEntrypointPath || fileURLToPath(import.meta.url);
+  const entrypoint = options.cliEntrypointPath || resolveCliEntrypointPath();
   const commandParts = options.commandPath ?? [];
   const strippedArgs = stripBackgroundFlag(options.rawArgs);
   if (isCompiledBinary() || entrypoint === execPath) {
@@ -498,6 +619,19 @@ export async function runAgentStatusCommand(
   return runStatusWatch(reconciled.runId, intervalMs, deps);
 }
 
+function formatActivitySummary(activity: RunActivity | undefined): string | undefined {
+  if (!activity) return undefined;
+  const { counters, inFlight, lastEventAt } = activity;
+  const parts: string[] = [`${counters.fileEdits} edits, ${counters.toolCalls} tools`];
+  if (inFlight) {
+    const elapsedSec = Math.floor(
+      (Date.now() - new Date(lastEventAt).getTime()) / 1000
+    );
+    parts.push(`in-flight ${inFlight.kind}${inFlight.name ? ` ${inFlight.name}` : ""} ${elapsedSec}s`);
+  }
+  return `activity: ${parts.join(", ")}`;
+}
+
 function printStatusOnce(record: RunRecord, deps: AgentRunControlDeps & { output: OutputLike }): number {
   deps.output.write(`runId:    ${record.runId}\n`);
   deps.output.write(`status:   ${record.status}\n`);
@@ -510,6 +644,8 @@ function printStatusOnce(record: RunRecord, deps: AgentRunControlDeps & { output
   if (typeof record.exitCode === "number") deps.output.write(`exitCode: ${record.exitCode}\n`);
   if (record.dialogId) deps.output.write(`dialog:   ${record.dialogId}\n`);
   if (record.note) deps.output.write(`note:     ${record.note}\n`);
+  const activitySummary = formatActivitySummary(record.activity);
+  if (activitySummary) deps.output.write(`${activitySummary}\n`);
   deps.output.write(`log:      ${record.logPath}\n`);
 
   const logLines = readLastLogLines(record.logPath, 20, deps);

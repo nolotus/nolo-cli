@@ -1064,54 +1064,6 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toEqual(DEFAULT_PRIVATE_LOCAL_TOOL_NAMES);
   });
 
-  test("aborts stalled custom provider requests when timeoutMs is provided", async () => {
-    const store = new Map<string, any>([
-      ["agent-user-1-mimo", {
-        dbKey: "agent-user-1-mimo",
-        id: "mimo",
-        prompt: "Use monthly mimo.",
-        model: "mimo-v2.5-pro",
-        provider: "custom",
-        apiSource: "custom",
-        customProviderUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-        apiKey: "mimo-monthly-key",
-      }],
-    ]);
-    const adapter = createCliLocalRuntimeAdapter({
-      env: {
-        NOLO_LOCAL_USER_ID: "user-1",
-      },
-      store: {
-        read: async (key) => store.get(key) ?? null,
-        put: async (key, value) => {
-          store.set(key, value);
-        },
-        batch: async (ops) => {
-          for (const op of ops) {
-            if (op.type === "put") store.set(op.key, op.value);
-          }
-        },
-        iterator: () => (async function* () {})(),
-      },
-      fetchImpl: async (_url, init) => {
-        if (init?.signal?.aborted) {
-          throw init.signal.reason ?? new Error("aborted");
-        }
-        await new Promise((_, reject) => {
-          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
-        });
-        throw new Error("unreachable");
-      },
-    });
-
-    await expect(runLocalAgentTurn({
-      adapter,
-      agentRef: "mimo",
-      input: "hello",
-      timeoutMs: 10,
-    })).rejects.toThrow(/timed out|aborted/i);
-  });
-
   test("uses loopback transport for localhost custom providers when the default fetch path cannot connect", async () => {
     const store = new Map<string, any>([
       ["agent-user-1-localhost", {

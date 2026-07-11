@@ -350,46 +350,6 @@ export const setDefaultAgentId = createAsyncThunk(
     ).unwrap(),
 );
 
-export const setFlashAgentId = createAsyncThunk(
-  "settings/setFlashAgentId",
-  async (agentId: string, { dispatch }) =>
-    dispatch(
-      setSettings({
-        flashAgentId: resolveDefaultAgentIdSetting(agentId),
-      }),
-    ).unwrap(),
-);
-
-export const setBalancedAgentId = createAsyncThunk(
-  "settings/setBalancedAgentId",
-  async (agentId: string, { dispatch }) =>
-    dispatch(
-      setSettings({
-        balancedAgentId: resolveDefaultAgentIdSetting(agentId),
-      }),
-    ).unwrap(),
-);
-
-export const setQualityAgentId = createAsyncThunk(
-  "settings/setQualityAgentId",
-  async (agentId: string, { dispatch }) =>
-    dispatch(
-      setSettings({
-        qualityAgentId: resolveDefaultAgentIdSetting(agentId),
-      }),
-    ).unwrap(),
-);
-
-export const setImageAgentId = createAsyncThunk(
-  "settings/setImageAgentId",
-  async (agentId: string, { dispatch }) =>
-    dispatch(
-      setSettings({
-        imageAgentId: resolveDefaultAgentIdSetting(agentId),
-      }),
-    ).unwrap(),
-);
-
 export const setPreferredAnimationSet = createAsyncThunk(
   "settings/setPreferredAnimationSet",
   async (index: number, { dispatch }) =>

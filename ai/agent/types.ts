@@ -66,16 +66,14 @@ export interface AgentRuntimeOptions {
         imageSize?: "1K" | "2K" | "4K";
     };
 
-    /**
-     * 本轮 LLM 路由覆盖（仅当前 turn）：provider / model / reasoningEffort。
-     * CLI/desktop 路径可能在更早分支处理，web 路径在 streamAgentChatTurn 中合并。
-     */
-    llmConfigOverride?: {
-        provider?: string;
-        model?: string;
-        reasoningEffort?: string;
-    };
-
     cwd?: string;
     restrictShellToWorkspace?: boolean;
+
+    /**
+     * quick-chat 通用档意图提示：本轮用户消息表达了文件/代码/工作区意图，
+     * 桌面端 runtime 应为通用三档内置 agent 注入只读工作区工具集。
+     * 仅对 quick-chat 通用档（BUILTIN_PLATFORM_AGENT_CONFIGS 的 key）生效；
+     * 专职/用户自建 agent 完全忽略此 hint。
+     */
+    workspaceToolsHint?: boolean;
 }

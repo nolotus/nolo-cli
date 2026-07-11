@@ -186,6 +186,11 @@ const runSetPrimaryDialogAgentAction = async (args: any, thunkApi: any) => {
   return setPrimaryDialogAgentAction(args, thunkApi);
 };
 
+const runSetDialogExtraReferencesAction = async (args: any, thunkApi: any) => {
+  const { setDialogExtraReferencesAction } = await import("./actions/setDialogExtraReferencesAction");
+  return setDialogExtraReferencesAction(args, thunkApi);
+};
+
 const runHandleSendMessageAction = async (args: any, thunkApi: any) => {
   const { handleSendMessageAction } = await import("./actions/handleSendMessageAction");
   return handleSendMessageAction(args, thunkApi);
@@ -559,6 +564,7 @@ const dialogSlice = createSliceWithThunks({
     addDialogAgent: create.asyncThunk(runAddCybotAction),
     removeDialogAgent: create.asyncThunk(runRemoveDialogAgentAction),
     setPrimaryDialogAgent: create.asyncThunk(runSetPrimaryDialogAgentAction),
+    setDialogExtraReferences: create.asyncThunk(runSetDialogExtraReferencesAction),
 
     // --- Reducers ---
     addPendingFile: create.reducer(
@@ -772,6 +778,7 @@ export const {
   removeDialogAgent,
   replacePrimaryCybot,
   setPrimaryDialogAgent,
+  setDialogExtraReferences,
   handleSendMessage,
   addActiveController,
   removeActiveController,

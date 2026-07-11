@@ -110,6 +110,9 @@ export default {
       dialogUsageTokensSection: "Session tokens",
       dialogUsageBillingSection: "Billing",
       recharge: "Click to recharge", // 新增单独的充值翻译
+      dialog: {
+        tempSkills: "Temporary skills",
+      },
       // 新增中止功能相关翻译
       stopAllGeneration: "Stop All Generations",
       allMessagesAborted: "All messages have been aborted",
@@ -389,6 +392,9 @@ export default {
       dialogUsageTokensSection: "本会话 token",
       dialogUsageBillingSection: "计费",
       recharge: "点此充值", // 新增单独的充值翻译
+      dialog: {
+        tempSkills: "临时技能",
+      },
       // 新增中止功能相关翻译
       stopAllGeneration: "停止所有生成",
       allMessagesAborted: "所有消息已中止",
@@ -660,6 +666,9 @@ export default {
       dialogUsageTokensSection: "本會話 token",
       dialogUsageBillingSection: "計費",
       recharge: "點此充值", // 新增单独的充值翻译
+      dialog: {
+        tempSkills: "臨時技能",
+      },
       // 新增中止功能相关翻译
       stopAllGeneration: "停止所有生成",
       allMessagesAborted: "所有訊息已中止",

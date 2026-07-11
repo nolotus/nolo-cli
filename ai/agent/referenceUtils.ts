@@ -7,6 +7,26 @@ import {
   type SkillRuntimePageLike,
 } from "../skills/referenceRuntime";
 
+export function mergeReferences(
+  base?: ReferenceItem[] | null,
+  extra?: ReferenceItem[] | null
+): ReferenceItem[] {
+  const safeBase = Array.isArray(base) ? base : [];
+  const safeExtra = Array.isArray(extra) ? extra : [];
+
+  const seen = new Set<string>();
+  const merged: ReferenceItem[] = [];
+
+  for (const item of [...safeBase, ...safeExtra]) {
+    const key = item.dbKey;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    merged.push(item);
+  }
+
+  return merged;
+}
+
 export type ResolvedReferenceAssets = {
   references: ReferenceItem[];
   referencedTools: string[];

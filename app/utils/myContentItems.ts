@@ -181,7 +181,11 @@ export function buildOwnedAppContentItems(
         },
       ];
     })
-    .sort((left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt));
+    .sort(
+      (left, right) =>
+        toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt) ||
+        left.contentKey.localeCompare(right.contentKey)
+    );
 }
 
 export function buildMyContentItemsFromUserData(
@@ -270,7 +274,9 @@ export function buildMyContentItemsFromUserData(
   });
 
   return items.sort(
-    (left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt)
+    (left, right) =>
+      toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt) ||
+      left.contentKey.localeCompare(right.contentKey)
   );
 }
 

@@ -49,7 +49,7 @@ import { sendOpenAIResponseRequest } from "../chat/sendOpenAIResponseRequest";
 import type { AgentRuntimeOptions } from "./types";
 import { buildAgentViewMessages } from "./cleanAgentMessages";
 import { extractCategorizedMentions, type CategorizedMentions } from "../../create/editor/utils/slateUtils";
-import { resolveReferenceAssets, resolveToolsFromKeys } from "./referenceUtils";
+import { mergeReferences, resolveReferenceAssets, resolveToolsFromKeys } from "./referenceUtils";
 import { estimateTokenCount } from "../context/tokenUtils";
 import {
     applyImageConfigRuntimeOverride,
@@ -1809,13 +1809,16 @@ export const streamAgentChatTurnHandler = async (
             recommendedSkillTools: referenceRecommendedSkillTools,
             recommendedSkillHints: referenceRecommendedSkillHints,
             skillPromptPatches: referenceSkillPromptPatches,
-        } = await resolveReferenceAssets(agentConfig.references, dispatch);
+        } = await resolveReferenceAssets(
+            mergeReferences(agentConfig.references, (selectDialogConfigByKey(getState(), explicitDialogKey) ?? selectCurrentDialogConfig(getState()))?.extraReferences),
+            dispatch
+        );
         logQuickChatPerfStage(quickChatPerfStartedAt, "stream-agent-references-resolved", {
             referenceCount: normalizedReferences?.length ?? 0,
             referencedToolCount: referenceTools?.length ?? 0,
         });
 
-        const agentConfigWithReferences = {
+        const agentConfigWithReferences: import("./buildSystemPrompt").AgentRuntimeConfig = {
             ...agentConfig,
             references: normalizedReferences,
             referencedTools: referenceTools,

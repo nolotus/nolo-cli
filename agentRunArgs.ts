@@ -54,6 +54,7 @@ export type ParsedAgentRunArgs = {
   taskEvidence?: TaskEvidenceInput;
   workflowRef?: string;
   fallbackAgentKeys?: string[];
+  skillRefs?: string[];
 };
 
 export function readFlagValue(args: string[], flag: string) {
@@ -213,7 +214,7 @@ export function writeUsage(
   }
   output.write(
     "Usage: nolo agent run <agent> <message> [--local|--server|--auto] [--continue <dialogId>] [--cwd <path>]\n" +
-      "       nolo agent run --agent <agent> (--msg <message>|--msg-file <path>) [--image <url-or-path>] [--space <spaceId>] [--category <name>] [--inherit-from-dialog <dialog>] [--parent-dialog <dialog>] [--subject-dialog <dialog>] [--subject-ref <kind:id[:role]>] [--task-row-dbkey <key>] [--allowed-child-agent <agent>] [--fallback-agent <agent>] (suggestions for agent to decide on quota) [--allowed-tool <tool>] [--bg] [--timeout-ms <n>] [--events jsonl] [--no-stream]\n"
+      "       nolo agent run --agent <agent> (--msg <message>|--msg-file <path>) [--image <url-or-path>] [--space <spaceId>] [--category <name>] [--inherit-from-dialog <dialog>] [--parent-dialog <dialog>] [--subject-dialog <dialog>] [--subject-ref <kind:id[:role]>] [--task-row-dbkey <key>] [--allowed-child-agent <agent>] [--fallback-agent <agent>] (suggestions for agent to decide on quota) [--allowed-tool <tool>] [--bg] [--timeout-ms <n>] [--events jsonl] [--no-stream] [--skill <dbKey-or-md-path>]\n"
   );
 }
 
@@ -277,6 +278,9 @@ export function parseAgentRunArgs(
   const fullstackLocalWorkspaceDefault =
     isFullstackCodingAgentRef(rawAgentKey, agentKey) && runtimeMode !== "server";
   const workflowRef = readFlagValue(args, "--workflow");
+  const skillRefs = readRepeatedFlagValues(args, "--skill")
+    .map((v) => v.trim())
+    .filter(Boolean);
   const taskRowDbKey = readFlagValue(args, "--task-row-dbkey");
   const artifactIds = readFlagValue(args, "--artifact-ids")
     ?.split(",")
@@ -291,6 +295,7 @@ export function parseAgentRunArgs(
     ...(eventsMode ? { eventsMode } : {}),
     injectFeatureWorktreeInstruction: fullstackLocalWorkspaceDefault,
     ...(workflowRef ? { workflowRef } : {}),
+    ...(skillRefs.length ? { skillRefs } : {}),
     ...(taskRowDbKey
       ? {
           taskEvidence: {

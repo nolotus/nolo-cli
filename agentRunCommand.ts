@@ -8,7 +8,8 @@
 import { runAgentTurn, type RunAgentTurnOptions, type RunAgentTurnResult } from "./client/agentRun";
 import { CliProviderQuotaError } from "./ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
-import { resolveAgentRecordFromHybridStore } from "./agentRecordHelpers";
+import { resolveAgentRecordFromHybridStore, readDbRecord } from "./agentRecordHelpers";
+import { resolveAuthToken } from "./cliEnvHelpers";
 import { homedir } from "node:os";
 import { getReadableCliDb } from "./agentCommandSupport";
 
@@ -37,6 +38,9 @@ import {
   prependWorkflowReferencePrompt,
   resolveWorkflowReference,
   type ResolvedWorkflowReference,
+  resolveSkillReference,
+  type ResolvedSkillReference,
+  prependSkillReferencesPrompt,
 } from "./agentRunPrompts";
 import {
   formatLocalRunSummary,
@@ -280,6 +284,33 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
       return 1;
     }
   }
+
+  let skillReferences: ResolvedSkillReference[] | undefined;
+  if (parsed.skillRefs?.length) {
+    const skills: ResolvedSkillReference[] = [];
+    const authToken = resolveAuthToken(args, env);
+    const serverUrl = resolveServerUrl(env);
+    for (const ref of parsed.skillRefs) {
+      try {
+        const resolved = await resolveSkillReference(ref, {
+          cwd: parsed.cwd,
+          readDbRecord: async (dbKey: string) => {
+            return readDbRecord({
+              dbKey,
+              authToken,
+              serverUrl,
+              fetchImpl: fetch,
+            });
+          },
+        });
+        skills.push(resolved);
+      } catch (error) {
+        output.write(`[nolo] ${error instanceof Error ? error.message : String(error)}\n`);
+        return 1;
+      }
+    }
+    skillReferences = skills;
+  }
   let localRuntimeCwd = parsed.cwd;
   if (!localRuntimeCwd && parsed.runtimeMode === "local") {
     localRuntimeCwd = homedir();
@@ -328,15 +359,18 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     agentName: targetAgentKey,
     agentKey: targetAgentKey,
     serverUrl: resolveServerUrl(env),
-    message: prependWorkflowReferencePrompt(
-      prependSubjectDialogMarker(
-        prependFeatureWorktreeInstruction(
-          effectiveMessage,
-          parsed.injectFeatureWorktreeInstruction
+    message: prependSkillReferencesPrompt(
+      prependWorkflowReferencePrompt(
+        prependSubjectDialogMarker(
+          prependFeatureWorktreeInstruction(
+            effectiveMessage,
+            parsed.injectFeatureWorktreeInstruction
+          ),
+          parsed.subjectDialogKey
         ),
-        parsed.subjectDialogKey
+        workflowReference
       ),
-      workflowReference
+      skillReferences
     ),
     imageUrls: parsed.imageUrls.map(normalizeCliImageInput),
     scriptDir: deps.scriptDir,

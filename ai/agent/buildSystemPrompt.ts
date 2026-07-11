@@ -312,12 +312,19 @@ const buildSpaceContextBlock = (contexts: Contexts): string => {
 
 
 
-const buildSkillGuidanceBlock = (agentConfig: Agent): string => {
-  const recommendedSkillHints = Array.isArray((agentConfig as any).recommendedSkillHints)
-    ? ((agentConfig as any).recommendedSkillHints as string[]).filter(Boolean)
+export type AgentRuntimeConfig = import("../../app/types").Agent & {
+  referencedTools?: string[];
+  recommendedSkillTools?: string[];
+  recommendedSkillHints?: string[];
+  skillPromptPatches?: string[];
+};
+
+export const buildSkillGuidanceBlock = (agentConfig: AgentRuntimeConfig): string => {
+  const recommendedSkillHints = Array.isArray(agentConfig.recommendedSkillHints)
+    ? (agentConfig.recommendedSkillHints as string[]).filter(Boolean)
     : [];
-  const skillPromptPatches = Array.isArray((agentConfig as any).skillPromptPatches)
-    ? ((agentConfig as any).skillPromptPatches as string[]).filter(Boolean)
+  const skillPromptPatches = Array.isArray(agentConfig.skillPromptPatches)
+    ? (agentConfig.skillPromptPatches as string[]).filter(Boolean)
     : [];
 
   if (recommendedSkillHints.length === 0 && skillPromptPatches.length === 0) {
@@ -336,7 +343,7 @@ const buildSkillGuidanceBlock = (agentConfig: Agent): string => {
 // ============================================================================
 
 export const buildSystemPrompt = (options: {
-  agentConfig: Agent;
+  agentConfig: AgentRuntimeConfig;
   language?: string;
   contexts?: Contexts;
   viewport?: { width: number; height: number };
@@ -346,7 +353,7 @@ export const buildSystemPrompt = (options: {
 }): string => buildSystemPromptContext(options).content;
 
 export const buildSystemPromptContext = (options: {
-  agentConfig: Agent;
+  agentConfig: AgentRuntimeConfig;
   language?: string;
   contexts?: Contexts;
   viewport?: { width: number; height: number };

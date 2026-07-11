@@ -58,6 +58,7 @@ interface CreateDialogArgs {
   skipAgentConfigRead?: boolean;
   optimisticReturnBeforeWrite?: boolean;
   preferredServerOrigin?: string | null;
+  extraReferences?: import("../../../app/types").ReferenceItem[];
 }
 
 const isGreetingConfig = (g: unknown): g is AgentGreetingConfig =>
@@ -235,6 +236,7 @@ export const createDialogAction = async (
     ...(spaceId && { spaceId }),
     category,
     referenceKeys,
+    ...(args.extraReferences && args.extraReferences.length > 0 && { extraReferences: args.extraReferences }),
     ...(inheritedFromDialogKey && { inheritedFromDialogKey }),
     ...(inheritedFromDialogTitle && { inheritedFromDialogTitle }),
     inputTokens: 0,

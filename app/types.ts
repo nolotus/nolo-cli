@@ -73,6 +73,8 @@ export interface DialogConfig {
   createdAt: string; // 创建时间戳
   updatedAt: string; // 最后更新时间戳
   dbKey?: string;
+  /** 对话级临时挂载的引用（skill/instruction/knowledge），与 agent.references 同语义，随对话生效 */
+  extraReferences?: ReferenceItem[];
   spaceId?: string;
   category?: string;
 

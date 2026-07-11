@@ -10,6 +10,7 @@ import { Message } from "../../app/types";
 import { read } from "../../database/dbSlice";
 import { fetchAgentContexts } from "../agent/fetchAgentContexts";
 import { generateRequestBody } from "../llm/generateRequestBody";
+import { mergeReferences } from "./referenceUtils";
 import { getApiEndpoint } from "../llm/providers";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentToken } from "../../auth/authSlice";
@@ -27,6 +28,7 @@ export interface RunAgentClientLoopArgs {
   content: any;
   parentMessageId?: string;
   billingDialogKey?: string;
+  extraReferences?: import("../../app/types").ReferenceItem[];
 }
 
 export interface RunAgentClientLoopResult {
@@ -53,7 +55,7 @@ export async function runAgentClientLoop(
 
   // 2. 加载 Agent 上下文（知识库 / references）
   const agentContexts = await fetchAgentContexts(
-    agentConfig.references,
+    mergeReferences(agentConfig.references, args.extraReferences),
     dispatch
   );
 

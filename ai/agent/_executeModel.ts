@@ -5,6 +5,7 @@ import { read } from "../../database/dbSlice";
 import { fetchAgentContexts } from "../agent/fetchAgentContexts";
 import { filterAndCleanMessages } from "../../integrations/openai/filterAndCleanMessages";
 import { selectAllMsgs } from "../../chat/messages/messageSlice";
+import { mergeReferences } from "./referenceUtils";
 import { generateRequestBody } from "../llm/generateRequestBody";
 import { getApiEndpoint } from "../llm/providers";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
@@ -64,7 +65,7 @@ export const _executeModel = async (
       : agentConfig;
     const resolvedAgentConfig = resolvedConfig as Agent;
     const agentContexts = withAgentContext
-      ? await fetchAgentContexts(resolvedAgentConfig.references, dispatch)
+      ? await fetchAgentContexts(mergeReferences(resolvedAgentConfig.references, selectCurrentDialogConfig(state)?.extraReferences), dispatch)
       : {};
 
     let messages: Message[];

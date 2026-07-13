@@ -10,7 +10,6 @@ import { DataType } from "../../create/types";
 import type { RootState, AppDispatch } from "../../app/store";
 import { write } from "../../database/dbSlice";
 import type { PageData } from "./types";
-import { format } from "date-fns";
 
 // 新增：把 markdown 转为 Slate 的工具 & 类型
 import { markdownToSlate } from "../../create/editor/transforms/markdownToSlate";
@@ -83,11 +82,10 @@ export const createPageAction = async (
   const spaceId = customSpaceId ?? selectCurrentSpaceId(state);
   const { dbKey, id } = createPageKey.create(userId);
 
-  const now = new Date();
-  const dateStr = format(now, "yyyy-MM-dd HH:mm");
-  const defaultTitle = i18n.t("page:defaultTitleFormat", {
-    defaultValue: "{{date}} 的笔记",
-    date: dateStr,
+  // Untitled by default — created time is shown as secondary meta in the page
+  // chrome, not baked into the title (users should type a real name).
+  const defaultTitle = i18n.t("page:untitled", {
+    defaultValue: "未命名页面",
   });
   let title = initialTitle?.trim() || defaultTitle;
 

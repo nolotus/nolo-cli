@@ -32,6 +32,8 @@ export interface DocState {
   isSaving: boolean;
   saveError: string | null;
   lastSavedAt: string | null;
+  /** ISO creation time from page record (for title meta chrome). */
+  createdAt: string | null;
   lastSavedSlateData: EditorContent | null;
   lastSavedTitle: string | null;
   lastSavedIcon: ContentIcon | null;
@@ -68,6 +70,7 @@ const initialState: DocState = {
   isSaving: false,
   saveError: null,
   lastSavedAt: null,
+  createdAt: null,
   lastSavedSlateData: null,
   lastSavedTitle: null,
   lastSavedIcon: null,
@@ -186,6 +189,10 @@ export const docSlice = createSliceWithThunks({
           state.type = action.payload.type;
           const payload = action.payload as any;
           state.lastSavedAt = payload.updatedAt || payload.updated_at || null;
+          state.createdAt =
+            (typeof payload.created === "string" && payload.created) ||
+            (typeof payload.createdAt === "string" && payload.createdAt) ||
+            state.lastSavedAt;
           state.tools = action.payload.tools || null;
           state.meta = action.payload.meta || null;
         },
@@ -490,6 +497,11 @@ export const selectDocFocusContext = createSelector(
 export const selectLastSavedAt = createSelector(
   [selectDocState],
   (doc) => doc.lastSavedAt
+);
+
+export const selectDocCreatedAt = createSelector(
+  [selectDocState],
+  (doc) => doc.createdAt
 );
 
 export default docSlice.reducer;

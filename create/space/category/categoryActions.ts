@@ -206,13 +206,33 @@ export const createCategoryActions = (create: Create) => ({
         })
       ).unwrap();
 
-      return { spaceId, updatedSpaceData, newCategoryId };
+      // New categories default expanded. Seed both Redux (fulfilled) and
+      // localStorage so changeSpace / hard reload cannot re-apply the
+      // "unregistered regular category = collapsed" fallback.
+      const collapsedCategories = {
+        ...rootState.space.collapsedCategories,
+        [newCategoryId]: false,
+      };
+      if (typeof window !== "undefined") {
+        writeStoredCollapsedCategories(
+          spaceId,
+          collapsedCategories,
+          window.localStorage,
+        );
+      }
+
+      return { spaceId, updatedSpaceData, newCategoryId, collapsedCategories };
     },
     {
       fulfilled: (state: SpaceState, action: any) => {
         if (state.currentSpaceId === action.payload.spaceId) {
           state.currentSpace = action.payload.updatedSpaceData;
-          if (action.payload.newCategoryId) {
+          if (action.payload.collapsedCategories) {
+            state.collapsedCategories = {
+              ...state.collapsedCategories,
+              ...action.payload.collapsedCategories,
+            };
+          } else if (action.payload.newCategoryId) {
             state.collapsedCategories[action.payload.newCategoryId] = false;
           }
         }

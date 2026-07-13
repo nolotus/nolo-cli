@@ -9,6 +9,8 @@ import { updateContentCategoryAction } from "./updateContentCategoryAction";
 import { deleteMultipleContentAction } from "./deleteMultipleContentAction"; // <-- 新增: 导入批量删除 Action
 import { uploadAndAddFileToSpaceAction } from "./uploadAndAddFileToSpaceAction";
 import { normalizeSpaceId } from "../spaceKeys";
+import { UNCATEGORIZED_ID } from "../constants";
+import { writeStoredCollapsedCategories } from "../spaceCollapsedState";
 
 type Create = {
   asyncThunk: (...args: any[]) => any;
@@ -20,18 +22,64 @@ type Create = {
  * @param create - 由 buildCreateSlice 提供的创建器对象
  */
 export const createContentThunks = (create: Create) => ({
-  addContentToSpace: create.asyncThunk(addContentAction, {
-    fulfilled: (state: SpaceState, action: any) => {
-      const { spaceId, updatedSpaceData } = action.payload;
-      const normalizedSpaceId = normalizeSpaceId(spaceId);
-      const normalizedCurrentSpaceId = state.currentSpaceId
-        ? normalizeSpaceId(state.currentSpaceId)
-        : null;
-      if (normalizedCurrentSpaceId === normalizedSpaceId) {
-        state.currentSpace = updatedSpaceData;
+  /**
+   * Add content into a space. When the content lands in a real category,
+   * force-expand that category (Redux + localStorage) so "create page"
+   * never leaves the new item trapped inside a default-collapsed section.
+   */
+  addContentToSpace: create.asyncThunk(
+    async (
+      input: Parameters<typeof addContentAction>[0],
+      thunkAPI: Parameters<typeof addContentAction>[1]
+    ) => {
+      const result = await addContentAction(input, thunkAPI);
+      const rawCategoryId =
+        typeof input.categoryId === "string" ? input.categoryId.trim() : "";
+      const expandCategoryId =
+        rawCategoryId && rawCategoryId !== UNCATEGORIZED_ID
+          ? rawCategoryId
+          : null;
+
+      if (expandCategoryId) {
+        const rootState = thunkAPI.getState();
+        const collapsedCategories = {
+          ...rootState.space.collapsedCategories,
+          [expandCategoryId]: false,
+        };
+        if (typeof window !== "undefined") {
+          writeStoredCollapsedCategories(
+            result.spaceId,
+            collapsedCategories,
+            window.localStorage
+          );
+        }
+        return { ...result, expandCategoryId, collapsedCategories };
       }
+
+      return { ...result, expandCategoryId: null as string | null };
     },
-  }),
+    {
+      fulfilled: (state: SpaceState, action: any) => {
+        const { spaceId, updatedSpaceData, expandCategoryId, collapsedCategories } =
+          action.payload;
+        const normalizedSpaceId = normalizeSpaceId(spaceId);
+        const normalizedCurrentSpaceId = state.currentSpaceId
+          ? normalizeSpaceId(state.currentSpaceId)
+          : null;
+        if (normalizedCurrentSpaceId === normalizedSpaceId) {
+          state.currentSpace = updatedSpaceData;
+          if (collapsedCategories) {
+            state.collapsedCategories = {
+              ...state.collapsedCategories,
+              ...collapsedCategories,
+            };
+          } else if (expandCategoryId) {
+            state.collapsedCategories[expandCategoryId] = false;
+          }
+        }
+      },
+    }
+  ),
 
   moveContentToSpace: create.asyncThunk(moveContentAction, {
     fulfilled: (state: SpaceState, action: any) => {

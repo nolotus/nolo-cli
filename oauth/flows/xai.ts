@@ -9,6 +9,7 @@ import type {
   OAuthTokenResponse,
   PkcePair,
 } from "../types";
+import type { CliFetchImpl } from "../../cliFetch";
 
 
 // Hermes hermes_cli/auth.py L93-111
@@ -59,7 +60,7 @@ export function validateXAIEndpoint(url: string, field: string): string {
  * Hermes `_xai_oauth_discovery` L3038-3084.
  */
 async function xaiOAuthDiscovery(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   timeoutMs: number = DISCOVERY_TIMEOUT_MS
 ): Promise<XAIOAuthDiscovery> {
   let response: Response;
@@ -143,7 +144,7 @@ function generateState(): string {
 }
 
 async function exchangeXAIToken(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   code: string,
   redirectUri: string,
   verifier: string

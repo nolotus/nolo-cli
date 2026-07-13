@@ -18,6 +18,7 @@ import {
   resolveConnectorRunCwd as defaultResolveConnectorRunCwd,
 } from "./connectorRunArtifact";
 import { createCliLocalRuntimeAdapter } from "./client/localRuntimeAdapter";
+import type { CliFetchImpl } from "./cliFetch";
 import {
   materializeLargeConnectorPrompt as defaultMaterializeLargeConnectorPrompt,
   readRuntimePromptPageMeta as defaultReadRuntimePromptPageMeta,
@@ -95,7 +96,7 @@ export type MachineWsRunDispatchDeps = {
     parsed: Record<string, unknown>;
     runtimeEnv: EnvLike;
     cwd: string;
-    fetchImpl?: typeof fetch;
+    fetchImpl?: CliFetchImpl;
     onProgress?: (progress: ConnectorRunProgress) => void;
   }) => Promise<ConnectorLocalRunResult>;
 };
@@ -149,9 +150,10 @@ export function summarizeAgentConfigForLogs(agentConfig: unknown) {
     skipLocalRuntimeEnsure: readField(config, "skipLocalRuntimeEnsure") ?? null,
     hasApiKey: isNonEmptyString(readField(config, "apiKey")),
     apiKeyHeader: readField(config, "apiKeyHeader") ?? null,
-    hasApiKeyFromAgentKey:
-      typeof readField(config, "apiKeyFromAgentKey") === "string" &&
-      (readField(config, "apiKeyFromAgentKey") ?? "").length > 0,
+    hasApiKeyFromAgentKey: (() => {
+      const value = readField(config, "apiKeyFromAgentKey");
+      return typeof value === "string" && value.length > 0;
+    })(),
     runtimeBindingKind: readField(runtimeBinding, "kind") ?? null,
     runtimeMachineId: readField(runtimeBinding, "machineId") ?? null,
     connectorSurface: readField(runtimeBinding, "connectorSurface") ?? readField(runtimeBinding, "surface") ?? null,
@@ -272,7 +274,7 @@ export function mergeToolNames(...values: unknown[]) {
 }
 
 export function localRuntimeEnvFromPolicy(runtimeEnv: EnvLike, policy?: ConnectorRuntimePolicy): EnvLike {
-  return resolveLocalRuntimeEnvFromPolicy(runtimeEnv, policy);
+  return resolveLocalRuntimeEnvFromPolicy(runtimeEnv, policy as any);
 }
 
 export function forwardedUserAuthToken(parsed: unknown): string {
@@ -332,7 +334,7 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
   parsed: unknown;
   runtimeEnv: EnvLike;
   cwd: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
   onProgress?: (progress: ConnectorRunProgress) => void;
 }): Promise<ConnectorLocalRunResult> {
   const obj = isRecord(args.parsed) ? args.parsed : {};
@@ -381,6 +383,10 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
     fetchImpl: args.fetchImpl ?? fetch,
     store: {
       read: async (key) => store.get(key) ?? null,
+      write: async (key, value) => {
+        store.set(key, value);
+        return value;
+      },
       batch: async (ops) => {
         for (const op of ops) {
           if (op.type === "put") store.set(op.key, op.value);

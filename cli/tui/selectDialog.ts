@@ -71,7 +71,7 @@ function countRenderedLines(text: string) {
 }
 
 function clearRenderedLines(output: NodeJS.WritableStream, lineCount: number) {
-  if (!output.isTTY || lineCount <= 0) return;
+  if (!(output as any).isTTY || lineCount <= 0) return;
   for (let index = 0; index < lineCount; index += 1) {
     output.write("\x1b[1A\x1b[2K");
   }
@@ -201,7 +201,7 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       title: args.title,
       maxVisible: args.maxVisible,
     });
-    if (output.isTTY && typeof output.write === "function") {
+    if ((output as any).isTTY && typeof output.write === "function") {
       clearRenderedLines(output, renderedLineCount);
       output.write(`${frame}\n`);
       renderedLineCount = countRenderedLines(frame);

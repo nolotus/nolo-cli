@@ -208,7 +208,7 @@ async function runUpdateCommand(
       skillConfig: mergedConfig,
       existing,
     });
-    skillSummary = buildSkillSummaryForRecord(record);
+    skillSummary = buildSkillSummaryForRecord(record) ?? undefined;
   } else {
     const description = readOption(args, "--description") ?? existing?.meta?.description ?? "";
     const body = readBodyArg(args, typeof existing?.content === "string" ? existing.content : "");

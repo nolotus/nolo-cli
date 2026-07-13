@@ -20,7 +20,9 @@ export function buildCliLocalRuntimeDbEnv(env: EnvLike = process.env) {
   };
 }
 
-export async function getDefaultCliLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
+export async function getDefaultCliLocalRuntimeDb(
+  options: CliLocalRuntimeDbPathOptions = {}
+): Promise<CliLocalRuntimeDb> {
   const { getDefaultCliLocalRuntimeDb: getAuthorityBackedDb } = await import("./localRuntimeAuthority");
-  return getAuthorityBackedDb();
+  return getAuthorityBackedDb(options);
 }

@@ -44,6 +44,7 @@ import {
   type MachineWsRunDispatchDeps,
   type PermissionPolicy,
 } from "./machineWsRunDispatchPurity";
+import type { CliFetchImpl } from "./cliFetch";
 
 // Re-export the public surface so existing callers keep working.
 export {
@@ -80,7 +81,7 @@ export async function handleConnectorRunMessage(
   send: (message: string) => void,
   executeCli: LocalCliExecutor,
   runtimeEnv: EnvLike,
-  fetchImpl?: typeof fetch,
+  fetchImpl?: CliFetchImpl,
   deps: MachineWsRunDispatchDeps = {}
 ) {
   let parsed: unknown;
@@ -124,7 +125,10 @@ export async function handleConnectorRunMessage(
     const timeout = normalizeConnectorRunTimeoutMs(payload.timeoutMs);
     let cwd = resolveConnectorRunCwd({ env: runtimeEnv, policy: machinePermissionPolicy });
     let runContent = "";
-    let runModel: string | undefined = readField(agentConfig, "model");
+    let runModel: string | undefined = (() => {
+      const value = readField(agentConfig, "model");
+      return typeof value === "string" ? value : undefined;
+    })();
     let runTrace: unknown[] = [];
     let artifactCwd = cwd;
     let baseSha: string | null = null;
@@ -206,8 +210,9 @@ export async function handleConnectorRunMessage(
         (typeof reasoningEffortRaw === "string" && reasoningEffortRaw) ||
         (typeof reasoningEffortFallback === "string" && reasoningEffortFallback) ||
         undefined;
+      const modelValue = readField(agentConfig, "model");
       const result = await executeCli(finalProvider, materializedPrompt.prompt, {
-        model: (readField(agentConfig, "model")) || undefined,
+        model: typeof modelValue === "string" ? modelValue : undefined,
         timeout,
         cwd,
         yolo: true,

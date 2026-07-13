@@ -6,9 +6,12 @@ import {
 import {
   messageStreaming,
   messageStreamEnd,
+  addToolMessage,
 } from "../../chat/messages/messageSlice";
 import { handleToolCalls } from "../../chat/messages/toolThunks";
 import type { ImageGenerationState, Message } from "../../chat/messages/types";
+import { DataType } from "../../create/types";
+import { write } from "../../database/dbSlice";
 import { selectRuntimeCurrentServer } from "../../app/stateViews/runtime";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getApiEndpoint } from "../llm/providers";
@@ -25,6 +28,12 @@ import {
   waitForInitialStreamRetry,
 } from "./streamRetry";
 import { updateTotalUsage } from "./updateTotalUsage";
+import {
+  parseToolCallArguments,
+  buildInvalidToolCallSelfHealResult,
+  INVALID_TOOL_ARGS_REPLACEMENT,
+  sanitizeOutboundResponsesInput,
+} from "./toolCallArgumentGuard";
 import type { CompletionMeta } from "./sendOpenAICompletionsRequest";
 import { prepareTools } from "../tools/prepareTools";
 import {
@@ -353,6 +362,98 @@ export const sendOpenAIResponseRequest = async ({
       return buildMeta(false, false, null);
     }
 
+    // 防护 A：流结束校验 arguments，分离合法 / 非法 call。
+    const validCalls: AssistantToolCall[] = [];
+    const invalidCalls: AssistantToolCall[] = [];
+    for (const call of state.assistantToolCalls) {
+      if (!call) continue;
+      if (parseToolCallArguments(call?.function?.arguments).valid) {
+        validCalls.push(call);
+      } else {
+        invalidCalls.push({
+          ...call,
+          type: "function",
+          function: {
+            name: call?.function?.name ?? "",
+            arguments: INVALID_TOOL_ARGS_REPLACEMENT,
+          },
+        });
+      }
+    }
+
+    // 用替换后的（合法 JSON）arguments 覆盖 assistantToolCalls，
+    // 使后续 finalize() 持久化的 assistant 消息 tool_calls 全部合法。
+    if (invalidCalls.length > 0) {
+      const invalidById = new Map<string, AssistantToolCall>();
+      for (const call of invalidCalls) {
+        if (call?.id) invalidById.set(call.id, call);
+      }
+      state.assistantToolCalls = state.assistantToolCalls.map((call) => {
+        const invalid = call?.id ? invalidById.get(call.id) : undefined;
+        if (!invalid) return call;
+        return {
+          ...call,
+          type: "function",
+          function: {
+            name: invalid.function?.name ?? call.function?.name ?? "",
+            arguments: INVALID_TOOL_ARGS_REPLACEMENT,
+          },
+        };
+      });
+
+      // 为非法 call 持久化自愈 tool 结果消息（不执行工具本身）。
+      // startIndex 从合法 call 数量之后开始，避免与 handleToolCalls 的
+      // `${messageId}-t00x` 消息 id 冲突。
+      for (let i = 0; i < invalidCalls.length; i++) {
+        const call = invalidCalls[i];
+        const callId =
+          call?.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const toolIndex = validCalls.length + i;
+        const runningToolMessageId = `${messageId}-t${String(toolIndex).padStart(3, "0")}`;
+        const runningToolDbKey = `dialog-${dialogId}-msg-${runningToolMessageId}`;
+        const toolName = call?.function?.name || "unknown";
+        const selfHealContent = buildInvalidToolCallSelfHealResult(callId, toolName);
+        const toolMessage: Message = {
+          id: runningToolMessageId,
+          dbKey: runningToolDbKey,
+          role: "tool",
+          content: selfHealContent,
+          toolCallId: callId,
+          thinkContent: "",
+          cybotKey: agentConfig.dbKey,
+          isStreaming: false,
+          toolName,
+          parentMessageId: messageId,
+          toolPayload: {
+            toolName,
+            status: "failed",
+            input: {},
+            rawToolCall: call,
+            error: {
+              type: "InvalidToolCallArguments",
+              message:
+                "工具参数 JSON 被截断或非法，已跳过执行并替换为占位 arguments。",
+              retryable: true,
+            },
+            summary: `❌ ${toolName} 参数被截断，已跳过`,
+          },
+        } as any;
+        dispatch(addToolMessage(toolMessage as any));
+        const { controller: _c, ...messageToWrite } = toolMessage as any;
+        await dispatch(
+          write({
+            data: { ...messageToWrite, type: DataType.MSG },
+            customKey: runningToolDbKey,
+          })
+        );
+      }
+    }
+
+    if (!validCalls.length) {
+      await finalize();
+      return buildMeta(false, false, null);
+    }
+
     if (state.usage) {
       dispatch(
         tokenUsageLiveUpdate({
@@ -367,7 +468,7 @@ export const sendOpenAIResponseRequest = async ({
 
     const result = await dispatch(
       handleToolCalls({
-        accumulatedCalls: state.assistantToolCalls,
+        accumulatedCalls: validCalls,
         currentContentBuffer: state.contentBuffer,
         agentConfig,
         messageId,
@@ -438,9 +539,21 @@ export const sendOpenAIResponseRequest = async ({
           ]
         : []),
     ];
+    // 防护 B：出站清洗。历史 input 里可能含被截断的 function_call
+    // （arguments 无法 JSON.parse），provider 会拒绝并让对话永久卡死。
+    // 这里清洗 input：替换坏 arguments 为 {"_invalid":true}，并为缺配对
+    // function_call_output 的 function_call 补占位输出，避免孤儿调用。
+    const sanitizedInput = Array.isArray(bodyData?.input)
+      ? sanitizeOutboundResponsesInput(bodyData.input)
+      : bodyData?.input;
+    const baseBodyData =
+      sanitizedInput !== bodyData?.input
+        ? { ...bodyData, input: sanitizedInput }
+        : bodyData;
+
     const requestBody = {
-      ...bodyData,
-      ...(tools.length ? { tools, tool_choice: bodyData.tool_choice ?? "auto" } : {}),
+      ...baseBodyData,
+      ...(tools.length ? { tools, tool_choice: baseBodyData.tool_choice ?? "auto" } : {}),
       stream: true,
     };
 

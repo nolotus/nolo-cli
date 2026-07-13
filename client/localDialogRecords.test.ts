@@ -10,11 +10,11 @@ describe("CLI local dialog records", () => {
     expect(localDialogMessageRecordToRuntimeMessage({
       role: "assistant",
       content: "previous answer",
-      tool_calls: [{ id: "call-1", type: "function" }],
+      tool_calls: [{ id: "call-1", type: "function", function: { name: "x", arguments: "{}" } }],
     })).toEqual({
       role: "assistant",
       content: "previous answer",
-      tool_calls: [{ id: "call-1", type: "function" }],
+      tool_calls: [{ id: "call-1", type: "function", function: { name: "x", arguments: "{}" } }],
     });
 
     expect(localDialogMessageRecordToRuntimeMessage({

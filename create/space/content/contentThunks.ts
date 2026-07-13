@@ -4,6 +4,7 @@ import { addContentAction } from "./addContentAction";
 import { deleteContentFromSpaceAction } from "./deleteContentFromSpaceAction";
 import { moveContentAction } from "./moveContentAction";
 import { updateContentTitleAction } from "./updateContentTitleAction";
+import { updateContentPinnedAction } from "./updateContentPinnedAction";
 import { updateContentCategoryAction } from "./updateContentCategoryAction";
 import { deleteMultipleContentAction } from "./deleteMultipleContentAction"; // <-- 新增: 导入批量删除 Action
 import { uploadAndAddFileToSpaceAction } from "./uploadAndAddFileToSpaceAction";
@@ -92,6 +93,20 @@ export const createContentThunks = (create: Create) => ({
     },
     rejected: (_state: SpaceState, action: any) => {
       toast.error(action.error.message || "标题保存失败");
+    },
+  }),
+
+  updateContentPinned: create.asyncThunk(updateContentPinnedAction, {
+    fulfilled: (state: SpaceState, action: any) => {
+      if (
+        action.payload.updatedSpaceData &&
+        state.currentSpaceId === action.payload.spaceId
+      ) {
+        state.currentSpace = action.payload.updatedSpaceData;
+      }
+    },
+    rejected: (_state: SpaceState, action: any) => {
+      toast.error(action.error.message || "置顶状态更新失败");
     },
   }),
 

@@ -1,4 +1,5 @@
 import { deleteDbRecordOnServers, readDbRecordFromServers, type GlobalDeleteResult } from "./globalRecordOperations";
+import type { CliFetchImpl } from "./cliFetch";
 import {
   buildDialogAttachmentPlan,
   extractFileContentIds,
@@ -21,7 +22,7 @@ function asText(value: unknown) {
 async function readDialogMessages(args: {
   authToken: string;
   dialogId: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
 }) {
   const response = await args.fetchImpl(`${args.serverUrl}/rpc/getConvMsgs`, {
@@ -44,8 +45,8 @@ export async function planDialogAttachmentCleanup(args: {
   dialogId: string;
   ownerId?: string | null;
   includeUserOwnedReferenced?: boolean;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
   serverUrls: string[];
 }): Promise<DialogAttachmentPlan> {
@@ -127,8 +128,8 @@ export async function planDialogAttachmentCleanup(args: {
 export async function deleteDialogAttachmentCandidates(args: {
   authToken: string;
   candidates: DialogAttachmentCandidate[];
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrls: string[];
 }): Promise<DialogAttachmentDeleteResult[]> {
   const results: DialogAttachmentDeleteResult[] = [];

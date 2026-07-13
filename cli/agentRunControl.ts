@@ -371,6 +371,8 @@ export function finalizeRunRecord(
     status: RunRecord["status"];
     exitCode?: number;
     dialogId?: string;
+    /** Diagnostic note for callers/logs; not persisted on the run record. */
+    note?: string;
   },
   deps: AgentRunControlDeps = {}
 ): void {

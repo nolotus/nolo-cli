@@ -7,6 +7,7 @@ import {
 } from "./client/profileConfig";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { includeTableActivityColumns } from "./render/table/activityColumns";
+import type { CliFetchImpl } from "./cliFetch";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -14,7 +15,7 @@ type OutputLike = { write(chunk: string): unknown };
 type TableCommandDeps = {
   env?: EnvLike;
   output?: OutputLike;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 };
 
 type OutputMode = "full" | "raw" | "items" | "jsonl";
@@ -150,7 +151,7 @@ async function fetchTableRowsFromServer(
   serverUrl: string,
   requestBody: Record<string, unknown>,
   authToken: string,
-  fetchImpl: typeof fetch
+  fetchImpl: CliFetchImpl
 ): Promise<{ serverUrl: string; ok: boolean; payload?: Record<string, unknown>; error?: string }> {
   try {
     const response = await fetchImpl(`${serverUrl}/api/table/query-rows`, {
@@ -439,7 +440,7 @@ async function readJsonResponse(response: Response) {
 
 async function fetchUserTableRecords(args: {
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   limit: number;
   serverUrl: string;
   userId: string;
@@ -465,7 +466,7 @@ async function fetchUserTableRecords(args: {
 
 async function fetchSpaceTableRecords(args: {
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
   spaceId: string;
 }) {
@@ -729,8 +730,8 @@ export async function runTableDeleteRowsCommand(args: string[], deps: TableComma
       }
 
       deletionSpec = matchedRows
-        .filter((item: { dbKey?: unknown }) => typeof item?.dbKey === "string")
-        .map((item: { dbKey: string }) => ({ dbKey: item.dbKey, source: "--filters" }));
+        .filter((item): item is TableQueryRow & { dbKey: string } => typeof item?.dbKey === "string")
+        .map((item) => ({ dbKey: item.dbKey, source: "--filters" }));
       if (deletionSpec.length === 0) {
         output.write(`${JSON.stringify({ ok: true, deleted: 0, results: [] })}\n`);
         return 0;

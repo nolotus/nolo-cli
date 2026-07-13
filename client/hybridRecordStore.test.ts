@@ -4,18 +4,22 @@ import {
   createCliHybridRecordStore,
   shouldCacheRemoteRecord,
 } from "./hybridRecordStore";
+import { asTestKvDb } from "../cliTestMocks";
 
 function createMemoryDb(initial: Record<string, any> = {}) {
   const store = new Map(Object.entries(initial));
   return {
     store,
-    db: {
+    db: asTestKvDb({
       get: async (key: string) => {
         if (!store.has(key)) throw new Error(`not found: ${key}`);
         return store.get(key);
       },
       put: async (key: string, value: any) => {
         store.set(key, value);
+      },
+      del: async (key: string) => {
+        store.delete(key);
       },
       batch: async (ops: Array<{ type: "put"; key: string; value: any }>) => {
         for (const op of ops) {
@@ -27,7 +31,7 @@ function createMemoryDb(initial: Record<string, any> = {}) {
           if (entry[0] >= gte && (!lte || entry[0] <= lte)) yield entry;
         }
       })(),
-    },
+    }),
   };
 }
 

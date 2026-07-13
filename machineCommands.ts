@@ -1,4 +1,5 @@
 import type { MachineHeartbeat } from "./connector-experimental/protocol";
+import type { CliFetchImpl } from "./cliFetch";
 import { detectMachineInfo } from "./connector-experimental/machineInfo";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import {
@@ -41,7 +42,7 @@ type MachineCommandDeps = {
   cliEntrypointPath?: string;
   maxConnectorAttempts?: number;
   sleep?: (ms: number) => Promise<void>;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
   machineInfo?: () => MachineHeartbeat;
   runHeartbeatLoop?: (options: HeartbeatLoopOptions) => Promise<void>;
   connectWebSocket?: (url: string, options: ConnectorWebSocketOptions) => Promise<void>;

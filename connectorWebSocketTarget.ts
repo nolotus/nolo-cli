@@ -1,3 +1,5 @@
+import type { CliFetchImpl } from "./cliFetch";
+
 export class ConnectorWebSocketAuthError extends Error {
   code: string;
 
@@ -51,7 +53,7 @@ export async function resolveConnectorWebSocketTarget(input: {
   machineId: string;
   connectorSurface?: string;
   headers: Record<string, string>;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 }) {
   const directWsUrl = new URL(input.serverUrl);
   directWsUrl.protocol = directWsUrl.protocol === "https:" ? "wss:" : "ws:";

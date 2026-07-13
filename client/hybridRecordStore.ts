@@ -6,6 +6,7 @@ import {
   type HybridRecordKvDb,
   type HybridRecordStore,
 } from "../agentRuntimeLocal";
+import type { CliFetchImpl } from "../cliFetch";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -15,7 +16,7 @@ export type { HybridRecordStore };
 type CliHybridRecordStoreDeps = {
   db: CliKvDb;
   env: EnvLike;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 };
 
 function normalizeServer(value: string) {

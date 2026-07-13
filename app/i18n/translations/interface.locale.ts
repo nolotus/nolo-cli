@@ -24,6 +24,9 @@ export default {
       content: "Content",
       title: "Title",
       deleteDialogTitle: 'Delete "{{title}}"',
+      deleteContentTitle: 'Delete "{{title}}"',
+      deleteContentConfirm:
+        'Are you sure you want to delete "{{title}}"?',
       deleteDialogConfirmation:
         "Are you sure you want to delete this conversation? This action cannot be undone.",
       deleteAgentCurrentCopyConfirmation:
@@ -429,6 +432,9 @@ export default {
       "Go Back": "Go Back",
       deleteSuccess: "Delete successful",
       deleteMovedToTrash: '"{{title}}" moved to Recycle Bin',
+      deleteMovedToTrashBatch_one: "1 item moved to Recycle Bin",
+      deleteMovedToTrashBatch_other: "{{count}} items moved to Recycle Bin",
+      batchDeleteCancelled: "Batch delete cancelled",
       recycleBin: {
         title: "Recycle Bin",
         subtitle:
@@ -1271,6 +1277,8 @@ export default {
       content: "内容",
       title: "标题",
       deleteDialogTitle: '删除"{{title}}"',
+      deleteContentTitle: '删除"{{title}}"',
+      deleteContentConfirm: '确定要删除"{{title}}"吗？',
       deleteDialogConfirmation: "确定要删除这个对话吗？此操作不可撤销。",
       deleteAgentCurrentCopyConfirmation:
         "确定要删除这个 Agent 的当前副本吗？这不会删除公开副本，也不会删除历史对话。",
@@ -1612,6 +1620,9 @@ export default {
       "Go Back": "返回",
       deleteSuccess: "删除成功",
       deleteMovedToTrash: '"{{title}}" 已移至回收站',
+      deleteMovedToTrashBatch_one: "1 项内容已移至回收站",
+      deleteMovedToTrashBatch_other: "{{count}} 项内容已移至回收站",
+      batchDeleteCancelled: "批量删除已取消",
       recycleBin: {
         title: "回收站",
         subtitle:
@@ -2446,6 +2457,8 @@ export default {
       content: "內容",
       title: "標題",
       deleteDialogTitle: '刪除"{{title}}"',
+      deleteContentTitle: '刪除"{{title}}"',
+      deleteContentConfirm: '確定要刪除"{{title}}"嗎？',
       deleteDialogConfirmation: "您確定要刪除這個對話嗎？此操作不可撤銷。",
       deleteAgentCurrentCopyConfirmation:
         "確定要刪除這個 Agent 的目前副本嗎？這不會刪除公開副本，也不會刪除歷史對話。",
@@ -2787,6 +2800,9 @@ export default {
       "Go Back": "返回",
       deleteSuccess: "刪除成功",
       deleteMovedToTrash: '"{{title}}" 已移至回收站',
+      deleteMovedToTrashBatch_one: "1 項內容已移至回收站",
+      deleteMovedToTrashBatch_other: "{{count}} 項內容已移至回收站",
+      batchDeleteCancelled: "批量刪除已取消",
       recycleBin: {
         title: "回收站",
         subtitle:
@@ -3545,6 +3561,8 @@ quickChat: {
       content: "コンテンツ",
       title: "タイトル",
       deleteDialogTitle: '"{{title}}"を削除',
+      deleteContentTitle: '"{{title}}"を削除',
+      deleteContentConfirm: '"{{title}}"を削除してもよろしいですか？',
       deleteDialogConfirmation:
         "この対話を削除してもよろしいですか？この操作は取り消せません。",
       deleteAgentCurrentCopyConfirmation:
@@ -3896,6 +3914,9 @@ quickChat: {
       "Go Back": "戻る",
       deleteSuccess: "削除成功",
       deleteMovedToTrash: '"{{title}}" をゴミ箱に移動しました',
+      deleteMovedToTrashBatch_one: "1 件のアイテムをゴミ箱に移動しました",
+      deleteMovedToTrashBatch_other: "{{count}} 件のアイテムをゴミ箱に移動しました",
+      batchDeleteCancelled: "一括削除をキャンセルしました",
       recycleBin: {
         title: "ゴミ箱",
         subtitle:

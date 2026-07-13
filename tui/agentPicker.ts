@@ -1,4 +1,5 @@
 import { resolveCliAgentKeyInput } from "../agentAliases";
+import type { CliFetchImpl } from "../cliFetch";
 import {
   findAgentCatalogEntry,
   loadAgentCatalog,
@@ -34,14 +35,16 @@ export async function runAgentPicker(args: {
   env?: EnvLike;
   input?: NodeJS.ReadStream;
   output?: NodeJS.WritableStream;
-  fetchImpl?: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
   readKey?: () => Promise<string | null>;
   interactive?: boolean;
 }) {
   const output = args.output ?? process.stdout;
   const input = args.input ?? process.stdin;
-  const interactive = args.interactive ?? Boolean(input.isTTY && output.isTTY);
+  const interactive =
+    args.interactive ??
+    Boolean((input as any).isTTY && (output as any).isTTY);
   const entries = await loadAgentCatalog({
     env: args.env,
     currentKey: args.currentKey,

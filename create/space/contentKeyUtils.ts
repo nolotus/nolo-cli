@@ -1,5 +1,8 @@
 import { ContentType } from "../../app/types";
-import { buildAppEditorPath } from "../../app/constants/appEditor";
+import {
+  buildAppDetailPath,
+  buildAppEditorPath,
+} from "../../app/constants/appEditor";
 import { DataType } from "../types";
 import { normalizeSpaceId } from "./spaceKeys";
 
@@ -131,8 +134,11 @@ export const isRoutableContentActive = ({
     type?.toLowerCase() === ContentType.APP ||
     isAppContentKey(contentKey)
   ) {
-    const appEditorPath = buildAppEditorPath(normalizeAppRouteId(contentKey), spaceId);
-    return currentPath === appEditorPath;
+    const appRouteId = normalizeAppRouteId(contentKey);
+    return (
+      currentPath === buildAppDetailPath(appRouteId, spaceId) ||
+      currentPath === buildAppEditorPath(appRouteId, spaceId)
+    );
   }
 
   // Explicit route param wins when a caller actually has it.

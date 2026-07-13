@@ -2,6 +2,7 @@ import { getDefaultCliLocalRuntimeDb } from "./localRuntimeDb";
 import type { CliLocalRuntimeDb } from "./client/localRuntimeAdapter";
 import { resolveCliAgentKeyInput } from "./agentAliases";
 import { resolveAuthToken, resolveServerUrl } from "./cliEnvHelpers";
+import type { CliFetchImpl } from "./cliFetch";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -13,7 +14,7 @@ type AgentPullCommandDeps = {
   env?: EnvLike;
   output?: OutputLike;
   db?: CliLocalRuntimeDb;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 };
 
 export type ParsedAgentPullArgs = {
@@ -72,7 +73,7 @@ async function readRemoteAgent(args: {
   agentKey: string;
   serverUrl: string;
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
 }) {
   const res = await args.fetchImpl(
     `${args.serverUrl}/api/v1/db/read/${encodeURIComponent(args.agentKey)}`,

@@ -153,6 +153,10 @@ export default {
       titlePlaceholder: "Untitled",
       moreActions: "More Actions",
       editTitle: "Edit Title",
+      pin: "Pin",
+      unpin: "Unpin",
+      pinUpdated: "Pin status updated",
+      pinUpdateFailed: "Failed to update pin status",
       moveToSpace: "Move to Space",
       add_content: "Add...",
       create_space_desc: "Create a separate workspace",
@@ -212,7 +216,6 @@ export default {
 
       // === 内容管理页面 ===
       contentManagement: "Content Management",
-      itemDeleted: "Item deleted",
       deleteFailed: "Delete failed",
       uploadSuccess: "Upload complete",
       uploadFailed: "Upload failed",
@@ -442,6 +445,10 @@ export default {
       moveFailed: "移动失败：{{message}}",
       unknownError: "未知错误",
       editTitle: "编辑标题",
+      pin: "置顶",
+      unpin: "取消置顶",
+      pinUpdated: "置顶状态已更新",
+      pinUpdateFailed: "置顶状态更新失败",
       moveToSpace: "移动到空间",
       add_content: "添加...",
       create_space_desc: "创建一个独立的工作空间",
@@ -501,7 +508,6 @@ export default {
 
       // === 内容管理页面 ===
       contentManagement: "内容管理",
-      itemDeleted: "项目已删除",
       deleteFailed: "删除失败",
       uploadSuccess: "上传完成",
       uploadFailed: "上传失败",
@@ -729,6 +735,10 @@ export default {
       moveFailed: "移動失敗：{{message}}",
       unknownError: "未知錯誤",
       editTitle: "編輯標題",
+      pin: "置頂",
+      unpin: "取消置頂",
+      pinUpdated: "置頂狀態已更新",
+      pinUpdateFailed: "置頂狀態更新失敗",
       moveToSpace: "移動到空間",
       // 新增翻译键
       joinConversation: "加入對話",
@@ -781,7 +791,6 @@ export default {
 
       // === 內容管理頁面 ===
       contentManagement: "內容管理",
-      itemDeleted: "項目已刪除",
       deleteFailed: "刪除失敗",
       uploadSuccess: "上傳完成",
       uploadFailed: "上傳失敗",
@@ -1016,6 +1025,10 @@ export default {
       moveFailed: "移動に失敗しました: {{message}}",
       unknownError: "不明なエラー",
       editTitle: "タイトルを編集",
+      pin: "ピン留め",
+      unpin: "ピン留め解除",
+      pinUpdated: "ピン留めの状態を更新しました",
+      pinUpdateFailed: "ピン留めの状態の更新に失敗しました",
       moveToSpace: "スペースに移動",
       // 新增翻译键
       joinConversation: "会話に参加",
@@ -1071,7 +1084,6 @@ export default {
 
       // === コンテンツ管理ページ ===
       contentManagement: "コンテンツ管理",
-      itemDeleted: "項目を削除しました",
       deleteFailed: "削除に失敗しました",
       uploadSuccess: "アップロード完了",
       uploadFailed: "アップロード失敗",

@@ -1,4 +1,5 @@
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
+import type { CliFetchImpl } from "./cliFetch";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -9,7 +10,7 @@ type OutputLike = {
 type SetupOfflineMarxistsAgentDeps = {
   env?: EnvLike;
   output?: OutputLike;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
   now?: () => number;
 };
 
@@ -106,7 +107,7 @@ function parseArgs(args: string[], env: EnvLike): ParsedArgs | null {
 }
 
 async function readDbRecord(args: {
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
   authToken: string;
   dbKey: string;
@@ -123,7 +124,7 @@ async function readDbRecord(args: {
 }
 
 async function writeDbRecord(args: {
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
   authToken: string;
   userId: string;
@@ -187,7 +188,7 @@ function buildTargetAgent(args: {
 }
 
 async function attachAgentToSpace(args: {
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   parsed: ParsedArgs;
   contentKey: string;
   title: string;

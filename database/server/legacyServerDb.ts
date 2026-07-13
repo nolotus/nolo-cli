@@ -10,7 +10,8 @@ export type LegacyServerDb = {
   readonly status?: string;
   open(): Promise<void>;
   close(): Promise<void>;
-  get<T = any>(key: string): Promise<T>;
+  get(key: string): Promise<any>;
+  get<T>(key: string): Promise<T>;
   put(key: string, value: unknown): Promise<void>;
   del(key: string): Promise<void>;
   batch(ops: AuthorityBatchOperation[]): Promise<void>;
@@ -41,8 +42,8 @@ export function createLegacyServerDb(store: AuthorityStore): LegacyServerDb {
     async close() {
       await store.close();
     },
-    async get<T = any>(key: string) {
-      return store.get<T>(key);
+    async get(key: string): Promise<any> {
+      return store.get(key);
     },
     async put(key: string, value: unknown) {
       await store.put(key, value);

@@ -16,8 +16,11 @@ import notificationReducer from ".//notifications/notificationSlice";
 // 新增：工具调用 trace
 import toolRunReducer from "../ai/tools/toolRunSlice";
 import shareReducer from "../share/shareSlice";
+import appInspectorReducer from ".//appInspector/appInspectorSlice";
 
-export const reducer = {
+// Explicit Record type so composite/declaration checks do not require naming
+// private slice state interfaces from other packages (TS4023).
+export const reducer: Record<string, any> = {
   dialog: dialogReducer,
   plan: planSlice,
   workflow: workflowReducer,
@@ -33,4 +36,5 @@ export const reducer = {
   toolRun: toolRunReducer,
   favorite: favoriteReducer,
   share: shareReducer,
+  appInspector: appInspectorReducer,
 };

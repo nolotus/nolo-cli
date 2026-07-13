@@ -7,6 +7,7 @@ import {
 } from "./agentRecordHelpers";
 import type { EnvLike } from "./cliEnvHelpers";
 import { parseUserIdFromAuthToken, resolveServerUrl } from "./cliEnvHelpers";
+import type { CliFetchImpl } from "./cliFetch";
 
 export type AgentEmailRpcMethod =
   | "bindAgentEmailIdentity"
@@ -123,8 +124,8 @@ export async function resolveAgentIdForEmailRpc(args: {
   env: EnvLike;
   db: CliKvDb;
   authToken: string;
-  fetchImpl: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
 }): Promise<string> {
   const resolvedInput = resolveCliAgentKeyInput(args.agentInput);
   if (resolvedInput.startsWith("agent-")) {
@@ -157,8 +158,8 @@ export async function postAgentEmailRpc(args: {
   cliArgs?: string[];
   env: EnvLike;
   authToken: string;
-  fetchImpl: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
 }): Promise<{
   data: AgentEmailIdentityRpcData;
   agent: Record<string, unknown>;

@@ -12,6 +12,7 @@ import {
 } from "./client/profileConfig";
 import { resolveAuthTokenFromEnv } from "./cliEnvHelpers";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
+import type { CliFetchImpl } from "./cliFetch";
 
 export const LOGIN_HELP_TEXT = `Log in to Nolo and save a local profile.
 
@@ -69,7 +70,7 @@ function getArg(args: string[], flag: string) {
 
 type LoginCommandDeps = {
   configPath?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
   openBrowser?: (url: string) => Promise<boolean> | boolean;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -79,7 +80,7 @@ type LoginCommandDeps = {
 };
 
 const postJson = async (
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   url: string,
   body: Record<string, unknown>
 ) =>
@@ -139,7 +140,7 @@ async function saveTokenLogin(args: {
 async function runWebLogin(args: {
   configPath: string;
   serverUrl: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   openBrowser: (url: string) => Promise<boolean> | boolean;
   sleep: (ms: number) => Promise<void>;
   now: () => number;

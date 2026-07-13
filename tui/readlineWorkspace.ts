@@ -60,7 +60,7 @@ type CliCommandRunner = (
 
 type RawModeInput = NodeJS.ReadableStream & {
   isRaw?: boolean;
-  setRawMode?: (mode: boolean) => unknown;
+  setRawMode: (mode: boolean) => unknown;
 };
 
 type TurnRole = "user" | "assistant";
@@ -1195,7 +1195,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           async (request) => {
             fixedInput.pause();
             try {
-              return await runConfirmDialog({ request, input, output });
+              return await runConfirmDialog({
+                request,
+                input: input as any,
+                output: output as any,
+              });
             } finally {
               fixedInput.resumeFromDialog();
             }

@@ -302,11 +302,43 @@ export const buildEditingContextSummary = (
             typeof editingTarget?.summary === "string" && editingTarget.summary.trim()
                 ? editingTarget.summary.trim()
                 : null;
+        const selectedNode =
+            metadata && typeof metadata === "object" && metadata.selectedNode &&
+            typeof metadata.selectedNode === "object"
+                ? (metadata.selectedNode as Record<string, unknown>)
+                : null;
         const constraintPacks = buildAppConstraintPacks({
             framework,
             fileNames,
             externalImports,
         });
+
+        if (selectedNode && typeof selectedNode.cssPath === "string") {
+            const tagName =
+                typeof selectedNode.tagName === "string" && selectedNode.tagName
+                    ? selectedNode.tagName
+                    : "元素";
+            const cssPath = String(selectedNode.cssPath);
+            const outerHTMLSnippet =
+                typeof selectedNode.outerHTMLSnippet === "string"
+                    ? selectedNode.outerHTMLSnippet
+                    : "";
+            const textSnippet =
+                typeof selectedNode.textSnippet === "string" ? selectedNode.textSnippet : "";
+            const noloLoc =
+                typeof selectedNode.noloLoc === "string" ? selectedNode.noloLoc : "";
+            constraintPacks.push({
+                id: "selected-node",
+                title: "用户选中节点（定点修改）",
+                rules: [
+                    `用户已在预览中精准选中一个元素：<${tagName}> ，CSS 路径：${cssPath}${noloLoc ? `，源码位置：${noloLoc}` : ""}。本轮修改必须以这个元素为中心。`,
+                    `选中元素的 HTML 片段（可能截断）：${outerHTMLSnippet}${textSnippet ? `；可见文本：${textSnippet}` : ""}。先在源码文件中定位到生成这段 HTML 的代码，再动手。`,
+                    "修改收敛在该元素及其直接样式来源（命中的组件/类/design token）；调视觉参数优先改 token 或局部组件。",
+                    "禁止重写未命中的页面结构、布局、文案、数据流或其他组件；保持未命中文件不变。",
+                    "如果按 CSS 路径和 HTML 片段在源码中找不到对应位置，先向用户说明并请用户重新选择，不要凭猜测大范围改动。",
+                ],
+            });
+        }
 
         return [
             "当前编辑目标：一个 Web 应用（Editing App）。",

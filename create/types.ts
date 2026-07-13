@@ -19,4 +19,5 @@ export enum DataType {
   IMAGE = "image",
   APP = "app",
   EMAIL = "email",
+  Category = "category",
 }

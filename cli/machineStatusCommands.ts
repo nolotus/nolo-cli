@@ -1,4 +1,5 @@
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
+import type { CliFetchImpl } from "./cliFetch";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -18,7 +19,7 @@ export type MachineSummary = {
 export type MachineStatusCommandDeps = {
   env?: EnvLike;
   output?: OutputLike;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 };
 
 function resolveServerUrl(env: EnvLike) {

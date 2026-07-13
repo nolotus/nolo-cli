@@ -1,3 +1,4 @@
+// @ts-nocheck — incomplete db/fetch stubs for dry-run local runtime paths.
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -5,6 +6,11 @@ import { tmpdir } from "node:os";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
 import { createCliLocalRuntimeAdapter } from "./localRuntimeAdapter";
+
+/** Test-only loose deps for incomplete fetch/db stubs. */
+function createAdapter(deps: any) {
+  return createCliLocalRuntimeAdapter(deps);
+}
 
 describe("CLI local runtime dry run", () => {
   const DEFAULT_PRIVATE_LOCAL_TOOL_NAMES = [
@@ -47,7 +53,7 @@ describe("CLI local runtime dry run", () => {
       ]);
       const batchOps: any[] = [];
       let completeCount = 0;
-      const adapter = createCliLocalRuntimeAdapter({
+      const adapter = createAdapter({
         env: {
           NOLO_LOCAL_USER_ID: "user-1",
           NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",

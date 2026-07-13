@@ -7,6 +7,7 @@ import type { LocalAgentActionGate, LocalAgentLoopEvent, LocalAgentToolEvent } f
 import type { PermissionRequest } from "../agent-runtime/actionGate";
 import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode, AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
+import type { CliFetchImpl } from "../cliFetch";
 import { createStreamingTextWriter } from "./streamingOutput";
 import {
   createRenderAwareStreamWriter,
@@ -84,7 +85,7 @@ export type RunAgentTurnOptions = {
   traceTools?: boolean;
   eventsMode?: "jsonl";
   taskEvidence?: TaskEvidenceInput;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
   currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
   actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;

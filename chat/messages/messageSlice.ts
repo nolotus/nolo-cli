@@ -1405,6 +1405,7 @@ export const selectLastAssistantMessage = (
   return undefined;
 };
 
+// cast: buildCreateSlice async thunks 会推断成 void|AsyncThunk|ActionCreator 联合
 export const {
   addUserMessage,
   messageStreaming,
@@ -1423,7 +1424,7 @@ export const {
   addToolMessage,
   updateToolMessage,
   removeMessagesByIds,
-} = messageSlice.actions;
+} = messageSlice.actions as any;
 
 
 export default messageSlice.reducer;

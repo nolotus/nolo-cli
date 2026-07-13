@@ -46,7 +46,7 @@ describe("selectDialog", () => {
       ],
       readKey: async () => keys.shift() ?? null,
       input: { isTTY: false } as NodeJS.ReadStream,
-      output: { isTTY: false, write() {} } as NodeJS.WritableStream,
+      output: { isTTY: false, write() {} } as unknown as NodeJS.WritableStream,
     });
 
     expect(result).toEqual({
@@ -61,7 +61,7 @@ describe("selectDialog", () => {
       items: [{ label: "nolo" }],
       readKey: async () => "\u001b",
       input: { isTTY: false } as NodeJS.ReadStream,
-      output: { isTTY: false, write() {} } as NodeJS.WritableStream,
+      output: { isTTY: false, write() {} } as unknown as NodeJS.WritableStream,
     });
 
     expect(result).toEqual({ kind: "cancelled" });

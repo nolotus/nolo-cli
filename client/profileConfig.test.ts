@@ -28,10 +28,10 @@ describe("cli profile config", () => {
       writeFileSync(path, `${JSON.stringify(seeded, null, 2)}\n`, "utf8");
 
       const config = loadProfileConfig(path);
-      expect(config.currentProfile).toBe("default");
-      expect(config.profiles.default.serverUrl).toBe("https://nolo.chat");
-      expect(config.profiles.default.authToken).toBe("token-123");
-      expect(buildEnvFromProfile(config)).toEqual({
+      expect(config!.currentProfile).toBe("default");
+      expect(config!.profiles.default.serverUrl).toBe("https://nolo.chat");
+      expect(config!.profiles.default.authToken).toBe("token-123");
+      expect(buildEnvFromProfile(config!)).toEqual({
         NOLO_PROFILE: "default",
         NOLO_SERVER: "https://nolo.chat",
         AUTH_TOKEN: "token-123",

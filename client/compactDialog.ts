@@ -2,6 +2,7 @@
 // HTTP-only compact helper for CLI TUI (no Redux store available).
 
 import { ulid } from "ulid";
+import type { CliFetchImpl } from "../cliFetch";
 
 const DB_PATH = "/api/v1/db";
 
@@ -34,7 +35,7 @@ function extractCustomId(key: string): string {
 }
 
 async function readDialogRecord(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   serverUrl: string,
   authToken: string,
   dialogKey: string
@@ -101,7 +102,7 @@ function buildForkedDialogRecord(
 }
 
 async function writeDialogRecord(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   serverUrl: string,
   authToken: string,
   record: Record<string, unknown> & { dbKey: string }
@@ -126,7 +127,7 @@ async function writeDialogRecord(
  * Failure here is non-fatal since the dialog is already stored.
  */
 async function addDialogToSpaceIfNeeded(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   serverUrl: string,
   authToken: string,
   record: Record<string, unknown> & { dbKey: string }
@@ -187,7 +188,7 @@ export async function compactDialog(options: {
   serverUrl: string;
   authToken: string;
   dialogId: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 }): Promise<CompactDialogResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
 

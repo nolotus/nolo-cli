@@ -24,7 +24,7 @@ export type OwnedAppContentItem = {
   title: string;
   type: ContentType.APP;
   contentKey: string;
-  pinned: false;
+  pinned: boolean;
   createdAt: string | number;
   updatedAt: string | number;
   spaceId: string | null;
@@ -188,6 +188,13 @@ export function buildOwnedAppContentItems(
     );
 }
 
+export function pinnedFirst(
+  a: { pinned?: boolean },
+  b: { pinned?: boolean }
+): number {
+  return Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
+}
+
 export function buildMyContentItemsFromUserData(
   records: UserContentRecord[],
   currentServer: string,
@@ -227,7 +234,7 @@ export function buildMyContentItemsFromUserData(
           title: typeof app.name === "string" && app.name.trim() ? app.name : contentKey,
           type: ContentType.APP,
           contentKey: app.appKey ?? normalizeAppRouteId(app.appId ?? ""),
-          pinned: false,
+          pinned: Boolean(record.pinned),
           createdAt: timestamp,
           updatedAt: timestamp,
           spaceId,
@@ -273,11 +280,14 @@ export function buildMyContentItemsFromUserData(
     ];
   });
 
-  return items.sort(
-    (left, right) =>
+  return items.sort((left, right) => {
+    const pinDiff = pinnedFirst(left, right);
+    return (
+      pinDiff ||
       toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt) ||
       left.contentKey.localeCompare(right.contentKey)
-  );
+    );
+  });
 }
 
 const previewItemKey = (item: MyContentListItem): string =>

@@ -1,6 +1,6 @@
 export type DbWithOpenStatus = {
   status?: string | null;
-  open(): Promise<unknown>;
+  open?: () => Promise<unknown>;
 };
 
 export async function ensureDbOpen(db: DbWithOpenStatus) {
@@ -8,5 +8,7 @@ export async function ensureDbOpen(db: DbWithOpenStatus) {
     return;
   }
 
-  await db.open();
+  if (typeof db.open === "function") {
+    await db.open();
+  }
 }

@@ -17,7 +17,7 @@ export async function runConfirmDialog(args: {
 }): Promise<boolean> {
   const output = args.output ?? process.stdout;
   const input = args.input ?? process.stdin;
-  const interactive = Boolean(input.isTTY && output.isTTY);
+  const interactive = Boolean((input as any).isTTY && (output as any).isTTY);
   if (!interactive) {
     return false;
   }

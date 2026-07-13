@@ -15,6 +15,7 @@ import type {
   OAuthTokenResponse,
   PkcePair,
 } from "../types";
+import type { CliFetchImpl } from "../../cliFetch";
 
 export const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const OPENAI_CODEX_SCOPES = [
@@ -55,7 +56,7 @@ const DEVICE_MAX_POLLS = 120;
 type Json = Record<string, unknown>;
 
 async function postJson(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   url: string,
   body: Record<string, string>,
   deps?: OAuthFlowDeps
@@ -78,7 +79,7 @@ async function postJson(
  * bodies are rejected, so token exchange/refresh must post form-encoded.
  */
 async function postForm(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   url: string,
   body: Record<string, string>,
   deps?: OAuthFlowDeps
@@ -400,7 +401,6 @@ export async function runOpenAiCodexBrowserPkce(
   const callback = await startCallbackServer({
     port: OPENAI_CODEX_CALLBACK_PORT,
     now,
-    sleep: deps.sleep,
   });
   try {
     const authorizeUrl = new URL(OPENAI_CODEX_AUTHORIZE_URL);

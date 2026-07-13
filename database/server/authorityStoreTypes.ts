@@ -20,7 +20,13 @@ export interface AuthorityStore {
   readonly status?: string;
   open(): Promise<void>;
   close(): Promise<void>;
-  get<T = any>(key: string): Promise<T>;
+  /**
+   * Schema-free KV payloads.
+   * Non-generic overload first so bare `get(key)` stays `Promise<any>`
+   * (generic-only `get<T=any>` collapses under expect/NoInfer to `undefined`).
+   */
+  get(key: string): Promise<any>;
+  get<T>(key: string): Promise<T>;
   put(key: string, value: unknown): Promise<void>;
   del(key: string): Promise<void>;
   batchWrite(ops: AuthorityBatchOperation[]): Promise<void>;

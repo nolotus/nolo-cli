@@ -1,4 +1,5 @@
 import type { AgentCommandDeps } from "./agentCommandSupport";
+import type { CliFetchImpl } from "./cliFetch";
 import { buildSpaceLookup, getSpaceContentKeys } from "./cliSpaceHelpers";
 import {
   parseUserIdFromAuthToken,
@@ -429,7 +430,7 @@ async function readDialogOverHttp(args: {
   dialogId: string;
   limit: number;
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
 }) {
   const authHeaders = {
     Authorization: `Bearer ${args.authToken}`,
@@ -503,7 +504,7 @@ async function tryHttpDialogCandidates(args: {
   dialogId: string;
   limit: number;
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
 }) {
   const attempts: HttpAttempt[] = [];
   for (const base of args.bases) {
@@ -540,7 +541,7 @@ async function readDialogSnapshot(args: {
   base: string;
   dialogId: string;
   dialogKey: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   limit: number;
 }) {
   const candidateBases = resolveServerCandidates({ NOLO_SERVER: args.base }, args.base);
@@ -659,7 +660,7 @@ function summarizeDialogEvidence(dialog: any, target: DialogSubjectRef) {
     (ref) => ref.kind === normalizeSubjectKind(target.kind) && ref.id === target.id
   );
   const lastToolNames = Array.isArray(checkpoint.lastToolNames)
-    ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim())
+    ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0)
     : [];
 
   return {
@@ -758,7 +759,7 @@ function excludeDialogsById(dialogs: any[], excludeDialogIds: string[]) {
 
 async function queryDialogEvidenceBySubjectRef(args: {
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   limit: number;
   serverUrl: string;
   subjectRef: DialogSubjectRef;
@@ -803,15 +804,15 @@ function renderCompactDialogStatus(snapshot: any) {
           ? "active"
           : "unknown";
   const tools = Array.isArray(snapshot.toolsUsed)
-    ? snapshot.toolsUsed.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim()).slice(0, 8)
+    ? snapshot.toolsUsed.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0).slice(0, 8)
     : Array.isArray(checkpoint.lastToolNames)
-      ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim()).slice(0, 8)
+      ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0).slice(0, 8)
       : [];
   const files = Array.isArray(snapshot.writtenFiles) && snapshot.writtenFiles.length
-    ? snapshot.writtenFiles.filter((file: unknown): file is string => typeof file === "string" && file.trim()).slice(0, 8)
+    ? snapshot.writtenFiles.filter((file: unknown): file is string => typeof file === "string" && file.trim().length > 0).slice(0, 8)
     : snapshot.artifacts && typeof snapshot.artifacts === "object" && Array.isArray(snapshot.artifacts.changedFiles ?? snapshot.artifacts.writtenFiles ?? snapshot.artifacts.files)
       ? (snapshot.artifacts.changedFiles ?? snapshot.artifacts.writtenFiles ?? snapshot.artifacts.files)
-        .filter((file: unknown): file is string => typeof file === "string" && file.trim())
+        .filter((file: unknown): file is string => typeof file === "string" && file.trim().length > 0)
         .slice(0, 8)
       : [];
   const subjectRefs = Array.isArray(snapshot.subjectRefs)
@@ -844,7 +845,7 @@ function renderCompactDialogStatus(snapshot: any) {
     })
     .filter(Boolean);
   const toolErrors = Array.isArray(snapshot.toolErrors)
-    ? snapshot.toolErrors.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim()).slice(0, 8)
+    ? snapshot.toolErrors.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0).slice(0, 8)
     : [];
   const checkpointUpdatedAt = typeof checkpoint.updatedAt === "number" || typeof checkpoint.updatedAt === "string"
     ? Date.parse(String(checkpoint.updatedAt))
@@ -893,8 +894,8 @@ function renderCompactDialogStatus(snapshot: any) {
 
 async function readSpaceDialogRecords(args: {
   authToken: string;
-  fetchImpl: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
   serverUrls: string[];
   spaceInput: string;
   userId: string;

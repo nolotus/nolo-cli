@@ -1,6 +1,7 @@
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
 import type { CliKvDb } from "./client/hybridRecordStore";
 import type { EnvLike } from "./cliEnvHelpers";
+import type { CliFetchImpl } from "./cliFetch";
 
 export type OutputLike = { write(chunk: string): unknown };
 
@@ -39,8 +40,8 @@ export type AgentCommandDeps = {
   env?: EnvLike;
   output?: OutputLike;
   db?: CliKvDb;
-  fetchImpl?: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
   machineInfo?: () => MachineHeartbeat;
   connectWebSocket?: (url: string, options: SmokeWebSocketOptions) => Promise<void>;
   executeCli?: LocalCliExecutor;
@@ -50,7 +51,7 @@ export type AgentCommandDeps = {
     pushMessage: (response: string) => void,
     executeCli: LocalCliExecutor,
     env: EnvLike,
-    fetchImpl: typeof fetch
+    fetchImpl: CliFetchImpl
   ) => Promise<void>;
   localRuntimeProbe?: (env: EnvLike) => Promise<LocalRuntimeProbeResult>;
 };

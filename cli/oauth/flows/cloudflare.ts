@@ -6,6 +6,7 @@ import type {
   OAuthTokenResponse,
   PkcePair,
 } from "../types";
+import type { CliFetchImpl } from "../../cliFetch";
 
 // Cloudflare self-managed OAuth endpoints. Documentation:
 // https://developers.cloudflare.com/fundamentals/api/oauth/
@@ -72,7 +73,7 @@ function buildCloudflareAuthorizeUrl(opts: {
 }
 
 async function exchangeCloudflareToken(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   code: string,
   redirectUri: string,
   verifier: string,
@@ -236,7 +237,7 @@ export type CloudflareApiTokenCreateInput = {
   name: string;
   policies: CloudflareApiTokenPolicy[];
   accessToken: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 };
 
 /**
@@ -298,7 +299,7 @@ export async function createCloudflareApiToken(
  */
 export async function listCloudflarePermissionGroups(
   accessToken: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: CliFetchImpl = fetch
 ): Promise<Array<{ id: string; name: string; permissions: string[] }>> {
   const response = await fetchImpl(
     `${CLOUDFLARE_API_BASE}/user/tokens/permission_groups`,
@@ -352,7 +353,7 @@ export async function listCloudflarePermissionGroups(
 export async function findCloudflareZoneIdByName(
   accessToken: string,
   zoneName: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: CliFetchImpl = fetch
 ): Promise<string | null> {
   const response = await fetchImpl(
     `${CLOUDFLARE_API_BASE}/zones?name=${encodeURIComponent(zoneName)}`,
@@ -407,7 +408,7 @@ export async function generateCloudflareEmailRoutingToken(input: {
   accessToken: string;
   zoneName: string;
   tokenName?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 }): Promise<{ token: string; zoneId: string }> {
   const fetchImpl = input.fetchImpl ?? fetch;
   const zoneId = await findCloudflareZoneIdByName(

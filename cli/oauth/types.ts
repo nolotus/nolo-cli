@@ -4,6 +4,7 @@ import type {
   OAuthRefreshFn,
   OAuthTokenStore,
 } from "../../agent-runtime/oauthTokenStore";
+import type { CliFetchImpl } from "../cliFetch";
 export type {
   OAuthCredential,
   OAuthProvider,
@@ -31,7 +32,7 @@ export type OAuthTokenResponse = {
 };
 
 export type OAuthFlowDeps = {
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
   openBrowser?: (url: string) => Promise<boolean> | boolean;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;

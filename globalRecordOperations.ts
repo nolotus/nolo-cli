@@ -5,6 +5,7 @@ import {
 } from "./agentRecordHelpers";
 import { isTombstoneRecord } from "./database/tombstones";
 import { mergeAndDedupUserData } from "./database/userDataMerge";
+import type { CliFetchImpl } from "./cliFetch";
 
 export type GlobalRecordFailure = {
   serverUrl: string;
@@ -30,15 +31,15 @@ export type DbDeleteOptions = {
 
 export async function listUserRecordsFromServers(args: {
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   limit?: number;
   serverUrls: string[];
   summary?: boolean;
   type: string | string[];
   userId: string;
   label?: string;
-}) {
+}): Promise<{ records: any[]; failures: GlobalRecordFailure[] }> {
   const remoteResults: Array<{ data: { data: any[] } }> = [];
   const failures: GlobalRecordFailure[] = [];
 
@@ -107,8 +108,8 @@ export async function listUserRecordsFromServers(args: {
 export async function readDbRecordFromServers(args: {
   authToken: string;
   dbKey: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   includeDeleted?: boolean;
   serverUrls: string[];
   label?: string;
@@ -144,8 +145,8 @@ export async function readDbRecordFromServers(args: {
 export async function readDbRecordVersionsFromServers(args: {
   authToken: string;
   dbKey: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrls: string[];
 }) {
   const records: any[] = [];
@@ -199,11 +200,11 @@ export async function readDbRecordVersionsFromServers(args: {
 export async function readLiveDbRecordAfterTombstoneMerge(args: {
   authToken: string;
   dbKey: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrls: string[];
   label?: string;
-}) {
+}): Promise<any> {
   const result = await readDbRecordVersionsFromServers(args);
   const merged = mergeAndDedupUserData(
     [],
@@ -231,8 +232,8 @@ export async function readLiveDbRecordAfterTombstoneMerge(args: {
 export async function recordExistsAfterTombstoneMerge(args: {
   authToken: string;
   dbKey: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrls: string[];
 }) {
   try {
@@ -247,8 +248,8 @@ export async function deleteDbRecordOnServers(args: {
   authToken: string;
   dbKey: string;
   deleteOptions?: DbDeleteOptions;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrls: string[];
 }): Promise<GlobalDeleteResult[]> {
   return deleteDbRecordOnTargets({
@@ -261,8 +262,8 @@ export async function deleteDbRecordOnTargets(args: {
   authToken: string;
   dbKey: string;
   deleteOptions?: DbDeleteOptions;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   targets: GlobalRecordTarget[];
 }): Promise<GlobalDeleteResult[]> {
   const promises = args.targets.map(async (target) => {

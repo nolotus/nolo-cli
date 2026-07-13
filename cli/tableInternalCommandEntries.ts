@@ -1,4 +1,4 @@
-import { createArgsCommand } from "./cliCommandFactories";
+import { createArgsCommand, createEnvCommand } from "./cliCommandFactories";
 import type { CommandEntry } from "./cliCommandTypes";
 
 export function renderTableHelpText() {
@@ -41,6 +41,30 @@ export function getTableInternalCommandEntries(): CommandEntry[] {
       // Dynamic import keeps a broken command module from crashing the whole CLI at startup.
       const { runTableDeleteRowsCommand } = await import("./tableCommands");
       return runTableDeleteRowsCommand(args);
+    }),
+    createEnvCommand(["table", "add-column"], "Add a table column", async (args, deps) => {
+      const { runTableAddColumnCommand } = await import("./tableCommands");
+      return runTableAddColumnCommand(args, deps);
+    }),
+    createEnvCommand(["table", "add-row"], "Add a table row", async (args, deps) => {
+      const { runTableAddRowCommand } = await import("./tableCommands");
+      return runTableAddRowCommand(args, deps);
+    }),
+    createEnvCommand(["table", "add-rows"], "Add table rows", async (args, deps) => {
+      const { runTableAddRowsCommand } = await import("./tableCommands");
+      return runTableAddRowsCommand(args, deps);
+    }),
+    createEnvCommand(["table", "update-row"], "Update a table row", async (args, deps) => {
+      const { runTableUpdateRowCommand } = await import("./tableCommands");
+      return runTableUpdateRowCommand(args, deps);
+    }),
+    createEnvCommand(["table", "update-rows"], "Update table rows", async (args, deps) => {
+      const { runTableUpdateRowsCommand } = await import("./tableCommands");
+      return runTableUpdateRowsCommand(args, deps);
+    }),
+    createEnvCommand(["table", "delete-row"], "Delete a table row", async (args, deps) => {
+      const { runTableDeleteRowCommand } = await import("./tableCommands");
+      return runTableDeleteRowCommand(args, deps);
     }),
   ];
 }

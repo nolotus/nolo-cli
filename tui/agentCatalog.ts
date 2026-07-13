@@ -6,6 +6,7 @@ import {
 } from "../agentListHelpers";
 import { getReadableCliDb } from "../agentCommandSupport";
 import { queryUserRecords, readDbRecord } from "../agentRecordHelpers";
+import type { CliFetchImpl } from "../cliFetch";
 import {
   parseUserIdFromAuthToken,
   resolveAuthToken,
@@ -97,8 +98,8 @@ function mergeCatalogEntries(
 export async function loadAgentCatalog(args: {
   env?: EnvLike;
   currentKey: string;
-  fetchImpl?: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
 }): Promise<AgentCatalogEntry[]> {
   const env = args.env ?? process.env;
   const fetchImpl = args.fetchImpl ?? fetch;
@@ -126,7 +127,7 @@ export async function loadAgentCatalog(args: {
     privateAgents = remoteResult.agents.map(listedAgentToCatalogEntry);
   } catch {
     try {
-      const db = await getReadableCliDb();
+      const db = await getReadableCliDb({ write: () => {} });
       const cached = await listLocalCachedAgents({ db, userId });
       privateAgents = cached.map(listedAgentToCatalogEntry);
     } catch {

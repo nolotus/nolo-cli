@@ -82,10 +82,11 @@ import {
 } from "../../ai/tools/readXPostTool";
 import { ulid } from "ulid";
 import { isCompiledBinary } from "../cliEnvHelpers";
+import type { CliFetchImpl } from "../cliFetch";
 
 type EnvLike = Record<string, string | undefined>;
-type FetchInput = Parameters<typeof fetch>[0];
-type FetchInit = Parameters<typeof fetch>[1];
+type FetchInput = string | URL | Request;
+type FetchInit = RequestInit;
 type LocalCliExecutor = (
   provider: string,
   prompt: string,
@@ -155,7 +156,7 @@ type CliLocalRuntimeAdapterDeps = {
   store?: HybridRecordStore;
   now?: () => number;
   createId?: () => string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
   cwd?: string;
   output?: { write(chunk: string): unknown };
   localToolExecutors?: Record<string, (call: any) => Promise<{ content: string; metadata?: Record<string, unknown> }>>;
@@ -305,7 +306,7 @@ async function defaultLoopbackRequest(input: FetchInput, init?: FetchInit) {
 }
 
 async function fetchWithTransientRetry(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   input: FetchInput,
   init?: FetchInit,
   options: {
@@ -765,7 +766,7 @@ function buildLocalParentWakeMessage(args: {
 async function postRemoteRecord(args: {
   authToken: string;
   data: any;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   key: string;
   serverUrl: string;
   userId: string;
@@ -790,7 +791,7 @@ async function postRemoteRecord(args: {
 
 async function readRemoteRecord(args: {
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   key: string;
   serverUrl: string;
 }) {
@@ -812,7 +813,7 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
   authToken: string;
   childDialogKey: string;
   childDialogRecord: Record<string, any>;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   input: AgentRuntimeSaveTurnInput;
   serverUrl: string;
   userId: string;
@@ -895,7 +896,7 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
 
 async function syncLocalDialogEvidenceToRemote(args: {
   env: EnvLike;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   input: AgentRuntimeSaveTurnInput;
   ops: Array<{ type: "put"; key: string; value: any }>;
   output?: { write(chunk: string): unknown };
@@ -965,7 +966,7 @@ async function syncLocalDialogEvidenceToRemote(args: {
 
 function buildServerPlatformToolExecutors(args: {
   env: EnvLike;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
 }) {
   const postServer = async (path: string, body: object) => {
     const serverUrl = resolveRuntimeServerUrl(args.env);
@@ -1031,7 +1032,7 @@ function buildServerPlatformToolExecutors(args: {
 function buildLocalToolExecutors(args: {
   workspaceRoot: string;
   env: EnvLike;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   localToolExecutors?: CliLocalRuntimeAdapterDeps["localToolExecutors"];
   readXPost?: CliLocalRuntimeAdapterDeps["readXPost"];
   readXhsProfile?: CliLocalRuntimeAdapterDeps["readXhsProfile"];
@@ -1159,7 +1160,7 @@ async function writeDialog(args: {
   now: () => number;
   createId: () => string;
   env: EnvLike;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   output?: { write(chunk: string): unknown };
   cwd?: string;
 }) {
@@ -1328,8 +1329,15 @@ export function createCliLocalRuntimeAdapter(
                 : undefined;
             const prompt = buildPromptForCliProvider(messages);
             try {
+              const reasoningEffortRaw = agentConfig.reasoning_effort;
               const reasoningEffort =
-                agentConfig.reasoning_effort || agentConfig.reasoningEffort;
+                reasoningEffortRaw === "low" ||
+                reasoningEffortRaw === "medium" ||
+                reasoningEffortRaw === "high" ||
+                reasoningEffortRaw === "xhigh" ||
+                reasoningEffortRaw === "max"
+                  ? reasoningEffortRaw
+                  : undefined;
               const result = await executeCli(provider, prompt, {
                 ...(agentConfig.model ? { model: agentConfig.model } : {}),
                 ...(reasoningEffort ? { reasoningEffort } : {}),

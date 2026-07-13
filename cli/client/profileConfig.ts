@@ -78,7 +78,9 @@ export function saveDefaultProfile(
   return config;
 }
 
-export function buildEnvFromProfile(config: NoloProfileConfig | null) {
+export function buildEnvFromProfile(
+  config: NoloProfileConfig | null
+): Record<string, string | undefined> {
   if (!config) return {};
   const profile = config.profiles[config.currentProfile];
   if (!profile) return {};
@@ -94,7 +96,7 @@ export function buildEnvFromProfile(config: NoloProfileConfig | null) {
 export function buildCliRuntimeEnv(
   processEnv: NodeJS.ProcessEnv,
   config: NoloProfileConfig | null
-) {
+): Record<string, string | undefined> {
   const profileEnv = buildEnvFromProfile(config);
   const explicitServerUrl =
     processEnv.NOLO_SERVER || processEnv.NOLO_SERVER_URL || processEnv.BASE_URL;

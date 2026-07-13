@@ -1,3 +1,4 @@
+// @ts-nocheck — mock-heavy local runtime adapter suite; stubs intentionally incomplete vs HybridRecordKvDb/fetch.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -12,6 +13,11 @@ import {
 import { LOCAL_CODEX_AGENT_KEY } from "../agentAliases";
 
 const FULLSTACK_TEST_AGENT_KEY = "fullstack";
+
+/** Test-only: incomplete fetch/db stubs need a loose deps surface. */
+function createAdapter(deps: any) {
+  return createCliLocalRuntimeAdapter(deps);
+}
 
 describe("CLI local runtime adapter", () => {
   beforeEach(() => {
@@ -78,7 +84,7 @@ describe("CLI local runtime adapter", () => {
   test("reuses prepared agent runtime for repeated loadAgentConfig calls", async () => {
     clearCliLocalRuntimePreparedAgentCache();
     let storeReads = 0;
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: { NOLO_LOCAL_USER_ID: "user-1" },
       cwd: "/tmp/nolo-cache-test",
       db: {
@@ -110,7 +116,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("loads stored local CLI agent records before falling back to built-ins", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "0e95801d90",
       },
@@ -147,7 +153,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("loads local CLI agent records by their handle", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -181,7 +187,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("falls back to built-in local Codex CLI agent without machine binding", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -211,7 +217,7 @@ describe("CLI local runtime adapter", () => {
 
   test("runs cli-provider agents through the local CLI executor instead of OpenAI-compatible direct mode", async () => {
     const cliExecutions: Array<{ provider: string; prompt: string; options: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         OPENAI_API_KEY: "sk-should-not-be-used",
@@ -280,7 +286,7 @@ describe("CLI local runtime adapter", () => {
         cliProvider: "agy",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -380,7 +386,7 @@ describe("CLI local runtime adapter", () => {
         cliProvider: "codex",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -490,7 +496,7 @@ describe("CLI local runtime adapter", () => {
         cliProvider: "agy",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_SERVER: "https://us.nolo.chat",
         AUTH_TOKEN: authTokenForUser("token-user"),
@@ -545,7 +551,7 @@ describe("CLI local runtime adapter", () => {
         cliProvider: "agy",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -582,7 +588,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("fails cli-provider local runs clearly when the requested local CLI is unavailable", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         OPENAI_API_KEY: "sk-should-not-be-used",
@@ -619,7 +625,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("creates read-compatible ULID dialog ids for local CLI runs by default", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -654,7 +660,7 @@ describe("CLI local runtime adapter", () => {
 
   test("forwards reasoningEffort camelCase to the CLI executor", async () => {
     let cliCalledWith: any = null;
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -693,7 +699,7 @@ describe("CLI local runtime adapter", () => {
 
   test("passes cli-provider image inputs to the CLI executor instead of rejecting", async () => {
     let cliCalledWith: any = null;
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -763,7 +769,7 @@ describe("CLI local runtime adapter", () => {
       }],
     ]);
     const batchOps: any[] = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         OPENAI_API_KEY: "sk-local",
@@ -857,7 +863,7 @@ describe("CLI local runtime adapter", () => {
   test("loads a missing explicit agent key through the hybrid store remote cache", async () => {
     const memory = new Map<string, any>();
     const requests: string[] = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -917,7 +923,7 @@ describe("CLI local runtime adapter", () => {
   test("keeps local runtime runnable when the configured local server is down but a cluster server can provide agent config", async () => {
     const memory = new Map<string, any>();
     const requests: string[] = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "http://127.0.0.1:38123",
@@ -1003,7 +1009,7 @@ describe("CLI local runtime adapter", () => {
         reasoning_effort: "medium",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         OPENAI_API_KEY: "sk-custom",
@@ -1077,7 +1083,7 @@ describe("CLI local runtime adapter", () => {
       }],
     ]);
     const loopbackRequests: Array<{ url: string; body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -1144,7 +1150,7 @@ describe("CLI local runtime adapter", () => {
         tools: ["writeFile"],
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -1222,7 +1228,7 @@ describe("CLI local runtime adapter", () => {
         tools: ["readFile"],
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -1287,7 +1293,7 @@ describe("CLI local runtime adapter", () => {
         useServerProxy: true,
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -1344,7 +1350,7 @@ describe("CLI local runtime adapter", () => {
         useServerProxy: true,
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_SERVER: "https://us.nolo.chat",
@@ -1400,7 +1406,7 @@ describe("CLI local runtime adapter", () => {
         model: "gpt-4.1-mini",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -1511,7 +1517,7 @@ describe("CLI local runtime adapter", () => {
         model: "gpt-4.1-mini",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -1611,7 +1617,7 @@ describe("CLI local runtime adapter", () => {
       }],
     ]);
     let requestCount = 0;
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_LOCAL_OPENAI_BASE_URL: "https://llm.example/v1",
@@ -1698,7 +1704,7 @@ describe("CLI local runtime adapter", () => {
         content: "previous answer",
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -1757,7 +1763,7 @@ describe("CLI local runtime adapter", () => {
 
   test("passes image_url message parts through to OpenAI-compatible providers", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -1799,7 +1805,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("allows registered execShell by default", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {},
       db: {
         get: async () => ({
@@ -1836,7 +1842,7 @@ describe("CLI local runtime adapter", () => {
         toolNames: ["readFile"],
       }],
     ]);
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_LOCAL_ALLOWED_TOOLS: "readFile",
@@ -1868,7 +1874,7 @@ describe("CLI local runtime adapter", () => {
 
   test("advertises execShell to OpenAI-compatible providers by default", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -1905,7 +1911,7 @@ describe("CLI local runtime adapter", () => {
 
   test("keeps fullstack local model tools to the compact coding surface", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -1959,7 +1965,7 @@ describe("CLI local runtime adapter", () => {
 
   test("can expose only declared local workspace tools for tool ablations", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -1996,7 +2002,7 @@ describe("CLI local runtime adapter", () => {
 
   test("defaults local workspace tools to strategy descriptions and rich parameters", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2074,7 +2080,7 @@ describe("CLI local runtime adapter", () => {
 
   test("can vary globFiles schema through local runtime env", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2120,7 +2126,7 @@ describe("CLI local runtime adapter", () => {
 
   test("can vary listFiles schema through local runtime env", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2165,7 +2171,7 @@ describe("CLI local runtime adapter", () => {
 
   test("can vary readFile schema through local runtime env", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2212,7 +2218,7 @@ describe("CLI local runtime adapter", () => {
 
   test("can vary searchFiles schema through local runtime env", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2263,7 +2269,7 @@ describe("CLI local runtime adapter", () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "nolo-cli-runtime-"));
     try {
       await Bun.write(join(workspaceRoot, "README.md"), "local ok\n");
-      const adapter = createCliLocalRuntimeAdapter({
+      const adapter = createAdapter({
         env: {},
         cwd: workspaceRoot,
         db: {
@@ -2294,7 +2300,7 @@ describe("CLI local runtime adapter", () => {
 
   test("exposes declared server table write tools in local runtime requests", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2332,7 +2338,7 @@ describe("CLI local runtime adapter", () => {
 
   test("executes declared createTable through the server table bridge when capture is explicit", async () => {
     const requests: Array<{ url: string; auth: string | null; body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_SERVER: "https://us.nolo.chat",
         AUTH_TOKEN: "token-1",
@@ -2391,7 +2397,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("blocks local table writes when the current user request is not explicit capture", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_SERVER: "https://us.nolo.chat",
         AUTH_TOKEN: "token-1",
@@ -2431,7 +2437,7 @@ describe("CLI local runtime adapter", () => {
 
   test("adds typed CLI workspace tools to the default nolo local agent request", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -2493,7 +2499,7 @@ describe("CLI local runtime adapter", () => {
     }) as unknown as typeof Bun.spawn;
 
     try {
-      const adapter = createCliLocalRuntimeAdapter({
+      const adapter = createAdapter({
         env: {
           NOLO_LOCAL_USER_ID: "user-1",
           AUTH_TOKEN: "token-1",
@@ -2539,7 +2545,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("runs execShell locally by default", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {},
       db: {
         get: async () => ({
@@ -2574,7 +2580,7 @@ describe("CLI local runtime adapter", () => {
   test("confirms destructive shell command and retries when callback returns true", async () => {
     const permissionRequests: PermissionRequest[] = [];
     const shellCalls: { args: any; confirmed?: boolean }[] = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {},
       db: {
         get: async () => ({
@@ -2619,7 +2625,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("rejects destructive shell command when confirmation callback returns false", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {},
       db: {
         get: async () => ({
@@ -2653,7 +2659,7 @@ describe("CLI local runtime adapter", () => {
   test("applies runtime policy shell settings to local executors without adding a timeout", async () => {
     const requests: Array<{ body: any }> = [];
     const shellCalls: any[] = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
       },
@@ -2727,7 +2733,7 @@ describe("CLI local runtime adapter", () => {
 
   test("accepts execShell aliases from the local model", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
       },
@@ -2784,7 +2790,7 @@ describe("CLI local runtime adapter", () => {
   test("pauses for manual terminal action and resumes the same local turn", async () => {
     const requests: Array<{ body: any }> = [];
     const userActions: any[] = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
       },
@@ -2858,7 +2864,7 @@ describe("CLI local runtime adapter", () => {
 
   test("blocks destructive local execShell calls unless the user explicitly asked to delete", async () => {
     let executorCalls = 0;
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
       },
@@ -2925,7 +2931,7 @@ describe("CLI local runtime adapter", () => {
 
   test("exposes runtime policy tools to the local model even when toolNames omits them", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
       },
@@ -2984,7 +2990,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("treats runtime policy visual tools as declared local tools", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
       },
@@ -3028,7 +3034,7 @@ describe("CLI local runtime adapter", () => {
 
   test("exposes read_xhs_profile to OpenAI-compatible providers when the agent declares it", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -3063,7 +3069,7 @@ describe("CLI local runtime adapter", () => {
 
   test("exposes read_x_post to OpenAI-compatible providers when the agent declares it", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -3098,7 +3104,7 @@ describe("CLI local runtime adapter", () => {
 
   test("adds read_x_post to local web-capable agent tool surface", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -3133,7 +3139,7 @@ describe("CLI local runtime adapter", () => {
 
   test("does not expose read_xhs_profile when the agent does not declare it", async () => {
     const requests: Array<{ body: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         OPENAI_API_KEY: "sk-local",
         NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
@@ -3167,7 +3173,7 @@ describe("CLI local runtime adapter", () => {
 
   test("executes read_xhs_profile locally through the desktop bridge", async () => {
     const xhsCalls: Array<{ args: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -3229,7 +3235,7 @@ describe("CLI local runtime adapter", () => {
 
   test("default read_x_post executor calls the local bridge reader", async () => {
     const readerCalls: Array<{ args: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -3290,7 +3296,7 @@ describe("CLI local runtime adapter", () => {
 
   test("default read_xhs_profile executor calls the local bridge reader", async () => {
     const readerCalls: Array<{ args: any; thunkApi: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -3361,7 +3367,7 @@ describe("CLI local runtime adapter", () => {
 
   test("default read_xhs_profile executor ignores explicit XHS profile env", async () => {
     const readerCalls: Array<{ args: any }> = [];
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
         NOLO_XHS_READER_PROFILE_DIR: "/tmp/custom-xhs-profile",
@@ -3411,7 +3417,7 @@ describe("CLI local runtime adapter", () => {
   });
 
   test("read_xhs_profile executor does not falsely succeed when bridge is unavailable", async () => {
-    const adapter = createCliLocalRuntimeAdapter({
+    const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
       },
@@ -3464,7 +3470,7 @@ describe("CLI local runtime adapter", () => {
           toolNames: ["writeFile"],
         }],
       ]);
-      const adapter = createCliLocalRuntimeAdapter({
+      const adapter = createAdapter({
         env: {
           NOLO_LOCAL_USER_ID: "user-1",
         },

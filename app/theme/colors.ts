@@ -480,16 +480,17 @@ export const mono = {
     textQuaternary:      "#7B8793",  // gray-8
     textLight:           "#3E454C",
     placeholder:         "#7B8793",
-    border:              "#3E454C",
+    // 边框必须比所在表面亮一档,否则夜间卡片/分割线全部融进背景
+    border:              "#4A525A",
     borderHover:         "#6E7A87",
-    borderLight:         "#292E32",
+    borderLight:         "#343A40",
     messageBackground:   "#3E454C",
     codeBackground:      "#1A1D20",  // 略深于 canvas 的冷墨色
     // 基于深 slate-gray #0F1113 (RGB 15, 17, 19) 的有机阴影，在冷深色背景上极其细腻浮空
     shadowLight:         "rgba(15, 17, 19, 0.28)",
     shadowMedium:        "rgba(15, 17, 19, 0.45)",
     shadowHeavy:         "rgba(15, 17, 19, 0.65)",
-    textHeading:         "#FFBF66",
+    textHeading:         "#F1F2F4",  // 近白标题;橙色 heading 在夜间大标题上过于突兀
     textOnPrimary:       "#2E2E2E",
   },
 };

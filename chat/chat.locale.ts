@@ -33,6 +33,7 @@ export default {
       deleteContentConfirmation:
         "Are you sure you want to delete this content? This action cannot be undone.",
       deleteContentTitle: 'Delete "{{title}}"',
+      deleteMovedToTrash: '"{{title}}" moved to Recycle Bin',
       deleteFailed: "Deletion failed",
       deleteMessage: "Delete Message",
       deleteSuccess: "Deleted successfully",
@@ -175,6 +176,7 @@ export default {
         executing: "Executing...",
         requiresApproval: "Requires Approval",
         resumePrompt: "Please continue with your previous plan based on the tool execution results; if the task is complete, summarize it concisely.",
+        preflightRepairing: "Preflight found {{count}} issue(s), auto-repairing…",
       },
       toolNames: {
         tool: "Tool",
@@ -318,6 +320,7 @@ export default {
       delete: "删除",
       deleteContentConfirmation: "您确定要删除此内容吗？此操作无法撤销。",
       deleteContentTitle: '删除 "{{title}}"',
+      deleteMovedToTrash: '"{{title}}" 已移至回收站',
       deleteFailed: "删除失败",
       deleteMessage: "删除消息",
       deleteSuccess: "删除成功",
@@ -449,6 +452,7 @@ export default {
         executing: "正在执行...",
         requiresApproval: "等待确认",
         resumePrompt: "请基于刚才工具执行的结果继续完成你之前的计划；如果任务已经完成，请用简洁的方式总结结果。",
+        preflightRepairing: "预检发现 {{count}} 个问题，正在自动修复…",
       },
       toolNames: {
         tool: "工具",
@@ -592,6 +596,7 @@ export default {
       delete: "刪除",
       deleteContentConfirmation: "您確定要刪除此內容嗎？此操作無法撤銷。",
       deleteContentTitle: '刪除 "{{title}}"',
+      deleteMovedToTrash: '"{{title}}" 已移至回收站',
       deleteFailed: "刪除失敗",
       deleteMessage: "刪除訊息",
       deleteSuccess: "刪除成功",
@@ -712,6 +717,7 @@ export default {
         executing: "正在執行...",
         requiresApproval: "等待確認",
         resumePrompt: "請基於剛才工具執行的結果繼續完成你之前的計劃；如果任務已經完成，請用簡潔的方式總結結果。",
+        preflightRepairing: "預檢發現 {{count}} 個問題，正在自動修復…",
       },
       toolNames: {
         tool: "工具",
@@ -793,7 +799,8 @@ export default {
       delete: "削除",
       deleteContentConfirmation:
         "このコンテンツを削除しますか？この操作は元に戻せません。",
-      deleteContentTitle: "「{{title}}」を削除",
+      deleteContentTitle: '「{{title}}」を削除',
+      deleteMovedToTrash: '"{{title}}" をゴミ箱に移動しました',
       deleteFailed: "削除に失敗しました",
       deleteMessage: "メッセージを削除",
       deleteSuccess: "削除に成功しました",
@@ -923,6 +930,7 @@ export default {
         executing: "実行中...",
         requiresApproval: "承認が必要",
         resumePrompt: "ツールの実行結果に基づいて、前の計画を続行してください。タスクが完了した場合は、簡潔にまとめてください。",
+        preflightRepairing: "プリフライトで {{count}} 件の問題を検出、自動修復中…",
       },
       toolNames: {
         tool: "ツール",

@@ -1133,6 +1133,7 @@ export const makeSelectRowsByTable = (tenantId: string, tableId: string) =>
  * 导出
  * ------------------------------------------------------------------------*/
 
+// cast: buildCreateSlice async thunks 会推断成 void|AsyncThunk|ActionCreator 联合
 export const {
   createTable,
   initTable,
@@ -1151,7 +1152,7 @@ export const {
   reorderColumn,
   updateColumnWidth,
   setTableFocusContext,
-} = tableSlice.actions;
+} = tableSlice.actions as any;
 
 export const {
   selectCurrentTable,

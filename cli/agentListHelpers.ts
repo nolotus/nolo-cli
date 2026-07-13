@@ -1,4 +1,5 @@
 import type { CliKvDb } from "./client/hybridRecordStore";
+import type { CliFetchImpl } from "./cliFetch";
 import {
   listUserRecordsFromServers,
   readLiveDbRecordAfterTombstoneMerge,
@@ -123,14 +124,14 @@ export async function listLocalCachedAgents(args: {
 async function hasReadableRecord(args: {
   authToken: string;
   dbKey: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
   readDbRecord: (args: {
     authToken: string;
     dbKey: string;
-    fallbackFetchImpl?: typeof fetch;
-    fetchImpl: typeof fetch;
+    fallbackFetchImpl?: CliFetchImpl;
+    fetchImpl: CliFetchImpl;
     serverUrl: string;
   }) => Promise<any>;
 }) {
@@ -144,15 +145,15 @@ async function hasReadableRecord(args: {
 
 export async function listRemoteAgents(args: {
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   includeLegacy: boolean;
   serverUrl: string;
   userId: string;
   queryUserRecords: (args: {
     authToken: string;
-    fallbackFetchImpl?: typeof fetch;
-    fetchImpl: typeof fetch;
+    fallbackFetchImpl?: CliFetchImpl;
+    fetchImpl: CliFetchImpl;
     serverUrl: string;
     userId: string;
     type: "agent" | "cybot";
@@ -160,8 +161,8 @@ export async function listRemoteAgents(args: {
   readDbRecord: (args: {
     authToken: string;
     dbKey: string;
-    fallbackFetchImpl?: typeof fetch;
-    fetchImpl: typeof fetch;
+    fallbackFetchImpl?: CliFetchImpl;
+    fetchImpl: CliFetchImpl;
     serverUrl: string;
   }) => Promise<any>;
 }) {
@@ -192,8 +193,8 @@ export async function listRemoteAgents(args: {
 
 export async function listRemoteAgentsAcrossServers(args: {
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   includeLegacy: boolean;
   serverUrls: string[];
   userId: string;
@@ -218,8 +219,8 @@ export async function listRemoteAgentsAcrossServers(args: {
 export async function decorateAgentsWithPublicStatusAcrossServers(args: {
   agents: ListedAgent[];
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrls: string[];
 }) {
   await Promise.all(

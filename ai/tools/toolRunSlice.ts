@@ -277,7 +277,6 @@ export const executeToolRun = createAsyncThunk(
         const userId = latestState.auth?.currentUser?.userId;
         if (userId) {
           const { fetchUserSpaceMemberships } = await import("../../create/space/spaceSlice");
-          // @ts-expect-error dynamic import callability
           await thunkApi.dispatch(fetchUserSpaceMemberships(userId) as any);
         }
       }

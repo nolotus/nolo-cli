@@ -58,7 +58,7 @@ function findWorkspaceRoot(startPath: string) {
 }
 
 function listWorkspacePackageJsonFiles(workspaceParent: string): string[] {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Array<{ name: string; isDirectory(): boolean }>;
   try {
     entries = readdirSync(workspaceParent, { withFileTypes: true });
   } catch {

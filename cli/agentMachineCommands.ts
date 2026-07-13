@@ -1,4 +1,5 @@
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
+import type { CliFetchImpl } from "./cliFetch";
 import { resolveConnectorWebSocketTarget } from "./connectorWebSocketTarget";
 import { resolveCliAgentKeyInput } from "./agentAliases";
 import {
@@ -35,7 +36,7 @@ async function forwardConnectorRunMessage(
   pushMessage: (response: string) => void,
   executeCli: LocalCliExecutor,
   env: EnvLike,
-  fetchImpl: typeof fetch
+  fetchImpl: CliFetchImpl
 ) {
   const { handleConnectorRunMessage } = await import("./machineWsRunDispatch");
   return handleConnectorRunMessage(message, pushMessage, executeCli, env, fetchImpl);
@@ -157,7 +158,7 @@ async function defaultConnectWebSocket(url: string, options: SmokeWebSocketOptio
 
 async function heartbeatCurrentMachine(args: {
   authToken: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   machine: MachineHeartbeat;
   serverUrl: string;
 }) {

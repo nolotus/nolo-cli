@@ -33,11 +33,11 @@ class MemoryAuthorityBacking {
     this.status = "closed";
   }
 
-  async get<T = any>(key: string): Promise<T> {
+  async get(key: string): Promise<any> {
     if (!this.data.has(key)) {
       throw createNotFoundError();
     }
-    return this.data.get(key) as T;
+    return this.data.get(key);
   }
 
   async put(key: string, value: unknown) {
@@ -111,8 +111,8 @@ export function createMemoryAuthorityStore(
     async close() {
       await backing.close();
     },
-    async get<T = any>(key: string) {
-      return backing.get<T>(key);
+    async get(key: string): Promise<any> {
+      return backing.get(key);
     },
     async put(key: string, value: unknown) {
       await backing.put(key, value);

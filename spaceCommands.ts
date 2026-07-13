@@ -15,11 +15,12 @@ import { ulid } from "ulid";
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { resolveFileCategory } from "./app/utils/fileUtils";
+import type { CliFetchImpl } from "./cliFetch";
 
 type SpaceCommandDeps = {
   env: NodeJS.ProcessEnv;
   output?: { write(chunk: string): unknown };
-  fetchImpl?: typeof fetch;
+  fetchImpl?: CliFetchImpl;
 };
 
 const VALID_INVITE_ROLES = new Set<string>([
@@ -110,7 +111,7 @@ Note:
 async function writeDbRecord(args: {
   authToken: string;
   dbKey: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   record: Record<string, any>;
   serverUrl: string;
   userId: string;
@@ -271,7 +272,10 @@ export async function runSpaceInviteCommand(
     members: [...members, memberId],
     updatedAt: now,
   };
-  const memberKey = createSpaceKey.member(memberId, spaceId);
+  if (!memberId?.trim()) {
+    throw new Error("space invite requires --member <userId>.");
+  }
+  const memberKey = createSpaceKey.member(memberId.trim(), spaceId);
   const memberRecord = {
     dbKey: memberKey,
     type: DataType.SPACE,

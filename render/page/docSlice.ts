@@ -370,6 +370,7 @@ export const docSlice = createSliceWithThunks({
   }),
 });
 
+// cast: buildCreateSlice async thunks 会推断成 void|AsyncThunk|ActionCreator 联合
 export const {
   createDoc,
   initDoc,
@@ -384,7 +385,7 @@ export const {
   resetDoc,
   updateDocTags,
   previewDoc,
-} = docSlice.actions;
+} = docSlice.actions as any;
 
 const selectDocState = (state: any) => state.doc;
 

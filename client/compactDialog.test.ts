@@ -40,7 +40,7 @@ function makeFetchMock(options: {
 }) {
   const calls: { url: string; method: string; body?: unknown }[] = [];
 
-  const fetchMock: typeof fetch = async (input, init) => {
+  const fetchMock: import("../cliFetch").CliFetchImpl = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     const bodyStr = typeof init?.body === "string" ? init.body : undefined;
@@ -139,7 +139,7 @@ describe("compactDialog", () => {
   });
 
   test("throws when the server read fails", async () => {
-    const fetchFailing: typeof fetch = async () =>
+    const fetchFailing: import("../cliFetch").CliFetchImpl = async () =>
       new Response("{}", { status: 404 });
 
     await expect(

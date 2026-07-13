@@ -10,7 +10,7 @@ import { mdastToSlate } from "./fromMarkdown";
  * 1. Markdown 文本 -> MDAST (Markdown 抽象语法树)
  * 2. MDAST -> Slate.js 节点
  */
-export function markdownToSlate(markdown: string) {
+export function markdownToSlate(markdown: string): any[] | null {
   if (!markdown || typeof markdown !== "string") {
     return null;
   }
@@ -20,5 +20,5 @@ export function markdownToSlate(markdown: string) {
     mdastExtensions: [gfmFromMarkdown()],
   });
 
-  return mdastToSlate(mdastTree);
+  return mdastToSlate(mdastTree) as any[];
 }

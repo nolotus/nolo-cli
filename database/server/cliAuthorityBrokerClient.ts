@@ -178,12 +178,12 @@ export function createCliAuthorityBrokerClient(
       await invokeBrokerRequest(options, { type: "status" });
     },
     async close() {},
-    async get<T = any>(key: string) {
+    async get(key: string): Promise<any> {
       const result = await invokeBrokerRequest(options, { type: "get", key });
       if (result.type !== "get") {
         throw new Error(`CLI authority broker protocol mismatch for get at ${options.endpoint}`);
       }
-      return result.value as T;
+      return result.value;
     },
     async put(key: string, value: unknown) {
       await invokeBrokerRequest(options, { type: "put", key, value });

@@ -75,6 +75,7 @@ export interface AgentRunRuntimeContext {
     presentationIntent?: string;
     parentThreadId?: string;
     rootThreadId?: string;
+    parentDialogId?: string;
 }
 
 export interface LoopResult extends Omit<AgentRuntimeResult, "policyState"> {

@@ -118,6 +118,7 @@
     "ai/agent.ts",
     "connector-experimental/machineInfo.ts",
     "connector-experimental/protocol.ts",
+    "cliFetch.ts",
     "processSpawn.ts",
     "oauth/apiKeyRefResolver.ts",
     "oauth/token-store.ts",
@@ -127,6 +128,7 @@
     "oauth/types.ts",
     "oauth/callback-server.ts",
     "oauth/pkce.ts",
+    "cliTestMocks.ts",
     "oauth/authCommand.ts",
     "oauth/flows/cloudflare.ts",
     "oauth/envFile.ts",
@@ -163,6 +165,7 @@
     "cli/globalRecordOperations.ts",
     "cli/localLevelDbCleanup.ts",
     "cli/client/hybridRecordStore.ts",
+    "cli/cliFetch.ts",
     "cli/localRuntimeDb.ts",
     "cli/agentListHelpers.ts",
     "cli/cliSpaceHelpers.ts",
@@ -220,6 +223,7 @@
     "cli/authCommands.ts",
     "cli/machineCommands.ts",
     "cli/tableCommands.ts",
+    "cli/cliTestMocks.ts",
     "cli/client/compactDialog.ts",
     "cli/client/localProviderResolver.ts",
     "cli/client/agentConfigResolver.ts",
@@ -505,6 +509,7 @@
     "ai/chat/fetchUtils.ts",
     "ai/chat/parseApiError.ts",
     "ai/chat/streamRetry.ts",
+    "ai/chat/toolCallArgumentGuard.ts",
     "ai/chat/accumulateToolCallChunks.ts",
     "ai/chat/inlineImageUrlsForCustomProvider.ts",
     "ai/agent/utils/imageOutput.ts",
@@ -576,9 +581,11 @@
     "create/space/content/deleteContentFromSpaceAction.ts",
     "create/space/content/moveContentAction.ts",
     "create/space/content/updateContentTitleAction.ts",
+    "create/space/content/updateContentPinnedAction.ts",
     "create/space/content/updateContentCategoryAction.ts",
     "create/space/content/deleteMultipleContentAction.ts",
     "create/space/content/uploadAndAddFileToSpaceAction.ts",
+    "create/space/content/spaceContentPatch.ts",
     "create/editor/utils/slateUtils.ts",
     "create/editor/transforms/slateToText.ts",
     "create/editor/transforms/slateToSimplifiedMarkdown.ts",
@@ -633,6 +640,7 @@
     "app/reducer.ts",
     "app/favorite/favoriteSlice.ts",
     "app/notifications/notificationSlice.ts",
+    "app/appInspector/appInspectorSlice.ts",
     "app/notifications/model.ts",
     "app/favorite/type.ts",
     "app/constants/appEditor.ts",
@@ -782,7 +790,7 @@
     "bun-types": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^7.0.2"
   },
   "repository": {
     "type": "git",

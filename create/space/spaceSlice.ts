@@ -202,6 +202,7 @@ const spaceSlice = createSliceWithThunks({
   }),
 });
 
+// cast: buildCreateSlice async thunks 会推断成 void|AsyncThunk|ActionCreator 联合
 export const {
   toggleCategoryCollapse,
   setAllCategoriesCollapsed,
@@ -220,6 +221,7 @@ export const {
   deleteContentFromSpace,
   deleteMultipleContent,
   updateContentTitle,
+  updateContentPinned,
   updateContentCategory,
   uploadAndAddFileToSpace,
   fetchUserSpaceMemberships,
@@ -232,7 +234,7 @@ export const {
   resetSpace,
   setViewMode,
   hydrateMemberSpacesFromLocal,
-} = spaceSlice.actions;
+} = spaceSlice.actions as any;
 
 const selectSpaceState = (state: any): SpaceState => state.space;
 

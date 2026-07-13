@@ -80,8 +80,8 @@ export function createLevelAuthorityStore(
     async close() {
       await levelDb.close();
     },
-    async get<T = any>(key: string) {
-      return levelDb.get(key) as Promise<T>;
+    async get(key: string): Promise<any> {
+      return levelDb.get(key);
     },
     async put(key: string, value: unknown) {
       await levelDb.put(key, value);

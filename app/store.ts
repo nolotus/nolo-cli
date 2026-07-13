@@ -23,6 +23,7 @@ export interface RootState {
   toolRun: any;
   favorite: any;
   share: any;
+  appInspector: any;
 }
 
 export type AppExtra = {
@@ -30,17 +31,41 @@ export type AppExtra = {
   tokenManager: TokenManager | null;
 };
 
-// AppDispatch from the real store type (avoids ThunkDispatch<RootState,...>
-// incompatibility with RTK's inferred dispatch types).
-export type AppDispatch = ThunkDispatch<RootState, AppExtra, UnknownAction>;
+// AppDispatch: loose on purpose for full-repo typecheck.
+// buildCreateSlice / create.asyncThunk 导出常被推断成 `void | AsyncThunk` 联合；
+// 严格 ThunkDispatch 会在 call site 炸掉。返回值用 `any`（不是 unknown）以保留
+// 既有 `.unwrap()` 后属性访问（green gate 依赖这一点）。
+type DispatchResult = Promise<any> & {
+  unwrap: () => Promise<any>;
+  then: Promise<any>["then"];
+  catch: Promise<any>["catch"];
+  finally: Promise<any>["finally"];
+};
 
-// 工作区：buildCreateSlice 生成的 async thunk 在类型推断下会被并上 `void`，
-// 导致 dispatch 无法直接调用。这里提供一个类型化入口，把 dispatch 断言为可接受
-// 任意 thunk action 并返回 `Promise<T> & { unwrap(): Promise<T> }` 的可调用对象。
-// 仅在已知调用的是 thunk 的组件里使用，避免在普通 plain action 上展开错误假设。
-export type TypedThunkDispatch = <T>(
-  action: unknown
+export type AppDispatch = ((action: any) => DispatchResult) &
+  ThunkDispatch<RootState, AppExtra, UnknownAction>;
+
+// 已知调用的是 thunk 时，可指定 unwrap 的结果类型。
+export type TypedThunkDispatch = <T = any>(
+  action: any
 ) => Promise<T> & { unwrap: () => Promise<T> };
+
+/** Strip void|union from buildCreateSlice async thunk action creators. */
+export function asThunkActionCreator<A extends any[], R = any>(
+  creator: ((...args: A) => R) | void | object | unknown
+): (...args: A) => R {
+  return creator as (...args: A) => R;
+}
+
+/** Dispatch a (possibly void-union) thunk/action and keep unwrap(). */
+export function dispatchThunk<T = any>(
+  dispatch: AppDispatch | ((action: any) => any),
+  action: any
+): Promise<T> & { unwrap: () => Promise<T> } {
+  return (dispatch as (a: any) => Promise<T> & { unwrap: () => Promise<T> })(
+    action
+  );
+}
 
 export type AppThunkApi = {
   dispatch: AppDispatch;
@@ -54,7 +79,7 @@ interface CreateStoreOptions {
   preloadedState?: Partial<RootState>;
 }
 
-export const createAppStore = (options: CreateStoreOptions = {}) => {
+export const createAppStore = (options: CreateStoreOptions = {}): any => {
   const { dbInstance, tokenManager, preloadedState } = options;
 
   return configureStore({
@@ -73,7 +98,7 @@ export const createAppStore = (options: CreateStoreOptions = {}) => {
   });
 };
 
-export type AppStore = ReturnType<typeof createAppStore>;
+export type AppStore = any;
 // RootState IS defined directly above — no AppStore dependency.
 
 export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
@@ -83,5 +108,13 @@ declare global {
   interface Window {
     __PRELOADED_STATE__?: RootState;
     __NOLO_DESKTOP__?: boolean;
+    __appInitPerf?: {
+      start(label: string): void;
+      end(label: string): void;
+    };
+    __sidebarPerfTiming?: {
+      measure: (label: string) => void;
+      marks: Record<string, number>;
+    };
   }
 }

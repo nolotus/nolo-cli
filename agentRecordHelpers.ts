@@ -13,6 +13,7 @@ import {
   type EnvLike,
 } from "./cliEnvHelpers";
 import { readPipeText, spawnProcess } from "./processSpawn";
+import type { CliFetchImpl } from "./cliFetch";
 
 const PROVIDER_COPY_FIELDS = [
   "apiSource",
@@ -78,8 +79,8 @@ async function findLocalAgentRecordByHandle(args: {
 async function findRemoteAgentRecordByHandle(args: {
   handle: string;
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
   userId: string;
 }) {
@@ -161,7 +162,7 @@ function shouldUseCurlTransportFallback(error: unknown) {
 export async function fetchWithTransportFallback(
   url: string,
   init: RequestInit,
-  options: { fallbackFetchImpl?: typeof fetch; fetchImpl: typeof fetch }
+  options: { fallbackFetchImpl?: CliFetchImpl; fetchImpl: CliFetchImpl }
 ): Promise<Response> {
   const signal = init.signal ?? AbortSignal.timeout(10000);
   const nextInit = { ...init, signal };
@@ -180,8 +181,8 @@ export async function fetchWithTransportFallback(
 export async function readAgentRecord(args: {
   agentKey: string;
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
 }) {
   const res = await fetchWithTransportFallback(
@@ -202,8 +203,8 @@ export async function readAgentRecord(args: {
 export async function readDbRecord(args: {
   dbKey: string;
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   includeDeleted?: boolean;
   serverUrl: string;
 }) {
@@ -225,8 +226,8 @@ export async function readDbRecord(args: {
 
 export async function queryUserRecords(args: {
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   limit?: number;
   serverUrl: string;
   summary?: boolean;
@@ -268,8 +269,8 @@ export async function deleteDbRecord(args: {
   dbKey: string;
   deleteOptions?: { type?: "single" | "table" | "messages" };
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
 }) {
   const type = args.deleteOptions?.type;
@@ -295,8 +296,8 @@ export async function deleteDbRecord(args: {
 export async function writeAgentRecord(args: {
   agentKey: string;
   authToken: string;
-  fallbackFetchImpl?: typeof fetch;
-  fetchImpl: typeof fetch;
+  fallbackFetchImpl?: CliFetchImpl;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
   userId: string;
   record: Record<string, any>;
@@ -327,8 +328,8 @@ export async function resolveAgentRecordFromHybridStore(args: {
   cliArgs?: string[];
   env: EnvLike;
   db: CliKvDb;
-  fetchImpl: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
 }) {
   const agentKey = resolveCliAgentKeyInput(args.agentInput);
   const authToken = args.cliArgs
@@ -543,8 +544,8 @@ export async function buildCreatedAgentRecord(args: {
   parsed: NonNullable<ReturnType<typeof parseAgentUpdateArgs>>;
   env: EnvLike;
   db: CliKvDb;
-  fetchImpl: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
   authToken: string;
 }) {
   const serverUrl = args.cliArgs ? resolveServerUrl(args.cliArgs, args.env) : resolveServerUrl(args.env);
@@ -611,8 +612,8 @@ export async function buildUpdatedAgentRecord(args: {
   parsed: NonNullable<ReturnType<typeof parseAgentUpdateArgs>>;
   env: EnvLike;
   db: CliKvDb;
-  fetchImpl: typeof fetch;
-  fallbackFetchImpl?: typeof fetch;
+  fetchImpl: CliFetchImpl;
+  fallbackFetchImpl?: CliFetchImpl;
   authToken: string;
 }) {
   const cached = await resolveAgentRecordFromHybridStore({

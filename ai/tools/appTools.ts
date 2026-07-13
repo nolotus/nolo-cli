@@ -1367,6 +1367,11 @@ export async function appDeployFunc(
     void thunkApi.dispatch(syncAppRecord(data.appKey, data.appRecord));
   }
 
+  // 通知对话编辑器刷新左侧预览 iframe（UI4）。
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("app-editor-refresh"));
+  }
+
   const lines = [
     `🚀 应用部署成功！`,
     `- 名称: ${data.userFriendlyName}`,

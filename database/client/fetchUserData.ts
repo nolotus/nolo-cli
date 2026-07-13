@@ -21,10 +21,22 @@ const attachQueriedKey = (key: string, value: any) => {
 // db should be passed from caller (e.g. thunk extra)
 export async function fetchUserData(
     db: any,
+    types: string,
+    userId: string,
+    options?: FetchUserDataOptions
+): Promise<any[]>;
+export async function fetchUserData(
+    db: any,
+    types: string[],
+    userId: string,
+    options?: FetchUserDataOptions
+): Promise<Record<string, any[]>>;
+export async function fetchUserData(
+    db: any,
     types: string | string[],
     userId: string,
     options: FetchUserDataOptions = {}
-) {
+): Promise<any[] | Record<string, any[]>> {
     const results: Record<string, any[]> = {};
     const typeArray = Array.isArray(types) ? types : [types];
     const includeDeleted = options.includeDeleted === true;

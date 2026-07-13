@@ -1,4 +1,5 @@
 import type { AgentCommandDeps } from "./agentCommandSupport";
+import type { CliFetchImpl } from "./cliFetch";
 import {
   readOption,
   resolveAuthToken,
@@ -123,7 +124,7 @@ function hasDeleteFilter(body: Record<string, unknown>) {
 async function postMemoryDelete(args: {
   authToken: string;
   body: Record<string, unknown>;
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   serverUrl: string;
 }) {
   const res = await args.fetchImpl(`${args.serverUrl}/api/memory/delete`, {

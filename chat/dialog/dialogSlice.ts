@@ -759,6 +759,7 @@ const dialogSlice = createSliceWithThunks({
 });
 
 // --- Actions and Reducer Exports ---
+// cast: buildCreateSlice async thunks 会推断成 void|AsyncThunk|ActionCreator 联合
 export const {
   createPageAndAddReference,
   addPendingFile,
@@ -789,7 +790,7 @@ export const {
   enqueueUserInput,
   dequeueUserInput,
   clearPendingUserInputQueue,
-} = dialogSlice.actions;
+} = dialogSlice.actions as any;
 
 export default dialogSlice.reducer;
 

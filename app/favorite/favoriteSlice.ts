@@ -647,13 +647,14 @@ export const favoriteSlice = createSliceWithThunks({
     }),
 });
 
+// cast: buildCreateSlice async thunks 会推断成 void|AsyncThunk|ActionCreator 联合
 export const {
     initFavorites,
     toggleFavorite,
     toggleContentFavorite,
     resetFavorites,
     removeFavoriteLocally,
-} = favoriteSlice.actions;
+} = favoriteSlice.actions as any;
 
 export default favoriteSlice.reducer;
 

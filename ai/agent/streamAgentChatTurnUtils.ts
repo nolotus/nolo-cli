@@ -356,11 +356,14 @@ export const validateAccessAndBalance = (
     const userBalance = selectCurrentUserBalance(state);
     const currentUserId = selectUserId(state);
 
-    if (typeof userBalance !== "number") {
-        return "正在获取用户余额，请稍候...";
-    }
-
-    const isOwner = Boolean(currentUserId) && agentConfig.userId === currentUserId;
+    const isCustomApi = agentConfig.apiSource === "custom";
+    const isCliApi = agentConfig.apiSource === "cli";
+    // M3: device-local owner when logged out; account match when logged in.
+    const isDeviceLocalOwner =
+        agentConfig.userId === "local" && !currentUserId;
+    const isOwner =
+        isDeviceLocalOwner ||
+        (Boolean(currentUserId) && agentConfig.userId === currentUserId);
 
     if (!isOwner) {
         const hasWhitelist =
@@ -377,10 +380,32 @@ export const validateAccessAndBalance = (
         }
     }
 
-    const isCustomApi = agentConfig.apiSource === "custom";
-    const isCliApi = agentConfig.apiSource === "cli";
+    // M3: custom/cli (and local-owner non-platform) skip balance before the
+    // "balance is still loading" gate so logged-out local runs are not blocked.
     if (isCustomApi || isCliApi) {
         return null;
+    }
+    // Local-owner agents without explicit platform apiSource are treated as
+    // non-platform for the balance gate (credentials live on-device).
+    const isPlatformApi =
+        agentConfig.apiSource === "platform" ||
+        agentConfig.useServerProxy === true;
+    if (isDeviceLocalOwner && !isPlatformApi) {
+        return null;
+    }
+
+    if (typeof userBalance !== "number") {
+        // Platform path without balance: ask for login instead of a false "loading" state.
+        // Prefer the session object over selectors alone so parallel test mocks of
+        // `selectUserId` cannot mis-classify a logged-out client as "balance loading".
+        const hasSessionUser = Boolean(
+            (state as { auth?: { currentUser?: { userId?: string } | null } })
+                ?.auth?.currentUser?.userId,
+        );
+        if (!currentUserId || !hasSessionUser) {
+            return "请登录后使用平台模型，或改用本地自定义/API/CLI Agent。";
+        }
+        return "正在获取用户余额，请稍候...";
     }
 
     const serverPrices = getModelPricing(agentConfig.provider || "", agentConfig.model);

@@ -13,6 +13,7 @@ import {
 import { pino } from "pino";
 import { deductBalance } from "../../../auth/authSlice"; // <--- 1. 导入新的 deductBalance action
 import { prepareTokenUsageData } from "../../../ai/token/prepareTokenUsageData";
+import { resolveMessageOwner } from "../../messages/resolveMessageOwner";
 
 const logger = pino({ name: "token-usage", level: "info" });
 const dialogTokenPatchQueue = new Map<string, Promise<void>>();
@@ -102,6 +103,9 @@ const updateStats = async (
       write({
         data: { ...updatedStats, id: key, type: DataType.TOKEN },
         customKey: key,
+        // Must stamp owner on writeConfig: writeAction overwrites data.userId
+        // from writeConfig.userId || currentUserId (empty when logged out).
+        userId: data.userId,
       })
     );
 
@@ -165,12 +169,26 @@ export const updateTokensAction = async (
   { dialogId, dialogKey, usage: usageRaw, agentConfig }: any,
   thunkApi: any
 ) => {
-  const { currentUser } = thunkApi.getState().auth;
+  const state = thunkApi.getState();
+  const { currentUser } = state.auth;
+  // Same owner priority as message writes (resolveMessageOwner): dialog
+  // config → dialog key (dialog-local-*) → account → "local". Logged-out
+  // local dialogs produce token-local-* / token-stats-day-user-local-* and
+  // hit the shared device-local no-replication boundary.
+  const dialogConfig = dialogKey ? selectById(state, dialogKey) : null;
+  const dialogConfigUserId = (dialogConfig as { userId?: unknown } | null)
+    ?.userId;
+  const ownerUserId = resolveMessageOwner({
+    dialogConfigUserId:
+      typeof dialogConfigUserId === "string" ? dialogConfigUserId : null,
+    dialogKey: typeof dialogKey === "string" ? dialogKey : "",
+    currentAccountUserId: currentUser?.userId ?? null,
+  });
   const timestamp = Date.now();
   const prepared = prepareTokenUsageData({
     rawUsage: usageRaw,
     agentConfig,
-    userId: currentUser?.userId,
+    userId: ownerUserId,
     username: currentUser?.username,
     cybotId: agentConfig.id,
     dialogId,
@@ -184,6 +202,9 @@ export const updateTokensAction = async (
     type: DataType.TOKEN,
     id: ulid(timestamp),
     dateKey: format(timestamp, "yyyy-MM-dd"),
+    // Keep the same clock used for id/dateKey so record keys never see
+    // undefined when a prepare helper omits timestamp.
+    timestamp,
   } as TokenUsageData;
 
   const record = createTokenRecord(persistedTokenData, {

@@ -1,7 +1,9 @@
 import { selectCurrentServer } from "../../app/settings/settingSlice";
+import { getIsDesktopApp } from "../../app/utils/env";
 import { selectCurrentToken } from "../../auth/authSlice";
 import type { RootState } from "../../app/store";
 import type { CliProvider } from "./cliExecutor";
+import { isCliProvider } from "./cliProviders";
 
 type CliChatAction = "start" | "turn" | "get" | "close";
 
@@ -27,13 +29,27 @@ function getCliChatRequestConfig(thunkApi: any) {
   return { currentServer, token };
 }
 
+/** Desktop shell is served by the local host; CLI must hit same-origin so the
+ *  local host can spawn the user's CLI (cloud cannot). Do not use currentServer
+ *  here — resolveDesktopSafeServer rewrites local URLs to cloud on desktop. */
+function resolveCliChatUrl(currentServer: string): string {
+  if (getIsDesktopApp()) return "/api/cli/chat";
+  return `${currentServer}/api/cli/chat`;
+}
+
+function resolveCliScanUrl(): string {
+  // Scan only makes sense against the local desktop host (spawn + PATH).
+  // Non-desktop callers should skip before fetching.
+  return "/api/cli/scan";
+}
+
 async function postCliChat(
   thunkApi: any,
   body: Record<string, any>,
   signal?: AbortSignal,
 ): Promise<Response> {
   const { currentServer, token } = getCliChatRequestConfig(thunkApi);
-  return fetch(`${currentServer}/api/cli/chat`, {
+  return fetch(resolveCliChatUrl(currentServer), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -150,4 +166,42 @@ export function createCliChatTurnStream(
         },
     signal,
   );
+}
+
+/**
+ * Desktop-only: ask local host which whitelist CLIs are on PATH.
+ * Non-desktop → [] (no local host to probe). Failures → [] (manual pick).
+ */
+export async function scanInstalledClis(
+  thunkApi?: any,
+  signal?: AbortSignal,
+): Promise<CliProvider[]> {
+  if (!getIsDesktopApp()) return [];
+
+  let token: string | undefined;
+  try {
+    if (thunkApi?.getState) {
+      token = selectCurrentToken(thunkApi.getState() as RootState) || undefined;
+    }
+  } catch {
+    // Logged-out desktop still scans via trusted same-origin.
+  }
+
+  try {
+    const response = await fetch(resolveCliScanUrl(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: "{}",
+      signal,
+    });
+    if (!response.ok) return [];
+    const data = (await response.json()) as { installed?: unknown };
+    if (!Array.isArray(data?.installed)) return [];
+    return data.installed.filter(isCliProvider);
+  } catch {
+    return [];
+  }
 }

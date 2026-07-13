@@ -920,11 +920,6 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
     const skipLocal = await shouldSkipAutoLocalForServerPlatformTools(options);
     if (!skipLocal) {
       const localResult = await runLocalAgentTurnForCli(options, { reportFailure: false });
-      if (localResult.exitCode !== 0 && localResult.localError) {
-        options.output.write(
-          `[nolo] auto runtime: local run unavailable (${localResult.localError instanceof Error ? localResult.localError.message : String(localResult.localError)}); falling back to server.\n`
-        );
-      }
       if (localResult.exitCode === 0) {
         return {
           exitCode: localResult.exitCode,
@@ -933,8 +928,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
         };
       }
       if (isMissingLocalAgentConfigError(localResult.localError, options.agentKey)) {
+        // Local config refresh is local-adapter only; still prefer local before any server path.
         options.output.write(
-          `[nolo] Local agent config was missing; refreshing from the configured server and retrying local once.\n`
+          `[nolo] Local agent config was missing; refreshing local config and retrying local once.\n`
         );
         try {
           const refreshed = await refreshMissingLocalAgentConfig(options);
@@ -951,8 +947,30 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
             }
           }
         } catch {
-          // Fall through to the existing server runtime fallback below.
+          // Fall through — server fallback only when authenticated (M3).
         }
+      }
+      // M3: no server fallback without an auth token. Surface local failure instead.
+      if (!authToken) {
+        const localErrorMessage = localResult.localError instanceof Error
+          ? localResult.localError.message
+          : localResult.localError
+            ? String(localResult.localError)
+            : "local runtime failed";
+        options.output.write(
+          `[nolo] auto runtime: local run unavailable (${localErrorMessage}). ` +
+            "No auth token is set, so server fallback is disabled. " +
+            "Fix local credentials/config, or run `nolo login` / set AUTH_TOKEN to enable server runtime.\n"
+        );
+        return {
+          exitCode: 1,
+          ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
+        };
+      }
+      if (localResult.localError) {
+        options.output.write(
+          `[nolo] auto runtime: local run unavailable (${localResult.localError instanceof Error ? localResult.localError.message : String(localResult.localError)}); falling back to server.\n`
+        );
       }
     }
   }

@@ -64,6 +64,24 @@ interface CreateDialogArgs {
 const isGreetingConfig = (g: unknown): g is AgentGreetingConfig =>
   !!g && typeof g === "object" && !Array.isArray(g);
 
+const LOCAL_OWNER_DIALOG_PREFIXES = ["agent-local-", "cybot-local-"];
+
+/**
+ * Returns true when the dialog references a device-local Agent/cybot
+ * (e.g. `agent-local-*` / `cybot-local-*`). Such dialogs must always be
+ * owned by `"local"`, even when an account is currently logged in.
+ */
+export const isLocalOwnerDialogCybots = (cybots: readonly string[]): boolean => {
+  if (!Array.isArray(cybots)) return false;
+  for (const cybot of cybots) {
+    if (typeof cybot !== "string") continue;
+    for (const prefix of LOCAL_OWNER_DIALOG_PREFIXES) {
+      if (cybot.startsWith(prefix)) return true;
+    }
+  }
+  return false;
+};
+
 const notifyUserDataUpdated = () => {
   if (
     typeof window !== "undefined" &&
@@ -94,7 +112,31 @@ export const createDialogAction = async (
   const { dispatch: dispatchRaw, getState, extra } = thunkApi as any;
   const dispatch = dispatchRaw as any;
   const agentKey = cybots[0];
-  const userId = selectUserId(getState()) as string;
+  const currentUserId =
+    (selectUserId(getState()) as string | null | undefined) ?? null;
+  const isLocalCybotDialog = isLocalOwnerDialogCybots(cybots);
+  // Per M1-C owner rules:
+  //   1. dialogs referencing agent-local-/cybot-local- are always "local",
+  //      even when an account is logged in.
+  //   2. Otherwise owner is the current account; fall back to "local"
+  //      when no account is active (logged out).
+  const userId: string = isLocalCybotDialog
+    ? "local"
+    : currentUserId && currentUserId.trim().length > 0
+      ? currentUserId
+      : "local";
+
+  try {
+    const { localFirstLog } = await import("../../../app/localFirst/localFirstLog");
+    localFirstLog("dialog.create", {
+      owner: userId,
+      agentKey: typeof agentKey === "string" ? agentKey : "",
+      isLocalCybot: isLocalCybotDialog,
+      hasSpace: Boolean(args.spaceId),
+    });
+  } catch {
+    /* diagnostics best-effort */
+  }
 
   const readAgentConfig = async () => {
     const existing = (await dispatch(
@@ -117,7 +159,11 @@ export const createDialogAction = async (
     }
 
     await dispatch(
-      write({ data: recoveredBuiltinAgent, customKey: recoveredBuiltinAgent.dbKey })
+      write({
+        data: recoveredBuiltinAgent,
+        customKey: recoveredBuiltinAgent.dbKey,
+        userId,
+      })
     ).unwrap();
 
     return recoveredBuiltinAgent;
@@ -180,6 +226,9 @@ export const createDialogAction = async (
   // Dialog creation must only honor an explicit caller-provided `spaceId`.
   // Omitting `spaceId` means creating an unscoped dialog.
   const spaceId = explicitSpaceId;
+  // M1-C: use the resolved owner (local for local agents, otherwise current
+  // account) so dialog-local-* matches its Agent record owner. Prevents the
+  // dialog from silently inheriting a logged-in account's `userId`.
   const dialogPath = createDialogKey(userId);
   const dialogId = extractCustomId(dialogPath);
 
@@ -229,6 +278,7 @@ export const createDialogAction = async (
   const dialogData = {
     id: dialogId,
     dbKey: dialogPath,
+    userId,
     cybots,
     title,
     type: DataType.DIALOG,
@@ -264,7 +314,16 @@ export const createDialogAction = async (
     };
     dispatch((upsertSSREntity as any)(optimisticDialogData));
     notifyUserDataUpdated();
-    void dispatch(write({ data: dialogData, customKey: dialogPath }))
+    // M1-C: pass `userId` explicitly so writeAction does not fall back to
+    // the runtime currentUserId (which may be a logged-in account) and
+    // accidentally override the resolved local owner.
+    void dispatch(
+      write({
+        data: { ...dialogData, userId },
+        customKey: dialogPath,
+        userId,
+      })
+    )
       .unwrap()
       .catch((error: unknown) => {
         console.error("[createDialogAction] optimistic dialog write failed", {
@@ -276,7 +335,11 @@ export const createDialogAction = async (
   }
 
   const result = await dispatch(
-    write({ data: dialogData, customKey: dialogPath })
+    write({
+      data: { ...dialogData, userId },
+      customKey: dialogPath,
+      userId,
+    })
   ).unwrap();
 
   // 3. 将对话添加到空间
@@ -357,7 +420,8 @@ export const createDialogAction = async (
           dialogConfig: {
             id: dialogId,
             dbKey: dialogPath,
-          } as DialogConfig,
+            userId,
+          } as unknown as DialogConfig,
         })
       );
     } else if (effectiveCfg.text) {
@@ -372,7 +436,8 @@ export const createDialogAction = async (
           dialogConfig: {
             id: dialogId,
             dbKey: dialogPath,
-          } as DialogConfig,
+            userId,
+          } as unknown as DialogConfig,
         })
       );
     }

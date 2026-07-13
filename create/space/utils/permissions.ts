@@ -1,47 +1,56 @@
-// create/space/utils/permissions.ts (新文件)
+// create/space/utils/permissions.ts
 
 import type { SpaceData } from "../../../app/types";
+import {
+  DEVICE_LOCAL_OWNER_ID,
+  isDeviceLocalSpaceBody,
+} from "../../../database/authority/deviceLocal";
 
 /**
- * 检查用户是否是指定空间的成员。
- * 如果检查不通过，则抛出错误。
- * @param spaceData - 要检查的空间数据对象，可以为 null。
- * @param userId - 要检查的用户 ID，可以为 null。
- * @throws {Error} 如果空间数据缺失、用户 ID 缺失或用户不是成员。
+ * Check whether the actor may mutate the given Space.
+ *
+ * Device-local Space body (`userId`/`ownerId` === `"local"`) is owned by the
+ * synthetic local owner: guest and any logged-in account may operate it.
+ * Account Spaces keep strict membership (logged-in + members includes userId).
+ * Local cache of an account Space is never treated as device-local.
  */
 export const checkSpaceMembership = (
   spaceData: SpaceData | null,
-  userId: string | null
+  userId: string | null | undefined
 ): void => {
   if (!spaceData) {
-    // 在调用此函数前，通常应该确保 spaceData 已加载
-    // 但添加此检查以防万一
     console.error("[Permission Check] Space data is missing.");
     throw new Error("无法执行权限检查：空间数据缺失。");
   }
+
+  // Real local body authority only — not arbitrary cached account Spaces.
+  if (isDeviceLocalSpaceBody(spaceData)) {
+    return;
+  }
+
   if (!userId) {
     console.error("[Permission Check] User ID is missing.");
     throw new Error("无法执行权限检查：用户 ID 缺失。");
   }
 
-  // 检查 members 数组是否存在且包含 userId
   if (
     !spaceData.members ||
     !Array.isArray(spaceData.members) ||
     !spaceData.members.includes(userId)
   ) {
-    // 记录警告日志，但抛出统一的、用户友好的错误信息
     console.warn(
       `[Permission Check] User ${userId} attempt to operate on space ${spaceData.id} without membership.`
     );
     throw new Error("当前用户不是空间成员");
   }
-
-  // 未来可以在这里添加更多的权限检查逻辑，例如：
-  // if (requiredRole === 'admin' && spaceData.roles[userId] !== 'admin') {
-  //     throw new Error("需要管理员权限");
-  // }
 };
 
-// 你可以在这个文件中添加其他与 Space 权限相关的辅助函数
-// export const checkSpaceOwner = (...) => { ... };
+/**
+ * Fields to merge into Space body patch/write changes so replication authority
+ * sees `userId === "local"` and plans zero remote servers.
+ * No-op for account Spaces (must not rewrite account ownership stamps).
+ */
+export const localSpaceAuthorityPatchStamp = (
+  spaceData: { userId?: string | null; ownerId?: string | null } | null | undefined
+): { userId: typeof DEVICE_LOCAL_OWNER_ID } | Record<string, never> =>
+  isDeviceLocalSpaceBody(spaceData) ? { userId: DEVICE_LOCAL_OWNER_ID } : {};

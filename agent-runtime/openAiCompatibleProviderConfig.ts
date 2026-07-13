@@ -1,4 +1,5 @@
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
+import type { CredentialBroker } from "./credentialBroker";
 import type { OpenAiCompatibleProviderConfig } from "./openAiCompatibleProvider";
 import { buildProviderExecutionPlan, type ApiKeyRefResolver } from "./providerResolution";
 
@@ -8,12 +9,15 @@ export async function resolveOpenAiCompatibleProviderConfig(args: {
   agentConfig: AgentRuntimeAgentConfig;
   env: EnvLike;
   apiKeyRefResolver?: ApiKeyRefResolver;
+  /** Local-first OS credential broker (API keys). Prefer over raw agent.apiKey. */
+  credentialBroker?: CredentialBroker;
 }): Promise<OpenAiCompatibleProviderConfig> {
   const plan = await buildProviderExecutionPlan({
     agentConfig: args.agentConfig,
     env: args.env,
     runtimeKind: "local",
     ...(args.apiKeyRefResolver ? { apiKeyRefResolver: args.apiKeyRefResolver } : {}),
+    ...(args.credentialBroker ? { credentialBroker: args.credentialBroker } : {}),
   });
   if (plan.mode === "cli" || plan.transport !== "direct") {
     throw new Error("OpenAI-compatible provider config requires a direct provider execution plan.");

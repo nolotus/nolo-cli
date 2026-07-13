@@ -1,6 +1,6 @@
 import { selectUserId } from "../../auth/authSlice";
 import { createSpaceKey } from "../space/spaceKeys";
-import { read, remove, patch } from "../../database/dbSlice";
+import { read, remove, patch, write } from "../../database/dbSlice";
 import { deleteDbKey } from "../../app/hooks/deleteDbKey";
 import {
   persistDefaultSpacePreference,
@@ -16,6 +16,12 @@ import {
   splitKey,
 } from "../../database/keys";
 import { normalizeSpaceId } from "./spaceKeys";
+import {
+  DEVICE_LOCAL_OWNER_ID,
+  isDeviceLocalSpaceBody,
+} from "../../database/authority/deviceLocal";
+import { buildTombstoneRecord } from "../../database/tombstones";
+import { DataType } from "../types";
 
 // 定义ThunkAPI的通用类型（根据redux-thunk的用法）
 interface ThunkAPI {
@@ -35,7 +41,12 @@ type DeleteSpaceArgs =
       strategy?: DeleteSpaceStrategy;
     };
 
-const getCurrentUserId = (state: any): string => selectUserId(state) as string;
+const getCurrentUserId = (state: any): string | null => {
+  const userId = selectUserId(state) as string | null | undefined;
+  if (typeof userId !== "string") return null;
+  const trimmed = userId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
 
 const fetchSpaceData = async (
   spaceId: string,
@@ -52,8 +63,22 @@ const fetchSpaceData = async (
   }
 };
 
-const checkOwnerPermission = (spaceData: any | undefined, userId: string) => {
-  if (spaceData && spaceData.ownerId !== userId) {
+/**
+ * Owner gate for Space delete.
+ * - Device-local body (`ownerId`/`userId` === `"local"`): guest or any account
+ *   may delete (synthetic local owner). Cached account Spaces are never local.
+ * - Account Space: require logged-in actor matching ownerId (unchanged).
+ */
+const checkOwnerPermission = (
+  spaceData: any | undefined,
+  accountUserId: string | null | undefined
+) => {
+  if (!spaceData) return;
+  if (isDeviceLocalSpaceBody(spaceData)) return;
+  if (!accountUserId) {
+    throw new Error("User is not logged in.");
+  }
+  if (spaceData.ownerId !== accountUserId) {
     throw new Error("Only owner can delete space");
   }
 };
@@ -67,6 +92,93 @@ const deleteSpaceData = async (
     await dispatch(remove(spaceKey)).unwrap();
   } catch (error) {
     console.warn(`Failed to delete space ${spaceId}:`, error);
+  }
+};
+
+/**
+ * Device-local Space delete: write tombstones with explicit userId=local so
+ * replication plans [] (removeAction does not pass record.userId to planner).
+ * Body first, then membership — body tombstone alone drops the Space from
+ * restart listing even if a membership row is briefly left behind.
+ */
+const tombstoneLocalAuthorityRecord = async (
+  dbKey: string,
+  existing: Record<string, unknown> | null | undefined,
+  dispatch: ThunkAPI["dispatch"]
+) => {
+  const nowIso = new Date().toISOString();
+  const base =
+    existing && typeof existing === "object"
+      ? { ...existing }
+      : ({ dbKey } as Record<string, unknown>);
+  const tombstone = buildTombstoneRecord(
+    {
+      ...base,
+      dbKey,
+      userId: DEVICE_LOCAL_OWNER_ID,
+    },
+    nowIso
+  );
+  await dispatch(
+    write({
+      data: tombstone,
+      customKey: dbKey,
+      userId: DEVICE_LOCAL_OWNER_ID,
+    })
+  ).unwrap();
+};
+
+const deleteLocalSpaceAuthority = async (
+  spaceId: string,
+  spaceData: any | undefined,
+  dispatch: ThunkAPI["dispatch"]
+) => {
+  const spaceKey = createSpaceKey.space(spaceId);
+  try {
+    await tombstoneLocalAuthorityRecord(
+      spaceKey,
+      spaceData && typeof spaceData === "object" ? spaceData : { dbKey: spaceKey },
+      dispatch
+    );
+  } catch (error) {
+    console.warn(`Failed to tombstone local space ${spaceId}:`, error);
+    throw error;
+  }
+
+  const memberIds = new Set<string>([DEVICE_LOCAL_OWNER_ID]);
+  if (Array.isArray(spaceData?.members)) {
+    for (const memberId of spaceData.members) {
+      if (typeof memberId === "string" && memberId.trim()) {
+        memberIds.add(memberId.trim());
+      }
+    }
+  }
+
+  for (const memberId of memberIds) {
+    const memberKey = createSpaceKey.member(memberId, spaceId);
+    let existingMember: Record<string, unknown> | null = null;
+    try {
+      existingMember = await dispatch(read({ dbKey: memberKey })).unwrap();
+    } catch {
+      existingMember = null;
+    }
+    try {
+      await tombstoneLocalAuthorityRecord(
+        memberKey,
+        existingMember ?? {
+          dbKey: memberKey,
+          type: DataType.SPACE,
+          userId: memberId,
+          spaceId: normalizeSpaceId(spaceId),
+        },
+        dispatch
+      );
+    } catch (err) {
+      console.warn(
+        `Failed to tombstone local membership ${memberId} for space ${spaceId}:`,
+        err
+      );
+    }
   }
 };
 
@@ -241,21 +353,31 @@ export const deleteSpaceAction = async (
 ) => {
   const { dispatch, getState } = thunkAPI;
   const { spaceId, strategy } = resolveDeleteArgs(input);
-  const userId = getCurrentUserId(getState());
-  if (!userId) {
-    throw new Error("User is not logged in.");
-  }
+  const accountUserId = getCurrentUserId(getState());
   const spaceData = await fetchSpaceData(spaceId, dispatch);
+  const isLocalSpace = isDeviceLocalSpaceBody(spaceData);
 
-  checkOwnerPermission(spaceData, userId);
+  if (!isLocalSpace) {
+    if (!accountUserId) {
+      throw new Error("User is not logged in.");
+    }
+    checkOwnerPermission(spaceData, accountUserId);
+  }
+  // Device-local Space: guest or logged-in may delete; body owner is "local".
+  // Do not require account membership / account ownerId match.
+
+  // Content strategy ownership: local Space uses synthetic local owner.
+  const ownershipUserId = isLocalSpace
+    ? DEVICE_LOCAL_OWNER_ID
+    : (accountUserId as string);
 
   if (spaceData && strategy !== "delete-space-only") {
     const allEntities = await listSpaceEntities(spaceData, dispatch);
     const ownedEntities = allEntities.filter(({ entityKey, entity }) =>
-      isOwnedByUser(entityKey, entity, userId)
+      isOwnedByUser(entityKey, entity, ownershipUserId)
     );
     const unownedEntities = allEntities.filter(
-      ({ entityKey, entity }) => !isOwnedByUser(entityKey, entity, userId)
+      ({ entityKey, entity }) => !isOwnedByUser(entityKey, entity, ownershipUserId)
     );
 
     if (strategy === "move-owned-to-all") {
@@ -266,11 +388,25 @@ export const deleteSpaceAction = async (
     }
   }
 
-  await deleteSpaceData(spaceId, dispatch);
-  await deleteAllMembers(spaceData, spaceId, dispatch);
-  await deleteCurrentUserMember(userId, spaceId, dispatch);
+  if (isLocalSpace) {
+    await deleteLocalSpaceAuthority(spaceId, spaceData, dispatch);
+  } else {
+    await deleteSpaceData(spaceId, dispatch);
+    await deleteAllMembers(spaceData, spaceId, dispatch);
+    await deleteCurrentUserMember(accountUserId as string, spaceId, dispatch);
+  }
+
+  // Local Space: only clear device-local default-space preference.
+  // Never clear the signed-in account's defaultSpaceId for a local Space.
+  const preferenceOwners = isLocalSpace
+    ? [DEVICE_LOCAL_OWNER_ID]
+    : [
+        accountUserId as string,
+        ...(Array.isArray(spaceData?.members) ? spaceData.members : []),
+      ];
+
   await clearDeletedMemberDefaultSpacePreferences(
-    [userId, ...(Array.isArray(spaceData?.members) ? spaceData.members : [])],
+    preferenceOwners,
     spaceId,
     dispatch
   );

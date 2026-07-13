@@ -1,5 +1,8 @@
 import type { RootState, AppThunkApi } from "../../app/store";
-import { readDefaultSpaceIdPreference } from "../../app/settings/defaultSpacePreference";
+import {
+  readDefaultSpaceIdPreference,
+  resolveDefaultSpacePreferenceOwnerId,
+} from "../../app/settings/defaultSpacePreference";
 
 import { changeSpace } from "./spaceSlice";
 import { readSpaceIfExists } from "./resolvePreferredSpaceId";
@@ -19,10 +22,18 @@ export const loadDefaultSpaceAction = async (
     return null;
   }
 
+  // Actor-scoped default: guest → "local"; account A/B → that account only.
+  // Does not read another actor's register (no local↔account leak).
+  const preferenceOwnerId = resolveDefaultSpacePreferenceOwnerId(
+    userId ?? state.auth?.currentUser?.userId ?? null
+  );
   const memberSpaces = state.space.memberSpaces;
 
   try {
-    const defaultSpaceId = await readDefaultSpaceIdPreference(dispatch, userId);
+    const defaultSpaceId = await readDefaultSpaceIdPreference(
+      dispatch,
+      preferenceOwnerId
+    );
     const spaceIdToLoad = await readSpaceIfExists(dispatch, defaultSpaceId);
 
     if (spaceIdToLoad) {
@@ -32,7 +43,7 @@ export const loadDefaultSpaceAction = async (
 
     if (memberSpaces === null) {
       console.warn(
-        `[Space] Skipped default-space selection for ${userId}: memberships are still loading and no readable default-space register exists.`
+        `[Space] Skipped default-space selection for ${preferenceOwnerId}: memberships are still loading and no readable default-space register exists.`
       );
       return null;
     }
@@ -44,7 +55,7 @@ export const loadDefaultSpaceAction = async (
       const readableId = await readSpaceIfExists(dispatch, fallbackId);
       if (readableId) {
         console.info(
-          `[Space] No register for ${userId}, falling back to member space: ${readableId}`
+          `[Space] No register for ${preferenceOwnerId}, falling back to member space: ${readableId}`
         );
         await dispatch((changeSpace as any)(readableId)).unwrap();
         return readableId;
@@ -52,7 +63,7 @@ export const loadDefaultSpaceAction = async (
     }
 
     console.warn(
-      `[Space] Skipped default-space selection for ${userId}: no readable default-space register exists.`
+      `[Space] Skipped default-space selection for ${preferenceOwnerId}: no readable default-space register exists.`
     );
     return null;
   } catch (error) {

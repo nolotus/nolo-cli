@@ -7,6 +7,10 @@ import {
   syncWithServers,
 } from "../requests";
 import { planServersForTenant } from "../tenantPlacement";
+import {
+  isDeviceLocalDbKey,
+  isDeviceLocalOwnerId,
+} from "../authority/deviceLocal";
 import { resolveRecordAuthority } from "../authority/recordAuthority";
 import { planAuthorityReadServers } from "./readResolution";
 
@@ -53,6 +57,21 @@ export const resolveAuthorityReplicationServers = ({
       state?.settings?.userAuthorityRegistry ??
       state?.auth?.currentUser?.authorityRegistry,
   });
+
+  // Device-local records must never leave the device.
+  // Even when remote sync servers are configured and a real account is
+  // logged in, we plan an empty replication list here so write/patch/remove
+  // and read-backfill calls skip the network round-trip entirely.
+  // Covers: owner from key (`agent-local-*` / `dialog-local-*`),
+  // authoritative `record.userId === "local"` (e.g. dialog message keys
+  // where dialogId is not the owner), and device-local dbKey prefixes.
+  if (
+    isDeviceLocalOwnerId(authority.ownerUserId) ||
+    isDeviceLocalOwnerId(record?.userId) ||
+    isDeviceLocalDbKey(dbKey)
+  ) {
+    return [];
+  }
 
   return planAuthorityReadServers({
     allServers,

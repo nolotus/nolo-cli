@@ -292,6 +292,51 @@ export default {
       finish: "Finish",
       ocrAddToChat: "OCR to Chat",
       newTable: "New Table",
+      // Existing-account Space local-Agent reconciliation (not full Space cloud sync)
+      syncLocalAgents: "Sync local Agents in this Space",
+      syncLocalAgentsSectionTitle: "Local Agents in this Space",
+      syncLocalAgentsSectionDesc:
+        "Reconcile device-local Agent references in this account Space catalog into account snapshots. Does not create a new Space or run full Space cloud sync.",
+      syncLocalAgentsTitle: "Sync local Agents in this Space",
+      syncLocalAgentsConfirm: "Confirm sync",
+      syncLocalAgentsConfirmLead:
+        "Found {{count}} local Agent reference(s). Sync them to the current account and rewrite this Space catalog?",
+      syncLocalAgentsFactLocalRemains:
+        "Local Agents remain in the global/local view.",
+      syncLocalAgentsFactSnapshot:
+        "Account Agent configuration snapshots are created or reused.",
+      syncLocalAgentsFactCatalogRewrite:
+        "This Space's catalog references switch to account Agent keys.",
+      syncLocalAgentsFactNoDialogs:
+        "Dialogs, messages, attachments, docs, tables, and files are not uploaded.",
+      syncLocalAgentsFactNoSecrets:
+        "Local API keys and tokens are not uploaded.",
+      syncLocalAgentsFactNoContinuous:
+        "This is a one-time action; there is no continuous sync.",
+      syncLocalAgentsSuccess:
+        "Rewrote {{count}} local Agent reference(s) to account snapshots (local Agents kept)",
+      syncLocalAgentsNoop:
+        "This Space has no local Agents that need syncing (nothing uploaded)",
+      syncLocalAgentsError: "Sync failed. Please try again.",
+      syncLocalAgentsBlockedTitle: "Cannot sync local Agents",
+      syncLocalAgentsBlockedLead:
+        "Preflight found unsupported or missing local content. Upload was blocked. Resolve the types below and try again.",
+      syncLocalAgentsBlockedOk: "Got it",
+      syncLocalAgentsBlockedReason_unsupported_local_content:
+        "Contains device-local content types that are not supported for this sync.",
+      syncLocalAgentsBlockedReason_missing_or_tombstoned_record:
+        "Some referenced records are missing or already deleted.",
+      syncLocalAgentsBlockedReason_authoritative_type_mismatch:
+        "Catalog labels do not match the authoritative record type.",
+      syncLocalAgentsType_dialog: "Dialog",
+      syncLocalAgentsType_page: "Page",
+      syncLocalAgentsType_doc: "Doc",
+      syncLocalAgentsType_table: "Table",
+      syncLocalAgentsType_file: "File",
+      syncLocalAgentsType_image: "Image",
+      syncLocalAgentsType_app: "App",
+      syncLocalAgentsType_task: "Task",
+      syncLocalAgentsType_unknown: "Unknown",
       myShares: {
         title: "My Shares",
       },
@@ -583,6 +628,48 @@ export default {
       finish: "完成",
       ocrAddToChat: "OCR 加入对话",
       newTable: "新建表格",
+      // 已有账号 Space 的本机 Agent 对账（不是完整 Space 云同步）
+      syncLocalAgents: "同步此 Space 中的本机 Agent",
+      syncLocalAgentsSectionTitle: "本机 Agent 与此 Space",
+      syncLocalAgentsSectionDesc:
+        "把此账号 Space 目录里引用的本机 Agent 对账到账号快照。不会创建新 Space，也不会做完整 Space 云同步。",
+      syncLocalAgentsTitle: "同步此 Space 中的本机 Agent",
+      syncLocalAgentsConfirm: "确认同步",
+      syncLocalAgentsConfirmLead:
+        "检测到 {{count}} 个本机 Agent 引用。确认同步到当前账号并改写此 Space 目录？",
+      syncLocalAgentsFactLocalRemains:
+        "本机 Agent 会继续留在全局/本机视图中。",
+      syncLocalAgentsFactSnapshot:
+        "会为这些本机 Agent 创建或复用账号侧配置快照。",
+      syncLocalAgentsFactCatalogRewrite:
+        "此 Space 目录中的引用会切换为账号 Agent 键。",
+      syncLocalAgentsFactNoDialogs:
+        "不会上传对话、消息、附件、文档、表格或文件。",
+      syncLocalAgentsFactNoSecrets: "不会上传本机 API 密钥或令牌。",
+      syncLocalAgentsFactNoContinuous: "这是一次性操作，不会持续同步。",
+      syncLocalAgentsSuccess:
+        "已改写 {{count}} 个本机 Agent 引用到账号快照（本机 Agent 仍保留）",
+      syncLocalAgentsNoop: "此 Space 没有需要同步的本机 Agent（无上传）",
+      syncLocalAgentsError: "同步失败，请稍后重试",
+      syncLocalAgentsBlockedTitle: "无法同步本机 Agent",
+      syncLocalAgentsBlockedLead:
+        "预检发现不支持或缺失的本机内容，已阻止上传。请先处理下列类型后再试。",
+      syncLocalAgentsBlockedOk: "知道了",
+      syncLocalAgentsBlockedReason_unsupported_local_content:
+        "包含尚不支持同步的本机内容类型。",
+      syncLocalAgentsBlockedReason_missing_or_tombstoned_record:
+        "部分引用的记录缺失或已删除。",
+      syncLocalAgentsBlockedReason_authoritative_type_mismatch:
+        "目录标注与真实记录类型不一致。",
+      syncLocalAgentsType_dialog: "对话",
+      syncLocalAgentsType_page: "页面",
+      syncLocalAgentsType_doc: "文档",
+      syncLocalAgentsType_table: "表格",
+      syncLocalAgentsType_file: "文件",
+      syncLocalAgentsType_image: "图片",
+      syncLocalAgentsType_app: "应用",
+      syncLocalAgentsType_task: "任务",
+      syncLocalAgentsType_unknown: "未知",
       myShares: {
         title: "我的分享",
       },
@@ -866,6 +953,48 @@ export default {
       finish: "完成",
       ocrAddToChat: "OCR 加入對話",
       newTable: "新增表格",
+      // 既有帳號 Space 的本機 Agent 對帳（不是完整 Space 雲同步）
+      syncLocalAgents: "同步此 Space 中的本機 Agent",
+      syncLocalAgentsSectionTitle: "本機 Agent 與此 Space",
+      syncLocalAgentsSectionDesc:
+        "把此帳號 Space 目錄裡引用的本機 Agent 對帳到帳號快照。不會建立新 Space，也不會做完整 Space 雲同步。",
+      syncLocalAgentsTitle: "同步此 Space 中的本機 Agent",
+      syncLocalAgentsConfirm: "確認同步",
+      syncLocalAgentsConfirmLead:
+        "偵測到 {{count}} 個本機 Agent 引用。確認同步到目前帳號並改寫此 Space 目錄？",
+      syncLocalAgentsFactLocalRemains:
+        "本機 Agent 會繼續留在全域/本機視圖中。",
+      syncLocalAgentsFactSnapshot:
+        "會為這些本機 Agent 建立或重用帳號側設定快照。",
+      syncLocalAgentsFactCatalogRewrite:
+        "此 Space 目錄中的引用會切換為帳號 Agent 鍵。",
+      syncLocalAgentsFactNoDialogs:
+        "不會上傳對話、訊息、附件、文件、表格或檔案。",
+      syncLocalAgentsFactNoSecrets: "不會上傳本機 API 金鑰或權杖。",
+      syncLocalAgentsFactNoContinuous: "這是一次性操作，不會持續同步。",
+      syncLocalAgentsSuccess:
+        "已改寫 {{count}} 個本機 Agent 引用到帳號快照（本機 Agent 仍保留）",
+      syncLocalAgentsNoop: "此 Space 沒有需要同步的本機 Agent（無上傳）",
+      syncLocalAgentsError: "同步失敗，請稍後再試",
+      syncLocalAgentsBlockedTitle: "無法同步本機 Agent",
+      syncLocalAgentsBlockedLead:
+        "預檢發現不支援或缺失的本機內容，已阻止上傳。請先處理下列類型後再試。",
+      syncLocalAgentsBlockedOk: "知道了",
+      syncLocalAgentsBlockedReason_unsupported_local_content:
+        "包含尚不支援同步的本機內容類型。",
+      syncLocalAgentsBlockedReason_missing_or_tombstoned_record:
+        "部分引用的記錄缺失或已刪除。",
+      syncLocalAgentsBlockedReason_authoritative_type_mismatch:
+        "目錄標註與真實記錄類型不一致。",
+      syncLocalAgentsType_dialog: "對話",
+      syncLocalAgentsType_page: "頁面",
+      syncLocalAgentsType_doc: "文件",
+      syncLocalAgentsType_table: "表格",
+      syncLocalAgentsType_file: "檔案",
+      syncLocalAgentsType_image: "圖片",
+      syncLocalAgentsType_app: "應用",
+      syncLocalAgentsType_task: "任務",
+      syncLocalAgentsType_unknown: "未知",
       myShares: {
         title: "我的分享",
       },
@@ -1159,6 +1288,52 @@ export default {
       delete_space_cancel_desc: "今回は削除せず、設定ページに戻ります。",
       ocrAddToChat: "OCR チャットへ追加",
       newTable: "新しいテーブル",
+      // 既存アカウント Space のローカル Agent 突合（完全な Space クラウド同期ではない）
+      syncLocalAgents: "この Space 内のローカル Agent を同期",
+      syncLocalAgentsSectionTitle: "この Space のローカル Agent",
+      syncLocalAgentsSectionDesc:
+        "このアカウント Space カタログ内の端末ローカル Agent 参照をアカウント側スナップショットに突合します。新しい Space は作らず、完全な Space クラウド同期も行いません。",
+      syncLocalAgentsTitle: "この Space 内のローカル Agent を同期",
+      syncLocalAgentsConfirm: "同期を確認",
+      syncLocalAgentsConfirmLead:
+        "{{count}} 件のローカル Agent 参照が見つかりました。現在のアカウントに同期し、この Space カタログを書き換えますか？",
+      syncLocalAgentsFactLocalRemains:
+        "ローカル Agent はグローバル/ローカル表示に残ります。",
+      syncLocalAgentsFactSnapshot:
+        "これらのローカル Agent のアカウント側設定スナップショットを作成または再利用します。",
+      syncLocalAgentsFactCatalogRewrite:
+        "この Space カタログの参照はアカウント Agent キーに切り替わります。",
+      syncLocalAgentsFactNoDialogs:
+        "ダイアログ・メッセージ・添付・ドキュメント・テーブル・ファイルはアップロードしません。",
+      syncLocalAgentsFactNoSecrets:
+        "ローカルの API キーやトークンはアップロードしません。",
+      syncLocalAgentsFactNoContinuous:
+        "これは一度きりの操作で、継続同期はありません。",
+      syncLocalAgentsSuccess:
+        "{{count}} 件のローカル Agent 参照をアカウント側スナップショットに書き換えました（ローカル Agent は保持）",
+      syncLocalAgentsNoop:
+        "この Space に同期が必要なローカル Agent はありません（アップロードなし）",
+      syncLocalAgentsError:
+        "同期に失敗しました。しばらくしてから再試行してください。",
+      syncLocalAgentsBlockedTitle: "ローカル Agent を同期できません",
+      syncLocalAgentsBlockedLead:
+        "事前確認で未対応または欠落したローカル内容が見つかり、アップロードをブロックしました。次の種類を解消してから再試行してください。",
+      syncLocalAgentsBlockedOk: "了解",
+      syncLocalAgentsBlockedReason_unsupported_local_content:
+        "この同期では未対応の端末ローカル内容タイプが含まれています。",
+      syncLocalAgentsBlockedReason_missing_or_tombstoned_record:
+        "一部の参照先レコードが欠落しているか、既に削除されています。",
+      syncLocalAgentsBlockedReason_authoritative_type_mismatch:
+        "カタログ上の種別と実際のレコード種別が一致しません。",
+      syncLocalAgentsType_dialog: "ダイアログ",
+      syncLocalAgentsType_page: "ページ",
+      syncLocalAgentsType_doc: "ドキュメント",
+      syncLocalAgentsType_table: "テーブル",
+      syncLocalAgentsType_file: "ファイル",
+      syncLocalAgentsType_image: "画像",
+      syncLocalAgentsType_app: "アプリ",
+      syncLocalAgentsType_task: "タスク",
+      syncLocalAgentsType_unknown: "不明",
       myShares: {
         title: "マイ共有",
       },

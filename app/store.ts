@@ -82,6 +82,18 @@ interface CreateStoreOptions {
 export const createAppStore = (options: CreateStoreOptions = {}): any => {
   const { dbInstance, tokenManager, preloadedState } = options;
 
+  // Bind durable explicit-sync mapping persistence to the same client DB.
+  // Dynamic import avoids static cycles; best-effort when DB is present.
+  if (dbInstance) {
+    void import("../database/sync/syncMapping")
+      .then(({ bindSyncMappingClientDb }) => {
+        bindSyncMappingClientDb(dbInstance);
+      })
+      .catch(() => {
+        /* mapping store optional during SSR / partial bundles */
+      });
+  }
+
   return configureStore({
     reducer,
     middleware: (getDefaultMiddleware) =>

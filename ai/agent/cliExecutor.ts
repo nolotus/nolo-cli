@@ -21,11 +21,12 @@ import { tmpdir } from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import { resolveLaunchableCodexCommand } from "../../connector-experimental/codexBinary";
 import { buildCliPrompt } from "./cliPrompt";
+import type { CliProvider } from "./cliProviders";
 
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
 
-/** 已支持的 CLI 工具。新增时在此联合类型追加，并在 EXECUTORS 里注册实现 */
-export type CliProvider = "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok" | "kimi";
+/** 已支持的 CLI 工具 — 真值见 cliProviders.ts；新增时改 CLI_PROVIDER_VALUES 并在 EXECUTORS 注册 */
+export type { CliProvider };
 
 /**
  * CLI provider 图片输入。
@@ -237,7 +238,27 @@ function normalizeProxyEnv(env: Record<string, string | undefined>): Record<stri
   };
 }
 
-function buildCliProcessEnv(extraEnv?: Record<string, string | undefined>) {
+/**
+ * Probe binaries for each CLI provider — mirrors spawn/exec targets in this module.
+ * Copilot is launched as `gh copilot` (also accept bare `copilot`).
+ * Used only by local desktop scan; never accept user-supplied bin names.
+ */
+export const CLI_PROBE_BINARIES: Readonly<
+  Record<CliProvider, readonly string[]>
+> = {
+  copilot: ["gh", "copilot"],
+  gemini: ["gemini"],
+  codex: ["codex"],
+  claude: ["claude"],
+  agy: ["agy"],
+  qoder: ["qoder"],
+  opencode: ["opencode"],
+  grok: ["grok"],
+  kimi: ["kimi"],
+};
+
+/** Enhanced process env for CLI spawn / binary probes (GUI PATH on macOS). */
+export function buildCliProcessEnv(extraEnv?: Record<string, string | undefined>) {
   const baseEnv: Record<string, string | undefined> = {
     ...process.env,
     ...extraEnv,

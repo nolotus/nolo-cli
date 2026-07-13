@@ -42,7 +42,9 @@ import {
   withImageGenerationCount,
 } from "../../ai/token/openaiImageGenerationUsage";
 import { resolveHandleSendMessageContext } from "../dialog/actions/handleSendMessageResolver";
+import { resolveMessageOwner } from "./resolveMessageOwner";
 
+export { resolveMessageOwner } from "./resolveMessageOwner";
 
 const OLDER_LOAD_LIMIT = 30;
 
@@ -555,7 +557,16 @@ export const messageSlice = createSliceWithThunks({
 
         const dialogKey = dialogConfig.dbKey || dialogConfig.id;
         const dialogId = extractCustomId(dialogKey);
-        const userId = selectUserId(state);
+        const currentAccountUserId =
+          (selectUserId(state) as string | null | undefined) ?? null;
+        const dialogConfigUserId = (dialogConfig as { userId?: unknown })
+          .userId;
+        const userId = resolveMessageOwner({
+          dialogConfigUserId:
+            typeof dialogConfigUserId === "string" ? dialogConfigUserId : null,
+          dialogKey,
+          currentAccountUserId,
+        });
 
         const { key: messageDbKey, messageId } =
           createDialogMessageKeyAndId(dialogId);
@@ -567,7 +578,7 @@ export const messageSlice = createSliceWithThunks({
           userId,
         };
 
-        // 提取并保存引用 keys
+        // 提取并保存引用 keys（fire-and-forget；保留既有顺序）
         dispatch(
           addReferenceKeysAction({
             content: message.content,
@@ -575,15 +586,19 @@ export const messageSlice = createSliceWithThunks({
           })
         ).catch((err) => console.error("Failed to add refs:", err));
 
+        // 先做 Redux optimistic add（保持既有顺序，避免回放行为变化）
         dispatch(messageActions.addUserMessage({ ...fullMessage, dialogId }));
 
         const { controller, ...messageToWrite } = fullMessage;
-        dispatch(
+        // 必须先 await 本地持久化成功，handleSendMessageAction 已经 await 此 thunk，
+        // 才能保证用户消息落盘后 provider 才开始流式回复。
+        await dispatch(
           write({
             data: { ...messageToWrite, type: DataType.MSG },
             customKey: fullMessage.dbKey,
+            userId,
           })
-        );
+        ).unwrap();
 
         return fullMessage;
       }
@@ -936,6 +951,26 @@ export const messageSlice = createSliceWithThunks({
             ? { ...(persistedMetadata ?? {}), ...inferredActivityCompletionMetadata }
             : persistedMetadata;
 
+        // Same owner authority as prepareAndPersistMessage: dialogConfig.userId
+        // → dialog key (dialog-local-*) → logged-in account → "local".
+        // Logged-out local dialogs must stamp userId=local so writeAction and
+        // the shared device-local replication guard keep records on-device.
+        const state = getState() as any;
+        const dialogConfig = selectDbRecordById(state, dialogKey) as
+          | DialogConfig
+          | null
+          | undefined;
+        const dialogConfigUserId = (dialogConfig as { userId?: unknown } | null)
+          ?.userId;
+        const currentAccountUserId =
+          (selectUserId(state) as string | null | undefined) ?? null;
+        const userId = resolveMessageOwner({
+          dialogConfigUserId:
+            typeof dialogConfigUserId === "string" ? dialogConfigUserId : null,
+          dialogKey,
+          currentAccountUserId,
+        });
+
         const finalMessage: Message = {
           id: messageId,
           dbKey: msgKey,
@@ -952,6 +987,8 @@ export const messageSlice = createSliceWithThunks({
           ...(toolCalls && toolCalls.length > 0
             ? { tool_calls: toolCalls }
             : {}),
+          // Authoritative owner last so metadata cannot overwrite it.
+          userId,
         };
 
         const { controller, ...messageToWrite } = finalMessage;
@@ -960,6 +997,7 @@ export const messageSlice = createSliceWithThunks({
           write({
             data: { ...messageToWrite, type: DataType.MSG },
             customKey: msgKey,
+            userId,
           })
         );
 

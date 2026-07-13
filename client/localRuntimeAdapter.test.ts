@@ -19,6 +19,35 @@ function createAdapter(deps: any) {
   return createCliLocalRuntimeAdapter(deps);
 }
 
+describe("CLI local runtime adapter source contract (credential broker)", () => {
+  const source = readFileSync(join(import.meta.dir, "localRuntimeAdapter.ts"), "utf8");
+
+  test("wires createFileCredentialBroker into resolveProvider paths", () => {
+    expect(source).toContain('from "../agent-runtime/fileCredentialBroker"');
+    expect(source).toContain("createFileCredentialBroker");
+    expect(source).toContain("const credentialBroker = createFileCredentialBroker()");
+    expect(source).toContain("credentialBroker,");
+  });
+
+  test("passes credentialBroker to platform and direct OpenAI-compatible resolvers", () => {
+    expect(source).toContain("resolvePlatformChatProviderConfig({");
+    expect(source).toContain("resolveCliOpenAiProviderConfig({");
+    // Both call sites must include credentialBroker next to apiKeyRefResolver.
+    const platformBlock = source.slice(
+      source.indexOf("resolvePlatformChatProviderConfig({"),
+      source.indexOf("resolvePlatformChatProviderConfig({") + 280,
+    );
+    const directBlock = source.slice(
+      source.indexOf("resolveCliOpenAiProviderConfig({"),
+      source.indexOf("resolveCliOpenAiProviderConfig({") + 280,
+    );
+    expect(platformBlock).toContain("apiKeyRefResolver");
+    expect(platformBlock).toContain("credentialBroker");
+    expect(directBlock).toContain("apiKeyRefResolver");
+    expect(directBlock).toContain("credentialBroker");
+  });
+});
+
 describe("CLI local runtime adapter", () => {
   beforeEach(() => {
     clearCliLocalRuntimePreparedAgentCache();

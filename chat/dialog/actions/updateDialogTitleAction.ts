@@ -2,6 +2,7 @@
 
 import { runLlm } from "../../../ai/agent/agentSlice";
 import type { RootState } from "../../../app/store";
+import { selectUserId } from "../../../auth/authSlice";
 import {
   updateContentTitle,
 } from "../../../create/space/spaceSlice";
@@ -87,11 +88,58 @@ type UpdateDialogTitleDeps = {
   selectDialogById?: typeof selectById;
   selectAllMessages?: typeof selectAllMsgs;
   updateSpaceContentTitle?: typeof updateContentTitle;
+  selectCurrentUserId?: typeof selectUserId;
+};
+
+type UpdateDialogTitleArgs = {
+  dialogKey: string;
+  /** Optional agent config from the completing turn (local-first title skip). */
+  agentConfig?: {
+    userId?: unknown;
+    credentialRef?: unknown;
+    useServerProxy?: unknown;
+  } | null;
+};
+
+/**
+ * Logged-out local Agent/dialog turns must not call the platform-proxy title LLM
+ * (avoids unauthenticated 403). Authenticated platform title path stays intact.
+ */
+export const shouldSkipPlatformTitleLlm = (args: {
+  currentUserId?: string | null;
+  dialogKey: string;
+  dialogConfig?: { userId?: unknown } | null;
+  agentConfig?: UpdateDialogTitleArgs["agentConfig"];
+}): boolean => {
+  const current =
+    typeof args.currentUserId === "string" ? args.currentUserId.trim() : "";
+  const loggedOut = !current || current === "local";
+  if (!loggedOut) return false;
+
+  const dialogUserId =
+    typeof args.dialogConfig?.userId === "string"
+      ? args.dialogConfig.userId.trim()
+      : "";
+  const agentUserId =
+    typeof args.agentConfig?.userId === "string"
+      ? args.agentConfig.userId.trim()
+      : "";
+  const hasLocalCredentialRef =
+    typeof args.agentConfig?.credentialRef === "string" &&
+    args.agentConfig.credentialRef.trim().length > 0;
+  const dialogKey = typeof args.dialogKey === "string" ? args.dialogKey : "";
+
+  return (
+    dialogUserId === "local" ||
+    agentUserId === "local" ||
+    hasLocalCredentialRef ||
+    dialogKey.startsWith("dialog-local-")
+  );
 };
 
 // --- 异步 Thunk Action ---
 export const updateDialogTitleActionWithDeps = async (
-  args: { dialogKey: string },
+  args: UpdateDialogTitleArgs,
   thunkApi: { dispatch: any; getState: () => any; extra: any },
   deps: UpdateDialogTitleDeps = {}
 ) => {
@@ -101,8 +149,9 @@ export const updateDialogTitleActionWithDeps = async (
     selectDialogById = selectById,
     selectAllMessages = selectAllMsgs,
     updateSpaceContentTitle = updateContentTitle,
+    selectCurrentUserId = selectUserId,
   } = deps;
-  const { dialogKey } = args;
+  const { dialogKey, agentConfig } = args;
   const { dispatch, getState } = thunkApi;
   const state = getState() as RootState;
 
@@ -119,21 +168,32 @@ export const updateDialogTitleActionWithDeps = async (
     return dialogConfig;
   }
 
-  const content = JSON.stringify(
-    messageContext.map((msg) => ({ role: msg.role, content: msg.content }))
-  );
-
-  const generatedTitle = await (dispatch as any)(
-    runLlmAction({
-      llmConfig: BUILTIN_TITLE_LLM_CONFIG,
-      content,
-      billingDialogKey: dialogKey,
-    })
-  ).unwrap();
-
   const fallbackTitle =
     buildDialogFallbackTitleFromMessages(messageContext) ||
     `Conversation on ${format(new Date(), "MMM d")}`;
+
+  let generatedTitle: unknown = "";
+  const currentUserId = selectCurrentUserId(state as any) as string | null | undefined;
+  if (
+    !shouldSkipPlatformTitleLlm({
+      currentUserId,
+      dialogKey,
+      dialogConfig,
+      agentConfig,
+    })
+  ) {
+    const content = JSON.stringify(
+      messageContext.map((msg) => ({ role: msg.role, content: msg.content }))
+    );
+    generatedTitle = await (dispatch as any)(
+      runLlmAction({
+        llmConfig: BUILTIN_TITLE_LLM_CONFIG,
+        content,
+        billingDialogKey: dialogKey,
+      })
+    ).unwrap();
+  }
+
   const title = resolveDialogTitle(generatedTitle, fallbackTitle);
 
   const spaceId =
@@ -148,7 +208,7 @@ export const updateDialogTitleActionWithDeps = async (
 };
 
 export const updateDialogTitleAction = async (
-  args: { dialogKey: string },
+  args: UpdateDialogTitleArgs,
   thunkApi: { dispatch: any; getState: () => any; extra: any }
 ) =>
   updateDialogTitleActionWithDeps(args, thunkApi);

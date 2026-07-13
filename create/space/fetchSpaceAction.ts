@@ -5,6 +5,8 @@ import {
   fetchAuthoritativeRemoteSpace,
   selectSpaceRemoteAuth,
 } from "../space/spaceAccess";
+import { isDeviceLocalSpaceBody } from "../../database/authority/deviceLocal";
+import { isTombstoneRecord } from "../../database/tombstones";
 
 type FetchSpaceInput = SpaceId | { spaceId: SpaceId; fresh?: boolean };
 
@@ -24,20 +26,6 @@ export const fetchSpaceAction = async (
   const spaceId = normalizeSpaceId(rawSpaceId);
   const spaceKey = createSpaceKey.space(spaceId);
 
-  if (fresh) {
-    const { token, userId, servers } = selectSpaceRemoteAuth(thunkAPI.getState());
-    if (token && userId && servers.length > 0) {
-      const remoteSpace = await fetchAuthoritativeRemoteSpace({
-        servers,
-        token,
-        userId,
-        spaceId,
-      });
-      if (remoteSpace) return { spaceId, spaceData: remoteSpace };
-      throw new Error(`Space not found: ${spaceId}`);
-    }
-  }
-
   const readSpace = async (dbKey: string): Promise<SpaceData | null> => {
     try {
       const { read, readAndWait } = await import("../../database/dbSlice");
@@ -54,13 +42,48 @@ export const fetchSpaceAction = async (
     }
   };
 
-  let spaceData: SpaceData | null = await readSpace(spaceKey);
+  const readLocalSpaceBody = async (): Promise<SpaceData | null> => {
+    let spaceData: SpaceData | null = await readSpace(spaceKey);
+    // If not found, try the raw ID as a fallback (maybe stored with the prefix)
+    if (!spaceData && rawSpaceId !== spaceKey) {
+      spaceData = await readSpace(rawSpaceId);
+    }
+    if (!spaceData || isTombstoneRecord(spaceData)) {
+      return null;
+    }
+    return spaceData;
+  };
 
-  // If not found, try the raw ID as a fallback (maybe stored with the prefix)
-  if (!spaceData && rawSpaceId !== spaceKey) {
-    spaceData = await readSpace(rawSpaceId);
+  // Device-local Space body authority (slice B1):
+  // While logged in with token, still open/fresh-fetch local Spaces from local
+  // body only. Never treat a remote miss of a device-local Space as not-found.
+  // Account Spaces keep remote fresh authority when credentials exist.
+  if (fresh) {
+    const localBody = await readLocalSpaceBody();
+    if (localBody && isDeviceLocalSpaceBody(localBody)) {
+      return { spaceId, spaceData: localBody };
+    }
+
+    const { token, userId, servers } = selectSpaceRemoteAuth(thunkAPI.getState());
+    // Guest / no token: never hit remote for Space body.
+    if (token && userId && servers.length > 0) {
+      const remoteSpace = await fetchAuthoritativeRemoteSpace({
+        servers,
+        token,
+        userId,
+        spaceId,
+      });
+      if (remoteSpace) return { spaceId, spaceData: remoteSpace };
+      throw new Error(`Space not found: ${spaceId}`);
+    }
+
+    if (localBody) {
+      return { spaceId, spaceData: localBody };
+    }
+    throw new Error(`Space not found: ${spaceId}`);
   }
 
+  const spaceData = await readLocalSpaceBody();
   if (!spaceData) {
     throw new Error(`Space not found: ${spaceId}`);
   }

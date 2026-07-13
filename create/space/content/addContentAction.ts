@@ -5,7 +5,10 @@ import type { SpaceData, SpaceContent, ContentType, FileCategory } from "../../.
 import { selectUserId } from "../../../auth/authSlice";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { read, patch } from "../../../database/dbSlice";
-import { checkSpaceMembership } from "../utils/permissions";
+import {
+  checkSpaceMembership,
+  localSpaceAuthorityPatchStamp,
+} from "../utils/permissions";
 import { UNCATEGORIZED_ID } from "../../space/constants";
 
 export interface AddContentRequest {
@@ -46,8 +49,7 @@ export const addContentAction = async (
   const { dispatch, getState } = thunkAPI;
   const userId = selectUserId(getState());
 
-  // 基本输入验证
-  if (!userId) throw new Error("User is not logged in.");
+  // 基本输入验证（登录门控下放到权限：本地 Space 允许 guest）
   if (!contentKey || typeof contentKey !== "string" || contentKey.trim() === "")
     throw new Error("Invalid contentKey provided.");
   if (!title || typeof title !== "string" || title.trim() === "")
@@ -61,7 +63,7 @@ export const addContentAction = async (
     dbKey: spaceKey
   })).unwrap();
 
-  // 权限检查
+  // 权限检查：本地 body → local owner；账号 Space 仍要求成员
   checkSpaceMembership(spaceData, userId);
 
   // 检查 Content Key 是否已存在
@@ -102,10 +104,11 @@ export const addContentAction = async (
     ...(skillSummary !== undefined ? { skillSummary } : {}),
   };
 
-  // 准备并执行 Patch 更新
+  // 准备并执行 Patch 更新；本地 Space 显式 stamp userId=local → servers=[]
   const changes = {
     contents: { [contentKey]: newSpaceContent },
     updatedAt: now,
+    ...localSpaceAuthorityPatchStamp(spaceData),
   };
 
   const updatedSpaceData = await dispatch(

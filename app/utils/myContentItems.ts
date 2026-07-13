@@ -156,6 +156,92 @@ const resolveRecordTimestamp = (record: UserContentRecord): string | number =>
   record.created ??
   0;
 
+export const deduplicateContentRecords = <T extends UserContentRecord>(
+  records: T[]
+): T[] => {
+  const uniqueMap = new Map<string, T>();
+  for (const record of records) {
+    const key = resolveUserContentRecordKey(record);
+    if (!key) continue;
+    const existing = uniqueMap.get(key);
+    if (!existing) {
+      uniqueMap.set(key, record);
+      continue;
+    }
+    const existingTs = toTimestamp(resolveRecordTimestamp(existing));
+    const nextTs = toTimestamp(resolveRecordTimestamp(record));
+    if (nextTs > existingTs) {
+      uniqueMap.set(key, record);
+    }
+  }
+  return Array.from(uniqueMap.values());
+};
+
+/**
+ * Explicit local↔account sync mapping link used to collapse paired rows.
+ * Keys may differ (e.g. agent-local-* vs agent-userId-*).
+ */
+export type ContentSyncMappingLink = {
+  localDbKey: string;
+  remoteDbKey: string;
+};
+
+const pickPreferredMappedRecord = <T extends UserContentRecord>(
+  left: T,
+  right: T
+): T => {
+  const leftTs = toTimestamp(resolveRecordTimestamp(left));
+  const rightTs = toTimestamp(resolveRecordTimestamp(right));
+  if (rightTs > leftTs) return right;
+  if (leftTs > rightTs) return left;
+  // Timestamp tie: prefer the remote/account side (right is remote when called
+  // as pick(local, remote)) so the visible row tracks account identity after sync.
+  return right;
+};
+
+/**
+ * Same-key dedupe, then collapse local+remote pairs linked by explicit mappings
+ * into a single row (M5). Unmapped local and account records stay independent.
+ */
+export const deduplicateContentRecordsWithMappings = <T extends UserContentRecord>(
+  records: T[],
+  mappings: readonly ContentSyncMappingLink[] = []
+): T[] => {
+  const byKey = new Map<string, T>();
+  for (const record of deduplicateContentRecords(records)) {
+    const key = resolveUserContentRecordKey(record);
+    if (!key) continue;
+    byKey.set(key, record);
+  }
+
+  const dropKeys = new Set<string>();
+
+  for (const mapping of mappings) {
+    const localKey =
+      typeof mapping.localDbKey === "string" ? mapping.localDbKey.trim() : "";
+    const remoteKey =
+      typeof mapping.remoteDbKey === "string" ? mapping.remoteDbKey.trim() : "";
+    if (!localKey || !remoteKey || localKey === remoteKey) continue;
+    if (dropKeys.has(localKey) || dropKeys.has(remoteKey)) continue;
+
+    const localRecord = byKey.get(localKey);
+    const remoteRecord = byKey.get(remoteKey);
+    if (!localRecord || !remoteRecord) continue;
+
+    const preferred = pickPreferredMappedRecord(localRecord, remoteRecord);
+    const preferredKey = resolveUserContentRecordKey(preferred);
+    const dropKey = preferredKey === remoteKey ? localKey : remoteKey;
+
+    byKey.set(preferredKey || remoteKey, preferred);
+    if (dropKey && dropKey !== (preferredKey || remoteKey)) {
+      byKey.delete(dropKey);
+      dropKeys.add(dropKey);
+    }
+  }
+
+  return Array.from(byKey.values());
+};
+
 export function buildOwnedAppContentItems(
   apps: readonly AppSummary[],
   myAppsLabel: string

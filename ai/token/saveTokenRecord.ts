@@ -37,15 +37,19 @@ export const saveTokenRecord = async (
   record: TokenRecord,
   thunkApi: { dispatch: (action: unknown) => unknown }
 ) => {
-  const key = createTokenKey.record(
-    tokenData.userId || record.userId,
-    tokenData.timestamp ?? record.createdAt
-  );
+  const ownerUserId = tokenData.userId || record.userId;
+  const eventTime =
+    tokenData.timestamp ?? record.createdAt ?? Date.now();
+  const key = createTokenKey.record(ownerUserId, eventTime);
   try {
     await thunkApi.dispatch(
       write({
-        data: { ...record, id: key, type: DataType.TOKEN },
+        data: { ...record, id: key, type: DataType.TOKEN, userId: ownerUserId },
         customKey: key,
+        // writeAction stamps record.userId from writeConfig.userId ||
+        // currentUserId; without this, logged-out local token rows lose
+        // the authoritative "local" owner before replication planning.
+        userId: ownerUserId,
       })
     );
   } catch (error) {

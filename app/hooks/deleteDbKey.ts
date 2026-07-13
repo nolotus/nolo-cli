@@ -12,11 +12,16 @@ import {
 import { deleteDialog } from "../../chat/dialog/dialogSlice";
 import { deleteTable } from "../../render/table/tableSlice";
 import { deleteContentFromSpace } from "../../create/space/spaceSlice";
-import { remove } from "../../database/dbSlice";
+import { read, remove, selectById } from "../../database/dbSlice";
 import { removeFavoriteLocally } from "../favorite/favoriteSlice";
 import { resolveDeletedFavoriteProjectionRemoval } from "../favorite/deletedFavoriteProjection";
 import type { AppDispatch } from "../store";
 import type { RootState } from "../store";
+import {
+    deleteAgentLocalCredentialRef,
+    extractAgentLocalCredentialRef,
+    isPublicAgentProjectionKey,
+} from "../../agent-runtime/deleteAgentLocalCredential";
 
 type DeleteDbKeyInput =
     | string
@@ -37,8 +42,14 @@ type ResolvedDeleteInput = {
     includeAttachments?: boolean;
 };
 
+/**
+ * Authoritative entity delete (tombstone + server remove).
+ * Space reference detach is a separate step in deleteDbKey and must not clear
+ * global Agent credentials by itself.
+ */
 const performDirectDelete = async (
     dispatch: AppDispatch,
+    getState: () => RootState,
     contentKey: string,
     preferredServerOrigin?: string,
     includeAttachments?: boolean
@@ -55,11 +66,58 @@ const performDirectDelete = async (
         return;
     }
 
+    if (isAgentKey(contentKey)) {
+        // Peek credentialRef before DB delete — never read secrets; never use OAuth apiKeyRef.
+        // Public projections share the private agent's ref and must not clear the broker key.
+        // Prefer Redux when warm; cold cache (list/deep-link) falls back to existing DB read.
+        let credentialRef: string | null = null;
+        if (!isPublicAgentProjectionKey(contentKey)) {
+            try {
+                let record: unknown = selectById(getState() as any, contentKey);
+                if (!record) {
+                    try {
+                        record = await (dispatch as any)(
+                            read({
+                                dbKey: contentKey,
+                                preferredServerOrigin,
+                            })
+                        ).unwrap();
+                    } catch {
+                        record = null;
+                    }
+                }
+                credentialRef = extractAgentLocalCredentialRef(record);
+            } catch {
+                credentialRef = null;
+            }
+        }
+
+        // Order: DB/tombstone first. Broker cleanup only after success so a DB failure
+        // never leaves a live Agent without its local key.
+        await (dispatch as any)(
+            remove({
+                dbKey: contentKey,
+                preferredServerOrigin,
+            })
+        ).unwrap();
+
+        if (credentialRef) {
+            const cleanup = await deleteAgentLocalCredentialRef(credentialRef);
+            if (!cleanup.deleted && "warning" in cleanup) {
+                // Sanitized: no ref/secret. Do not resurrect DB; keep delete API success.
+                console.warn(
+                    "[deleteDbKey] local API credential cleanup failed after agent delete:",
+                    cleanup.warning
+                );
+            }
+        }
+        return;
+    }
+
     if (
         isAppKey(contentKey) ||
         isPageKey(contentKey) ||
         isFileKey(contentKey) ||
-        isAgentKey(contentKey) ||
         isTaskKey(contentKey)
     ) {
         await (dispatch as any)(
@@ -210,8 +268,11 @@ export const deleteDbKey =
                 // 无论 space 操作结果如何，实体都必须被标记为已删除，
                 // 否则 deleteContentFromSpace 成功但跳过实体删除时，
                 // 远端活记录会在下一次 merge 时回流。
+                // Agent local credentialRef is cleared only on this authoritative path
+                // (after successful remove) — not when merely detaching a Space reference.
                 await performDirectDelete(
                     dispatch,
+                    getState,
                     contentKey,
                     preferredServerOrigin,
                     includeAttachments
@@ -222,6 +283,7 @@ export const deleteDbKey =
                 // - 实体 tombstone 已先写入
                 // - space.contents 的本地 patch 也要在导航前落稳
                 // 但不要求等待远端强一致。
+                // Space unlink alone must never delete per-Agent broker secrets.
                 if (effectiveSpaceId) {
                     await (dispatch as any)(
                         (deleteContentFromSpace as any)({

@@ -18,6 +18,8 @@ export type AgentRuntimeAgentConfig = {
   apiKeyHeader?: string;
   apiKeyFromAgentKey?: string;
   apiKeyRef?: string;
+  /** Broker ref for local-first secrets (never a raw API key). */
+  credentialRef?: string;
   useServerProxy?: boolean;
   temperature?: number;
   top_p?: number;

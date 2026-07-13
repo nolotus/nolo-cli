@@ -60,9 +60,17 @@ export const parseOwnerUserIdFromDbKey = (
   const normalized = cleanSegment(dbKey);
   if (!normalized) return null;
 
-  const [prefix] = normalized.split("-");
+  const parts = normalized.split("-");
+  const [prefix] = parts;
   if (!prefix) return null;
   if (!USER_OWNED_SECOND_SEGMENT_PREFIXES.has(prefix)) return null;
+
+  // Dialog message keys: dialog-{dialogId}-msg-{messageId}.
+  // dialogId is not the owner (align with server writeAuthority.resolveKeyOwnerId);
+  // callers must fall through to record.userId / candidate context.
+  if (parts[0] === "dialog" && parts[2] === "msg") {
+    return null;
+  }
 
   const ownerAndRest = normalized.slice(prefix.length + 1);
   const candidateOwner = resolveCandidateOwnerFromKeyRemainder(

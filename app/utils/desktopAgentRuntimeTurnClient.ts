@@ -2,6 +2,15 @@ import type {
   AgentRuntimeMessageContent,
   LocalAgentTurnResult,
 } from "../../agent-runtime";
+import type {
+  DesktopAgentRuntimeAgentConfigSnapshot,
+  DesktopAgentRuntimeDialogHistorySnapshot,
+} from "../../agent-runtime/desktopRequestSnapshot";
+import {
+  assertDesktopAgentRuntimeTurnBodyHasNoRawSecrets,
+  buildDesktopAgentRuntimeAgentConfigSnapshot,
+  buildDesktopAgentRuntimeDialogHistorySnapshot,
+} from "../../agent-runtime/desktopRequestSnapshot";
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 
 export type DesktopAgentRuntimeTurnResult =
@@ -22,16 +31,60 @@ type RunDesktopAgentRuntimeTurnArgs = {
   cwd?: string;
   restrictShellToWorkspace?: boolean;
   workspaceToolsHint?: boolean;
+  /**
+   * Pre-built allowlisted snapshot, or a full agent record the client will sanitize.
+   * Prefer passing the already-built snapshot from streamAgentChatTurn.
+   */
+  agentConfigSnapshot?: DesktopAgentRuntimeAgentConfigSnapshot | Record<string, unknown> | null;
+  /**
+   * Optional dialog history from webview state when host LevelDB has no dialog.
+   */
+  dialogHistorySnapshot?: DesktopAgentRuntimeDialogHistorySnapshot | null;
+  /**
+   * Raw client messages used to build dialogHistorySnapshot when snapshot is not pre-built.
+   */
+  dialogMessages?: unknown[];
   fetchImpl?: typeof fetch;
 };
 
-function buildDesktopAgentRuntimeTurnBody(args: RunDesktopAgentRuntimeTurnArgs) {
+/** Stable client error when a provided agent config cannot be snapshotted for the turn. */
+export const DESKTOP_AGENT_CONFIG_SNAPSHOT_BUILD_FAILED =
+  "desktop_agent_config_snapshot_invalid";
+
+export function buildDesktopAgentRuntimeTurnBody(args: RunDesktopAgentRuntimeTurnArgs) {
   const continueDialogId =
     typeof args.continueDialogId === "string"
       ? args.continueDialogId.trim()
       : "";
 
-  return {
+  let agentConfigSnapshot: DesktopAgentRuntimeAgentConfigSnapshot | undefined;
+  if (args.agentConfigSnapshot && typeof args.agentConfigSnapshot === "object") {
+    // Accept either a pre-built snapshot or a raw agent record.
+    // Fail closed: when the client was given a config for the local Desktop path,
+    // never silently omit the snapshot (host LevelDB is empty for owner=local).
+    const built = buildDesktopAgentRuntimeAgentConfigSnapshot(
+      args.agentConfigSnapshot,
+      args.agentRef,
+    );
+    if (!built) {
+      throw new Error(DESKTOP_AGENT_CONFIG_SNAPSHOT_BUILD_FAILED);
+    }
+    agentConfigSnapshot = built;
+  }
+
+  let dialogHistorySnapshot: DesktopAgentRuntimeDialogHistorySnapshot | undefined;
+  if (args.dialogHistorySnapshot && typeof args.dialogHistorySnapshot === "object") {
+    dialogHistorySnapshot = args.dialogHistorySnapshot;
+  } else if (Array.isArray(args.dialogMessages) && continueDialogId) {
+    dialogHistorySnapshot =
+      buildDesktopAgentRuntimeDialogHistorySnapshot({
+        dialogId: continueDialogId,
+        messages: args.dialogMessages,
+        currentInput: args.input,
+      }) ?? undefined;
+  }
+
+  const body = {
     agentRef: args.agentRef,
     input: args.input,
     ...(args.runtimeContext ? { runtimeContext: args.runtimeContext } : {}),
@@ -39,7 +92,12 @@ function buildDesktopAgentRuntimeTurnBody(args: RunDesktopAgentRuntimeTurnArgs) 
     ...(args.cwd ? { cwd: args.cwd } : {}),
     ...(args.restrictShellToWorkspace ? { restrictShellToWorkspace: true } : {}),
     ...(args.workspaceToolsHint ? { workspaceToolsHint: true } : {}),
+    ...(agentConfigSnapshot ? { agentConfigSnapshot } : {}),
+    ...(dialogHistorySnapshot ? { dialogHistorySnapshot } : {}),
   };
+
+  assertDesktopAgentRuntimeTurnBodyHasNoRawSecrets(body);
+  return body;
 }
 
 function normalizeDesktopAgentRuntimeTurnError(data: any) {

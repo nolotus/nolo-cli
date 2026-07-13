@@ -3,13 +3,16 @@ import {
   runCloudflareOAuthLogin,
 } from "./flows/cloudflare";
 import { runAntigravityOAuthLogin } from "./flows/antigravity";
-import { runXaiOAuthLogin } from "./flows/xai";
+import { runXaiOAuthDeviceCode, runXaiOAuthLogin } from "./flows/xai";
 
 import type { CliRuntimeContext } from "../cliCommandTypes";
 import { defaultOpenBrowser } from "../authCommands";
 import type { OAuthFlowDeps, OAuthProvider } from "./types";
-import type { OAuthCredential } from "../agent-runtime/oauthTokenStore";
-import { createOAuthTokenStore, readOAuthCredential } from "./token-store";
+import type {
+  OAuthCredential,
+  OAuthTokenStore,
+} from "../agent-runtime/oauthTokenStore";
+import { createOAuthTokenStore } from "./token-store";
 import {
   runOpenAiCodexBrowserPkce,
   runOpenAiCodexDeviceCode,
@@ -22,6 +25,8 @@ import { parseFlagWithOptionalValue, upsertEnvVariable } from "./envFile";
 
 export type AuthProviderCommandDeps = OAuthFlowDeps & {
   noBrowserByDefault?: boolean;
+  /** Optional store; production defaults to createOAuthTokenStore(). */
+  tokenStore?: OAuthTokenStore;
 };
 
 const SYNC_HELP_LINE = `  --sync-to-server  After local save, push the credential to your nolo server.
@@ -49,18 +54,20 @@ apiSource: "custom" and provider: "openai".
 const XAI_HELP_TEXT = `Authorize nolo-cli to call the xAI Grok API via your SuperGrok subscription.
 
 Usage:
-  nolo auth xai [--browser] [--no-browser] [--sync-to-server] [--help]
+  nolo auth xai [--browser] [--device-code] [--no-browser] [--sync-to-server] [--help]
 
-Opens a browser to https://auth.x.ai (OIDC PKCE loopback on 127.0.0.1:56121)
-for SuperGrok / X Premium+ login. After approval, the access and refresh tokens
-are stored in ~/.nolo/credentials/xai.json.
+Default (interactive desktop): OIDC PKCE loopback on 127.0.0.1:56121.
+Headless / SSH / Docker: use --device-code or --no-browser (RFC 8628 device
+authorization; no localhost callback). After approval, tokens are stored in
+~/.nolo/credentials/xai.json.
 
 The OAuth client_id is the same fixed value used by NousResearch/hermes-agent
-(MIT) and oh-my-pi; xAI does not publish a public client registration flow.
+(MIT), oh-my-pi, and OpenClaw; xAI does not publish a public client registration flow.
 
 Options:
-  --browser         Use the browser PKCE flow (default for xAI).
-  --no-browser      Print the authorization URL only.
+  --browser         Use the browser PKCE loopback flow (default for xAI).
+  --device-code     Use RFC 8628 device authorization (headless-friendly).
+  --no-browser      Same as --device-code for xAI (no loopback listener).
 ${SYNC_HELP_LINE}
   --help, -h        Show this help and exit.
 
@@ -256,6 +263,7 @@ export async function runAuthProviderCommand(
 ): Promise<number> {
   const output = deps.output ?? console;
   const error = deps.error ?? console;
+  const tokenStore = deps.tokenStore ?? createOAuthTokenStore();
 
   if (args.includes("--help") || args.includes("-h")) {
     output.log(HELP_BY_PROVIDER[provider]);
@@ -277,7 +285,7 @@ export async function runAuthProviderCommand(
   const openBrowser = noBrowser ? undefined : (deps.openBrowser ?? defaultOpenBrowser);
 
   if (syncOnly) {
-    const credential = readOAuthCredential(provider);
+    const credential = tokenStore.read(provider);
     if (!credential) {
       error.error(
         `[nolo] No local ${provider} credential. Run: nolo auth ${provider}`
@@ -320,7 +328,13 @@ export async function runAuthProviderCommand(
         ? await runOpenAiCodexBrowserPkce(flowDeps)
         : await runOpenAiCodexDeviceCode(flowDeps);
     } else if (provider === "xai") {
-      credential = await runXaiOAuthLogin(flowDeps);
+      // Interactive desktop keeps loopback PKCE. Headless / explicit device-code
+      // uses RFC 8628 (no 127.0.0.1 callback). --browser forces loopback.
+      const useDeviceCode =
+        !useBrowser && (args.includes("--device-code") || noBrowser);
+      credential = useDeviceCode
+        ? await runXaiOAuthDeviceCode(flowDeps)
+        : await runXaiOAuthLogin(flowDeps);
     } else if (provider === "cloudflare") {
       credential = await runCloudflareOAuthLogin({
         ...flowDeps,
@@ -355,7 +369,7 @@ export async function runAuthProviderCommand(
     } else {
       credential = await runAntigravityOAuthLogin(flowDeps);
     }
-    createOAuthTokenStore().write(provider, credential);
+    tokenStore.write(provider, credential);
     const accountLabel =
       (credential.metadata?.email as string | undefined) ??
       credential.accountId ??
@@ -377,7 +391,7 @@ export async function runAuthProviderCommand(
     );
     return 1;
   }
- }
+}
 
 export async function runAuthChatgptCommand(
   args: string[],

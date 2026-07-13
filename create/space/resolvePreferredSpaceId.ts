@@ -1,5 +1,8 @@
 import type { RootState } from "../../app/store";
-import { readDefaultSpaceIdPreference } from "../../app/settings/defaultSpacePreference";
+import {
+  readDefaultSpaceIdPreference,
+  resolveDefaultSpacePreferenceOwnerId,
+} from "../../app/settings/defaultSpacePreference";
 import { read, readAndWait } from "../../database/dbSlice";
 
 import { createSpaceKey } from "./spaceKeys";
@@ -91,11 +94,13 @@ export const resolvePreferredSpaceId = async ({
     candidates.push(spaceId);
   };
 
+  // Preference owner is effective Space actor (guest → local; account → that id).
+  // Never cross-read local default into account or account default into guest.
+  const preferenceOwnerId = resolveDefaultSpacePreferenceOwnerId(
+    userId ?? state.auth?.currentUser?.userId ?? null
+  );
   pushCandidate(
-    await readDefaultSpaceIdPreference(
-      dispatch,
-      userId ?? state.auth?.currentUser?.userId ?? null
-    )
+    await readDefaultSpaceIdPreference(dispatch, preferenceOwnerId)
   );
 
   for (const memberSpace of state.space.memberSpaces || []) {

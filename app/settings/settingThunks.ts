@@ -30,6 +30,7 @@ import {
 import { updateSettingsState } from "./settingActions";
 import { getSettingDbActionThunks } from "./dbActionThunks";
 import {
+  DEVICE_LOCAL_OWNER_ID,
   readDefaultSpaceIdPreference,
   persistDefaultSpacePreference,
   normalizeDefaultSpaceIdPreference,
@@ -100,8 +101,9 @@ export const getSettings = createAsyncThunk<
  *  3. Persisting register-backed fields (defaultSpaceId, defaultAgentId)
  *  4. Updating local state via updateSettingsState
  *
- * When no user is logged in, only local-first appearance changes are
- * accepted (other settings require a user to persist against).
+ * When no user is logged in, only local-first appearance changes and/or
+ * defaultSpaceId (local register) are accepted; other settings still require
+ * a logged-in user.
  */
 export const setSettings = createAsyncThunk<
   Partial<SettingState>,
@@ -117,10 +119,26 @@ export const setSettings = createAsyncThunk<
     SYSTEM_DEFAULT_AGENT_ID;
   const userId = selectUserId(getState() as any);
   if (!userId) {
-    if (!isLocalFirstAppearanceChange(normalizedChanges)) {
+    const hasDefaultSpaceIdChange = hasOwn(changes, "defaultSpaceId");
+    const { defaultSpaceId: _guestDefaultSpaceId, ...guestAppearanceChanges } =
+      normalizedChanges;
+    const hasAppearanceChanges =
+      Object.keys(guestAppearanceChanges).length > 0;
+    if (hasAppearanceChanges) {
+      if (!isLocalFirstAppearanceChange(guestAppearanceChanges)) {
+        throw new Error("User not found for persisting settings.");
+      }
+    } else if (!hasDefaultSpaceIdChange) {
       throw new Error("User not found for persisting settings.");
     }
     dispatch(updateSettingsState(normalizedChanges));
+    if (hasDefaultSpaceIdChange) {
+      await persistDefaultSpacePreference(
+        dispatch,
+        DEVICE_LOCAL_OWNER_ID,
+        nextDefaultSpaceId,
+      );
+    }
     return normalizedChanges;
   }
   const persistencePlan = buildSettingsPersistencePlan({

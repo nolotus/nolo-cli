@@ -1,16 +1,22 @@
 // app/space/addSpaceAction.ts
 
-import { SpaceMemberWithSpaceInfo } from "../../app/types";
 import {
   MemberRole,
   SpaceVisibility,
   SpaceData,
   SpaceContent,
   ContentType,
+  type SpaceMemberWithSpaceInfo,
 } from "../../app/types";
 import { selectUserId } from "../../auth/authSlice";
 import { DataType } from "../types";
 import { fetchUserData } from "../../database/client/fetchUserData";
+import {
+  isDeviceLocalOwnerId,
+  isDeviceLocalSpaceMembership,
+  resolveEffectiveSpaceActorId,
+  resolveRecordOwnerUserId,
+} from "../../database/authority/deviceLocal";
 import { ulid } from "ulid";
 import { patch, write } from "../../database/dbSlice";
 import { createSpaceKey } from "../space/spaceKeys";
@@ -76,6 +82,12 @@ const getCurrentPathForLog = () =>
 
 /**
  * 新增 Space，包括首次迁移旧侧边栏数据到 Space.contents
+ *
+ * Device-local foundation:
+ * - Logged-out → synthetic actor `"local"` (Space body + membership stamped local).
+ * - Logged-in account → account-owned Space (unchanged).
+ * - Write config always passes explicit actor userId so local stamps even if a
+ *   session exists later; replication uses record.userId === "local" → [].
  */
 export const addSpaceAction = async (
   input: CreateSpaceRequest,
@@ -89,20 +101,23 @@ export const addSpaceAction = async (
   const visibility = (input.visibility ?? SpaceVisibility.PRIVATE) as SpaceVisibility;
   const { dispatch, getState, extra } = thunkAPI;
   const state = getState();
-  const userId = selectUserId(state);
-  if (!userId) throw new Error("User is not logged in.");
+  const accountUserId = selectUserId(state);
+  // Guest / blank → "local"; active non-local account → that account id.
+  // Does not mutate auth state.
+  const userId = resolveEffectiveSpaceActorId(accountUserId);
 
   const spaceId = ulid();
   const now = Date.now();
   const nowISO = new Date(now).toISOString();
 
-  // 基本 Space 数据
-  const spaceData: SpaceData = {
+  // 基本 Space 数据 — body keys remain space-{ULID}; authority is owner/userId.
+  const spaceData: SpaceData & { userId: string } = {
     id: spaceId,
     name,
     description,
     boundFolder,
     ownerId: userId,
+    userId,
     visibility,
     members: [userId],
     categories: {},
@@ -112,7 +127,20 @@ export const addSpaceAction = async (
     type: DataType.SPACE,
   };
   const spaces = selectAllMemberSpaces(state);
-  const hasSpace = spaces.length > 0;
+  // After local+account membership union, first-Space migration must be
+  // actor-scoped: a device-local membership must not block account first-Space
+  // migration, and an account membership must not block guest first-Space.
+  const hasSpaceForActor = spaces.some(
+    (membership: SpaceMemberWithSpaceInfo) => {
+      if (isDeviceLocalOwnerId(userId)) {
+        return isDeviceLocalSpaceMembership(membership);
+      }
+      if (isDeviceLocalSpaceMembership(membership)) return false;
+      return (
+        membership.userId === userId || membership.ownerId === userId
+      );
+    }
+  );
 
   console.info("[space/create] addSpaceAction", {
     userId,
@@ -120,11 +148,12 @@ export const addSpaceAction = async (
     visibility,
     boundFolder,
     memberSpaceCount: spaces.length,
+    hasSpaceForActor,
     currentPath: getCurrentPathForLog(),
   });
 
-  if (!hasSpace) {
-    // 首次创建 Space 时尝试迁移旧侧边栏数据
+  if (!hasSpaceForActor) {
+    // 首次创建 Space 时尝试迁移旧侧边栏数据（仅同 owner，避免 local↔account 串迁）
     const { data: oldItems = [] } = await getUserDataOnce({
       types: targetTypes,
       userId,
@@ -139,6 +168,11 @@ export const addSpaceAction = async (
 
       for (const item of oldItems) {
         if (!item.id || !item.type) continue;
+        // Classify source owner explicitly — never migrate account content into
+        // a local Space or local content into an account Space.
+        const recordOwner = resolveRecordOwnerUserId(item);
+        if (recordOwner !== userId) continue;
+
         const stableContentKey =
           typeof item.dbKey === "string" && item.dbKey.trim()
             ? item.dbKey
@@ -169,11 +203,14 @@ export const addSpaceAction = async (
     }
   }
 
-  // 写入 Space
+  // 写入 Space — explicit userId so local authority stamps even under account session
   const spaceKey = createSpaceKey.space(spaceId);
-  await dispatch(write({ data: spaceData, customKey: spaceKey })).unwrap();
+  await dispatch(
+    write({ data: spaceData, customKey: spaceKey, userId })
+  ).unwrap();
 
-  // 写入 SpaceMember
+  // 写入 SpaceMember — key family space-member-{userId}-{spaceId}
+  // Local path → space-member-local-{ULID}; never a second registry.
   const spaceMemberKey = createSpaceKey.member(userId, spaceId);
   const spaceMemberData: SpaceMemberWithSpaceInfo = {
     dbKey: spaceMemberKey,
@@ -190,7 +227,7 @@ export const addSpaceAction = async (
   };
 
   await dispatch(
-    write({ data: spaceMemberData, customKey: spaceMemberKey })
+    write({ data: spaceMemberData, customKey: spaceMemberKey, userId })
   ).unwrap();
 
   return spaceMemberData;

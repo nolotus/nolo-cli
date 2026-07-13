@@ -8,7 +8,70 @@ import { createCybotKey, createAgentKey } from "../../database/keys";
 import { DataType } from "../../create/types";
 import { ulid } from "ulid";
 import type { FormData as AgentFormData } from "../agent/createAgentSchema";
+import {
+  createFileCredentialBroker,
+  type CreateFileCredentialBrokerOptions,
+} from "../../agent-runtime/fileCredentialBroker";
+import type { CredentialBroker } from "../../agent-runtime/credentialBroker";
+import {
+  applyAgentSecretMigrationUpdates,
+  migrateAgentSecrets,
+} from "../../agent-runtime/migrateAgentSecrets";
 import { normalizeAgentRuntimeToolPolicy } from "../../agent-runtime/runtimeToolPolicy";
+
+type AgentCredentialBrokerFactory = (
+  options?: CreateFileCredentialBrokerOptions
+) => CredentialBroker;
+
+/** Production default: file-backed broker under ~/.nolo/credentials/keys. */
+let createAgentCredentialBroker: AgentCredentialBrokerFactory =
+  createFileCredentialBroker;
+
+/**
+ * Test-only override for the credential broker factory.
+ * Bun's `os.homedir()` ignores `process.env.HOME`, so tests inject a temp homeDir here.
+ */
+export function setAgentCredentialBrokerFactoryForTests(
+  factory: AgentCredentialBrokerFactory | null
+): void {
+  createAgentCredentialBroker = factory ?? createFileCredentialBroker;
+}
+
+const readNonEmptyApiKey = (value: unknown): string => {
+  return typeof value === "string" ? value.trim() : "";
+};
+
+/**
+ * Move a raw form/record apiKey into the local credential broker.
+ * On success the returned record/changes have apiKey stripped (null deletes on patch).
+ * Throws when put fails or the secret is not verified in the broker.
+ */
+const migrateRawApiKeyForAgent = async <T extends Record<string, unknown>>(args: {
+  record: T;
+  agentKey: string;
+  apiKey: string;
+  apiKeyRef?: string | null;
+  credentialRef?: string | null;
+}): Promise<T> => {
+  const broker = createAgentCredentialBroker();
+  const result = await migrateAgentSecrets({
+    agent: {
+      key: args.agentKey,
+      apiKey: args.apiKey,
+      apiKeyRef: args.apiKeyRef,
+      credentialRef: args.credentialRef,
+    },
+    broker,
+  });
+  const next = applyAgentSecretMigrationUpdates(args.record, result.updates);
+  // Successful migration must not leave a raw secret on the record.
+  if (readNonEmptyApiKey((next as any).apiKey)) {
+    throw new Error(
+      "Failed to migrate agent API key into the local credential broker. The raw key was not stripped."
+    );
+  }
+  return next;
+};
 
 const createSliceWithThunks = buildCreateSlice({
   creators: { asyncThunk: asyncThunkCreator },
@@ -384,19 +447,20 @@ export const slice = createSliceWithThunks({
      */
     createAgent: create.asyncThunk(
       async ({ userId, formData, spaceId }: CreateAgentArgs, thunkApi) => {
-        const processed = processAgentCreateForm(formData, userId);
+        const effectiveUserId = userId?.trim() ? userId.trim() : "local";
+        const processed = processAgentCreateForm(formData, effectiveUserId);
 
         const now = Date.now();
         const id = ulid();
 
-        const privateKey = createAgentKey.private(userId, id);
+        const privateKey = createAgentKey.private(effectiveUserId, id);
         const publicKey = createAgentKey.public(id);
 
-        const agent: Agent = {
+        let agent: Agent = {
           ...(processed as any),
           id,
           type: DataType.AGENT,
-          userId,
+          userId: effectiveUserId,
           createdAt: now,
           updatedAt: now,
           dialogCount: 0,
@@ -405,12 +469,42 @@ export const slice = createSliceWithThunks({
           spaceId: spaceId, // 记录 spaceId
         };
 
+        // Local agents must stay private and never write a public copy.
+        if (effectiveUserId === "local") {
+          agent.isPublic = false;
+        }
+
+        try {
+          const { localFirstLog } = await import("../../app/localFirst/localFirstLog");
+          localFirstLog("agent.create.start", {
+            owner: effectiveUserId,
+            hasRawApiKey: Boolean(readNonEmptyApiKey((agent as any).apiKey)),
+            hasSpace: Boolean(spaceId),
+          });
+        } catch {
+          /* diagnostics best-effort */
+        }
+
+        // Local-first: raw apiKey → credential broker before any DB write.
+        // OAuth apiKeyRef (chatgpt/xai/antigravity) is preserved by migrate when set.
+        const createRawApiKey = readNonEmptyApiKey((agent as any).apiKey);
+        if (createRawApiKey) {
+          agent = (await migrateRawApiKeyForAgent({
+            record: agent as any,
+            agentKey: privateKey,
+            apiKey: createRawApiKey,
+            apiKeyRef: (agent as any).apiKeyRef,
+            credentialRef: (agent as any).credentialRef,
+          })) as Agent;
+        }
+
         // 写入私有副本
         await thunkApi
           .dispatch(
             write({
               data: agent,
               customKey: privateKey,
+              userId: effectiveUserId,
             })
           )
           .unwrap();
@@ -422,9 +516,26 @@ export const slice = createSliceWithThunks({
               write({
                 data: agent,
                 customKey: publicKey,
+                userId: effectiveUserId,
               })
             )
             .unwrap();
+        }
+
+        try {
+          const { localFirstLog } = await import("../../app/localFirst/localFirstLog");
+          localFirstLog("agent.create.done", {
+            owner: effectiveUserId,
+            key: privateKey,
+            hasCredentialRef: Boolean(
+              typeof (agent as any).credentialRef === "string" &&
+                (agent as any).credentialRef.trim(),
+            ),
+            hasRawApiKey: Boolean(readNonEmptyApiKey((agent as any).apiKey)),
+            isPublic: Boolean(agent.isPublic),
+          });
+        } catch {
+          /* diagnostics best-effort */
         }
 
         return agent;
@@ -445,6 +556,7 @@ export const slice = createSliceWithThunks({
         { userId, agentId, formData, previousAgent }: UpdateAgentArgs,
         thunkApi
       ) => {
+        const effectiveUserId = userId?.trim() ? userId.trim() : "local";
         const normalizedAgentId = (() => {
           const raw = agentId.trim();
           if (raw.startsWith("agent-") || raw.startsWith("cybot-")) {
@@ -458,15 +570,39 @@ export const slice = createSliceWithThunks({
         // 1. 如果 agentId 是以 cybot- 开头，或者 previousAgent.type 是 cybot，说明这是存量旧数据。
         // 2. 存量数据必须使用 createCybotKey 才能正确定位到数据库中的位置。
         // 3. 新数据则默认使用 createAgentKey (agent- 前缀)。
-        let privateKey = createAgentKey.private(userId, normalizedAgentId);
+        let privateKey = createAgentKey.private(effectiveUserId, normalizedAgentId);
         let publicKey = createAgentKey.public(normalizedAgentId);
 
         if (agentId.startsWith("cybot-") || previousAgent?.type === "cybot") {
-          privateKey = createCybotKey.private(userId, normalizedAgentId);
+          privateKey = createCybotKey.private(effectiveUserId, normalizedAgentId);
           publicKey = createCybotKey.public(normalizedAgentId);
         }
 
-        const changes = processAgentUpdateChanges(formData || {}, userId, previousAgent);
+        let changes = processAgentUpdateChanges(formData || {}, effectiveUserId, previousAgent);
+
+        // Local-first: raw apiKey in the patch → broker, then strip from changes.
+        const updateRawApiKey = readNonEmptyApiKey((changes as any).apiKey);
+        if (updateRawApiKey) {
+          const formAny = (formData || {}) as any;
+          const migrated = await migrateRawApiKeyForAgent({
+            record: { ...changes } as Record<string, unknown>,
+            agentKey: privateKey,
+            apiKey: updateRawApiKey,
+            apiKeyRef:
+              formAny.apiKeyRef ??
+              (previousAgent as any)?.apiKeyRef ??
+              (changes as any).apiKeyRef,
+            credentialRef:
+              formAny.credentialRef ??
+              (previousAgent as any)?.credentialRef ??
+              (changes as any).credentialRef,
+          });
+          changes = migrated as typeof changes;
+          // Explicit null so patch deepMerge deletes any prior raw apiKey field.
+          if (!readNonEmptyApiKey((changes as any).apiKey)) {
+            (changes as any).apiKey = null;
+          }
+        }
 
         // 1) 检查本地是否存在
         let localExists = false;
@@ -495,13 +631,14 @@ export const slice = createSliceWithThunks({
             ...changes,
             id: normalizedAgentId,
             type: previousAgent.type || DataType.AGENT,
-            userId,
+            userId: effectiveUserId,
           };
           await thunkApi
             .dispatch(
               write({
                 data: merged,
                 customKey: privateKey,
+                userId: effectiveUserId,
               })
             )
             .unwrap();
@@ -520,7 +657,8 @@ export const slice = createSliceWithThunks({
         }
 
         // 2) 如提供 previousAgent，则尝试保持公共副本同步
-        if (previousAgent) {
+        // Local agents must never create, update, or delete a public copy.
+        if (previousAgent && effectiveUserId !== "local") {
           const wasPublic = !!previousAgent.isPublic;
           const hasIsPublicChange = Object.prototype.hasOwnProperty.call(
             changes,
@@ -536,7 +674,7 @@ export const slice = createSliceWithThunks({
               ...(changes as any),
               id: normalizedAgentId,
               type: previousAgent.type || DataType.AGENT,
-              userId,
+              userId: effectiveUserId,
             };
 
             await thunkApi
@@ -544,6 +682,7 @@ export const slice = createSliceWithThunks({
                 write({
                   data: mergedPublic,
                   customKey: publicKey,
+                  userId: effectiveUserId,
                 })
               )
               .unwrap();
@@ -561,7 +700,7 @@ export const slice = createSliceWithThunks({
           ...(changes as any),
           id: normalizedAgentId,
           type: base.type || DataType.AGENT,
-          userId,
+          userId: effectiveUserId,
         };
 
         return mergedPrivate;

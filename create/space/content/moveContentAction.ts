@@ -8,7 +8,10 @@ import { selectUserId } from "../../../auth/authSlice"; // 确认导入路径
 import { createSpaceKey } from "../../space/spaceKeys"; // 确认导入路径
 // 假设 dbSlice 提供 read, patch
 import { read, patch } from "../../../database/dbSlice"; // 确认导入路径
-import { checkSpaceMembership } from "../utils/permissions"; // 导入权限检查函数 (假设存在)
+import {
+  checkSpaceMembership,
+  localSpaceAuthorityPatchStamp,
+} from "../utils/permissions";
 import { UNCATEGORIZED_ID } from "../../space/constants"; // 导入常量
 import pino from "pino"; // 引入日志
 
@@ -60,10 +63,8 @@ export const moveContentAction = async (
   logger.info({ ...input, userId }, "Initiating moveContentAction");
 
   // --- 1. 基本验证 ---
-  if (!userId) {
-    logger.error("User not logged in.");
-    throw new Error("用户未登录");
-  }
+  // Login is not required up-front: device-local Spaces allow guest.
+  // Account Spaces still fail inside checkSpaceMembership when userId is blank.
   if (sourceSpaceId === targetSpaceId) {
     logger.error("Source and target space IDs are the same.");
     throw new Error(
@@ -188,17 +189,21 @@ export const moveContentAction = async (
     }
 
     // --- 7. 准备 Patch Changes ---
+    // Local Space patches stamp userId=local so replication plans [].
+    // Account Space patches must not rewrite ownership stamps.
     const sourcePatchChanges = {
       contents: {
         [contentKey]: null, // 从源移除引用 (null value in patch typically means delete key)
       },
       updatedAt: now,
+      ...localSpaceAuthorityPatchStamp(sourceSpaceData),
     };
     const targetPatchChanges = {
       contents: {
         [contentKey]: contentReferenceForTarget, // 向目标添加（或覆盖）引用
       },
       updatedAt: now,
+      ...localSpaceAuthorityPatchStamp(targetSpaceData),
     };
 
     // --- 8. 并行执行两个 Patch 更新 ---

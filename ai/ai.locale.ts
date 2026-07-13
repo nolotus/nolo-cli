@@ -18,6 +18,27 @@ export default {
       starting: "Starting...",
       viewDetails: "View Details",
       deleteSuccess: "Deleted successfully!",
+      moreActions: "More actions",
+      syncToAccount: "Sync to Nolo account",
+      syncedToAccount: "Synced to current account",
+      syncToAccountTitle: "Sync to Nolo account",
+      syncToAccountConfirm: "Confirm sync",
+      syncToAccountConfirmLead:
+        "Sync this device-local Agent's configuration to the current Nolo account?",
+      syncToAccountFactLocalRemains:
+        "The local Agent stays on this device.",
+      syncToAccountFactSnapshotOnly:
+        "This uploads an Agent configuration snapshot only.",
+      syncToAccountFactNoDialogs:
+        "Dialogs, messages, and attachments are not uploaded.",
+      syncToAccountFactNoSecrets:
+        "Local API keys and tokens are not uploaded.",
+      syncToAccountFactNoSpaceMembership:
+        "Space membership is not changed or synced in this step.",
+      syncToAccountFactOneTime:
+        "This is a one-time configuration snapshot upload, not continuous sync.",
+      syncToAccountSuccess: "Synced to the current account (local Agent kept)",
+      syncToAccountError: "Sync failed. Please try again.",
 
       // Component Specific
       agent: "Agent",
@@ -351,6 +372,23 @@ export default {
       starting: "启动中...",
       viewDetails: "详情",
       deleteSuccess: "删除成功！",
+      moreActions: "更多操作",
+      syncToAccount: "同步到 Nolo 账号",
+      syncedToAccount: "已同步到当前账号",
+      syncToAccountTitle: "同步到 Nolo 账号",
+      syncToAccountConfirm: "确认同步",
+      syncToAccountConfirmLead:
+        "确认把此本机 Agent 的配置同步到当前 Nolo 账号？",
+      syncToAccountFactLocalRemains: "本机 Agent 会继续留在这台设备上。",
+      syncToAccountFactSnapshotOnly: "本次只上传 Agent 配置快照。",
+      syncToAccountFactNoDialogs: "不会上传对话、消息、附件。",
+      syncToAccountFactNoSecrets: "不会上传本机 API 密钥或令牌。",
+      syncToAccountFactNoSpaceMembership:
+        "不会变更或同步 Space 成员关系。",
+      syncToAccountFactOneTime:
+        "这是一次性配置快照上传，不是持续同步。",
+      syncToAccountSuccess: "已同步到当前账号（本机 Agent 仍保留）",
+      syncToAccountError: "同步失败，请稍后重试",
 
       // 组件特定
       agent: "AI",
@@ -681,6 +719,23 @@ export default {
       starting: "啟動中...",
       viewDetails: "檢視詳情",
       deleteSuccess: "刪除成功！",
+      moreActions: "更多操作",
+      syncToAccount: "同步到 Nolo 帳號",
+      syncedToAccount: "已同步到目前帳號",
+      syncToAccountTitle: "同步到 Nolo 帳號",
+      syncToAccountConfirm: "確認同步",
+      syncToAccountConfirmLead:
+        "確認把此本機 Agent 的設定同步到目前 Nolo 帳號？",
+      syncToAccountFactLocalRemains: "本機 Agent 會繼續留在這台裝置上。",
+      syncToAccountFactSnapshotOnly: "本次只上傳 Agent 設定快照。",
+      syncToAccountFactNoDialogs: "不會上傳對話、訊息、附件。",
+      syncToAccountFactNoSecrets: "不會上傳本機 API 金鑰或權杖。",
+      syncToAccountFactNoSpaceMembership:
+        "不會變更或同步 Space 成員關係。",
+      syncToAccountFactOneTime:
+        "這是一次性設定快照上傳，不是持續同步。",
+      syncToAccountSuccess: "已同步到目前帳號（本機 Agent 仍保留）",
+      syncToAccountError: "同步失敗，請稍後再試",
 
       // 組件特定
       agent: "AI",
@@ -934,6 +989,28 @@ export default {
       starting: "開始中...",
       viewDetails: "詳細を表示",
       deleteSuccess: "正常に削除されました！",
+      moreActions: "その他の操作",
+      syncToAccount: "Nolo アカウントに同期",
+      syncedToAccount: "現在のアカウントに同期済み",
+      syncToAccountTitle: "Nolo アカウントに同期",
+      syncToAccountConfirm: "同期を確認",
+      syncToAccountConfirmLead:
+        "この端末ローカル Agent の設定を現在の Nolo アカウントに同期しますか？",
+      syncToAccountFactLocalRemains: "ローカル Agent はこの端末に残ります。",
+      syncToAccountFactSnapshotOnly:
+        "今回は Agent 設定のスナップショットのみをアップロードします。",
+      syncToAccountFactNoDialogs:
+        "ダイアログ・メッセージ・添付ファイルはアップロードしません。",
+      syncToAccountFactNoSecrets:
+        "ローカルの API キーやトークンはアップロードしません。",
+      syncToAccountFactNoSpaceMembership:
+        "この手順では Space のメンバーシップは変更・同期しません。",
+      syncToAccountFactOneTime:
+        "これは一回限りの設定スナップショットのアップロードであり、継続同期ではありません。",
+      syncToAccountSuccess:
+        "現在のアカウントに同期しました（ローカル Agent は保持）",
+      syncToAccountError:
+        "同期に失敗しました。しばらくしてから再試行してください。",
 
       // コンポーネント固有
       agent: "AI",

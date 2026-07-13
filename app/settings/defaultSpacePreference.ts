@@ -4,9 +4,24 @@ import {
   buildDefaultSpacePreferenceRegisterRecord,
   readUserPreferenceRegisterValue,
 } from "../../database/userPreferenceRegister";
+import {
+  DEVICE_LOCAL_OWNER_ID,
+  resolveEffectiveSpaceActorId,
+} from "../../database/authority/deviceLocal";
 import { normalizeSpaceId } from "../../create/space/spaceKeys";
 
 import { getSettingDbActionThunks } from "./dbActionThunks";
+
+/**
+ * Owner id for the default-space preference register.
+ * One register family only (`user-pref-{owner}-space_default`):
+ * - guest / blank → `"local"`
+ * - account A / B → that account userId
+ * Isolation is by owner segment — never share local↔account or A↔B registers.
+ */
+export const resolveDefaultSpacePreferenceOwnerId = (
+  userId?: string | null
+): string => resolveEffectiveSpaceActorId(userId);
 
 export const normalizeDefaultSpaceIdPreference = (
   value: unknown
@@ -35,11 +50,11 @@ export const readDefaultSpaceIdPreference = async (
   dispatch: any,
   userId?: string | null
 ): Promise<string | null> => {
-  if (!userId) {
-    return null;
-  }
+  // Always scope by effective actor so guest reads local register and
+  // account A/B read only their own register (no cross-leak).
+  const ownerId = resolveDefaultSpacePreferenceOwnerId(userId);
 
-  const registerKey = createUserPreferenceKey.defaultSpace(userId);
+  const registerKey = createUserPreferenceKey.defaultSpace(ownerId);
   const record = await dispatch(getSettingDbActionThunks().readAndWait(registerKey))
     .unwrap()
     .catch(() => null);
@@ -59,7 +74,8 @@ export const persistDefaultSpacePreference = async (
   userId: string,
   defaultSpaceId: string | null
 ) => {
-  const registerKey = createUserPreferenceKey.defaultSpace(userId);
+  const ownerId = resolveDefaultSpacePreferenceOwnerId(userId);
+  const registerKey = createUserPreferenceKey.defaultSpace(ownerId);
   const previousRecord = await dispatch(getSettingDbActionThunks().readAndWait(registerKey))
     .unwrap()
     .catch(() => null);
@@ -78,10 +94,12 @@ export const persistDefaultSpacePreference = async (
     getSettingDbActionThunks().write({
       customKey: registerKey,
       data: buildDefaultSpacePreferenceRegisterRecord({
-        userId,
+        userId: ownerId,
         defaultSpaceId,
         previousRecord,
       }),
     })
   ).unwrap();
 };
+
+export { DEVICE_LOCAL_OWNER_ID };

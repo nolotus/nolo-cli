@@ -2,8 +2,10 @@
 import { Agent } from "../../app/types";
 
 import { API_ENDPOINTS } from "../../database/config";
+import { buildProviderAuthHeaders } from "../../agent-runtime/providerResolution";
 import { performServerProxyFetchWithRetry } from "./serverProxyRetry";
 import { resolveAgentCallPlan } from "../../agent-runtime/agentCallPlan";
+import { resolveDirectRequestApiKey } from "./resolveDirectRequestApiKey";
 
 interface BodyData {
   model: string;
@@ -35,6 +37,7 @@ const buildProxyPayload = (
     bodyData.provider ||
     agentConfig.provider ||
     (apiSource === "custom" ? "custom" : undefined);
+  // Server-proxy KEY: only transient/raw apiKey. Never hydrate from local broker.
   const apiKey = agentConfig.apiKey?.trim() || undefined;
 
   return {
@@ -55,12 +58,17 @@ const fetchDirectly = async ({
   signal,
 }: Omit<FetchParams, "currentServer" | "token">): Promise<Response> => {
   try {
-    const apiKey = agentConfig.apiKey?.trim();
+    const apiKey = await resolveDirectRequestApiKey(agentConfig);
+    const authHeaders = buildProviderAuthHeaders({
+      endpoint: api,
+      apiKey: apiKey ?? "",
+      apiKeyHeader: (agentConfig as any).apiKeyHeader,
+    });
     return await fetch(api, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        ...authHeaders,
         ...(api.includes("openrouter.ai") ? {
           "HTTP-Referer": "https://nolo.chat",
           "X-Title": "nolo"

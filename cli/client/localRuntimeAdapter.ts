@@ -34,6 +34,7 @@ import { readOAuthCredential } from "../../agent-runtime/oauthTokenStore";
 import { getDefaultCliLocalRuntimeDb } from "../localRuntimeDb";
 import { resolveAgentRuntimeConfigFromRecord } from "./agentConfigResolver";
 import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
+import { createFileCredentialBroker } from "../../agent-runtime/fileCredentialBroker";
 import { createOAuthApiKeyRefResolver } from "../oauth/apiKeyRefResolver";
 import {
   buildLocalDialogWritePlan,
@@ -1365,7 +1366,10 @@ export function createCliLocalRuntimeAdapter(
         };
       }
 
+      // Local-first: OAuth resolver + file credential broker (metered API keys).
+      // Broker is preferred inside buildProviderExecutionPlan when both are present.
       const apiKeyRefResolver = createOAuthApiKeyRefResolver();
+      const credentialBroker = createFileCredentialBroker();
 
       // Antigravity (Google Cloud Code Assist) is not OpenAI-compatible: local
       // direct `/chat/completions` against daily-cloudcode-pa returns HTTP 404.
@@ -1478,6 +1482,7 @@ export function createCliLocalRuntimeAdapter(
           agentConfig,
           env: deps.env,
           apiKeyRefResolver,
+          credentialBroker,
         });
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1581,6 +1586,7 @@ export function createCliLocalRuntimeAdapter(
         agentConfig,
         env: deps.env,
         apiKeyRefResolver,
+        credentialBroker,
       });
       logLocalRuntimeDiagnostic("provider.selected", {
         agentKey: agentConfig.key,

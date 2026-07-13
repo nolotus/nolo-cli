@@ -8,6 +8,14 @@ import { extractUserId } from "../../../core/prefix";
 import { isSystemAdmin } from "../../../core/init";
 import { deleteDialog } from "../../../chat/dialog/dialogSlice";
 import { deleteTable } from "../../../render/table/tableSlice";
+import {
+  DEVICE_LOCAL_OWNER_ID,
+  isDeviceLocalSpaceBody,
+} from "../../../database/authority/deviceLocal";
+import {
+  checkSpaceMembership,
+  localSpaceAuthorityPatchStamp,
+} from "../utils/permissions";
 
 const nextSpaceUpdatedAt = (value: unknown): number | string => {
   const previousTimestamp =
@@ -112,7 +120,7 @@ export const deleteContentFromSpaceAction = async (
   const { contentKey, sourceServerOrigin } = input;
   const spaceId = normalizeSpaceId(input.spaceId);
   const { dispatch, getState } = thunkAPI;
-  const userId = selectUserId(getState());
+  const accountUserId = selectUserId(getState()) as string | null | undefined;
 
   // 1. 获取并验证 Space 数据
   const spaceKey = createSpaceKey.space(spaceId);
@@ -122,8 +130,8 @@ export const deleteContentFromSpaceAction = async (
   })).unwrap()) as SpaceData | null;
 
   if (!spaceData) throw new Error("空间不存在");
-  if (!userId || !spaceData.members?.includes(userId))
-    throw new Error("无权修改此空间");
+  // Local body → local owner (guest or logged-in); account Space keeps membership.
+  checkSpaceMembership(spaceData, accountUserId);
 
   const contentReference = findContentReference(spaceData, contentKey);
   if (!contentReference) {
@@ -139,7 +147,7 @@ export const deleteContentFromSpaceAction = async (
     contentDeletes[entityKey] = null;
   }
 
-  // 2. 从 Space 的 contents 中移除引用
+  // 2. 从 Space 的 contents 中移除引用；本地 Space 显式 stamp userId=local
   const updatedSpaceData = await (dispatch as any)(
     patch({
       dbKey: spaceKey,
@@ -147,11 +155,17 @@ export const deleteContentFromSpaceAction = async (
       changes: {
         contents: contentDeletes,
         updatedAt: nextSpaceUpdatedAt(spaceData.updatedAt),
+        ...localSpaceAuthorityPatchStamp(spaceData),
       },
     })
   ).unwrap();
 
   // 3. 根据内容类型执行实体的物理删除 (Functional Refactor)
+  // Local Space body → entity owner checks use synthetic "local" (not the
+  // active account id). Account Spaces keep account userId.
+  const userId = isDeviceLocalSpaceBody(spaceData)
+    ? DEVICE_LOCAL_OWNER_ID
+    : String(accountUserId ?? "");
   let entityRemoveError: string | null = null;
   const contentType = String(contentInfo.type || "").toLowerCase();
 

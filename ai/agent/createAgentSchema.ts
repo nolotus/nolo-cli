@@ -3,6 +3,10 @@
 import { ReferenceItem } from "../../app/types"; // 确保 app/types 里有 ReferenceItem 定义
 import { TFunction } from "i18next";
 import { z } from "zod";
+import { CLI_PROVIDER_VALUES } from "./cliProviders";
+
+// Re-export form-facing CLI list from the single browser-safe authority.
+export { CLI_PROVIDER_VALUES, type CliProvider, type CliProviderValue } from "./cliProviders";
 
 // --- 常量 ---
 export const DEFAULT_TEMPERATURE = 0.7;
@@ -13,6 +17,7 @@ export const DEFAULT_MAX_TOKENS = 4096;
 export const DEFAULT_REASONING_EFFORT = "medium";
 
 export const REASONING_EFFORT_OPTIONS = ["low", "medium", "high"] as const;
+
 const greetingMenuItemSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -118,10 +123,10 @@ export const getCreateAgentSchema = (t: TFunction) =>
         .optional(),
 
       /**
-       * CLI provider（apiSource=cli 时有效）：支持 "copilot" | "gemini" | "codex" | "claude" | "agy" | "qoder" | "opencode" | "grok" | "kimi"
+       * CLI provider（apiSource=cli 时有效）：见 CLI_PROVIDER_VALUES
        */
       cliProvider: z
-        .enum(["copilot", "gemini", "codex", "claude", "agy", "qoder", "opencode", "grok", "kimi"])
+        .enum(CLI_PROVIDER_VALUES)
         .nullable()
         .optional()
         .or(z.literal("")),

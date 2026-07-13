@@ -1,6 +1,7 @@
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import { pickAgentRuntimeInferenceOptions } from "./agentConfigOptions";
 import { getModelConfig } from "../ai/llm/providers";
+import type { CredentialBroker } from "./credentialBroker";
 import { resolveFreshAccessToken } from "./oauthTokenStore";
 import { OAUTH_PROVIDER_REFRESH } from "./oauthProviders";
 
@@ -65,6 +66,35 @@ export type AgentRuntimeLocation = "server" | "bound-machine" | "local-host";
  * wiring (which lives in packages/cli/oauth).
  */
 export type ApiKeyRefResolver = (ref: string) => Promise<string | null>;
+
+/**
+ * Load a secret from the local credential broker by explicit ref.
+ * Prefer this for metered API keys stored under ~/.nolo/credentials/keys/.
+ */
+export async function resolveCredentialFromBroker(
+  broker: CredentialBroker,
+  ref: string,
+): Promise<string | null> {
+  const trimmed = typeof ref === "string" ? ref.trim() : "";
+  if (!trimmed) return null;
+  try {
+    if (!(await broker.has(trimmed))) return null;
+    const secret = await broker.get(trimmed);
+    if (typeof secret !== "string") return null;
+    const value = secret.trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build an ApiKeyRefResolver that reads from a CredentialBroker first.
+ * Callers may compose with OAuth resolvers (try broker, then OAuth).
+ */
+export function createBrokerApiKeyRefResolver(broker: CredentialBroker): ApiKeyRefResolver {
+  return (ref) => resolveCredentialFromBroker(broker, ref);
+}
 
 export type ProviderTransportDecision = {
   mode: AgentProviderMode;
@@ -243,6 +273,8 @@ export async function buildProviderExecutionPlan(args: {
   env: EnvLike;
   runtimeKind: "local" | "desktop" | "server";
   apiKeyRefResolver?: ApiKeyRefResolver;
+  /** Local-first OS credential broker (API keys). Prefer over raw agent.apiKey. */
+  credentialBroker?: CredentialBroker;
 }): Promise<ProviderExecutionPlan> {
   const { agentConfig, env } = args;
   const mode = resolveAgentProviderMode(agentConfig);
@@ -271,18 +303,39 @@ export async function buildProviderExecutionPlan(args: {
 
   if (mode === "custom") {
     const endpoint = resolveChatCompletionsEndpoint(agentConfig.customProviderUrl || resolveOpenAiCompatibleBaseUrl(env));
-    let apiKey = agentConfig.apiKey?.trim() || agentConfig.apiKeyFromAgentKey?.trim() || "";
+    let apiKey = "";
+    const credentialRef = agentConfig.credentialRef?.trim();
     const apiKeyRef = agentConfig.apiKeyRef?.trim();
-    if (apiKeyRef && args.apiKeyRefResolver) {
+
+    // Prefer local broker (migrated API keys) before raw record fields / OAuth resolver.
+    if (args.credentialBroker) {
+      const brokerRefs = [credentialRef, apiKeyRef].filter(
+        (ref): ref is string => Boolean(ref),
+      );
+      for (const ref of brokerRefs) {
+        const fromBroker = await resolveCredentialFromBroker(args.credentialBroker, ref);
+        if (fromBroker) {
+          apiKey = fromBroker;
+          break;
+        }
+      }
+    }
+
+    if (!apiKey && apiKeyRef && args.apiKeyRefResolver) {
       const resolved = await args.apiKeyRefResolver(apiKeyRef);
       if (resolved) {
         apiKey = resolved;
-      } else if (!apiKey) {
+      } else if (!agentConfig.apiKey?.trim() && !agentConfig.apiKeyFromAgentKey?.trim()) {
         throw new Error(
           `OAuth credential for "${apiKeyRef}" not found locally. Run \`nolo auth ${apiKeyRef}\` (and \`--sync-to-server\` for server-side agent runs).`,
         );
       }
     }
+
+    if (!apiKey) {
+      apiKey = agentConfig.apiKey?.trim() || agentConfig.apiKeyFromAgentKey?.trim() || "";
+    }
+
     const apiKeyHeader = resolveProviderAuthHeaderName({
       endpoint,
       apiKeyHeader: agentConfig.apiKeyHeader,

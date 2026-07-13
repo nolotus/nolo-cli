@@ -13,11 +13,18 @@ import {
 import { DataType } from "../../types";
 import { API_ENDPOINTS } from "../../../database/config";
 import { readAction } from "../../../database/actions/read";
+import {
+  DEVICE_LOCAL_OWNER_ID,
+  isDeviceLocalOwnerId,
+  isDeviceLocalSpaceMembership,
+} from "../../../database/authority/deviceLocal";
 import { isTombstoneRecord } from "../../../database/tombstones";
 
 type MembershipWithSource = SpaceMemberWithSpaceInfo & {
   sourceServer?: string;
   requiresRemoteSpaceVerification?: boolean;
+  /** True when this row is device-local authority (never remote-verified). */
+  deviceLocal?: boolean;
 };
 
 const CONTENT_SPACE_RECOVERY_TYPES = [
@@ -41,6 +48,18 @@ const readLocalSpaceData = async (db: any, spaceId: string): Promise<any | null>
   }
 };
 
+/**
+ * Effective owner for membership/space listing checks.
+ * Device-local rows always authenticate as `"local"`; account rows use active userId.
+ */
+const membershipCheckUserId = (
+  membership: { userId?: string | null },
+  activeUserId: string
+): string =>
+  isDeviceLocalSpaceMembership(membership)
+    ? DEVICE_LOCAL_OWNER_ID
+    : activeUserId;
+
 const buildLocalMembershipPreview = async (
   userId: string,
   db: any,
@@ -49,12 +68,23 @@ const buildLocalMembershipPreview = async (
   const preview = await Promise.all(
     memberships.map(async (membership) => {
       if (isTombstoneRecord(membership)) return null;
-      if (!membershipBelongsToUser(membership, userId)) return null;
+      const checkUserId = membershipCheckUserId(membership, userId);
+      if (!membershipBelongsToUser(membership, checkUserId)) return null;
 
       const normalizedSpaceId = normalizeSpaceId(membership.spaceId);
       const localSpaceData = await readLocalSpaceData(db, normalizedSpaceId);
-      if (localSpaceData && isTombstoneRecord(localSpaceData)) return null;
-      if (localSpaceData && !spaceListsUser(localSpaceData, userId)) return null;
+      // Device-local membership is locally authoritative but requires a real
+      // non-tombstoned Space body that lists `"local"`. Missing body is a
+      // ghost membership — drop it (same as tombstoned). Never remote-verify.
+      if (isDeviceLocalSpaceMembership(membership)) {
+        if (!localSpaceData || isTombstoneRecord(localSpaceData)) return null;
+        if (!spaceListsUser(localSpaceData, checkUserId)) return null;
+      } else {
+        if (localSpaceData && isTombstoneRecord(localSpaceData)) return null;
+        if (localSpaceData && !spaceListsUser(localSpaceData, checkUserId)) {
+          return null;
+        }
+      }
 
       return {
         ...membership,
@@ -69,9 +99,9 @@ const buildLocalMembershipPreview = async (
 };
 
 /**
- * 从本地 IndexedDB 获取数据
+ * 从本地 IndexedDB 按 userId 前缀扫描 space-member-{userId}-*
  */
-const fetchLocal = async (
+const fetchLocalForUser = async (
   userId: string,
   db: any
 ): Promise<SpaceMemberWithSpaceInfo[]> => {
@@ -83,7 +113,7 @@ const fetchLocal = async (
       lte: prefix + "\xff",
     });
 
-    if (iterator && typeof iterator.then === 'function') {
+    if (iterator && typeof iterator.then === "function") {
       iterator = await iterator;
     }
 
@@ -103,6 +133,43 @@ const fetchLocal = async (
     console.error("Error fetching local memberships:", error);
     return [];
   }
+};
+
+/**
+ * Device-local + active-account union (single list, no second registry).
+ * Guest / userId "local" → local only.
+ * Account A → space-member-local-* ∪ space-member-A-*.
+ */
+const fetchLocalUnion = async (
+  userId: string,
+  db: any
+): Promise<MembershipWithSource[]> => {
+  const deviceLocalRows = await fetchLocalForUser(DEVICE_LOCAL_OWNER_ID, db);
+  const taggedLocal: MembershipWithSource[] = deviceLocalRows.map(
+    (membership) => ({
+      ...membership,
+      spaceId: normalizeSpaceId(membership.spaceId),
+      deviceLocal: true,
+      userId: membership.userId || DEVICE_LOCAL_OWNER_ID,
+    })
+  );
+
+  if (isDeviceLocalOwnerId(userId)) {
+    return taggedLocal;
+  }
+
+  const accountRows = await fetchLocalForUser(userId, db);
+  const taggedAccount: MembershipWithSource[] = accountRows.map(
+    (membership) => ({
+      ...membership,
+      spaceId: normalizeSpaceId(membership.spaceId),
+      deviceLocal: false,
+    })
+  );
+
+  // Prefer account row when the same spaceId collides (account processed last
+  // in the merge map). Here we just concatenate; map merge applies preference.
+  return [...taggedLocal, ...taggedAccount];
 };
 
 const fetchRemoteContentSpaceIds = async (
@@ -192,6 +259,12 @@ const recoverMembershipsFromContentSpaces = async ({
 
 /**
  * 获取用户的所有空间成员资格。
+ *
+ * Device-local foundation:
+ * - Always unions `space-member-local-*` with the active account prefix.
+ * - Guest (`userId === "local"`) needs no token/server.
+ * - Device-local rows never remote-verify and never recover remotely.
+ * - Same spaceId collision: active-account membership wins over local.
  */
 export const fetchUserSpaceMembershipsAction = async (
   userId: string,
@@ -200,13 +273,19 @@ export const fetchUserSpaceMembershipsAction = async (
   const state = thunkAPI.getState();
   const db = thunkAPI.extra.db;
   const { token, servers } = selectSpaceRemoteAuth(state);
+  const isLocalActor = isDeviceLocalOwnerId(userId);
 
-  const localMembershipsPromise = fetchLocal(userId, db);
-  const remoteResultsPromise = Promise.all(
-    servers.map((server) =>
-      fetchRemoteUserSpaceMemberships(server, token, userId)
-    )
-  );
+  const localMembershipsPromise = fetchLocalUnion(userId, db);
+  // Guest / local actor: never hit remote membership RPC (no token required).
+  const remoteResultsPromise = isLocalActor
+    ? Promise.resolve([] as Awaited<
+        ReturnType<typeof fetchRemoteUserSpaceMemberships>
+      >[])
+    : Promise.all(
+        servers.map((server) =>
+          fetchRemoteUserSpaceMemberships(server, token, userId)
+        )
+      );
 
   const localMemberships = await localMembershipsPromise;
   if (state.space?.memberSpaces === null && localMemberships.length > 0) {
@@ -232,7 +311,8 @@ export const fetchUserSpaceMembershipsAction = async (
       }))
   );
   const hasSuccessfulRemoteFetch = successfulRemoteResults.length > 0;
-  const hasRemoteAuthority = !!token && servers.length > 0;
+  // Guest never has remote authority requirements even if servers are listed.
+  const hasRemoteAuthority = !isLocalActor && !!token && servers.length > 0;
 
   if (hasRemoteAuthority && !hasSuccessfulRemoteFetch) {
     throw new Error(
@@ -251,6 +331,18 @@ export const fetchUserSpaceMembershipsAction = async (
       await Promise.all(
         localMemberships.map(async (membership) => {
           const normalizedSpaceId = normalizeSpaceId(membership.spaceId);
+
+          // Device-local rows are device-authoritative: never flag for remote verify.
+          if (
+            membership.deviceLocal ||
+            isDeviceLocalSpaceMembership(membership)
+          ) {
+            return {
+              ...membership,
+              spaceId: normalizedSpaceId,
+              deviceLocal: true,
+            };
+          }
 
           if (remoteSpaceIds.has(normalizedSpaceId)) {
             return {
@@ -279,10 +371,35 @@ export const fetchUserSpaceMembershipsAction = async (
     membership: MembershipWithSource
   ): Promise<SpaceMemberWithSpaceInfo | null> => {
     if (isTombstoneRecord(membership)) return null;
-    if (!membershipBelongsToUser(membership, userId)) return null;
+
+    const checkUserId = membershipCheckUserId(membership, userId);
+    if (!membershipBelongsToUser(membership, checkUserId)) return null;
 
     const normalizedSpaceId = normalizeSpaceId(membership.spaceId);
     const localSpaceData = await readLocalSpaceData(db, normalizedSpaceId);
+    const isDeviceLocal =
+      membership.deviceLocal || isDeviceLocalSpaceMembership(membership);
+
+    // Device-local memberships never remote-verify. Body must exist, be
+    // non-tombstoned, and list `"local"` — missing body is ghost membership.
+    if (isDeviceLocal) {
+      if (!localSpaceData || isTombstoneRecord(localSpaceData)) return null;
+      if (!spaceListsUser(localSpaceData, checkUserId)) {
+        return null;
+      }
+      const {
+        sourceServer: _s,
+        requiresRemoteSpaceVerification: _r,
+        deviceLocal: _d,
+        ...visible
+      } = membership;
+      return {
+        ...visible,
+        spaceId: normalizedSpaceId,
+        userId: DEVICE_LOCAL_OWNER_ID,
+      };
+    }
+
     if (membership.sourceServer || membership.requiresRemoteSpaceVerification) {
       if (localSpaceData && isTombstoneRecord(localSpaceData)) return null;
       try {
@@ -304,7 +421,11 @@ export const fetchUserSpaceMembershipsAction = async (
           if (remoteSpace) break;
         }
         if (!spaceListsUser(remoteSpace, userId)) return null;
-        const { requiresRemoteSpaceVerification, ...verifiedMembership } = membership;
+        const {
+          requiresRemoteSpaceVerification,
+          deviceLocal: _dl,
+          ...verifiedMembership
+        } = membership;
         return {
           ...verifiedMembership,
           spaceId: normalizedSpaceId,
@@ -362,8 +483,9 @@ export const fetchUserSpaceMembershipsAction = async (
       ...activeMemberships,
     ].map((membership) => normalizeSpaceId(membership.spaceId))
   );
+  // Content recovery is account-only; never for guest/local actor.
   const recoveredMemberships =
-    hasRemoteAuthority && hasSuccessfulRemoteFetch
+    hasRemoteAuthority && hasSuccessfulRemoteFetch && !isLocalActor
       ? await recoverMembershipsFromContentSpaces({
         servers,
         token,
@@ -372,14 +494,39 @@ export const fetchUserSpaceMembershipsAction = async (
       })
       : [];
 
+  // Merge into one list. On spaceId collision prefer active-account membership
+  // over device-local: process device-local first, then account/recovered last.
   const membershipMap = new Map<string, SpaceMemberWithSpaceInfo>();
+  const preferAccountOnCollision = (
+    existing: SpaceMemberWithSpaceInfo | undefined,
+    next: SpaceMemberWithSpaceInfo
+  ): SpaceMemberWithSpaceInfo => {
+    if (!existing) return next;
+    const existingLocal = isDeviceLocalSpaceMembership(existing);
+    const nextLocal = isDeviceLocalSpaceMembership(next);
+    // Prefer non-local (active account) over local when ids collide.
+    if (existingLocal && !nextLocal) return next;
+    if (!existingLocal && nextLocal) return existing;
+    return next;
+  };
+
   [...activeMemberships, ...recoveredMemberships].forEach((membership) => {
     const normalizedSpaceId = normalizeSpaceId(membership.spaceId);
-    const { sourceServer, ...visibleMembership } = membership as MembershipWithSource;
-    membershipMap.set(normalizedSpaceId, {
+    const {
+      sourceServer: _sourceServer,
+      requiresRemoteSpaceVerification: _req,
+      deviceLocal: _deviceLocal,
+      ...visibleMembership
+    } = membership as MembershipWithSource;
+    const cleaned: SpaceMemberWithSpaceInfo = {
       ...visibleMembership,
       spaceId: normalizedSpaceId,
-    });
+    };
+    const existing = membershipMap.get(normalizedSpaceId);
+    membershipMap.set(
+      normalizedSpaceId,
+      preferAccountOnCollision(existing, cleaned)
+    );
   });
 
   const finalMemberships = Array.from(membershipMap.values()).sort(

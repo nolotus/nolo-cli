@@ -970,7 +970,7 @@ describe("cli agent run client", () => {
     expect(loadAgentConfigCalls).toBe(4);
     expect(localCompletions).toBe(1);
     expect(httpCalls).toEqual([]);
-    expect(output.text()).toContain("refreshing from the configured server and retrying local once");
+    expect(output.text()).toContain("refreshing local config and retrying local once");
     expect(output.text().match(/working locally/g)?.length).toBe(2);
   });
 
@@ -1016,7 +1016,7 @@ describe("cli agent run client", () => {
     expect(loadAgentConfigCalls).toBe(3);
     expect(httpCalls).toHaveLength(1);
     expect(httpCalls[0]?.body.agentKey).toBe("frontend-local");
-    expect(output.text()).toContain("refreshing from the configured server and retrying local once");
+    expect(output.text()).toContain("refreshing local config and retrying local once");
     expect(output.text()).toContain("frontend -> working");
     expect(output.text()).toContain("frontend > server fallback");
   });
@@ -1064,7 +1064,7 @@ describe("cli agent run client", () => {
     expect(httpCalls).toHaveLength(1);
     expect(httpCalls[0]?.body.agentKey).toBe("nolo-frontend");
     expect(output.text()).not.toContain("known platform agent");
-    expect(output.text()).toContain("refreshing from the configured server and retrying local once");
+    expect(output.text()).toContain("refreshing local config and retrying local once");
   });
 
   test("auto mode skips local runtime for agents that declare server platform tools", async () => {
@@ -1820,6 +1820,53 @@ describe("cli agent run client", () => {
 
     expect(result.exitCode).toBe(1);
     expect(output.text()).toContain("Run `nolo login`");
+  });
+
+  test("auto mode does not fall back to server without an auth token", async () => {
+    const output = new CaptureOutput();
+    let fetchCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "local-bot",
+      agentKey: "agent-local-01AGENT",
+      serverUrl: "https://nolo.chat",
+      message: "hello local",
+      scriptDir: "C:/missing/scripts",
+      env: {},
+      runtimeMode: "auto",
+      output,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Local",
+          apiSource: "custom",
+          customProviderUrl: "http://127.0.0.1:11434/v1",
+          model: "local-model",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local-no-auth" }),
+        resolveProvider: async () => ({
+          model: "local-model",
+          complete: async () => {
+            throw new Error("local provider offline");
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        throw new Error("fetch should not be called without auth token");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(fetchCalls).toBe(0);
+    expect(output.text()).toContain("server fallback is disabled");
+    expect(output.text()).not.toContain("falling back to server");
   });
 
   test("prints a friendly connection hint instead of crashing on transport errors", async () => {

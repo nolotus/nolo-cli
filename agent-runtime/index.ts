@@ -34,10 +34,73 @@ export { resolveOpenAiCompatibleProviderConfig } from "./openAiCompatibleProvide
 export {
   buildProviderAuthHeaders,
   buildProviderExecutionPlan,
+  createBrokerApiKeyRefResolver,
   resolveAgentProviderMode,
   resolveAgentRuntimeLocation,
+  resolveCredentialFromBroker,
   resolveProviderTransportDecision,
 } from "./providerResolution";
+export type { CredentialBroker, CredentialRef } from "./credentialBroker";
+export { assertCredentialRef } from "./credentialBroker";
+export {
+  createFileCredentialBroker,
+  getApiKeyCredentialPath,
+  getApiKeyCredentialsDir,
+} from "./fileCredentialBroker";
+export {
+  createDefaultSecurityRunner,
+  createMacOsKeychainCredentialBroker,
+  credentialRefToMacOsKeychainService,
+  MACOS_KEYCHAIN_ACCOUNT,
+  MACOS_KEYCHAIN_SERVICE_PREFIX,
+  SECURITY_ITEM_NOT_FOUND_EXIT,
+} from "./macOsKeychainCredentialBroker";
+export type {
+  CreateMacOsKeychainCredentialBrokerOptions,
+  SecurityRunner,
+  SecurityRunnerResult,
+} from "./macOsKeychainCredentialBroker";
+export {
+  buildWindowsCredentialPowerShellArgs,
+  createDefaultWindowsCredentialRunner,
+  createWindowsCredentialManagerBroker,
+  credentialRefToWindowsCredentialTarget,
+  WIN_ERROR_NOT_FOUND,
+  WINDOWS_CREDENTIAL_MANAGER_SCRIPT,
+  WINDOWS_CREDENTIAL_TARGET_PREFIX,
+  WINDOWS_CREDENTIAL_USERNAME,
+} from "./windowsCredentialManagerBroker";
+export type {
+  CreateWindowsCredentialManagerBrokerOptions,
+  WindowsCredentialRunner,
+  WindowsCredentialRunnerResult,
+} from "./windowsCredentialManagerBroker";
+export { createDesktopHostCredentialBroker } from "./desktopHostCredentialBroker";
+export type {
+  CreateDesktopHostCredentialBrokerOptions,
+  DesktopCredentialStoreMode,
+} from "./desktopHostCredentialBroker";
+export {
+  createFileSourceRegistry,
+  getSourceRegistryPath,
+} from "./sourceRegistry";
+export type {
+  SourceKind,
+  SourceRecord,
+  SourceRegistry,
+  SourceStatus,
+} from "./sourceRegistry";
+export {
+  applyAgentSecretMigrationUpdates,
+  buildAgentApiKeyCredentialRef,
+  migrateAgentSecrets,
+} from "./migrateAgentSecrets";
+export type {
+  AgentSecretFields,
+  AgentSecretMigrationResult,
+  AgentSecretMigrationUpdates,
+  CredentialMigrationStatus,
+} from "./migrateAgentSecrets";
 export {
   buildPlatformChatCompletionRequest,
   canUsePlatformChatProvider,
@@ -82,6 +145,24 @@ export {
   isFutureAgentThread,
 } from "./agentThread";
 export { resolveAgentRuntimeConfigFromRecord } from "./agentRecordConfig";
+export {
+  agentRuntimeConfigFromDesktopSnapshot,
+  assertDesktopAgentRuntimeTurnBodyHasNoRawSecrets,
+  buildDesktopAgentRuntimeAgentConfigSnapshot,
+  buildDesktopAgentRuntimeDialogHistorySnapshot,
+  isDesktopSnapshotSensitivePropertyName,
+  parseDesktopAgentRuntimeAgentConfigSnapshot,
+  parseDesktopAgentRuntimeDialogHistorySnapshot,
+  redactSensitiveJsonTree,
+  sanitizeToolCallArguments,
+  DESKTOP_AGENT_CONFIG_SNAPSHOT_FORBIDDEN_KEYS,
+  DESKTOP_AGENT_CONFIG_SNAPSHOT_STRING_FIELDS,
+  DESKTOP_TOOL_CALL_ARGUMENTS_MAX_CHARS,
+} from "./desktopRequestSnapshot";
+export type {
+  DesktopAgentRuntimeAgentConfigSnapshot,
+  DesktopAgentRuntimeDialogHistorySnapshot,
+} from "./desktopRequestSnapshot";
 export { dialogMessageRecordToAgentRuntimeMessage } from "./dialogMessageRecord";
 export { buildAgentRuntimeDialogWritePlan } from "./dialogWritePlan";
 export {
@@ -207,3 +288,15 @@ export type {
   AgentRuntimeWorkspaceMode,
 } from "./types";
 export * from "./externalTools";
+
+export {
+  assertCloudGrantAllowed,
+  createCloudCredentialGrant,
+  uploadCloudCredentialGrant,
+} from "./cloudCredentialGrant";
+export type {
+  CloudCredentialGrant,
+  CloudCredentialGrantStatus,
+  AssertCloudGrantAllowedInput,
+  CreateCloudCredentialGrantInput,
+} from "./cloudCredentialGrant";

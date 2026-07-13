@@ -1422,13 +1422,19 @@ export const streamAgentChatTurnHandler = async (
             };
 
             try {
+                const desktopAgentRef = agentConfig.dbKey || agentKey;
+                // Request-scoped authoritative snapshot: webview IndexedDB is the
+                // truth for logged-out local agents; host LevelDB must not be a
+                // second copy. Credential material stays as credentialRef only.
                 const eventStream = runDesktopAgentRuntimeTurnStream({
-                    agentRef: agentConfig.dbKey || agentKey,
+                    agentRef: desktopAgentRef,
                     input: userInput,
                     continueDialogId: dialogId,
                     cwd: runtimeOptions?.cwd,
                     restrictShellToWorkspace: runtimeOptions?.restrictShellToWorkspace === true,
                     workspaceToolsHint: runtimeOptions?.workspaceToolsHint === true,
+                    agentConfigSnapshot: agentConfig as Record<string, unknown>,
+                    dialogMessages: selectAllMsgs(getState() as RootState, dialogId),
                 });
 
                 for await (const event of eventStream) {

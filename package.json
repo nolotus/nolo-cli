@@ -636,6 +636,7 @@
     "app/settings/dbActionThunks.ts",
     "app/settings/defaultSpacePreference.ts",
     "app/settings/settingNormalizers.ts",
+    "app/settings/quickChatTierDefaults.ts",
     "app/store.ts",
     "app/reducer.ts",
     "app/favorite/favoriteSlice.ts",

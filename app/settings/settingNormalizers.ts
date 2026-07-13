@@ -12,6 +12,7 @@ import {
 } from "../../ai/policy/types";
 
 import { SYSTEM_DEFAULT_AGENT_ID } from "./settingTypes";
+import { QUICK_CHAT_DEFAULT_TIER_AGENTS } from "./quickChatTierDefaults";
 
 export const hasOwn = (target: object, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(target, key);
@@ -75,6 +76,27 @@ export const selectResolvedDefaultAgentId = (value: unknown): string => {
   const normalizedValue = resolveDefaultAgentIdSetting(value);
   return normalizedValue === SYSTEM_DEFAULT_AGENT_ID
     ? noloAgentId
+    : normalizedValue;
+};
+
+/**
+ * Resolve a quick-chat *tier* agent field (`flashAgentId` / `balancedAgentId` /
+ * `qualityAgentId` / `imageAgentId`) to its runtime id.
+ *
+ * Unlike the generic `defaultAgentId` field (which falls back to the built-in
+ * `nolo` agent when unset / on the system-default sentinel), each quick-chat
+ * tier has its own dedicated built-in public agent. When the stored value is
+ * missing or the `SYSTEM_DEFAULT_AGENT_ID` sentinel, we return that tier's
+ * built-in default instead of `noloAgentId`. A user-customized value is
+ * returned as-is.
+ */
+export const selectResolvedTierAgentId = (
+  value: unknown,
+  tier: "flash" | "balanced" | "quality" | "image",
+): string => {
+  const normalizedValue = resolveDefaultAgentIdSetting(value);
+  return normalizedValue === SYSTEM_DEFAULT_AGENT_ID
+    ? QUICK_CHAT_DEFAULT_TIER_AGENTS[tier]
     : normalizedValue;
 };
 

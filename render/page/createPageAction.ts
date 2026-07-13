@@ -82,6 +82,7 @@ export const createPageAction = async (
   const spaceId = customSpaceId ?? selectCurrentSpaceId(state);
   const { dbKey, id } = createPageKey.create(userId);
 
+  const now = new Date();
   // Untitled by default — created time is shown as secondary meta in the page
   // chrome, not baked into the title (users should type a real name).
   const defaultTitle = i18n.t("page:untitled", {

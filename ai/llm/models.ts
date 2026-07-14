@@ -9,7 +9,8 @@ import { openAIModels } from "../../integrations/openai/models";
 import { deepinfraModels } from "./deepinfra";
 import { xaiModels } from "../../integrations/xai/models";
 import { openrouterModels } from "./openrouterModels";
- import { fireworksModels } from "./fireworks";
+import { fireworksModels } from "./fireworks";
+import { ollamaCloudModels } from "./ollamaCloud";
 import { mistralModels } from "./mistral";
 import { mimoModels } from "./mimo";
 import { cloudflareModels } from "./cloudflare";
@@ -45,6 +46,7 @@ export const ALL_MODELS: ModelWithProvider[] = [
   ...withProvider("deepseek")(deepSeekModels),
   ...withProvider("deepinfra")(deepinfraModels),
   ...withProvider("fireworks")(fireworksModels),
+  ...withProvider("ollama-cloud")(ollamaCloudModels),
   ...withProvider("mistral")(mistralModels),
   ...withProvider("mimo")(mimoModels),
   ...withProvider("cloudflare")(cloudflareModels),

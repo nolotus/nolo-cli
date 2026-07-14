@@ -14,7 +14,7 @@
 export const QUICK_CHAT_AUTO_FALLBACK_AGENT_KEY =
   "agent-pub-deepseek-v4-flash";
 export const QUICK_CHAT_IMAGE_AGENT_KEY =
-  "agent-pub-01FWKIMI26IMGX0VE801000000";
+  "agent-pub-01KIMIK26OLLAMA0000000001";
 
 /** 快速对话四档内置默认 agentKey;用户未定制时回退到这些。 */
 export const QUICK_CHAT_DEFAULT_TIER_AGENTS: Record<

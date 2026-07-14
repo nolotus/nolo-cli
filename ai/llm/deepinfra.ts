@@ -1,20 +1,7 @@
 // ai/llm/deepinfra.ts
-import { DEEPINFRA_KIMI_FALLBACK_MODEL } from "./kimi";
+// Kimi removed from catalog — platform Kimi is ollama-cloud only.
 
 export const deepinfraModels = [
-  {
-    name: DEEPINFRA_KIMI_FALLBACK_MODEL,
-    displayName: "MoonshotAI: Kimi K2.6 (DeepInfra)",
-    hasVision: true,
-    price: {
-      input: 0.75 * 7,
-      output: 3.5 * 7,
-      inputCacheHit: 0.15 * 7,
-    },
-    maxOutputTokens: 262144,
-    contextWindow: 262144,
-    supportsTool: true,
-  },
   {
     name: "zai-org/GLM-5.2",
     displayName: "Z.AI: GLM 5.2 (DeepInfra)",

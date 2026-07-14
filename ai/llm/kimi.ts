@@ -1,9 +1,31 @@
+// packages/ai/llm/kimi.ts
+// Platform Kimi is Ollama Cloud only. Legacy Fireworks/DeepInfra/Vultr model
+// string helpers remain for request-body compatibility with old agent records.
+
+/** Ollama Cloud platform models (catalog + routing). */
+export const OLLAMA_CLOUD_KIMI_K26_MODEL = "kimi-k2.6";
+export const OLLAMA_CLOUD_KIMI_K27_CODE_MODEL = "kimi-k2.7-code";
+export const OLLAMA_CLOUD_PROVIDER = "ollama-cloud";
+
+/** @deprecated Legacy Fireworks model ids — not listed in catalog. */
 export const FIREWORKS_KIMI_LATEST_MODEL = "accounts/fireworks/models/kimi-latest";
-export const FIREWORKS_KIMI_CURRENT_MODEL = "accounts/fireworks/models/kimi-k2p7-code";
+/** @deprecated */
+export const FIREWORKS_KIMI_CURRENT_MODEL =
+  "accounts/fireworks/models/kimi-k2p7-code";
+/** @deprecated */
 export const FIREWORKS_KIMI_K2P6_MODEL = "accounts/fireworks/models/kimi-k2p6";
+/** @deprecated */
 export const DEEPINFRA_KIMI_FALLBACK_MODEL = "moonshotai/Kimi-K2.6";
+/** @deprecated */
 export const VULTR_KIMI_MODEL = "moonshotai/Kimi-K2.6";
-export const KIMI_PLATFORM_FALLBACK_STATUSES = [401, 402, 429, 500, 502, 503, 504];
+
+export const KIMI_PLATFORM_FALLBACK_STATUSES = [
+  401, 402, 429, 500, 502, 503, 504,
+];
+
+export const isOllamaCloudKimiModel = (model?: string | null): boolean =>
+  model === OLLAMA_CLOUD_KIMI_K26_MODEL ||
+  model === OLLAMA_CLOUD_KIMI_K27_CODE_MODEL;
 
 export const isFireworksKimiModel = (model?: string | null): boolean =>
   model === FIREWORKS_KIMI_LATEST_MODEL ||
@@ -16,14 +38,15 @@ export const isDeepInfraKimiModel = (model?: string | null): boolean =>
 export const isVultrKimiModel = (model?: string | null): boolean =>
   model === VULTR_KIMI_MODEL;
 
+/** Platform catalog + proxy: only ollama-cloud counts as supported platform Kimi. */
 export const isPlatformKimiProviderModel = (
   provider?: string | null,
   model?: string | null
 ): boolean => {
   const normalizedProvider = provider?.trim().toLowerCase();
-  if (normalizedProvider === "deepinfra") return isDeepInfraKimiModel(model);
-  if (normalizedProvider === "fireworks") return isFireworksKimiModel(model);
-  if (normalizedProvider === "vultr") return isVultrKimiModel(model);
+  if (normalizedProvider === OLLAMA_CLOUD_PROVIDER) {
+    return isOllamaCloudKimiModel(model);
+  }
   return false;
 };
 

@@ -5,12 +5,15 @@ import { googleModels } from "../../integrations/google/models";
 import { openAIModels } from "../../integrations/openai/models";
 import { openrouterModels } from "../llm/openrouterModels";
 import { deepinfraModels } from "../llm/deepinfra";
-import { vultrModels } from "../llm/vultr";
 import { xaiModels } from "../../integrations/xai/models";
 import './fireworks'
 import type { Model } from "./types";
 import type { Agent } from "../../app/types";
 import { fireworksModels } from "./fireworks";
+import {
+  OLLAMA_CLOUD_CHAT_COMPLETIONS_URL,
+  ollamaCloudModels,
+} from "./ollamaCloud";
 import { mistralModels } from "./mistral";
 import { mimoModels } from "./mimo";
 import {
@@ -20,7 +23,7 @@ import {
 import { gmiModels, GMI_CHAT_COMPLETIONS_URL } from "./gmi";
 import { zaiModels } from "./zai";
 import type { ModelPrice } from "./types";
-import { VULTR_KIMI_MODEL } from "./kimi";
+import { OLLAMA_CLOUD_KIMI_K26_MODEL } from "./kimi";
 export { supportedReasoningModels } from "./reasoningModels";
 export { getCloudflareWorkersAiChatCompletionsUrl } from "./cloudflare";
 
@@ -37,9 +40,9 @@ const MODEL_MAP = {
   google: googleModels,
   openai: openAIModels,
   deepinfra: deepinfraModels,
-  vultr: vultrModels,
   openrouter: openrouterModels,
   fireworks: fireworksModels,
+  "ollama-cloud": ollamaCloudModels,
   mistral: mistralModels,
   mimo: mimoModels,
   cloudflare: cloudflareModels,
@@ -205,9 +208,6 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   deepinfra: {
     default: "https://api.deepinfra.com/v1/openai/chat/completions",
   },
-  vultr: {
-    default: "https://api.vultrinference.com/v1/chat/completions",
-  },
   mistral: {
     default: "https://api.mistral.ai/v1/chat/completions",
   },
@@ -220,6 +220,9 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   },
   fireworks: {
     default: "https://api.fireworks.ai/inference/v1/chat/completions"
+  },
+  "ollama-cloud": {
+    default: OLLAMA_CLOUD_CHAT_COMPLETIONS_URL,
   },
   mimo: {
     default: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
@@ -262,8 +265,8 @@ export function getProviderByModelName(modelName: string): Provider | undefined 
 
 /** 默认模型配置（provider + model 成对出现，避免分散硬编码） */
 export const DEFAULT_MODEL = {
-  provider: "vultr" as Provider,
-  name: VULTR_KIMI_MODEL,
+  provider: "ollama-cloud" as Provider,
+  name: OLLAMA_CLOUD_KIMI_K26_MODEL,
 } as const;
 
 /** 统一获取 ChatCompletion / Responses 等端点 */

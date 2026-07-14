@@ -1,21 +1,9 @@
 // integrations/openai/models.ts
 import type { Model, ModelPrice } from "../../ai/llm/types";
 
-const GPT_5_4_STANDARD_PRICE: ModelPrice = {
-  input: 2.5 * 8,
-  output: 15 * 8,
-  inputCacheHit: 0.25 * 8,
-};
-
 const GPT_5_5_STANDARD_PRICE: ModelPrice = {
   input: 5 * 8,
   output: 30 * 8,
-  inputCacheHit: 0.5 * 8,
-};
-
-const GPT_5_4_LONG_CONTEXT_PRICE: ModelPrice = {
-  input: 5 * 8,
-  output: 22.5 * 8,
   inputCacheHit: 0.5 * 8,
 };
 
@@ -173,81 +161,5 @@ export const openAIModels: Model[] = [
       "2K": { low: 166, medium: 1366, high: 5500 },
       "4K": { low: 166, medium: 1366, high: 5500 },
     },
-  },
-  {
-    name: "gpt-5.4",
-    displayName: "GPT-5.4 Standard",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 1_047_576,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: GPT_5_4_STANDARD_PRICE,
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 272_001,
-          price: GPT_5_4_LONG_CONTEXT_PRICE,
-        },
-      ],
-    },
-  },
-  {
-    name: "gpt-5.4-mini",
-    displayName: "GPT-5.4 Mini",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 400_000,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: { input: 0.75 * 8, output: 4.5 * 8, inputCacheHit: 0.075 * 8 },
-  },
-  {
-    name: "gpt-5.4-nano",
-    displayName: "GPT-5.4 Nano",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 400_000,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: { input: 0.2 * 8, output: 1.25 * 8, inputCacheHit: 0.02 * 8 },
-  },
-  {
-    name: "gpt-5.4-pro",
-    displayName: "GPT-5.4 Pro",
-    endpointKey: "responses",
-    hasVision: true,
-    contextWindow: 1_047_576,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: GPT_5_4_PRO_STANDARD_PRICE,
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 272_001,
-          price: GPT_5_4_PRO_LONG_CONTEXT_PRICE,
-        },
-      ],
-    },
-  },
-  {
-    name: "gpt-5",
-    displayName: "GPT-5",
-    hasVision: true,
-    contextWindow: 400_000,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: { input: 1.25 * 8, output: 10 * 8, inputCacheHit: 0.125 * 8 },
-  },
-  {
-    name: "gpt-5-mini",
-    displayName: "GPT-5 mini",
-    hasVision: true,
-    contextWindow: 400_000,
-    maxOutputTokens: 128_000,
-    supportsReasoningEffort: true,
-    price: { input: 0.25 * 8, output: 2 * 8, inputCacheHit: 0.025 * 8 },
   },
 ];

@@ -42,11 +42,38 @@ export const isPageKey = (key: string): boolean => {
 
 /**
  * 判断一个 dbKey 是否是 Dialog 的 key
- * 形如：DIALOG-{userId}-{dialogId}
+ * 形如：dialog-{userId}-{dialogId} 或 dialog-{dialogId}-msg-{messageId}
  */
 export const isDialogKey = (key: string): boolean => {
   const parts = splitKey(key);
   return parts.length >= 3 && parts[0] === DataType.DIALOG;
+};
+
+/**
+ * 判断是否为 dialog **记录** key（排除消息 key）。
+ * 记录：dialog-{userId}-{dialogId}
+ * 消息：dialog-{dialogId}-msg-{messageId}
+ */
+export const isDialogRecordKey = (key: string): boolean => {
+  if (typeof key !== "string" || !key.startsWith(`${DataType.DIALOG}-`)) {
+    return false;
+  }
+  // Message keys always embed the "-msg-" segment after the dialogId.
+  if (key.includes("-msg-")) return false;
+  const parts = splitKey(key);
+  return parts.length >= 3 && parts[0] === DataType.DIALOG;
+};
+
+/**
+ * 判断 key 是否为指定 dialogId 的记录 key（非消息）。
+ * 形如：dialog-{userId}-{dialogId}
+ */
+export const isDialogRecordKeyForId = (
+  key: string,
+  dialogId: string,
+): boolean => {
+  if (!dialogId || !isDialogRecordKey(key)) return false;
+  return key.endsWith(`${SEPARATOR}${dialogId}`);
 };
 
 export const isTaskKey = (key: string): boolean => {
@@ -423,11 +450,15 @@ export const createTokenStatsKey = Object.assign(
 
 /* ---- Dialog ---- */
 // TODO(keys): Dialog 相关 key 使用 DataType.DIALOG 前缀，结构为
-//             DIALOG-{userId}-{dialogId} / DIALOG-{dialogId}-msg-{messageId}，
+//             dialog-{userId}-{dialogId} / dialog-{dialogId}-msg-{messageId}，
 //             已经与其它实体类型的前缀策略对齐，可以保持。
 export const createDialogKey = Object.assign(
   (userId: string) => createKey(DataType.DIALOG, userId, ulid()),
   {
+    /** O(1) 单条 dialog 记录 key */
+    single: (userId: string, dialogId: string) =>
+      createKey(DataType.DIALOG, userId, dialogId),
+    /** 某用户全部 dialog 记录范围（不含其它用户；消息 key 不在此前缀下） */
     rangeOfUser: (userId: string) => ({
       start: createKey(DataType.DIALOG, userId, ""),
       end: createKey(DataType.DIALOG, userId, "\uffff"),

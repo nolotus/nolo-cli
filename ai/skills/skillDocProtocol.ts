@@ -91,7 +91,16 @@ const SKILL_CONFIG_BLOCK = "skill-config";
 const EVAL_CONFIG_BLOCK = "eval-config";
 const WORKFLOW_CONFIG_BLOCK = "workflow-config";
 
-const normalizeStringArray = (value: unknown): string[] | undefined => {
+/**
+ * Pure string-list normalizer for skill-doc YAML / builder args.
+ *
+ * Locality: one seam for "unknown → unique non-empty trimmed strings" so
+ * protocol parse and createSkillDoc builder share the same empty/invalid
+ * fallback without re-owning the helper.
+ */
+export const normalizeStringArray = (
+  value: unknown
+): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   const items = value
     .filter((item): item is string => typeof item === "string")
@@ -112,7 +121,11 @@ const normalizeSkillEnumValue = <K extends SkillDocEnumKey>(
     ? (value as (typeof SKILL_DOC_ENUMS)[K][number])
     : undefined;
 
-const normalizeSkillModalities = (
+export const normalizeSkillBudgetTier = (
+  value: unknown
+): SkillBudgetTier | undefined => normalizeSkillEnumValue("budgetTier", value);
+
+export const normalizeSkillModalities = (
   value: unknown
 ): SkillModality[] | undefined => {
   const raw = normalizeStringArray(value);

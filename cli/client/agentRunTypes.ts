@@ -7,6 +7,8 @@
  * Side-effectful orchestration stays in agentRun.ts / machineWsRunDispatch.ts.
  */
 
+import { isLoopbackUrl } from "../../core/localOrigins";
+
 export type EnvLike = Record<string, string | undefined>;
 
 /**
@@ -47,12 +49,7 @@ export function isMachineBoundLocalhostCustomProvider(agentConfig: any) {
     ? agentConfig.customProviderUrl.trim()
     : "";
   if (!machineId || !providerUrl) return false;
-  try {
-    const hostname = new URL(providerUrl).hostname.toLowerCase();
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-  } catch {
-    return false;
-  }
+  return isLoopbackUrl(providerUrl);
 }
 
 /**

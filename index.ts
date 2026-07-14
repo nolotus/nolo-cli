@@ -12,7 +12,6 @@ import { buildCliRuntimeEnv, loadProfileConfig } from "./client/profileConfig";
 import { isCompiledBinary } from "./cliEnvHelpers";
 import { spawnProcess } from "./processSpawn";
 import { resolveTuiLaunchMode } from "./runtimeModeArgs";
-import { startTuiWorkspace } from "./tui/readlineWorkspace";
 import { readPackageInfo } from "./updateCommands";
 
 const SOURCE_CLI_DIR = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +32,12 @@ async function runScript(script: string, forwardedArgs: string[], env: NodeJS.Pr
   return proc.exited;
 }
 
+/** TUI pulls agentRun → localRuntimeAdapter graph; only load when launching interactive shell. */
+async function launchTuiWorkspace(args: { scriptDir: string; env: NodeJS.ProcessEnv }) {
+  const { startTuiWorkspace } = await import("./tui/readlineWorkspace");
+  return startTuiWorkspace(args);
+}
+
 const args = process.argv.slice(2);
 const runtimeEnv = {
   ...buildCliRuntimeEnv(process.env, loadProfileConfig()),
@@ -48,7 +53,7 @@ const runtimeContext = createCliRuntimeContext({
 
 if (args.length === 0) {
   if (process.stdin.isTTY) {
-    await startTuiWorkspace({ scriptDir: SCRIPT_DIR, env: runtimeEnv });
+    await launchTuiWorkspace({ scriptDir: SCRIPT_DIR, env: runtimeEnv });
   } else {
     console.log(renderHelpText());
   }
@@ -57,7 +62,7 @@ if (args.length === 0) {
 
 const tuiLaunchMode = resolveTuiLaunchMode(args);
 if (tuiLaunchMode.shouldStartTui) {
-  await startTuiWorkspace({
+  await launchTuiWorkspace({
     scriptDir: SCRIPT_DIR,
     env: { ...runtimeEnv, ...tuiLaunchMode.envPatch },
   });

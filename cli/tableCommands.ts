@@ -22,10 +22,21 @@ type OutputMode = "full" | "raw" | "items" | "jsonl";
 
 type TableQueryRow = Record<string, unknown> & { dbKey?: string; updatedAt?: string | number; updated_at?: string | number; createdAt?: string | number; created?: string | number; deletedAt?: unknown };
 
+type ResultLimit = {
+  /** null = unlimited (explicit --all or --limit 0) */
+  limit: number | null;
+  unlimited: boolean;
+  fromDefault: boolean;
+};
+
 // Multi-server query fetches a large page from each server and applies
 // limit/offset after client-side merge. This caps per-server fetch size.
 const MULTI_SERVER_FETCH_LIMIT = 10000;
 const DELETE_ROWS_QUERY_PAGE_SIZE = 200;
+const DEFAULT_TABLE_LIST_LIMIT = 50;
+const DEFAULT_TABLE_QUERY_LIMIT = 20;
+/** Safety cap for a single unbounded client-side dump (explicit --all). */
+const UNBOUNDED_CLIENT_CAP = 100_000;
 
 function readOption(args: string[], flag: string): string {
   for (let i = 0; i < args.length; i++) {
@@ -68,6 +79,118 @@ function parseOutputMode(raw: string): OutputMode {
   if (raw === "json") return "raw";
   if (raw === "full" || raw === "raw" || raw === "items" || raw === "jsonl") return raw;
   throw new Error(`--output must be one of full, raw, items, json, jsonl; got ${raw}`);
+}
+
+/**
+ * Resolve list/query result limit.
+ * - default: fallback when neither --limit nor --all
+ * - --all or --limit 0: unlimited (caller may still apply a safety cap on fetch)
+ * - --limit N (N>0): exact N
+ */
+function resolveResultLimit(args: string[], fallback: number): ResultLimit {
+  if (hasFlag(args, "--all")) {
+    return { limit: null, unlimited: true, fromDefault: false };
+  }
+  const raw = readOption(args, "--limit");
+  if (!raw) {
+    return { limit: fallback, unlimited: false, fromDefault: true };
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { limit: fallback, unlimited: false, fromDefault: true };
+  }
+  if (parsed === 0) {
+    return { limit: null, unlimited: true, fromDefault: false };
+  }
+  return { limit: Math.floor(parsed), unlimited: false, fromDefault: false };
+}
+
+function extractOutputItems(rawData: any): unknown[] {
+  if (Array.isArray(rawData?.items)) return rawData.items;
+  if (Array.isArray(rawData)) return rawData;
+  return [];
+}
+
+/** Stream a pretty-printed JSON array without building one intermediate string for the whole array. */
+function writeJsonArrayStream(output: OutputLike, items: unknown[]): void {
+  output.write("[\n");
+  for (let i = 0; i < items.length; i++) {
+    const pretty = JSON.stringify(items[i], null, 2);
+    const indented = pretty
+      .split("\n")
+      .map((line) => `  ${line}`)
+      .join("\n");
+    output.write(i === 0 ? indented : `,\n${indented}`);
+  }
+  output.write("\n]");
+}
+
+/** Stream NDJSON lines (one JSON value per line). */
+function writeJsonlStream(output: OutputLike, items: unknown[]): void {
+  for (const item of items) {
+    output.write(`${JSON.stringify(item)}\n`);
+  }
+}
+
+function writePrettyJsonStream(output: OutputLike, value: unknown): void {
+  // Prefer array streaming when the top-level value is a large array.
+  if (Array.isArray(value)) {
+    writeJsonArrayStream(output, value);
+    output.write("\n");
+    return;
+  }
+  if (value && typeof value === "object" && Array.isArray((value as { items?: unknown }).items)) {
+    const record = value as Record<string, unknown>;
+    const items = record.items as unknown[];
+    const keys = Object.keys(record);
+    output.write("{\n");
+    let wroteField = false;
+    for (const key of keys) {
+      if (key === "items") continue;
+      const prefix = wroteField ? ",\n" : "";
+      const pretty = JSON.stringify(record[key], null, 2)
+        .split("\n")
+        .map((line, idx) => (idx === 0 ? line : `  ${line}`))
+        .join("\n");
+      output.write(`${prefix}  ${JSON.stringify(key)}: ${pretty}`);
+      wroteField = true;
+    }
+    output.write(wroteField ? ',\n  "items": ' : '  "items": ');
+    // Inline array body with extra indent.
+    output.write("[\n");
+    for (let i = 0; i < items.length; i++) {
+      const pretty = JSON.stringify(items[i], null, 2);
+      const indented = pretty
+        .split("\n")
+        .map((line) => `    ${line}`)
+        .join("\n");
+      output.write(i === 0 ? indented : `,\n${indented}`);
+    }
+    output.write("\n  ]\n}\n");
+    return;
+  }
+  output.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeTableOutput(output: OutputLike, input: {
+  envelope: any;
+  rawData: any;
+  mode: OutputMode;
+}): void {
+  if (input.mode === "jsonl") {
+    writeJsonlStream(output, extractOutputItems(input.rawData));
+    return;
+  }
+  if (input.mode === "items") {
+    writeJsonArrayStream(output, extractOutputItems(input.rawData));
+    output.write("\n");
+    return;
+  }
+  if (input.mode === "raw") {
+    writePrettyJsonStream(output, input.rawData);
+    return;
+  }
+  writePrettyJsonStream(output, input.envelope);
 }
 
 function resolveQueryColumns(columns: string[] | undefined, includeActivity: boolean): string[] | undefined {
@@ -245,14 +368,6 @@ function resolveUserId(args: string[], env: EnvLike, authToken: string): string 
   return username && /^[a-z0-9_-]+$/i.test(username) ? username : undefined;
 }
 
-function formatOutput(input: { envelope: any; rawData: any; mode: OutputMode }): string {
-  if (input.mode === "full") return JSON.stringify(input.envelope, null, 2);
-  if (input.mode === "raw") return JSON.stringify(input.rawData, null, 2);
-  const items = Array.isArray(input.rawData?.items) ? input.rawData.items : input.rawData;
-  if (input.mode === "items") return JSON.stringify(items, null, 2);
-  return Array.isArray(items) ? items.map((item) => JSON.stringify(item)).join("\n") : JSON.stringify(items);
-}
-
 function mergeQueryShortcutFilters(args: string[], filters: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   const row = readOption(args, "--row") || readOption(args, "--row-id");
   const rowDbKey = readOption(args, "--row-dbkey");
@@ -272,7 +387,13 @@ function mergeQueryShortcutFilters(args: string[], filters: Record<string, unkno
 function usage(): string {
   return [
     "Usage:",
-    "  nolo table query --table <tableId|metaKey> [--tenant-id <userId>] [--filters <json>|--filter <json>] [--row <rowId|rowDbKey>] [--columns <json-array>] [--include-activity] [--no-base-fields] [--output full|raw|items|json|jsonl]",
+    "  nolo table query --table <tableId|metaKey> [--tenant-id <userId>] [--filters <json>|--filter <json>] [--row <rowId|rowDbKey>] [--columns <json-array>] [--include-activity] [--no-base-fields] [--limit <n>] [--offset <n>] [--all] [--output full|raw|items|json|jsonl]",
+    "",
+    "Options:",
+    `  --limit <n>   Max rows to return. Default: ${DEFAULT_TABLE_QUERY_LIMIT} (1 with --row). Use 0 with care.`,
+    "  --offset <n>  Skip first n rows (paging). Default: 0.",
+    "  --all         Full dump (same as --limit 0). Prefer --output jsonl for large results.",
+    "  --output      full|raw|items|json|jsonl. jsonl streams one row per line (lowest memory).",
     "",
   ].join("\n");
 }
@@ -288,7 +409,12 @@ function deleteRowsUsage(): string {
 function listUsage(): string {
   return [
     "Usage:",
-    "  nolo table list [--limit <n>] [--title-query <text>] [--purpose <purpose>] [--output full|raw|items|json|jsonl]",
+    "  nolo table list [--limit <n>] [--all] [--title-query <text>] [--purpose <purpose>] [--output full|raw|items|json|jsonl]",
+    "",
+    "Options:",
+    `  --limit <n>   Max tables to return. Default: ${DEFAULT_TABLE_LIST_LIMIT}. Use --limit 0 or --all for full dump.`,
+    "  --all         Full dump (same as --limit 0).",
+    "  --output      full|raw|items|json|jsonl. jsonl streams one table per line.",
     "",
   ].join("\n");
 }
@@ -335,17 +461,6 @@ function isLatestTableMetaDeleted(payloads: any[]): boolean {
   return Boolean(latestMeta?.deletedAt);
 }
 
-function formatTableListOutput(args: {
-  mode: OutputMode;
-  tables: any[];
-  envelope: any;
-}) {
-  if (args.mode === "full") return JSON.stringify(args.envelope, null, 2);
-  if (args.mode === "raw") return JSON.stringify(args.tables, null, 2);
-  if (args.mode === "items") return JSON.stringify(args.tables, null, 2);
-  return args.tables.map((item) => JSON.stringify(item)).join("\n");
-}
-
 export async function runTableListCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
   const env = deps.env ?? process.env;
   const output = deps.output ?? process.stdout;
@@ -374,7 +489,10 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
     return 1;
   }
 
-  const limit = Math.max(1, Math.min(Number(readOption(args, "--limit") || 50), 200));
+  const resultLimit = resolveResultLimit(args, DEFAULT_TABLE_LIST_LIMIT);
+  const limit = resultLimit.unlimited
+    ? UNBOUNDED_CLIENT_CAP
+    : Math.max(1, resultLimit.limit ?? DEFAULT_TABLE_LIST_LIMIT);
   const titleQuery = readOption(args, "--title-query").trim().toLowerCase();
   const purpose = readOption(args, "--purpose").trim();
   const spaceId = normalizeSpaceInput(readOption(args, "--space") || readOption(args, "--space-id"));
@@ -393,7 +511,7 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
       : await fetchUserTableRecords({
           authToken,
           fetchImpl,
-          limit: Math.min(scanLimit, 500),
+          limit: Math.min(scanLimit, resultLimit.unlimited ? UNBOUNDED_CLIENT_CAP : 500),
           serverUrl,
           userId,
         });
@@ -401,13 +519,13 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
     output.write(`[nolo] table list failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
-  const tables = records
+  const filtered = records
     .filter((table: any) => table && typeof table === "object" && !table.deletedAt)
     .filter((table: any) => !titleQuery || String(table.displayName ?? table.name ?? table.title ?? "").toLowerCase().includes(titleQuery))
     .filter((table: any) => !purpose || tableHasPurpose(table, purpose))
-    .sort((left: any, right: any) => getComparableUpdatedAt(right) - getComparableUpdatedAt(left))
-    .slice(0, limit)
-    .map((table: any) => ({
+    .sort((left: any, right: any) => getComparableUpdatedAt(right) - getComparableUpdatedAt(left));
+  const hitLimit = !resultLimit.unlimited && filtered.length > limit;
+  const tables = filtered.slice(0, limit).map((table: any) => ({
       dbKey: table.dbKey ?? null,
       tableId: table.tableId ?? null,
       displayName: table.displayName ?? table.name ?? table.title ?? "(untitled)",
@@ -418,8 +536,20 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
       updatedAt: table.updatedAt ?? table.updated_at ?? null,
     }));
 
-  const envelope = { success: true, userId, ...(spaceId ? { space: spaceId } : {}), total: tables.length, tables };
-  output.write(`${formatTableListOutput({ mode: outputMode, tables, envelope })}\n`);
+  const envelope = {
+    success: true,
+    userId,
+    ...(spaceId ? { space: spaceId } : {}),
+    total: tables.length,
+    ...(hitLimit ? { limit, truncated: true, nextOffset: limit } : {}),
+    tables,
+  };
+  writeTableOutput(output, {
+    mode: outputMode,
+    envelope,
+    // list raw/items/jsonl historically print the tables array (not { items })
+    rawData: tables,
+  });
   return 0;
 }
 
@@ -532,8 +662,12 @@ export async function runTableQueryCommand(args: string[], deps: TableCommandDep
 
   const serverUrls = resolveQueryServerUrls(args, env);
   const isMultiServer = serverUrls.length > 1;
-  const requestedLimit = Number(readOption(args, "--limit") || (hasSingleRowShortcut ? 1 : 20));
-  const requestedOffset = Number(readOption(args, "--offset") || 0);
+  const defaultQueryLimit = hasSingleRowShortcut ? 1 : DEFAULT_TABLE_QUERY_LIMIT;
+  const resultLimit = resolveResultLimit(args, defaultQueryLimit);
+  const requestedLimit = resultLimit.unlimited
+    ? UNBOUNDED_CLIENT_CAP
+    : Math.max(1, resultLimit.limit ?? defaultQueryLimit);
+  const requestedOffset = Math.max(0, Math.floor(Number(readOption(args, "--offset") || 0) || 0));
   const sortBy = readOption(args, "--sort-by") || "updatedAt";
   const sortOrder = readOption(args, "--sort-order") === "asc" ? "asc" : "desc";
 
@@ -576,6 +710,7 @@ export async function runTableQueryCommand(args: string[], deps: TableCommandDep
   }
 
   let mergedItems: TableQueryRow[] = [];
+  let fetchedBeforeSlice = 0;
   if (isMultiServer) {
     const itemMap = new Map<string, TableQueryRow>();
     const tableDeleted = isLatestTableMetaDeleted(
@@ -597,24 +732,74 @@ export async function runTableQueryCommand(args: string[], deps: TableCommandDep
       const diff = getComparableUpdatedAt(b) - getComparableUpdatedAt(a);
       return sortOrder === "asc" ? -diff : diff;
     });
-    mergedItems = mergedItems.slice(requestedOffset, requestedOffset + requestedLimit);
+    fetchedBeforeSlice = mergedItems.length;
+    mergedItems = resultLimit.unlimited
+      ? mergedItems.slice(requestedOffset, requestedOffset + UNBOUNDED_CLIENT_CAP)
+      : mergedItems.slice(requestedOffset, requestedOffset + requestedLimit);
   } else {
     const result = results[0];
     if (!result || !result.ok || !result.payload) {
       output.write(`[nolo] table query failed: ${result?.error ?? "unknown error"}\n`);
       return 1;
     }
-    mergedItems = getTableQueryItems(result.payload).filter((item) => !item.deletedAt);
+    // Client-side cap even if the server over-returns (defense in depth / mock safety).
+    const live = getTableQueryItems(result.payload).filter((item) => !item.deletedAt);
+    fetchedBeforeSlice = live.length;
+    mergedItems = resultLimit.unlimited
+      ? live.slice(0, UNBOUNDED_CLIENT_CAP)
+      : live.slice(0, requestedLimit);
   }
+
+  // Treat as truncated when the server/merge returned more than we emit, or when we filled
+  // the exact limit (more may exist server-side). Metadata is only attached on hit to keep
+  // small-result JSON shapes stable for existing scripts/tests.
+  const hitLimit =
+    !resultLimit.unlimited &&
+    (fetchedBeforeSlice > mergedItems.length ||
+      (mergedItems.length >= requestedLimit && requestedLimit > 0));
+
+  const truncationFields = hitLimit
+    ? {
+        limit: requestedLimit,
+        offset: requestedOffset,
+        truncated: true as const,
+        nextOffset: requestedOffset + mergedItems.length,
+      }
+    : {};
 
   const singleRawData = !isMultiServer ? getTableQueryRawData(results[0].payload) : null;
   const rawData = isMultiServer
-    ? { items: mergedItems }
+    ? {
+        items: mergedItems,
+        ...truncationFields,
+      }
     : singleRawData && typeof singleRawData === "object"
-      ? { ...singleRawData, items: mergedItems }
-      : { items: mergedItems };
-  const envelope = isMultiServer ? { rawData: { items: mergedItems }, _multiServerOrigins: serverUrls, _multiServerWarnings: multiServerWarnings } : results[0].payload;
-  output.write(`${formatOutput({ envelope, rawData, mode: outputMode })}\n`);
+      ? {
+          ...singleRawData,
+          items: mergedItems,
+          ...truncationFields,
+        }
+      : { items: mergedItems, ...truncationFields };
+  const envelope = isMultiServer
+    ? {
+        rawData: { items: mergedItems, ...truncationFields },
+        _multiServerOrigins: serverUrls,
+        _multiServerWarnings: multiServerWarnings,
+        ...truncationFields,
+      }
+    : results[0].payload && typeof results[0].payload === "object"
+      ? {
+          ...results[0].payload,
+          rawData,
+          ...truncationFields,
+        }
+      : { rawData, ...truncationFields };
+
+  writeTableOutput(output, {
+    envelope,
+    rawData,
+    mode: outputMode,
+  });
   return 0;
 }
 export async function runTableDeleteRowsCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {

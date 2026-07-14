@@ -5,85 +5,44 @@ import type {
 } from "../agentRuntimeLocal";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildLocalWorkspacePolicyToolNames,
-  buildLocalWorkspaceToolset,
-  buildLocalWorkspaceOpenAiTools,
-  buildOpenAiCompatibleChatCompletionRequest,
-  executeOpenAiCompatibleChatCompletion,
-  readOpenAiCompatibleSseCompletion,
-  buildPlatformChatCompletionRequest,
-  createLocalWorkspaceToolExecutors,
-  parseOpenAiCompatibleChatCompletionResponse,
-  parsePlatformChatCompletionData,
-  parsePlatformChatCompletionResponse,
-  resolvePlatformChatProviderConfig,
-  resolveCurrentRunRuntimeToolPolicy,
-  resolveLocalWorkspaceExecutorOptionsFromPolicy,
-  resolveRequestedRuntimeToolNames,
-  resolveRuntimeToolSurfaceForAgent,
-  shouldUsePlatformChatProvider,
-} from "../agentRuntimeLocal";
 import type { AgentRuntimeChatMessage, AgentRuntimeToolCall } from "../../agent-runtime";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
-import { fetchAntigravityCloudCodeCompletion } from "../../agent-runtime/antigravityCloudCodeProvider";
-import { isAntigravityOAuthAgent } from "../../agent-runtime/antigravityOAuth";
-import { readOAuthCredential } from "../../agent-runtime/oauthTokenStore";
-import { getDefaultCliLocalRuntimeDb } from "../localRuntimeDb";
-import { resolveAgentRuntimeConfigFromRecord } from "./agentConfigResolver";
-import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
-import { createFileCredentialBroker } from "../../agent-runtime/fileCredentialBroker";
-import { createOAuthApiKeyRefResolver } from "../oauth/apiKeyRefResolver";
-import {
-  buildLocalDialogWritePlan,
-  localDialogMessageRecordToRuntimeMessage,
-} from "./localDialogRecords";
-import {
-  buildLocalAgentLookupKeys,
-  shouldReadAgentKeyRemotely,
-} from "./localAgentRecords";
-import {
-  createCliHybridRecordStore,
-  type CliKvDb,
-  type HybridRecordStore,
-} from "./hybridRecordStore";
-import { executeLocalToolWithPolicy } from "./localToolPolicy";
-import { inferCaptureIntent } from "../../ai/policy/runtimePolicy";
+import type { CliKvDb, HybridRecordStore } from "./hybridRecordStore";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
-import { TOOL_PACKS } from "../../ai/tools/toolPacks";
-import { prepareTools } from "../../ai/tools/prepareTools";
 import {
   LOCAL_CODEX_AGENT_ID,
   LOCAL_CODEX_AGENT_KEY,
   NOLO_DEFAULT_AGENT_ID,
   NOLO_DEFAULT_AGENT_KEY,
 } from "../agentAliases";
-import {
-  buildNoloWorkspaceCliToolExecutors,
-  buildNoloWorkspaceOpenAiTools,
-  filterNoloWorkspaceToolNames,
-  parseNoloWorkspaceToolArguments,
-} from "../../agent-runtime/noloWorkspaceTools";
-import {
-  executeCli as defaultExecuteCli,
-  type CliExecuteResult,
-  type CliImageInput,
-  CliProviderQuotaError,
-} from "../../ai/agent/cliExecutor";
-import { buildCliPrompt } from "../../ai/agent/cliPrompt";
-import {
-  readXhsProfileFunc,
-  readXhsProfileFunctionSchema,
-} from "../../ai/tools/readXhsProfileTool";
-import {
-  readXPostFunc,
-  readXPostFunctionSchema,
-} from "../../ai/tools/readXPostTool";
-import { ulid } from "ulid";
 import { isCompiledBinary } from "../cliEnvHelpers";
 import type { CliFetchImpl } from "../cliFetch";
+
+/**
+ * Heavy agent-runtime / AI / local-DB modules are intentionally NOT top-level
+ * imported. Help and other light CLI paths import this file only for
+ * `clearCliLocalRuntimePreparedAgentCache` / builtin agent helpers; loading the
+ * full runtime graph on every `nolo --help` was ~300ms. Modules are require()'d
+ * on first real local-runtime use via ensureHeavyCliLocalRuntimeModules().
+ *
+ * Paths below must remain present as string literals for source-contract tests
+ * (e.g. fileCredentialBroker wiring).
+ */
+const requireFromAdapter = createRequire(import.meta.url);
+
+type CliExecuteResult = {
+  text: string;
+  raw?: string;
+  elapsed?: number;
+};
+type CliImageInput = { source: string };
+type ReadToolFn = (
+  args: Record<string, unknown>,
+  ctx?: unknown
+) => Promise<{ rawData: unknown; displayData?: unknown }>;
 
 type EnvLike = Record<string, string | undefined>;
 type FetchInput = string | URL | Request;
@@ -101,6 +60,123 @@ type LocalCliExecutor = (
     imageInputs?: CliImageInput[];
   }
 ) => Promise<CliExecuteResult>;
+
+// Populated by ensureHeavyCliLocalRuntimeModules() before any local-run path.
+let buildLocalWorkspacePolicyToolNames: any;
+let buildLocalWorkspaceToolset: any;
+let buildLocalWorkspaceOpenAiTools: any;
+let executeOpenAiCompatibleChatCompletion: any;
+let readOpenAiCompatibleSseCompletion: any;
+let buildPlatformChatCompletionRequest: any;
+let createLocalWorkspaceToolExecutors: any;
+let parsePlatformChatCompletionData: any;
+let parsePlatformChatCompletionResponse: any;
+let resolvePlatformChatProviderConfig: any;
+let resolveCurrentRunRuntimeToolPolicy: any;
+let resolveLocalWorkspaceExecutorOptionsFromPolicy: any;
+let resolveRequestedRuntimeToolNames: any;
+let resolveRuntimeToolSurfaceForAgent: any;
+let shouldUsePlatformChatProvider: any;
+let fetchAntigravityCloudCodeCompletion: any;
+let isAntigravityOAuthAgent: any;
+let readOAuthCredential: any;
+let getDefaultCliLocalRuntimeDb: any;
+let resolveAgentRuntimeConfigFromRecord: any;
+let resolveCliOpenAiProviderConfig: any;
+let createFileCredentialBroker: any;
+let createOAuthApiKeyRefResolver: any;
+let buildLocalDialogWritePlan: any;
+let localDialogMessageRecordToRuntimeMessage: any;
+let buildLocalAgentLookupKeys: any;
+let shouldReadAgentKeyRemotely: any;
+let createCliHybridRecordStore: any;
+let executeLocalToolWithPolicy: any;
+let inferCaptureIntent: any;
+let TOOL_PACKS: any;
+let prepareTools: any;
+let buildNoloWorkspaceCliToolExecutors: any;
+let buildNoloWorkspaceOpenAiTools: any;
+let filterNoloWorkspaceToolNames: any;
+let parseNoloWorkspaceToolArguments: any;
+let defaultExecuteCli: any;
+let CliProviderQuotaError: any;
+let buildCliPrompt: any;
+let readXhsProfileFunc: ReadToolFn;
+let readXhsProfileFunctionSchema: any;
+let readXPostFunc: ReadToolFn;
+let readXPostFunctionSchema: any;
+let ulid: () => string;
+
+let heavyCliLocalRuntimeModulesLoaded = false;
+
+function ensureHeavyCliLocalRuntimeModules() {
+  if (heavyCliLocalRuntimeModulesLoaded) return;
+  heavyCliLocalRuntimeModulesLoaded = true;
+
+  const agentRuntimeLocal = requireFromAdapter("../agentRuntimeLocal.ts");
+  buildLocalWorkspacePolicyToolNames = agentRuntimeLocal.buildLocalWorkspacePolicyToolNames;
+  buildLocalWorkspaceToolset = agentRuntimeLocal.buildLocalWorkspaceToolset;
+  buildLocalWorkspaceOpenAiTools = agentRuntimeLocal.buildLocalWorkspaceOpenAiTools;
+  executeOpenAiCompatibleChatCompletion = agentRuntimeLocal.executeOpenAiCompatibleChatCompletion;
+  readOpenAiCompatibleSseCompletion = agentRuntimeLocal.readOpenAiCompatibleSseCompletion;
+  buildPlatformChatCompletionRequest = agentRuntimeLocal.buildPlatformChatCompletionRequest;
+  createLocalWorkspaceToolExecutors = agentRuntimeLocal.createLocalWorkspaceToolExecutors;
+  parsePlatformChatCompletionData = agentRuntimeLocal.parsePlatformChatCompletionData;
+  parsePlatformChatCompletionResponse = agentRuntimeLocal.parsePlatformChatCompletionResponse;
+  resolvePlatformChatProviderConfig = agentRuntimeLocal.resolvePlatformChatProviderConfig;
+  resolveCurrentRunRuntimeToolPolicy = agentRuntimeLocal.resolveCurrentRunRuntimeToolPolicy;
+  resolveLocalWorkspaceExecutorOptionsFromPolicy =
+    agentRuntimeLocal.resolveLocalWorkspaceExecutorOptionsFromPolicy;
+  resolveRequestedRuntimeToolNames = agentRuntimeLocal.resolveRequestedRuntimeToolNames;
+  resolveRuntimeToolSurfaceForAgent = agentRuntimeLocal.resolveRuntimeToolSurfaceForAgent;
+  shouldUsePlatformChatProvider = agentRuntimeLocal.shouldUsePlatformChatProvider;
+
+  ({ fetchAntigravityCloudCodeCompletion } = requireFromAdapter(
+    "../../agent-runtime/antigravityCloudCodeProvider.ts"
+  ));
+  ({ isAntigravityOAuthAgent } = requireFromAdapter("../../agent-runtime/antigravityOAuth.ts"));
+  ({ readOAuthCredential } = requireFromAdapter("../../agent-runtime/oauthTokenStore.ts"));
+  ({ getDefaultCliLocalRuntimeDb } = requireFromAdapter("../localRuntimeDb.ts"));
+  ({ resolveAgentRuntimeConfigFromRecord } = requireFromAdapter("./agentConfigResolver.ts"));
+  ({ resolveCliOpenAiProviderConfig } = requireFromAdapter("./localProviderResolver.ts"));
+  ({ createFileCredentialBroker } = requireFromAdapter(
+    "../../agent-runtime/fileCredentialBroker.ts"
+  ));
+  ({ createOAuthApiKeyRefResolver } = requireFromAdapter("../oauth/apiKeyRefResolver.ts"));
+  ({
+    buildLocalDialogWritePlan,
+    localDialogMessageRecordToRuntimeMessage,
+  } = requireFromAdapter("./localDialogRecords.ts"));
+  ({
+    buildLocalAgentLookupKeys,
+    shouldReadAgentKeyRemotely,
+  } = requireFromAdapter("./localAgentRecords.ts"));
+  ({ createCliHybridRecordStore } = requireFromAdapter("./hybridRecordStore.ts"));
+  ({ executeLocalToolWithPolicy } = requireFromAdapter("./localToolPolicy.ts"));
+  ({ inferCaptureIntent } = requireFromAdapter("../../ai/policy/runtimePolicy.ts"));
+  ({ TOOL_PACKS } = requireFromAdapter("../../ai/tools/toolPacks.ts"));
+  ({ prepareTools } = requireFromAdapter("../../ai/tools/prepareTools.ts"));
+  ({
+    buildNoloWorkspaceCliToolExecutors,
+    buildNoloWorkspaceOpenAiTools,
+    filterNoloWorkspaceToolNames,
+    parseNoloWorkspaceToolArguments,
+  } = requireFromAdapter("../../agent-runtime/noloWorkspaceTools.ts"));
+  const cliExecutor = requireFromAdapter("../../ai/agent/cliExecutor.ts");
+  defaultExecuteCli = cliExecutor.executeCli;
+  CliProviderQuotaError = cliExecutor.CliProviderQuotaError;
+  ({ buildCliPrompt } = requireFromAdapter("../../ai/agent/cliPrompt.ts"));
+  ({
+    readXhsProfileFunc,
+    readXhsProfileFunctionSchema,
+  } = requireFromAdapter("../../ai/tools/readXhsProfileTool.ts"));
+  ({
+    readXPostFunc,
+    readXPostFunctionSchema,
+  } = requireFromAdapter("../../ai/tools/readXPostTool.ts"));
+  ({ ulid } = requireFromAdapter("ulid"));
+}
+
 const TRANSIENT_FETCH_MAX_ATTEMPTS = 3;
 const TRANSIENT_FETCH_RETRY_BASE_DELAY_MS = 250;
 const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
@@ -125,8 +201,8 @@ const LOCAL_SERVER_TABLE_TOOL_NAME_SET = new Set<string>(LOCAL_SERVER_TABLE_TOOL
 type PreparedAgentRuntime = {
   agentConfig: AgentRuntimeAgentConfig;
   activeAgentToolNames: string[];
-  runtimeToolExecutionLimits: ReturnType<typeof resolveLocalWorkspaceExecutorOptionsFromPolicy>;
-  localToolExecutors: ReturnType<typeof buildLocalToolExecutors>;
+  runtimeToolExecutionLimits: Record<string, unknown>;
+  localToolExecutors: Record<string, (call: any) => Promise<{ content: string; metadata?: Record<string, unknown> }>>;
 };
 
 const preparedAgentRuntimeCache = new Map<string, PreparedAgentRuntime>();
@@ -161,8 +237,8 @@ type CliLocalRuntimeAdapterDeps = {
   cwd?: string;
   output?: { write(chunk: string): unknown };
   localToolExecutors?: Record<string, (call: any) => Promise<{ content: string; metadata?: Record<string, unknown> }>>;
-  readXPost?: typeof readXPostFunc;
-  readXhsProfile?: typeof readXhsProfileFunc;
+  readXPost?: ReadToolFn;
+  readXhsProfile?: ReadToolFn;
   executeCli?: LocalCliExecutor;
   sleep?: (ms: number) => Promise<void>;
   loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
@@ -171,10 +247,12 @@ type CliLocalRuntimeAdapterDeps = {
 };
 
 async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
+  ensureHeavyCliLocalRuntimeModules();
   return getDefaultCliLocalRuntimeDb();
 }
 
 function createFallbackId() {
+  ensureHeavyCliLocalRuntimeModules();
   return ulid();
 }
 
@@ -1212,6 +1290,9 @@ async function writeDialog(args: {
 export function createCliLocalRuntimeAdapter(
   deps: CliLocalRuntimeAdapterDeps
 ): AgentRuntimeHostAdapter {
+  // Defer heavy graph until a local runtime adapter is actually constructed
+  // (not when this module is imported for cache-clear / builtin helpers).
+  ensureHeavyCliLocalRuntimeModules();
   const now = deps.now ?? Date.now;
   const createId = deps.createId ?? createFallbackId;
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -1342,6 +1423,9 @@ export function createCliLocalRuntimeAdapter(
               const result = await executeCli(provider, prompt, {
                 ...(agentConfig.model ? { model: agentConfig.model } : {}),
                 ...(reasoningEffort ? { reasoningEffort } : {}),
+                ...(typeof options?.timeoutMs === "number"
+                  ? { timeout: options.timeoutMs }
+                  : {}),
                 cwd: workspaceRoot,
                 yolo: true,
                 env: deps.env,

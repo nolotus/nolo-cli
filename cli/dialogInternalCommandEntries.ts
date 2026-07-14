@@ -3,7 +3,7 @@ import { createEnvCommand } from "./cliCommandFactories";
 
 export function getDialogInternalCommandEntries(): CommandEntry[] {
   return [
-    createEnvCommand(["dialog", "list"], "List dialogs", async (args, deps) => {
+    createEnvCommand(["dialog", "list"], "List dialogs (default --limit 50; --all/--limit 0 full; --jsonl streams)", async (args, deps) => {
       const { runDialogListCommand } = await import("./dialogCommands");
       return runDialogListCommand(args, deps);
     }),
@@ -11,7 +11,7 @@ export function getDialogInternalCommandEntries(): CommandEntry[] {
       const { runDialogDeleteCommand } = await import("./dialogCommands");
       return runDialogDeleteCommand(args, deps);
     }),
-    createEnvCommand(["dialog", "query"], "Query dialogs by subject refs", async (args, deps) => {
+    createEnvCommand(["dialog", "query"], "Query dialogs by subject refs (default --limit 50; --all full; --jsonl streams)", async (args, deps) => {
       const { runDialogQueryCommand } = await import("./dialogCommands");
       return runDialogQueryCommand(args, deps);
     }),

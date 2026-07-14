@@ -388,6 +388,19 @@ export async function buildProviderExecutionPlan(args: {
       ...(agentConfig.apiKeyHeader?.trim() ? { apiKeyHeader: agentConfig.apiKeyHeader.trim() } : {}),
     };
   }
+  // Platform direct: prefer brokered credentialRef (migrated keys) before env.
+  let apiKey = "";
+  const credentialRef = agentConfig.credentialRef?.trim();
+  if (args.credentialBroker && credentialRef) {
+    const fromBroker = await resolveCredentialFromBroker(args.credentialBroker, credentialRef);
+    if (fromBroker) {
+      apiKey = fromBroker;
+    }
+  }
+  if (!apiKey) {
+    apiKey = resolveOpenAiCompatibleApiKey(env);
+  }
+
   return {
     mode,
     transport: "direct",
@@ -395,6 +408,6 @@ export async function buildProviderExecutionPlan(args: {
     provider: agentConfig.provider || "openai-compatible",
     endpoint,
     requestOptions,
-    apiKey: resolveOpenAiCompatibleApiKey(env),
+    apiKey,
   };
 }

@@ -27,7 +27,7 @@ export type LocalAgentTurnInput = {
   onActionGate?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   onTextDelta?: (chunk: string) => void;
   onLoopEvent?: (event: LocalAgentLoopEvent) => void;
-  /** 单次 provider.complete 的硬超时；默认 120_000ms。超时重试一次，再超时抛错结束回合。 */
+  /** 单次 provider.complete 的硬超时；未设置时继承本回合 timeoutMs，再回退到 120_000ms。 */
   llmRequestTimeoutMs?: number;
 };
 
@@ -118,7 +118,7 @@ function emitLoopEvent(input: LocalAgentTurnInput, event: LocalAgentLoopEvent) {
   }
 }
 
-const LLM_TIMEOUT_RETRY_EXHAUSTED = "LLM_TIMEOUT_RETRY_EXHAUSTED";
+const LLM_REQUEST_TIMEOUT = "LLM_REQUEST_TIMEOUT";
 
 async function runCompleteWithTimeout(args: {
   provider: { complete(messages: AgentRuntimeChatMessage[], options?: any): Promise<AgentRuntimeResult> };
@@ -130,46 +130,33 @@ async function runCompleteWithTimeout(args: {
 }): Promise<AgentRuntimeResult> {
   const { provider, messages, options, timeoutMs, round, input } = args;
 
-  const attempt = async (): Promise<AgentRuntimeResult> => {
-    emitLoopEvent(input, { kind: "llm-start", round, atMs: Date.now() });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeoutReject = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`__llm_timeout__:${timeoutMs}`));
-      }, timeoutMs);
-    });
-    const complete = provider.complete(messages, options);
-    let ok = false;
-    try {
-      const result = await Promise.race([complete, timeoutReject]);
-      ok = true;
-      return result;
-    } finally {
-      if (timer) clearTimeout(timer);
-      emitLoopEvent(input, { kind: "llm-end", round, atMs: Date.now(), ok });
-    }
-  };
-
+  emitLoopEvent(input, { kind: "llm-start", round, atMs: Date.now() });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutReject = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`__llm_timeout__:${timeoutMs}`));
+    }, timeoutMs);
+  });
+  const complete = provider.complete(messages, options);
+  let ok = false;
   try {
-    return await attempt();
+    const result = await Promise.race([complete, timeoutReject]);
+    ok = true;
+    return result;
   } catch (error) {
     const isTimeout =
       error instanceof Error && error.message.startsWith("__llm_timeout__:");
     if (!isTimeout) throw error;
-    // 第一次超时 → 重试一次（发新的 llm-start/llm-end）
-    try {
-      return await attempt();
-    } catch (retryError) {
-      const retryIsTimeout =
-        retryError instanceof Error &&
-        retryError.message.startsWith("__llm_timeout__:");
-      if (!retryIsTimeout) throw retryError;
-      const exhausted = new Error(
-        `LLM request timed out after ${timeoutMs}ms (round ${round}, retry exhausted)`,
-      ) as Error & { code?: string };
-      exhausted.code = LLM_TIMEOUT_RETRY_EXHAUSTED;
-      throw exhausted;
-    }
+    // provider.complete has no cancellation contract. Retrying here would leave
+    // the timed-out CLI process alive and start a duplicate invocation.
+    const timeoutError = new Error(
+      `LLM request timed out after ${timeoutMs}ms (round ${round})`,
+    ) as Error & { code?: string };
+    timeoutError.code = LLM_REQUEST_TIMEOUT;
+    throw timeoutError;
+  } finally {
+    if (timer) clearTimeout(timer);
+    emitLoopEvent(input, { kind: "llm-end", round, atMs: Date.now(), ok });
   }
 }
 
@@ -413,7 +400,10 @@ export async function runLocalAgentTurn(
           ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
           ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
         },
-        timeoutMs: input.llmRequestTimeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+        timeoutMs:
+          input.llmRequestTimeoutMs ??
+          input.timeoutMs ??
+          DEFAULT_LLM_REQUEST_TIMEOUT_MS,
         round,
         input,
       });

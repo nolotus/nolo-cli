@@ -1,4 +1,3 @@
-import { runLocalAgentTurn } from "../agentRuntimeLocal";
 import { LOCAL_AGENT_CONFIG_MISSING_CODE } from "../../agent-runtime/localLoop";
 import {
   NOLO_PROJECT_MANAGER_AGENT_KEY,
@@ -37,6 +36,12 @@ import {
   CLI_PROVIDER_NAMES,
   isCliProviderAgentConfig,
 } from "./agentRunTypes";
+
+/** Local loop is heavy; load only when a local turn actually runs. */
+async function loadRunLocalAgentTurn() {
+  const { runLocalAgentTurn } = await import("../agentRuntimeLocal");
+  return runLocalAgentTurn;
+}
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -698,6 +703,7 @@ async function runLocalAgentTurnForCli(
     const subjectRefs = buildSubjectRefs(options);
     const allowedChildAgentKeys = options.allowedChildAgentKeys?.filter((key) => key.trim());
     const allowedToolNames = options.allowedToolNames?.filter((name) => name.trim());
+    const runLocalAgentTurn = await loadRunLocalAgentTurn();
     const result = await runLocalAgentTurn({
       adapter,
       agentRef: options.agentKey,

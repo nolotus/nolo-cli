@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -36,6 +43,26 @@ export function getCredentialPath(provider: OAuthProvider, homeDir = homedir()):
   return join(getCredentialsDir(homeDir), `${provider}.json`);
 }
 
+/** Same private-dir pattern as fileCredentialBroker (0700, best-effort chmod). */
+function ensurePrivateDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dir, 0o700);
+  } catch {
+    // Best-effort on platforms that ignore chmod (e.g. some Windows mounts).
+  }
+}
+
+/** Same private-file pattern as fileCredentialBroker (0600, best-effort chmod). */
+function writePrivateFile(path: string, body: string): void {
+  writeFileSync(path, body, { encoding: "utf8", mode: 0o600 });
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // Best-effort.
+  }
+}
+
 export function readOAuthCredential(
   provider: OAuthProvider,
   homeDir = homedir()
@@ -58,8 +85,8 @@ export function writeOAuthCredential(
   homeDir = homedir()
 ): void {
   const path = getCredentialPath(provider, homeDir);
-  mkdirSync(getCredentialsDir(homeDir), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(credential, null, 2)}\n`, "utf8");
+  ensurePrivateDir(getCredentialsDir(homeDir));
+  writePrivateFile(path, `${JSON.stringify(credential, null, 2)}\n`);
 }
 
 export function removeOAuthCredential(provider: OAuthProvider, homeDir = homedir()): void {

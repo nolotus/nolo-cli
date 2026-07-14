@@ -23,7 +23,8 @@ describe("CLI local runtime adapter source contract (credential broker)", () => 
   const source = readFileSync(join(import.meta.dir, "localRuntimeAdapter.ts"), "utf8");
 
   test("wires createFileCredentialBroker into resolveProvider paths", () => {
-    expect(source).toContain('from "../agent-runtime/fileCredentialBroker"');
+    // Broker is lazy-loaded for cold-start (require path), not top-level import.
+    expect(source).toContain("../../agent-runtime/fileCredentialBroker");
     expect(source).toContain("createFileCredentialBroker");
     expect(source).toContain("const credentialBroker = createFileCredentialBroker()");
     expect(source).toContain("credentialBroker,");
@@ -284,6 +285,7 @@ describe("CLI local runtime adapter", () => {
       adapter,
       agentRef: "frontend",
       input: "add tooltip",
+      timeoutMs: 600_000,
     });
 
     expect(result).toMatchObject({
@@ -295,6 +297,7 @@ describe("CLI local runtime adapter", () => {
       provider: "agy",
       options: {
         model: "gemini-3.1-pro",
+        timeout: 600_000,
         cwd: "/repo/worktree",
         yolo: true,
       },

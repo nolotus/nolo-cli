@@ -44,8 +44,12 @@ type ListedDialog = {
 
 const DIALOG_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
 const DIALOG_PATH_RE = /^\/(?:space\/([^/]+)\/)?dialog-(.+)-([0-9A-HJKMNP-TV-Z]{26})\/?$/i;
+const DEFAULT_DIALOG_LIST_LIMIT = 50;
+const DEFAULT_DIALOG_QUERY_LIMIT = 50;
+const UNBOUNDED_DIALOG_CAP = 100_000;
 const VALUE_FLAGS = new Set([
   "--limit",
+  "--offset",
   "--exclude-dialog",
   "--row-dbkey",
   "--server",
@@ -59,6 +63,12 @@ const VALUE_FLAGS = new Set([
   "--machine-key",
   "--user",
 ]);
+
+type ResultLimit = {
+  limit: number | null;
+  unlimited: boolean;
+  fromDefault: boolean;
+};
 
 function hasFlag(args: string[], flag: string) {
   return args.includes(flag);
@@ -91,10 +101,89 @@ function readAllPositional(args: string[]) {
   return positionals;
 }
 
-function readLimit(args: string[], fallback: number) {
+/**
+ * Resolve list/query result limit.
+ * - default: fallback
+ * - --all or --limit 0: unlimited
+ * - --limit N (N>0): N
+ */
+function resolveResultLimit(args: string[], fallback: number): ResultLimit {
+  if (hasFlag(args, "--all")) {
+    return { limit: null, unlimited: true, fromDefault: false };
+  }
   const raw = readOption(args, "--limit");
-  const parsed = raw ? Number(raw) : fallback;
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+  if (!raw) {
+    return { limit: fallback, unlimited: false, fromDefault: true };
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { limit: fallback, unlimited: false, fromDefault: true };
+  }
+  if (parsed === 0) {
+    return { limit: null, unlimited: true, fromDefault: false };
+  }
+  return { limit: Math.floor(parsed), unlimited: false, fromDefault: false };
+}
+
+function readOffset(args: string[]) {
+  const raw = readOption(args, "--offset");
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+/** Stream pretty JSON without one intermediate stringify of huge nested arrays when possible. */
+function writeJsonStream(output: { write(chunk: string): unknown }, value: unknown): void {
+  if (Array.isArray(value)) {
+    output.write("[\n");
+    for (let i = 0; i < value.length; i++) {
+      const pretty = JSON.stringify(value[i], null, 2);
+      const indented = pretty
+        .split("\n")
+        .map((line) => `  ${line}`)
+        .join("\n");
+      output.write(i === 0 ? indented : `,\n${indented}`);
+    }
+    output.write("\n]\n");
+    return;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    // Stream large dialogs/items arrays field-by-field to avoid one giant intermediate string.
+    const largeArrayKey = ["dialogs", "items", "messages"].find((key) => Array.isArray(record[key]));
+    if (largeArrayKey && Array.isArray(record[largeArrayKey]) && (record[largeArrayKey] as unknown[]).length > 32) {
+      const items = record[largeArrayKey] as unknown[];
+      output.write("{\n");
+      let wrote = false;
+      for (const [key, fieldValue] of Object.entries(record)) {
+        if (key === largeArrayKey) continue;
+        const pretty = JSON.stringify(fieldValue, null, 2)
+          .split("\n")
+          .map((line, idx) => (idx === 0 ? line : `  ${line}`))
+          .join("\n");
+        output.write(`${wrote ? ",\n" : ""}  ${JSON.stringify(key)}: ${pretty}`);
+        wrote = true;
+      }
+      output.write(`${wrote ? ",\n" : ""}  ${JSON.stringify(largeArrayKey)}: [\n`);
+      for (let i = 0; i < items.length; i++) {
+        const pretty = JSON.stringify(items[i], null, 2);
+        const indented = pretty
+          .split("\n")
+          .map((line) => `    ${line}`)
+          .join("\n");
+        output.write(i === 0 ? indented : `,\n${indented}`);
+      }
+      output.write("\n  ]\n}\n");
+      return;
+    }
+  }
+  output.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeJsonlStream(output: { write(chunk: string): unknown }, items: unknown[]): void {
+  for (const item of items) {
+    output.write(`${JSON.stringify(item)}\n`);
+  }
 }
 
 function getDialogIdFromKey(dbKey: string) {
@@ -209,18 +298,22 @@ function isScheduledDialog(record: ListedDialog) {
 
 function printListUsage(output: { write(chunk: string): unknown }) {
   output.write(`Usage:
-  nolo dialog list [--space <spaceId|spaceUrl>] [--limit 100] [--json] [--ids-only]
+  nolo dialog list [--space <spaceId|spaceUrl>] [--limit ${DEFAULT_DIALOG_LIST_LIMIT}] [--offset <n>] [--all] [--json] [--jsonl] [--ids-only]
 
 Options:
   --space <space>       List current user's dialogs attached to one space.
-  --limit <n>           Maximum dialogs to return. Default: 100.
+  --limit <n>           Maximum dialogs to return. Default: ${DEFAULT_DIALOG_LIST_LIMIT}. Use 0 or --all for full dump.
+  --offset <n>          Skip first n dialogs after sort/filter (paging).
+  --all                 Full dump (same as --limit 0). Prefer --jsonl for large results.
   --include-scheduled   Include scheduled automation run dialogs.
-  --json                Print machine-readable JSON.
+  --json                Print machine-readable JSON object.
+  --jsonl               Stream one dialog JSON object per line (lowest memory).
   --ids-only            Print only dialog ids.
   --server <url>        Override NOLO_SERVER/BASE_URL.
   --token <jwt>         Override AUTH_TOKEN.
 
 Lists merge global server candidates and ignore newer tombstones.
+Human default is a short summary; use --json/--jsonl for automation.
 `);
 }
 
@@ -279,10 +372,12 @@ Options:
   --subject-kind <kind>     Generic subject ref kind. Defaults to table-row with --row-dbkey.
   --subject-id <id>         Generic subject ref id. Defaults to --row-dbkey.
   --subject-role <role>     Optional role included in the query payload.
-  --limit <n>               Query limit. Default: 100.
+  --limit <n>               Query limit. Default: ${DEFAULT_DIALOG_QUERY_LIMIT}. Use 0 or --all for full dump.
+  --all                     Full dump (same as --limit 0). Prefer --jsonl for large results.
   --exclude-dialog <id>     Exclude one dialog id or dbKey from evidence results.
   --allow-empty             Exit 0 when no dialogs match.
-  --json                    Print machine-readable JSON.
+  --json                    Print machine-readable JSON object.
+  --jsonl                   Stream one dialog JSON object per line.
   --server <url>            Target server. Defaults to NOLO_SERVER/BASE_URL/profile.
   --token <jwt>             Override AUTH_TOKEN.
 
@@ -1132,7 +1227,10 @@ export async function runDialogQueryCommand(
     ...(subjectRole ? { role: subjectRole } : {}),
   };
   const serverUrl = resolveServerUrl(args, env);
-  const limit = readLimit(args, 100);
+  const resultLimit = resolveResultLimit(args, DEFAULT_DIALOG_QUERY_LIMIT);
+  const limit = resultLimit.unlimited
+    ? UNBOUNDED_DIALOG_CAP
+    : Math.max(1, resultLimit.limit ?? DEFAULT_DIALOG_QUERY_LIMIT);
   const fetchImpl = deps.fetchImpl ?? fetch;
   const excludeDialogIds = normalizeExcludedDialogIds(readOption(args, "--exclude-dialog"));
 
@@ -1147,12 +1245,17 @@ export async function runDialogQueryCommand(
     });
     const records = excludeDialogsById(rawRecords, excludeDialogIds);
     const strict = verifyDialogSubjectQuery(records, subjectRef, hasFlag(args, "--allow-empty"));
-    const dialogs = records
+    const allDialogs = records
       .filter((record) => dialogMatchesSubjectRef(record, subjectRef))
       .map((record) => summarizeDialogEvidence(record, subjectRef));
+    // Client-side cap if server over-returns.
+    const hitLimit = !resultLimit.unlimited && allDialogs.length > limit;
+    const dialogs = hitLimit ? allDialogs.slice(0, limit) : allDialogs;
 
-    if (hasFlag(args, "--json")) {
-      output.write(JSON.stringify({
+    if (hasFlag(args, "--jsonl")) {
+      writeJsonlStream(output, dialogs);
+    } else if (hasFlag(args, "--json")) {
+      writeJsonStream(output, {
         source: "db.query.subjectRef",
         readOnly: true,
         server: serverUrl,
@@ -1162,9 +1265,11 @@ export async function runDialogQueryCommand(
         ...(excludeDialogIds.length ? { excludedDialogIds: excludeDialogIds } : {}),
         strict,
         total: dialogs.length,
+        ...(hitLimit
+          ? { limit, truncated: true, nextOffset: dialogs.length }
+          : {}),
         dialogs,
-      }, null, 2));
-      output.write("\n");
+      });
     } else {
       output.write(`source: db.query.subjectRef\n`);
       output.write(`server: ${serverUrl}\n`);
@@ -1172,6 +1277,11 @@ export async function runDialogQueryCommand(
       if (excludeDialogIds.length) output.write(`excluded dialogs: ${excludeDialogIds.join(", ")}\n`);
       output.write(`strict: ${strict.ok ? "ok" : strict.reason}\n`);
       output.write(`total dialogs: ${dialogs.length}\n`);
+      if (hitLimit) {
+        output.write(
+          `truncated: showing ${dialogs.length}; use --all or --limit 0 for full dump\n`
+        );
+      }
       for (const dialog of dialogs) {
         output.write(
           `\n${dialog.title ?? "(untitled)"}\nid=${dialog.dialogId ?? "-"}\nstatus=${dialog.status ?? "-"}\ncheckpoint=${dialog.checkpointStatus ?? "-"}\nartifacts=${dialog.artifactCount}\nupdatedAt=${dialog.updatedAt ?? "-"}\ndbKey=${dialog.dialogKey ?? "-"}\n`
@@ -1212,7 +1322,11 @@ export async function runDialogListCommand(
   const fallbackFetchImpl = deps.fallbackFetchImpl;
   const serverUrl = resolveServerUrl(args, env);
   const serverUrls = resolveServerCandidates(args, env, serverUrl);
-  const limit = readLimit(args, 100);
+  const resultLimit = resolveResultLimit(args, DEFAULT_DIALOG_LIST_LIMIT);
+  const limit = resultLimit.unlimited
+    ? UNBOUNDED_DIALOG_CAP
+    : Math.max(1, resultLimit.limit ?? DEFAULT_DIALOG_LIST_LIMIT);
+  const offset = readOffset(args);
   const spaceInput = readOption(args, "--space") ?? readOption(args, "--space-id");
   const includeScheduled = hasFlag(args, "--include-scheduled");
 
@@ -1248,29 +1362,46 @@ export async function runDialogListCommand(
       queryFailures = result.failures;
     }
 
-    const dialogs = sortDialogs(
+    const sorted = sortDialogs(
       records
         .map((record) => normalizeDialogRecord(record))
         .filter((dialog): dialog is ListedDialog => dialog != null)
         .filter((dialog) => includeScheduled || !isScheduledDialog(dialog))
-    ).slice(0, limit);
+    );
+    const window = resultLimit.unlimited
+      ? sorted.slice(offset, offset + UNBOUNDED_DIALOG_CAP)
+      : sorted.slice(offset, offset + limit);
+    const hitLimit = !resultLimit.unlimited && sorted.length > offset + window.length;
+    const dialogs = window;
 
     if (hasFlag(args, "--ids-only")) {
       output.write(`${dialogs.map((dialog) => dialog.id).join("\n")}\n`);
       return 0;
     }
 
+    if (hasFlag(args, "--jsonl")) {
+      writeJsonlStream(output, dialogs);
+      return 0;
+    }
+
     if (hasFlag(args, "--json")) {
-      output.write(JSON.stringify({
+      writeJsonStream(output, {
         userId,
         ...(resolvedSpaceId ? { spaceId: resolvedSpaceId } : {}),
         source,
         targetServers: serverUrls,
         ...(queryFailures.length ? { serverFailures: queryFailures } : {}),
         total: dialogs.length,
+        ...(hitLimit
+          ? {
+              limit,
+              offset,
+              truncated: true,
+              nextOffset: offset + dialogs.length,
+            }
+          : {}),
         dialogs,
-      }, null, 2));
-      output.write("\n");
+      });
       return 0;
     }
 
@@ -1282,6 +1413,11 @@ export async function runDialogListCommand(
       output.write(`serverFailures: ${queryFailures.length}\n`);
     }
     output.write(`total dialogs: ${dialogs.length}\n`);
+    if (hitLimit) {
+      output.write(
+        `truncated: showing ${dialogs.length} (offset ${offset}); use --offset ${offset + dialogs.length} --limit ${limit}, or --all / --limit 0 for full dump\n`
+      );
+    }
     for (const dialog of dialogs) {
       output.write(
         `\n${dialog.title}\nid=${dialog.id}\nstatus=${dialog.status ?? "-"}\nupdatedAt=${dialog.updatedAt ?? "-"}\ndbKey=${dialog.dbKey}\n`

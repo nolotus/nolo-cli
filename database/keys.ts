@@ -653,6 +653,25 @@ function buildDialogAgentListIndexKeySet(args: {
  * Maintain reverse-chrono agent list index rows when a dialog is written.
  * Deletes stale (agent, invertedTs) keys when membership or updatedAt changes.
  */
+/**
+ * Build only delete ops for agent-list index rows of a dialog about to be removed.
+ * Equivalent to buildDialogAgentListIndexOps({ ..., nextRecord: null, previousRecord }).
+ */
+export function buildDialogAgentListIndexDeleteOps(args: {
+  userId: string | null | undefined;
+  dialogKey: string;
+  dialogId?: string;
+  previousRecord: Record<string, unknown> | null | undefined;
+}): Array<{ type: "del"; key: string }> {
+  return buildDialogAgentListIndexOps({
+    userId: args.userId,
+    dialogKey: args.dialogKey,
+    dialogId: args.dialogId,
+    nextRecord: null,
+    previousRecord: args.previousRecord,
+  }).filter((op): op is { type: "del"; key: string } => op.type === "del");
+}
+
 export function buildDialogAgentListIndexOps(args: {
   userId: string | null | undefined;
   dialogKey: string;
@@ -784,6 +803,55 @@ export function buildAgentAutomationOwnerIndexValue(args: {
 
 export function isAgentAutomationOwnerIndexKey(key: string): boolean {
   return key.startsWith(`${AGENT_AUTOMATION_OWNER_INDEX_PREFIX}-`);
+}
+
+/**
+ * Owner secondary index delete ops for an agent-automation primary record.
+ * Safe no-op when ownerAgentKey / automationId cannot be resolved.
+ */
+export function buildAgentAutomationOwnerIndexDeleteOps(args: {
+  userId: string | null | undefined;
+  automationKey: string;
+  record?: {
+    id?: unknown;
+    ownerAgentKey?: unknown;
+    createdBy?: unknown;
+  } | null;
+}): Array<{ type: "del"; key: string }> {
+  const automationKey = args.automationKey.trim();
+  if (!automationKey || !isAgentAutomationKey(automationKey)) return [];
+
+  const userIdFromRecord =
+    typeof args.record?.createdBy === "string" ? args.record.createdBy.trim() : "";
+  const userIdFromArg =
+    typeof args.userId === "string" ? args.userId.trim() : "";
+  // agent-automation-{userId}-{automationId}; automationId is the final segment.
+  const withoutPrefix = automationKey.startsWith(`${DataType.AGENT_AUTOMATION}-`)
+    ? automationKey.slice(`${DataType.AGENT_AUTOMATION}-`.length)
+    : "";
+  const lastDash = withoutPrefix.lastIndexOf("-");
+  const userIdFromKey =
+    lastDash > 0 ? withoutPrefix.slice(0, lastDash) : "";
+  const automationIdFromKey =
+    lastDash > 0 ? withoutPrefix.slice(lastDash + 1) : "";
+
+  const userId = userIdFromArg || userIdFromRecord || userIdFromKey;
+  const automationId =
+    (typeof args.record?.id === "string" && args.record.id.trim()) ||
+    automationIdFromKey;
+  const ownerAgentKey =
+    typeof args.record?.ownerAgentKey === "string"
+      ? args.record.ownerAgentKey.trim()
+      : "";
+
+  if (!userId || !automationId || !ownerAgentKey) return [];
+
+  return [
+    {
+      type: "del",
+      key: createAgentAutomationOwnerIndexKey(userId, ownerAgentKey, automationId),
+    },
+  ];
 }
 
 /* ---- Notification ---- */

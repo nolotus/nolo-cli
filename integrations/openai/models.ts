@@ -13,13 +13,13 @@ const GPT_5_5_LONG_CONTEXT_PRICE: ModelPrice = {
   inputCacheHit: 1 * 8,
 };
 
-const GPT_5_4_PRO_STANDARD_PRICE: ModelPrice = {
+const GPT_5_5_PRO_STANDARD_PRICE: ModelPrice = {
   input: 30 * 8,
   output: 180 * 8,
   inputCacheHit: 0,
 };
 
-const GPT_5_4_PRO_LONG_CONTEXT_PRICE: ModelPrice = {
+const GPT_5_5_PRO_LONG_CONTEXT_PRICE: ModelPrice = {
   input: 60 * 8,
   output: 270 * 8,
   inputCacheHit: 0,
@@ -130,13 +130,13 @@ export const openAIModels: Model[] = [
     contextWindow: 1_047_576,
     maxOutputTokens: 128_000,
     supportsReasoningEffort: true,
-    price: GPT_5_4_PRO_STANDARD_PRICE,
+    price: GPT_5_5_PRO_STANDARD_PRICE,
     pricingStrategy: {
       type: "tiered_context",
       tiers: [
         {
           minContext: 272_001,
-          price: GPT_5_4_PRO_LONG_CONTEXT_PRICE,
+          price: GPT_5_5_PRO_LONG_CONTEXT_PRICE,
         },
       ],
     },

@@ -301,7 +301,7 @@
     "agent-runtime/noloWorkspaceTools.ts",
     "agent-runtime/externalTools.ts",
     "agent-runtime/cloudCredentialGrant.ts",
-    "agent-runtime/oauthProviders.ts",
+    "agent-runtime/platformProviderEndpoints.ts",
     "agent-runtime/kimiHeaders.ts",
     "connector-experimental/heartbeatLoop.ts",
     "connector-experimental/capabilities.ts",

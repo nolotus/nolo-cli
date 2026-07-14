@@ -1,40 +1,13 @@
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import { pickAgentRuntimeInferenceOptions } from "./agentConfigOptions";
-import { getModelConfig } from "../ai/llm/providers";
 import type { CredentialBroker } from "./credentialBroker";
-import { resolveFreshAccessToken } from "./oauthTokenStore";
-import { OAUTH_PROVIDER_REFRESH } from "./oauthProviders";
+import {
+  isOpenAiResponsesModel,
+  OPENAI_RESPONSES_ENDPOINT,
+  resolvePlatformChatCompletionsEndpoint,
+} from "./platformProviderEndpoints";
 
 type EnvLike = Record<string, string | undefined>;
-
-const PROVIDER_ENDPOINTS: Record<string, string> = {
-  deepinfra: "https://api.deepinfra.com/v1/openai/chat/completions",
-  deepseek: "https://api.deepseek.com/chat/completions",
-  fireworks: "https://api.fireworks.ai/inference/v1/chat/completions",
-  google: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-  mistral: "https://api.mistral.ai/v1/chat/completions",
-  mimo: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
-  openai: "https://api.openai.com/v1/chat/completions",
-  openrouter: "https://openrouter.ai/api/v1/chat/completions",
-  nolo: "https://ollama.com/v1/chat/completions",
-  "ollama-cloud": "https://ollama.com/v1/chat/completions",
-  vultr: "https://api.vultrinference.com/v1/chat/completions",
-};
-
-function isOpenAiResponsesModel(args: {
-  provider?: string;
-  model?: string;
-  endpointKey?: string;
-}) {
-  if ((args.provider ?? "").trim().toLowerCase() !== "openai") return false;
-  if (args.endpointKey === "responses") return true;
-  if (!args.model) return false;
-  try {
-    return getModelConfig("openai", args.model).endpointKey === "responses";
-  } catch {
-    return false;
-  }
-}
 
 function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
   const customProviderUrl = agentConfig.customProviderUrl?.trim();
@@ -49,9 +22,9 @@ function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
     model: agentConfig.model,
     endpointKey: (agentConfig as any).endpointKey,
   })) {
-    return "https://api.openai.com/v1/responses";
+    return OPENAI_RESPONSES_ENDPOINT;
   }
-  const endpoint = PROVIDER_ENDPOINTS[provider];
+  const endpoint = resolvePlatformChatCompletionsEndpoint(provider);
   if (!endpoint) {
     throw new Error(`Platform chat provider does not support provider "${provider}".`);
   }

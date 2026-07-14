@@ -26,10 +26,18 @@ export function parseTokenUserId(token: string): string | null {
 }
 
 /**
- * Extract the custom ID (ULID) from a dialog key like `dialog-{userId}-{id}`.
- * Mirrors `extractCustomId` from `core/prefix` without importing it.
+ * Extract the custom ID (ULID) from a dialog record key like
+ * `dialog-{userId}-{id}`. userId may itself contain hyphens, so dialogId is
+ * always taken as the final dash segment. Message keys (`…-msg-…`) and
+ * non-dialog keys fall through to the legacy `parts.slice(2).join("-")`
+ * behavior. Mirrors `extractCustomId` from `core/prefix` without importing
+ * it.
  */
 function extractCustomId(key: string): string {
+  if (key.startsWith("dialog-") && !key.includes("-msg-")) {
+    const lastDash = key.lastIndexOf("-");
+    return lastDash >= 0 ? key.slice(lastDash + 1) : key;
+  }
   const parts = key.split("-");
   return parts.slice(2).join("-");
 }

@@ -323,6 +323,7 @@
     "database/server/serverStoreFactory.ts",
     "database/server/memoryAuthorityStore.ts",
     "database/utils/ulid.ts",
+    "database/dialogKey.ts",
     "ai/agent/cliExecutor.ts",
     "ai/skills/skillDocProtocol.ts",
     "ai/llm/providers.ts",

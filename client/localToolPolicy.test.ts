@@ -3,20 +3,20 @@ import { describe, expect, test } from "bun:test";
 import { executeLocalToolWithPolicy, resolveLocalToolPolicy } from "./localToolPolicy";
 
 describe("CLI local tool policy", () => {
-  test("allows execShell by default", () => {
+  test("allows execShell when the agent declares it", () => {
     expect(resolveLocalToolPolicy({
       env: {},
-      agentToolNames: [],
+      agentToolNames: ["execShell"],
       toolName: "execShell",
     })).toEqual({ allowed: true, toolName: "execShell" });
   });
 
-  test("allows execShell even without env allowlist", () => {
+  test("denies execShell when the agent does not declare it", () => {
     expect(resolveLocalToolPolicy({
-      env: { NOLO_LOCAL_ALLOWED_TOOLS: "execShell" },
-      agentToolNames: ["execShell"],
+      env: {},
+      agentToolNames: [],
       toolName: "execShell",
-    })).toEqual({ allowed: true, toolName: "execShell" });
+    })).toMatchObject({ allowed: false, toolName: "execShell" });
   });
 
   test("requires both env allowlist and agent declaration", () => {

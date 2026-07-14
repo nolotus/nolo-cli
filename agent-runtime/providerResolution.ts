@@ -16,6 +16,8 @@ const PROVIDER_ENDPOINTS: Record<string, string> = {
   mimo: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  nolo: "https://ollama.com/v1/chat/completions",
+  "ollama-cloud": "https://ollama.com/v1/chat/completions",
   vultr: "https://api.vultrinference.com/v1/chat/completions",
 };
 

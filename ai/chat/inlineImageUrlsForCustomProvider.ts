@@ -1,3 +1,5 @@
+import { isNoloHostedProvider } from "../llm/kimi";
+
 type ImageFetchResult = {
   ok: boolean;
   mimeType?: string;
@@ -12,6 +14,11 @@ type InlineOptions = {
 
 const FILE_CONTENT_PATH = "/api/v1/db/file/content/";
 
+/**
+ * Providers that reject remote image URLs and require base64 data URIs.
+ * Shared contract for client chat + server chat-proxy/agent-run (same as custom
+ * OpenAI-compatible hosts / Ollama Cloud).
+ */
 export const shouldInlineImageUrlsForAgent = (
   agentConfig:
     | { apiSource?: string | null; model?: string | null; provider?: string | null }
@@ -22,6 +29,8 @@ export const shouldInlineImageUrlsForAgent = (
   const provider = agentConfig?.provider?.toLowerCase();
   const model = agentConfig?.model?.toLowerCase();
   if (apiSource === "custom" || provider === "custom") return true;
+  // Platform nolo → Ollama: "image URLs are not currently supported, please use base64"
+  if (isNoloHostedProvider(provider)) return true;
   return provider === "openrouter" && model === "minimax/minimax-m3";
 };
 

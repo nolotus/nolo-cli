@@ -17,6 +17,7 @@ const REASONING_MODEL_NAMES = new Set([
   "gpt-5",
   "gpt-5-mini",
   "glm-5.2",
+  // Legacy model ids from retired Fireworks/DeepInfra/GMI/CF/Z.AI catalog rows
   "@cf/zai-org/glm-5.2",
   "zai-org/GLM-5.2",
   "accounts/fireworks/models/glm-5p2",

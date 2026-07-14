@@ -4,7 +4,11 @@ import { DataType } from "../../create/types";
 import { createAgentKey } from "../../database/keys";
 import { APP_BUILDER_PUBLIC_AGENT_KEY } from "../../app/constants/appEditor";
 
-const FIREWORKS_GLM_5_2_MODEL = "accounts/fireworks/models/glm-5p2";
+import {
+  OLLAMA_CLOUD_GLM_52_MODEL,
+  OLLAMA_CLOUD_GLM_PRICE,
+} from "../../ai/llm/ollamaCloud";
+import { PLATFORM_HOSTED_KIMI_PROVIDER } from "../../ai/llm/kimi";
 
 export type ObjectAssistantKind = "page" | "table" | "app" | "image" | "file";
 export type BuiltinObjectAssistantKind = Exclude<ObjectAssistantKind, "app">;
@@ -117,12 +121,12 @@ export const buildBuiltinObjectAssistantAgent = (
     type: DataType.AGENT,
     userId,
     isPublic: false,
-    provider: "fireworks",
-    model: FIREWORKS_GLM_5_2_MODEL,
+    provider: PLATFORM_HOSTED_KIMI_PROVIDER,
+    model: OLLAMA_CLOUD_GLM_52_MODEL,
     apiSource: "platform" as const,
     useServerProxy: true,
-    inputPrice: 1.4 * 8,
-    outputPrice: 4.4 * 8,
+    inputPrice: OLLAMA_CLOUD_GLM_PRICE.input,
+    outputPrice: OLLAMA_CLOUD_GLM_PRICE.output,
     createdAt: now,
     updatedAt: String(now),
     dialogCount: 0,

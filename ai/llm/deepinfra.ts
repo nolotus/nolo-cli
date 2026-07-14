@@ -1,21 +1,7 @@
 // ai/llm/deepinfra.ts
-// Kimi removed from catalog — platform Kimi is ollama-cloud only.
+// Kimi + GLM removed from catalog — platform Kimi/GLM are nolo (Ollama Cloud) only.
 
 export const deepinfraModels = [
-  {
-    name: "zai-org/GLM-5.2",
-    displayName: "Z.AI: GLM 5.2 (DeepInfra)",
-    hasVision: false,
-    price: {
-      input: 1.4 * 7,
-      output: 4.4 * 7,
-      inputCacheHit: 0.25 * 7,
-    },
-    contextWindow: 1048576,
-    maxOutputTokens: 1048576,
-    supportsTool: true,
-    supportsReasoningEffort: true,
-  },
   {
     name: "anthropic/claude-haiku-4-5",
     displayName: "Anthropic: Claude Haiku 4.5",

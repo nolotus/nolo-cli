@@ -914,6 +914,28 @@ const resolveAgentImageModelIdentity = (agentConfig: Partial<Agent>) => {
     }
 };
 
+const EXPLICIT_IMAGE_GENERATION_TOOL_NAMES = new Set([
+    "openAIGptImage",
+    "openAIGptImageGenerate",
+    "openAIGptImageEdit",
+    "chatgptWebImageGenerate",
+    "geminiFlashImage",
+    "geminiProImagePreview",
+]);
+
+const agentUsesExplicitImageGenerationTool = (agentConfig: Agent): boolean => {
+    const toolNames = Array.isArray((agentConfig as any).tools)
+        ? (agentConfig as any).tools
+        : Array.isArray((agentConfig as any).toolNames)
+          ? (agentConfig as any).toolNames
+          : [];
+    return toolNames.some(
+        (name: unknown) =>
+            typeof name === "string" &&
+            EXPLICIT_IMAGE_GENERATION_TOOL_NAMES.has(name.trim()),
+    );
+};
+
 export const resolveImageGenerationStreamingState = (
     agentConfig: Agent,
     args?: {
@@ -924,7 +946,8 @@ export const resolveImageGenerationStreamingState = (
     const { modelConfig } = resolveAgentImageModelIdentity(agentConfig);
     const hasImageOutput =
         !!(modelConfig?.hasImageOutput ?? (modelConfig as any)?.supportsImageOutput) ||
-        agentConfig.imageConfig?.enabled === true;
+        agentConfig.imageConfig?.enabled === true ||
+        agentUsesExplicitImageGenerationTool(agentConfig);
     if (!hasImageOutput) {
         return undefined;
     }
@@ -932,6 +955,11 @@ export const resolveImageGenerationStreamingState = (
     const currentProfile = modelConfig?.imageGenerationProfiles?.find(
         (profile) => profile.imageModel === modelConfig.name,
     );
+    const usesWebImageTool = agentUsesExplicitImageGenerationTool(agentConfig) &&
+        (Array.isArray((agentConfig as any).tools)
+            ? (agentConfig as any).tools
+            : []
+        ).includes("chatgptWebImageGenerate");
 
     return {
         kind: "image_generation",
@@ -939,7 +967,9 @@ export const resolveImageGenerationStreamingState = (
         startedAt: args?.previous?.startedAt ?? Date.now(),
         waitHint:
             formatImageWaitHint(modelConfig?.imageGenerationWaitTimeSeconds) ??
-            "通常需要几十秒",
+            (usesWebImageTool
+                ? "网页生图通常需要 30 秒到几分钟，切换对话不会中断"
+                : "通常需要几十秒"),
         profileLabel: currentProfile?.label,
     };
 };

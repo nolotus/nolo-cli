@@ -1,5 +1,5 @@
 // ai/llm/fireworks.ts
-// Kimi removed from catalog — platform Kimi is ollama-cloud only.
+// Kimi + GLM removed from catalog — platform Kimi/GLM are nolo (Ollama Cloud) only.
 
 export const fireworksModels = [
   {
@@ -13,19 +13,5 @@ export const fireworksModels = [
     },
     contextWindow: 512000,
     supportsTool: true,
-  },
-  {
-    name: "accounts/fireworks/models/glm-5p2",
-    displayName: "Z.AI: GLM 5.2",
-    hasVision: false,
-    price: {
-      input: 1.4 * 8,
-      output: 4.4 * 8,
-      cachingRead: 0.25 * 8,
-    },
-    contextWindow: 1048576,
-    maxOutputTokens: 1048576,
-    supportsTool: true,
-    supportsReasoningEffort: true,
   },
 ];

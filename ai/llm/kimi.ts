@@ -13,10 +13,16 @@ export const OLLAMA_CLOUD_PROVIDER = PLATFORM_HOSTED_KIMI_PROVIDER;
 export const LEGACY_OLLAMA_CLOUD_PROVIDER = "ollama-cloud";
 
 /**
- * User-facing copy when platform-hosted LLM (nolo → Ollama) is down, rate-limited,
- * or missing credentials. No multi-provider fallback — tell the user to retry later.
+ * User-facing copy when platform-hosted LLM (nolo → Ollama) is capacity-limited
+ * (429/5xx/timeout/network). Client validation errors (4xx other than 429) must
+ * surface the real upstream reason — do not blanket-map them here.
  */
 export const PLATFORM_LLM_BUSY_USER_MESSAGE = "服务器紧张";
+
+/** Capacity / transport failures that map to PLATFORM_LLM_BUSY_USER_MESSAGE. */
+export const PLATFORM_LLM_CAPACITY_STATUSES = new Set([
+  429, 500, 502, 503, 504,
+]);
 
 /** True for catalog provider id `nolo` and legacy `ollama-cloud` agent records. */
 export const isNoloHostedProvider = (provider?: string | null): boolean => {
@@ -25,6 +31,27 @@ export const isNoloHostedProvider = (provider?: string | null): boolean => {
     normalized === PLATFORM_HOSTED_KIMI_PROVIDER ||
     normalized === LEGACY_OLLAMA_CLOUD_PROVIDER
   );
+};
+
+/**
+ * Whether a nolo/Ollama failure should show the calm capacity message.
+ * 400/401/403/404 etc. stay as real errors (e.g. invalid image payload).
+ */
+export const shouldMapToPlatformBusyMessage = (opts: {
+  provider?: string | null;
+  status?: number | null;
+  errorName?: string | null;
+  /** True for missing platform key / abort without HTTP status. */
+  treatAsCapacity?: boolean;
+}): boolean => {
+  if (!isNoloHostedProvider(opts.provider)) return false;
+  if (opts.treatAsCapacity) return true;
+  const name = opts.errorName ?? "";
+  if (name === "AbortError" || name === "TimeoutError") return true;
+  if (opts.status != null && PLATFORM_LLM_CAPACITY_STATUSES.has(opts.status)) {
+    return true;
+  }
+  return false;
 };
 
 /** @deprecated Legacy Fireworks model ids — not listed in catalog. */

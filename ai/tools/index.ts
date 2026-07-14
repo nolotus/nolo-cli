@@ -306,6 +306,10 @@ import {
   openAIGptImageFunc,
 } from "./openaiImageTool";
 import {
+  chatgptWebImageGenerateFunctionSchema,
+  chatgptWebImageGenerateFunc,
+} from "./chatgptWebImageTool";
+import {
   remotionRenderVideoFunctionSchema,
   remotionRenderVideoFunc,
 } from "./remotionVideoTool";
@@ -2142,6 +2146,19 @@ const baseToolDefinitions: ToolDefinition[] = [
       name: "openAIGptImageGenerate",
       description:
         "使用 OpenAI GPT Image 2 生成新图片，适合文本出图与基于参考图的单次新图生成。",
+      category: "多媒体生成",
+    },
+    behavior: "action",
+    uiGroup: "media",
+  },
+  {
+    id: "chatgptWebImageGenerate",
+    schema: chatgptWebImageGenerateFunctionSchema,
+    executor: chatgptWebImageGenerateFunc,
+    description: {
+      name: "chatgptWebImageGenerate",
+      description:
+        "使用主人本机 ChatGPT 网页订阅生图；仅内部；失败勿 fallback OpenAI API。",
       category: "多媒体生成",
     },
     behavior: "action",

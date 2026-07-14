@@ -46,7 +46,7 @@ export const ALL_MODELS: ModelWithProvider[] = [
   ...withProvider("deepseek")(deepSeekModels),
   ...withProvider("deepinfra")(deepinfraModels),
   ...withProvider("fireworks")(fireworksModels),
-  ...withProvider("ollama-cloud")(ollamaCloudModels),
+  ...withProvider("nolo")(ollamaCloudModels),
   ...withProvider("mistral")(mistralModels),
   ...withProvider("mimo")(mimoModels),
   ...withProvider("cloudflare")(cloudflareModels),

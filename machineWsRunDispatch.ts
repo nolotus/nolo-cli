@@ -45,6 +45,10 @@ import {
   type PermissionPolicy,
 } from "./machineWsRunDispatchPurity";
 import type { CliFetchImpl } from "./cliFetch";
+import {
+  readChatgptWebImageLocalJobMeta,
+  runChatgptWebImageLocalJob as defaultRunChatgptWebImageLocalJob,
+} from "./chatgptWebImageLocalJob";
 
 // Re-export the public surface so existing callers keep working.
 export {
@@ -116,7 +120,45 @@ export async function handleConnectorRunMessage(
     deps.readRuntimePromptPageMeta ?? defaultReadRuntimePromptPageMeta;
   const runConnectorLocalRuntimeAgent =
     deps.runConnectorLocalRuntimeAgent ?? defaultRunConnectorLocalRuntimeAgent;
+  const runChatgptWebImageLocalJob =
+    deps.runChatgptWebImageLocalJob ?? defaultRunChatgptWebImageLocalJob;
   try {
+    // Local job: ChatGPT web image via Oracle — never falls through to CLI/runtime.
+    const chatgptWebImageJob = readChatgptWebImageLocalJobMeta(payload);
+    if (chatgptWebImageJob) {
+      logConnectorRun("agent.run.local-job.start", {
+        requestId,
+        localJob: "chatgptWebImageGenerate",
+        agentKey: readField(payload, "agentKey"),
+        promptBytes: Buffer.byteLength(chatgptWebImageJob.prompt || "", "utf8"),
+      });
+      const userAuthToken =
+        chatgptWebImageJob.userAuthToken ||
+        forwardedUserAuthToken(parsed) ||
+        "";
+      const jobResult = await runChatgptWebImageLocalJob({
+        prompt: chatgptWebImageJob.prompt,
+        userAuthToken,
+        serverBase: chatgptWebImageJob.serverBase,
+      });
+      const galleryRawData = jobResult.rawData;
+      send(JSON.stringify({
+        type: "agent.run.result",
+        requestId,
+        result: {
+          content: JSON.stringify(galleryRawData),
+          model: "chatgpt-web",
+          artifacts: {
+            localJob: "chatgptWebImageGenerate",
+            ...(jobResult.outPath ? { outPath: jobResult.outPath } : {}),
+            ...(jobResult.fileId ? { fileId: jobResult.fileId } : {}),
+            imageCount: galleryRawData.imageCount,
+          },
+        },
+      }));
+      return;
+    }
+
     const machinePermissionPolicy = resolveMachineRunPermissionPolicy(agentConfig);
     const runtimePolicy = runtimePolicyFromConnectorPayload(parsed);
     const extractedInput = extractMultimodalUserInput(payload.userInput);

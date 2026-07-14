@@ -23,7 +23,10 @@ import {
 import { gmiModels, GMI_CHAT_COMPLETIONS_URL } from "./gmi";
 import { zaiModels } from "./zai";
 import type { ModelPrice } from "./types";
-import { OLLAMA_CLOUD_KIMI_K26_MODEL } from "./kimi";
+import {
+  OLLAMA_CLOUD_KIMI_K26_MODEL,
+  PLATFORM_HOSTED_KIMI_PROVIDER,
+} from "./kimi";
 export { supportedReasoningModels } from "./reasoningModels";
 export { getCloudflareWorkersAiChatCompletionsUrl } from "./cloudflare";
 
@@ -42,7 +45,7 @@ const MODEL_MAP = {
   deepinfra: deepinfraModels,
   openrouter: openrouterModels,
   fireworks: fireworksModels,
-  "ollama-cloud": ollamaCloudModels,
+  nolo: ollamaCloudModels,
   mistral: mistralModels,
   mimo: mimoModels,
   cloudflare: cloudflareModels,
@@ -75,6 +78,10 @@ const ANTHROPIC_MODEL_ALIASES: Record<string, string> = {
 const normalizeLookupProvider = (provider?: string | null): LookupProvider | null => {
   if (!provider) return null;
   const normalized = provider.toLowerCase();
+  // Legacy catalog id → public product provider id
+  if (normalized === "ollama-cloud") {
+    return "nolo" as LookupProvider;
+  }
   if (normalized in MODEL_LOOKUP_MAP) {
     return normalized as LookupProvider;
   }
@@ -221,6 +228,10 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   fireworks: {
     default: "https://api.fireworks.ai/inference/v1/chat/completions"
   },
+  nolo: {
+    default: OLLAMA_CLOUD_CHAT_COMPLETIONS_URL,
+  },
+  // Legacy agent records may still store provider=ollama-cloud
   "ollama-cloud": {
     default: OLLAMA_CLOUD_CHAT_COMPLETIONS_URL,
   },
@@ -265,7 +276,7 @@ export function getProviderByModelName(modelName: string): Provider | undefined 
 
 /** 默认模型配置（provider + model 成对出现，避免分散硬编码） */
 export const DEFAULT_MODEL = {
-  provider: "ollama-cloud" as Provider,
+  provider: PLATFORM_HOSTED_KIMI_PROVIDER as Provider,
   name: OLLAMA_CLOUD_KIMI_K26_MODEL,
 } as const;
 

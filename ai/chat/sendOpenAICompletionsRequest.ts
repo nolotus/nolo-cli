@@ -90,6 +90,7 @@ type AssistantToolCall = {
 const EXPLICIT_IMAGE_TOOL_NAMES = new Set([
   "openAIGptImage",
   "openAIGptImageGenerate",
+  "chatgptWebImageGenerate",
   "openAIGptImageEdit",
   "geminiProImagePreview",
 ]);

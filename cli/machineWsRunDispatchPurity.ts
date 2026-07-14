@@ -99,6 +99,22 @@ export type MachineWsRunDispatchDeps = {
     fetchImpl?: CliFetchImpl;
     onProgress?: (progress: ConnectorRunProgress) => void;
   }) => Promise<ConnectorLocalRunResult>;
+  /** Override ChatGPT web image local job (tests / alternate runners). */
+  runChatgptWebImageLocalJob?: (
+    input: {
+      prompt: string;
+      userAuthToken?: string;
+      serverBase?: string;
+    },
+  ) => Promise<{
+    rawData: {
+      text: string;
+      imageCount: number;
+      files: Array<{ fileId: string; metadata: Record<string, unknown> }>;
+    };
+    outPath?: string;
+    fileId?: string;
+  }>;
 };
 
 export type ConnectorLocalRunResult = {

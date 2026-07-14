@@ -58,6 +58,18 @@ export function spawnProcess(options: SpawnProcessOptions): SpawnedProcess {
 
 export async function readPipeText(stream: Readable | null): Promise<string> {
   if (!stream) return "";
+  // Bun.spawn pipes are async iterables / web streams without setEncoding.
+  const anyStream = stream as any;
+  if (typeof anyStream.setEncoding !== "function" && typeof anyStream[Symbol.asyncIterator] === "function") {
+    const chunks: string[] = [];
+    for await (const chunk of anyStream as AsyncIterable<unknown>) {
+      if (typeof chunk === "string") chunks.push(chunk);
+      else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk).toString("utf8"));
+      else if (Buffer.isBuffer(chunk)) chunks.push(chunk.toString("utf8"));
+      else chunks.push(String(chunk ?? ""));
+    }
+    return chunks.join("");
+  }
   return new Promise((resolve) => {
     let data = "";
     let done = false;
@@ -66,9 +78,11 @@ export async function readPipeText(stream: Readable | null): Promise<string> {
       done = true;
       resolve(data);
     };
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk: string) => {
-      data += chunk;
+    if (typeof anyStream.setEncoding === "function") {
+      anyStream.setEncoding("utf8");
+    }
+    stream.on("data", (chunk: string | Buffer) => {
+      data += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     });
     stream.on("end", finish);
     stream.on("close", finish);

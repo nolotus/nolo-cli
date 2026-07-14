@@ -274,19 +274,6 @@ export const resolveShareAuthorIdentity = (args: {
   };
 };
 
-// ── Error helpers ───────────────────────────────────────────────────
-
-export const isLevelNotFoundError = (error: unknown): boolean => {
-  if (!error || typeof error !== "object") return false;
-  const e = error as Record<string, unknown>;
-  return (
-    e.notFound === true ||
-    e.name === "NotFoundError" ||
-    e.code === "LEVEL_NOT_FOUND" ||
-    e.code === "LEVEL_NOT_FOUND_ERROR"
-  );
-};
-
 // ── Sanitization ────────────────────────────────────────────────────
 
 const SENSITIVE_FIELDS = ["apiKey", "secret", "password"] as const;

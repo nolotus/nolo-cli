@@ -23,10 +23,21 @@ import {
 } from "../client/profileConfig";
 import { parseFlagWithOptionalValue, upsertEnvVariable } from "./envFile";
 
+export type ServerSyncConfig = {
+  serverOrigin: string;
+  authToken: string;
+};
+
 export type AuthProviderCommandDeps = OAuthFlowDeps & {
   noBrowserByDefault?: boolean;
   /** Optional store; production defaults to createOAuthTokenStore(). */
   tokenStore?: OAuthTokenStore;
+  /**
+   * Optional override for --sync-to-server resolution.
+   * Tests inject this instead of mock.module("../client/profileConfig"),
+   * which poisons Bun's shared module registry across files.
+   */
+  resolveServerSyncConfig?: () => ServerSyncConfig | null;
 };
 
 const SYNC_HELP_LINE = `  --sync-to-server  After local save, push the credential to your nolo server.
@@ -158,10 +169,7 @@ function isOAuthProvider(value: string): value is OAuthProvider {
  * Resolve the nolo server origin and auth token for --sync-to-server.
  * Priority: env vars (NOLO_SERVER, AUTH_TOKEN) → profile config.
  */
-function resolveServerSyncConfig(): {
-  serverOrigin: string;
-  authToken: string;
-} | null {
+export function resolveServerSyncConfig(): ServerSyncConfig | null {
   const envServer =
     process.env.NOLO_SERVER?.trim() ||
     process.env.NOLO_SERVER_URL?.trim() ||
@@ -178,7 +186,10 @@ function resolveServerSyncConfig(): {
   let profileToken = "";
   try {
     const config = loadProfileConfig();
-    const profileEnv = buildEnvFromProfile(config) as Record<string, string | undefined>;
+    const profileEnv = buildEnvFromProfile(config) as Record<
+      string,
+      string | undefined
+    >;
     profileServer = profileEnv.NOLO_SERVER?.trim() || "";
     profileToken = profileEnv.AUTH_TOKEN?.trim() || "";
   } catch {
@@ -202,7 +213,7 @@ async function syncCredentialToServer(
   const output = deps.output ?? console;
   const fetchImpl = deps.fetchImpl ?? fetch;
 
-  const syncConfig = resolveServerSyncConfig();
+  const syncConfig = (deps.resolveServerSyncConfig ?? resolveServerSyncConfig)();
   if (!syncConfig) {
     output.log(
       `[nolo] Warning: --sync-to-server requires NOLO_SERVER and AUTH_TOKEN env vars, or a configured profile. Skipping server sync.`

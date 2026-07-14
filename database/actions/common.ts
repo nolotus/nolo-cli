@@ -10,6 +10,7 @@ import {
   isNoloClusterServerOrigin,
   normalizeKnownServerOrigin,
 } from "../config";
+import { isLevelNotFoundError } from "../levelNotFoundError";
 
 // RN 下 pino 的 browser 写法可能有兼容性问题
 // 使用简单的 console 封装作为 fallback
@@ -131,17 +132,6 @@ export const getAllServers = (
   );
   return preferredNormalized ? [preferredNormalized, ...remaining] : remaining;
 };
-
-const isLevelNotFoundError = (err: any): boolean => {
-  const code = err?.code;
-  return (
-    err?.notFound === true ||
-    err?.name === "NotFoundError" ||
-    code === "LEVEL_NOT_FOUND" ||
-    code === "LEVEL_NOT_FOUND_ERROR"
-  );
-};
-
 
 // 从客户端数据库获取数据 (无需改动)
 export const fetchFromClientDb = async (

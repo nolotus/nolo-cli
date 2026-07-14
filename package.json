@@ -319,6 +319,7 @@
     "database/server/levelAuthorityStore.ts",
     "database/server/legacyServerDb.ts",
     "database/server/cliAuthorityBrokerTypes.ts",
+    "database/levelNotFoundError.ts",
     "database/server/db.ts",
     "database/server/ensureDbOpen.ts",
     "database/server/serverStoreFactory.ts",

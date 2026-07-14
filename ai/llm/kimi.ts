@@ -12,6 +12,21 @@ export const OLLAMA_CLOUD_PROVIDER = PLATFORM_HOSTED_KIMI_PROVIDER;
 /** Legacy agent records may still store this provider string. */
 export const LEGACY_OLLAMA_CLOUD_PROVIDER = "ollama-cloud";
 
+/**
+ * User-facing copy when platform-hosted LLM (nolo → Ollama) is down, rate-limited,
+ * or missing credentials. No multi-provider fallback — tell the user to retry later.
+ */
+export const PLATFORM_LLM_BUSY_USER_MESSAGE = "服务器紧张";
+
+/** True for catalog provider id `nolo` and legacy `ollama-cloud` agent records. */
+export const isNoloHostedProvider = (provider?: string | null): boolean => {
+  const normalized = provider?.trim().toLowerCase();
+  return (
+    normalized === PLATFORM_HOSTED_KIMI_PROVIDER ||
+    normalized === LEGACY_OLLAMA_CLOUD_PROVIDER
+  );
+};
+
 /** @deprecated Legacy Fireworks model ids — not listed in catalog. */
 export const FIREWORKS_KIMI_LATEST_MODEL = "accounts/fireworks/models/kimi-latest";
 /** @deprecated */

@@ -2,6 +2,7 @@ import type {
   AgentRuntimeChatMessage,
   AgentRuntimeResult,
 } from "./types";
+import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
 import { buildProviderAuthHeaders } from "./providerResolution";
 import { buildKimiCodeHeaders, isKimiCodeEndpoint } from "./kimiHeaders";
 import { createThinkParserState, extractThinkContent, flushThinkParser, processThinkChunk } from "./thinkTagParser";
@@ -26,16 +27,6 @@ type AccumulatedToolCall = {
     arguments: string;
   };
 };
-
-function toOpenAiCompatibleMessages(messages: AgentRuntimeChatMessage[]) {
-  return messages.map((message) => ({
-    role: message.role,
-    content: message.content ?? "",
-    ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
-    ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls } : {}),
-    ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
-  }));
-}
 
 export function buildOpenAiCompatibleChatCompletionRequest(args: {
   providerConfig: OpenAiCompatibleProviderConfig;

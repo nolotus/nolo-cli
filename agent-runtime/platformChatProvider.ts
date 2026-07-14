@@ -4,6 +4,7 @@ import type {
   AgentRuntimeChatMessage,
   AgentRuntimeResult,
 } from "./types";
+import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
 import {
   convertMessagesToResponsesInput,
   extractTextFromResponseOutput,
@@ -94,16 +95,6 @@ function shouldDisableThinking(providerConfig: PlatformChatProviderConfig) {
     providerConfig.provider.toLowerCase() === "mimo" ||
     /xiaomimimo\.com/i.test(providerConfig.endpoint)
   );
-}
-
-function toOpenAiCompatibleMessages(messages: AgentRuntimeChatMessage[]) {
-  return messages.map((message) => ({
-    role: message.role,
-    content: message.content ?? "",
-    ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
-    ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls } : {}),
-    ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
-  }));
 }
 
 function isResponsesEndpoint(endpoint: string) {

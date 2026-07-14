@@ -353,6 +353,7 @@
     "create/types.ts",
     "create/space/spaceKeys.ts",
     "core/localOrigins.ts",
+    "core/prefix.ts",
     "render/table/activityColumns.ts",
     "app/types.ts",
     "app/utils/fileUtils.ts",

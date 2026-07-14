@@ -7,16 +7,35 @@ import {
   OLLAMA_CLOUD_KIMI_K27_CODE_MODEL,
 } from "./kimi";
 
-/** Upper-bound platform prices from 2026-07-14 Ollama Cloud calibration ($/1M). */
+/**
+ * Ollama Cloud is a flat monthly plan, so cost per token is measured rather than
+ * quoted: burn one token side until Weekly % moves, then 1% weekly ≈ $0.05.
+ *
+ * Credits carry the provider's margin the same way the metered catalogs do —
+ * `USD * 8`, matching openai/fireworks (deepinfra uses 9). A bare `USD * 7` is the
+ * zero-margin identity (1 USD = 7 credits) and would sell these at cost.
+ *
+ * 2026-07-14 split input/output calibration, Δweekly ≥ 0.5% per leg → ±20%:
+ * Kimi INPUT 0.5% on ~2.58M prompt → $0.0097/1M; OUTPUT 0.8% on ~0.197M
+ * completion → $0.2035/1M.
+ *
+ * The previous 0.18/0.18 came from a blended burn that was never split by leg.
+ * Such a burn is dominated by prompt tokens, so the single number it produced was
+ * effectively the input price — then applied to output, which costs ~20x more.
+ */
 export const OLLAMA_CLOUD_KIMI_PRICE = {
-  input: 0.18,
-  output: 0.18,
+  input: 0.08,
+  output: 1.65,
 } as const;
 
-/** GLM 5.2 upper-bound from sequential Weekly-% calibration (2026-07-14). */
+/**
+ * GLM 5.2, same split calibration (2026-07-14):
+ * INPUT 0.6% on ~0.74M prompt → $0.0408/1M; OUTPUT 0.5% on ~0.098M completion
+ * → $0.2543/1M. Previous 0.23/0.23 shares the blended-burn error described above.
+ */
 export const OLLAMA_CLOUD_GLM_PRICE = {
-  input: 0.23,
-  output: 0.23,
+  input: 0.33,
+  output: 2.05,
 } as const;
 
 /** Ollama Cloud model id for GLM 5.2 (platform catalog). */
@@ -26,15 +45,18 @@ export const OLLAMA_CLOUD_GLM_52_MODEL = "glm-5.2";
  * DeepSeek V4 Flash on Ollama Cloud. Same model id as official DeepSeek so
  * fallback can reuse deepseek-v4-flash on api.deepseek.com.
  *
- * 2026-07-14 single-model Weekly-tick calibration (credits = USD × 7,
- * 1% weekly ≈ $0.05): INPUT leg 10.1→10.3% on ~2.65M prompt tokens →
- * ~0.026 积分/1M; OUTPUT leg 10.3→10.5% on ~0.445M completion → ~0.157.
- * Catalog rounds slightly up for clean billing: 0.03 / 0.16.
+ * 2026-07-14 single-model Weekly-tick calibration (1% weekly ≈ $0.05):
+ * INPUT leg 10.1→10.3% on ~2.65M prompt tokens → $0.0038/1M; OUTPUT leg
+ * 10.3→10.5% on ~0.445M completion → $0.0225/1M. Priced `USD * 8` as above.
+ *
+ * Measured at Δweekly = 0.2%, which is ±50%: two UI reads at 0.1% precision put
+ * ±0.1 on any Δ regardless of its size. The later Kimi/GLM legs used Δ ≥ 0.5%
+ * (±20%); re-run this one the same way before leaning on these two numbers.
  */
 export const OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
 export const OLLAMA_CLOUD_DEEPSEEK_FLASH_PRICE = {
   input: 0.03,
-  output: 0.16,
+  output: 0.18,
 } as const;
 
 export const OLLAMA_CLOUD_CHAT_COMPLETIONS_URL =

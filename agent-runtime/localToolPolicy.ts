@@ -3,6 +3,7 @@ import type {
   AgentRuntimeToolResult,
 } from "./hostAdapter";
 import { canonicalizeToolName } from "../ai/tools/toolNameAliases";
+import { parseToolArgumentsJson } from "./parseToolArguments";
 import { evaluateShellCommandPolicy } from "./shellCommandPolicy";
 
 type EnvLike = Record<string, string | undefined>;
@@ -53,13 +54,11 @@ function normalizeLocalToolName(toolName: string) {
 }
 
 function parseShellCommandPayload(rawArguments: string) {
-  try {
-    const parsed = JSON.parse(rawArguments || "{}");
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as { command?: unknown; cmd?: unknown; input?: unknown };
-  } catch {
-    return {};
-  }
+  return parseToolArgumentsJson(rawArguments) as {
+    command?: unknown;
+    cmd?: unknown;
+    input?: unknown;
+  };
 }
 
 function isRestrictedLocalToolMode(env: EnvLike) {

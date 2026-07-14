@@ -9,6 +9,7 @@ import type {
   AgentRuntimeMessageContent,
   AgentRuntimeResult,
 } from "./types";
+import { parseToolArgumentsJson } from "./parseToolArguments";
 
 export type LocalAgentTurnInput = {
   adapter: AgentRuntimeHostAdapter;
@@ -169,20 +170,8 @@ function clip(value: string, max = 240) {
   return compact.length > max ? `${compact.slice(0, max - 3)}...` : compact;
 }
 
-function parseToolArguments(raw: string | undefined) {
-  if (!raw?.trim()) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 function summarizeToolArguments(toolName: string, rawArgs: string | undefined) {
-  const args = parseToolArguments(rawArgs);
+  const args = parseToolArgumentsJson(rawArgs);
   const pick = (...keys: string[]) => {
     for (const key of keys) {
       const value = args[key];

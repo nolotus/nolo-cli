@@ -272,6 +272,7 @@
     "agent-runtime/hostAdapter.ts",
     "agent-runtime/types.ts",
     "agent-runtime/runtimeCompat.ts",
+    "agent-runtime/parseToolArguments.ts",
     "agent-runtime/thinkTagParser.ts",
     "agent-runtime/agentConfigOptions.ts",
     "agent-runtime/openAiCompatibleProvider.ts",

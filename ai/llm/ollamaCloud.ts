@@ -25,12 +25,16 @@ export const OLLAMA_CLOUD_GLM_52_MODEL = "glm-5.2";
 /**
  * DeepSeek V4 Flash on Ollama Cloud. Same model id as official DeepSeek so
  * fallback can reuse deepseek-v4-flash on api.deepseek.com.
- * Upper-bound from 2026-07-14 sequential Weekly-% calibration (~$0.037/1M).
+ *
+ * 2026-07-14 single-model Weekly-tick calibration (credits = USD × 7,
+ * 1% weekly ≈ $0.05): INPUT leg 10.1→10.3% on ~2.65M prompt tokens →
+ * ~0.026 积分/1M; OUTPUT leg 10.3→10.5% on ~0.445M completion → ~0.157.
+ * Catalog rounds slightly up for clean billing: 0.03 / 0.16.
  */
 export const OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
 export const OLLAMA_CLOUD_DEEPSEEK_FLASH_PRICE = {
-  input: 0.04,
-  output: 0.04,
+  input: 0.03,
+  output: 0.16,
 } as const;
 
 export const OLLAMA_CLOUD_CHAT_COMPLETIONS_URL =

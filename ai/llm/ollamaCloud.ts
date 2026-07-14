@@ -22,8 +22,50 @@ export const OLLAMA_CLOUD_GLM_PRICE = {
 /** Ollama Cloud model id for GLM 5.2 (platform catalog). */
 export const OLLAMA_CLOUD_GLM_52_MODEL = "glm-5.2";
 
+/**
+ * DeepSeek V4 Flash on Ollama Cloud. Same model id as official DeepSeek so
+ * fallback can reuse deepseek-v4-flash on api.deepseek.com.
+ * Upper-bound from 2026-07-14 sequential Weekly-% calibration (~$0.037/1M).
+ */
+export const OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
+export const OLLAMA_CLOUD_DEEPSEEK_FLASH_PRICE = {
+  input: 0.04,
+  output: 0.04,
+} as const;
+
 export const OLLAMA_CLOUD_CHAT_COMPLETIONS_URL =
   "https://ollama.com/v1/chat/completions";
+
+/** Official DeepSeek OpenAI-compatible chat endpoint (Flash fallback / Pro primary). */
+export const DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_URL =
+  "https://api.deepseek.com/chat/completions";
+
+/** Statuses that allow Ollama Flash → official DeepSeek fallback. */
+export const DEEPSEEK_FLASH_OLLAMA_FALLBACK_STATUSES = [
+  401, 402, 429, 500, 502, 503, 504,
+];
+
+export const isOllamaCloudDeepseekFlashModel = (
+  model?: string | null
+): boolean => model === OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL;
+
+/**
+ * Platform DeepSeek Flash (hosted): nolo/ollama-cloud catalog or legacy
+ * deepseek provider records still pointing at deepseek-v4-flash.
+ * Custom / explicit user keys stay on official DeepSeek only.
+ */
+export const isPlatformDeepseekFlashHosted = (
+  provider?: string | null,
+  model?: string | null
+): boolean => {
+  if (!isOllamaCloudDeepseekFlashModel(model)) return false;
+  const p = provider?.trim().toLowerCase();
+  return (
+    p === "nolo" ||
+    p === "ollama-cloud" ||
+    p === "deepseek"
+  );
+};
 
 export const ollamaCloudModels = [
   {
@@ -50,6 +92,16 @@ export const ollamaCloudModels = [
     hasVision: false,
     price: { ...OLLAMA_CLOUD_GLM_PRICE },
     maxOutputTokens: 131072,
+    contextWindow: 1_000_000,
+    supportsTool: true,
+    supportsReasoningEffort: true,
+  },
+  {
+    name: OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL,
+    displayName: "DeepSeek V4 Flash",
+    hasVision: false,
+    price: { ...OLLAMA_CLOUD_DEEPSEEK_FLASH_PRICE },
+    maxOutputTokens: 384_000,
     contextWindow: 1_000_000,
     supportsTool: true,
     supportsReasoningEffort: true,

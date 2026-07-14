@@ -5,6 +5,7 @@ import type {
 import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
 import { buildProviderAuthHeaders } from "./providerResolution";
 import { buildKimiCodeHeaders, isKimiCodeEndpoint } from "./kimiHeaders";
+import { parseSseDataLineJson } from "./sseDataLine";
 import { createThinkParserState, extractThinkContent, flushThinkParser, processThinkChunk } from "./thinkTagParser";
 import type { ThinkParseState } from "./thinkTagParser";
 
@@ -134,17 +135,8 @@ function processOpenAiCompatibleSseEvent(
   }
 ) {
   for (const line of event.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) continue;
-    const payload = trimmed.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      continue;
-    }
+    const parsed = parseSseDataLineJson(line) as any;
+    if (parsed == null) continue;
 
     if (parsed?.usage && typeof parsed.usage === "object") {
       state.usage = parsed.usage;

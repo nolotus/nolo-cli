@@ -1,3 +1,5 @@
+import { dialogMessageKey } from "../../database/keys";
+
 const FILE_CONTENT_RE = /(?:https?:\/\/[^/"'\s]+)?\/api\/v1\/db\/file\/content\/([^?#"'\s)]+)/g;
 
 export type DialogAttachmentMessage = {
@@ -57,7 +59,7 @@ function messageDbKey(dialogId: string, message: DialogAttachmentMessage) {
     return message.dbKey.trim();
   }
   if (typeof message.id === "string" && message.id.trim()) {
-    return `dialog-${dialogId}-msg-${message.id.trim()}`;
+    return dialogMessageKey(dialogId, message.id.trim());
   }
   return null;
 }

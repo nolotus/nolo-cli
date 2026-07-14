@@ -1151,6 +1151,7 @@ export {
   isDialogRecordKey,
   isDialogRecordKeyForId,
   createDialogKey,
+  dialogMessageKey,
   createDialogMessageKeyAndId,
   dialogMessageRange,
   dialogMessagePrefix,

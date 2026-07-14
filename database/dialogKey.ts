@@ -52,13 +52,16 @@ export const createDialogKey = Object.assign(
   },
 );
 
+/** Arg is dialogId (not full dialogKey). */
+export const dialogMessageKey = (dialogId: string, messageId: string): string =>
+  createKey(DataType.DIALOG, dialogId, "msg", messageId);
+
 export const createDialogMessageKeyAndId = (
   dialogId: string,
   ulidFn: () => string = ulid,
 ): { key: string; messageId: string } => {
   const messageId = ulidFn();
-  const key = createKey(DataType.DIALOG, dialogId, "msg", messageId);
-  return { key, messageId };
+  return { key: dialogMessageKey(dialogId, messageId), messageId };
 };
 
 /** Arg is dialogId (not full dialogKey). */

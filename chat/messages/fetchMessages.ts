@@ -1,6 +1,7 @@
 // chat/messages/fetchMessages.ts
 import type { Message } from "./types"; // 确保引入你的 Message 类型定义
 import { isTombstoneRecord } from "../../database/tombstones";
+import { dialogMessageRange } from "../../database/keys";
 
 // 定义返回类型，包含数据库的 key
 export type MessageWithKey = Message & { _key: string };
@@ -35,11 +36,11 @@ export const fetchMessages = async (
 
   // --- 准备查询 ---
   const messages: MessageWithKey[] = [];
-  const prefix = `dialog-${dialogId}-msg-`;
+  const { start, end } = dialogMessageRange(dialogId);
 
   const iteratorOptions: any = {
     // TODO: 替换为具体的迭代器选项类型
-    gte: prefix,
+    gte: start,
     reverse: true, // 总是从新到旧获取
     limit: limit,
   };
@@ -48,8 +49,8 @@ export const fetchMessages = async (
     // 加载更早的消息: Key < beforeKey
     iteratorOptions.lt = beforeKey;
   } else {
-    // 加载最新的消息: Key <= prefix + '\uffff'
-    iteratorOptions.lte = prefix + "\uffff";
+    // 加载最新的消息: Key <= end
+    iteratorOptions.lte = end;
   }
 
   // --- 执行查询 ---

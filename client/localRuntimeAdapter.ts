@@ -12,6 +12,7 @@ import type { AgentRuntimeChatMessage, AgentRuntimeToolCall } from "../agent-run
 import type { PermissionRequest } from "../agent-runtime/actionGate";
 import type { CliKvDb, HybridRecordStore } from "./hybridRecordStore";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
+import { dialogMessageRange } from "../database/keys";
 import {
   LOCAL_CODEX_AGENT_ID,
   LOCAL_CODEX_AGENT_KEY,
@@ -1222,8 +1223,8 @@ async function readDialogMessages(args: {
   dialogId: string;
 }) {
   const messages: AgentRuntimeChatMessage[] = [];
-  const prefix = `dialog-${args.dialogId}-msg-`;
-  const iterator = args.store.iterator({ gte: prefix, lte: `${prefix}\uffff` });
+  const { start, end } = dialogMessageRange(args.dialogId);
+  const iterator = args.store.iterator({ gte: start, lte: end });
   // Async iterator — must consume entries sequentially from the store cursor.
   for await (const [, value] of iterator) {
     const message = localDialogMessageRecordToRuntimeMessage(value);

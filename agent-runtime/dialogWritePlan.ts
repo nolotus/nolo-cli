@@ -3,6 +3,7 @@ import type {
   AgentRuntimeHost,
 } from "./types";
 import type { AgentRuntimeSaveTurnInput } from "./hostAdapter";
+import { dialogMessageKey } from "../database/keys";
 
 type DialogRecord = Record<string, any>;
 type DialogWriteOp = {
@@ -109,7 +110,7 @@ function buildDialogMessageWriteOps(args: {
       // Keep timestamp-prefix ordering for LevelDB range scans. Do not switch
       // to opaque ids until dialog query/continuation callers are reviewed.
       const id = `${args.now}-${String(index + 1).padStart(3, "0")}`;
-      const key = `dialog-${args.dialogId}-msg-${id}`;
+      const key = dialogMessageKey(args.dialogId, id);
       return {
         type: "put" as const,
         key,

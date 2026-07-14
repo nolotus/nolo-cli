@@ -466,6 +466,247 @@ export const createDialogKey = Object.assign(
   }
 );
 
+/* ---- Dialog agent list index (write-path secondary index) ---- */
+//
+// Reverse-chrono list of a user's non-automation dialogs for one agentKey:
+//   dialogidx-agent-{userId}-{agentKey}-{invertedUpdatedAt13}-{dialogId}
+//
+// invertedUpdatedAt = pad(TIMESTAMP_MAX - updatedAtMs, 13) so lexicographic
+// ascending scan = newest updatedAt first (exact sort for index-backed lists).
+// Value points at the dialog record key for O(1) get per page row.
+export const DIALOG_AGENT_LIST_INDEX_PREFIX = "dialogidx";
+const DIALOG_LIST_TIMESTAMP_MAX = 9_999_999_999_999;
+
+export type DialogAgentListIndexValue = {
+  dialogKey: string;
+  dialogId: string;
+  updatedAtMs: number;
+};
+
+export type DialogAgentListIndexOp =
+  | { type: "put"; key: string; value: DialogAgentListIndexValue }
+  | { type: "del"; key: string };
+
+export function parseDialogUpdatedAtMs(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+  if (typeof value === "string" && value) {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && /^\d+(\.\d+)?$/.test(value.trim())) {
+      return Math.max(0, Math.floor(asNumber));
+    }
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+  }
+  return 0;
+}
+
+/** Lexicographic ascending = newest first when used as key segment. */
+export function toDialogListInvertedTimestamp(updatedAt: unknown): string {
+  const ms = Math.min(
+    DIALOG_LIST_TIMESTAMP_MAX,
+    parseDialogUpdatedAtMs(updatedAt),
+  );
+  return String(DIALOG_LIST_TIMESTAMP_MAX - ms).padStart(13, "0");
+}
+
+export function createDialogAgentListIndexKey(args: {
+  userId: string;
+  agentKey: string;
+  updatedAt: unknown;
+  dialogId: string;
+}): string {
+  const userId = args.userId.trim();
+  const agentKey = args.agentKey.trim();
+  const dialogId = args.dialogId.trim();
+  if (!userId || !agentKey || !dialogId) return "";
+  return createKey(
+    DIALOG_AGENT_LIST_INDEX_PREFIX,
+    "agent",
+    userId,
+    agentKey,
+    toDialogListInvertedTimestamp(args.updatedAt),
+    dialogId,
+  );
+}
+
+export function createDialogAgentListIndexRange(
+  userId: string,
+  agentKey: string,
+): { start: string; end: string } {
+  const normalizedUserId = userId.trim();
+  const normalizedAgentKey = agentKey.trim();
+  if (!normalizedUserId || !normalizedAgentKey) {
+    return { start: "", end: "" };
+  }
+  const start = createKey(
+    DIALOG_AGENT_LIST_INDEX_PREFIX,
+    "agent",
+    normalizedUserId,
+    normalizedAgentKey,
+    "",
+  );
+  return { start, end: `${start}\uffff` };
+}
+
+/**
+ * Expand agent-/cybot- aliases so list-by either form hits the same membership.
+ */
+export function expandDialogAgentListIndexAliases(agentKey: string): string[] {
+  const key = agentKey.trim();
+  if (!key) return [];
+  const aliases = new Set<string>([key]);
+  if (key.startsWith("agent-")) {
+    aliases.add(`cybot-${key.slice("agent-".length)}`);
+  } else if (key.startsWith("cybot-")) {
+    aliases.add(`agent-${key.slice("cybot-".length)}`);
+  }
+  return Array.from(aliases);
+}
+
+/** Agent keys that should own a list-index row for this dialog. */
+export function collectDialogAgentListIndexAgentKeys(record: {
+  primaryAgentKey?: unknown;
+  cybots?: unknown;
+}): string[] {
+  const keys = new Set<string>();
+  const add = (raw: unknown) => {
+    if (typeof raw !== "string") return;
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    for (const alias of expandDialogAgentListIndexAliases(trimmed)) {
+      keys.add(alias);
+    }
+  };
+  add(record.primaryAgentKey);
+  if (Array.isArray(record.cybots)) {
+    for (const item of record.cybots) add(item);
+  }
+  return Array.from(keys);
+}
+
+/**
+ * Whether a dialog should appear in agent dialog lists (mirrors list filter:
+ * exclude automation evidence).
+ */
+export function isDialogAgentListIndexable(
+  record: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!record || typeof record !== "object") return false;
+  if (
+    record.triggerType === "automation_run" ||
+    record.triggerType === "scheduled_run"
+  ) {
+    return false;
+  }
+  if (record.parentAutomationKey) return false;
+  if (record.parentTaskKey) return false;
+  return true;
+}
+
+function resolveDialogIdForIndex(
+  dialogKey: string,
+  dialogId: string | undefined,
+  record: Record<string, unknown> | null | undefined,
+): string {
+  if (dialogId && dialogId.trim()) return dialogId.trim();
+  if (typeof record?.id === "string" && record.id.trim()) return record.id.trim();
+  // dialog-{userId}-{dialogId} — dialogId is the final segment for record keys.
+  const parts = splitKey(dialogKey);
+  if (parts.length >= 3 && parts[0] === DataType.DIALOG && !dialogKey.includes("-msg-")) {
+    return parts[parts.length - 1] ?? "";
+  }
+  return "";
+}
+
+function buildDialogAgentListIndexKeySet(args: {
+  userId: string;
+  dialogKey: string;
+  dialogId: string;
+  record: Record<string, unknown>;
+}): Map<string, DialogAgentListIndexValue> {
+  const map = new Map<string, DialogAgentListIndexValue>();
+  if (!args.userId.trim() || !args.dialogKey.trim() || !args.dialogId.trim()) {
+    return map;
+  }
+  if (!isDialogAgentListIndexable(args.record)) return map;
+  const updatedAtMs = parseDialogUpdatedAtMs(args.record.updatedAt);
+  const value: DialogAgentListIndexValue = {
+    dialogKey: args.dialogKey,
+    dialogId: args.dialogId,
+    updatedAtMs,
+  };
+  for (const agentKey of collectDialogAgentListIndexAgentKeys(args.record)) {
+    const key = createDialogAgentListIndexKey({
+      userId: args.userId,
+      agentKey,
+      updatedAt: updatedAtMs,
+      dialogId: args.dialogId,
+    });
+    if (key) map.set(key, value);
+  }
+  return map;
+}
+
+/**
+ * Maintain reverse-chrono agent list index rows when a dialog is written.
+ * Deletes stale (agent, invertedTs) keys when membership or updatedAt changes.
+ */
+export function buildDialogAgentListIndexOps(args: {
+  userId: string | null | undefined;
+  dialogKey: string;
+  dialogId?: string;
+  nextRecord: Record<string, unknown> | null | undefined;
+  previousRecord?: Record<string, unknown> | null;
+}): DialogAgentListIndexOp[] {
+  const userId = typeof args.userId === "string" ? args.userId.trim() : "";
+  const dialogKey = args.dialogKey.trim();
+  if (!userId || !dialogKey) return [];
+
+  const dialogId = resolveDialogIdForIndex(
+    dialogKey,
+    args.dialogId,
+    args.nextRecord ?? args.previousRecord ?? null,
+  );
+  if (!dialogId) return [];
+
+  const previousMap =
+    args.previousRecord && typeof args.previousRecord === "object"
+      ? buildDialogAgentListIndexKeySet({
+          userId,
+          dialogKey,
+          dialogId: resolveDialogIdForIndex(
+            dialogKey,
+            args.dialogId,
+            args.previousRecord,
+          ) || dialogId,
+          record: args.previousRecord,
+        })
+      : new Map<string, DialogAgentListIndexValue>();
+
+  const nextMap =
+    args.nextRecord && typeof args.nextRecord === "object"
+      ? buildDialogAgentListIndexKeySet({
+          userId,
+          dialogKey,
+          dialogId,
+          record: args.nextRecord,
+        })
+      : new Map<string, DialogAgentListIndexValue>();
+
+  const ops: DialogAgentListIndexOp[] = [];
+  for (const key of previousMap.keys()) {
+    if (!nextMap.has(key)) {
+      ops.push({ type: "del", key });
+    }
+  }
+  for (const [key, value] of nextMap) {
+    ops.push({ type: "put", key, value });
+  }
+  return ops;
+}
+
 export const createTaskKey = Object.assign(
   (userId: string) => createKey(DataType.TASK, userId, ulid()),
   {
@@ -487,6 +728,63 @@ export const createAgentAutomationKey = Object.assign(
 );
 
 export const agentAutomationKey = createAgentAutomationKey;
+
+/**
+ * Secondary index: agent automations by ownerAgentKey.
+ *
+ *   agent-automation-owner-idx-{userId}-{ownerAgentKey}-{automationId}
+ *
+ * Value points at the primary automation key so list-by-agent is O(agent)
+ * instead of user-range scan + value filter.
+ */
+export const AGENT_AUTOMATION_OWNER_INDEX_PREFIX =
+  "agent-automation-owner-idx";
+
+export type AgentAutomationOwnerIndexValue = {
+  automationKey: string;
+  automationId: string;
+  userId: string;
+  ownerAgentKey: string;
+};
+
+export const createAgentAutomationOwnerIndexKey = Object.assign(
+  (userId: string, ownerAgentKey: string, automationId: string) =>
+    createKey(
+      AGENT_AUTOMATION_OWNER_INDEX_PREFIX,
+      userId,
+      ownerAgentKey,
+      automationId,
+    ),
+  {
+    rangeOfAgent: (userId: string, ownerAgentKey: string) => {
+      const start = createKey(
+        AGENT_AUTOMATION_OWNER_INDEX_PREFIX,
+        userId,
+        ownerAgentKey,
+        "",
+      );
+      return { start, end: `${start}\uffff` };
+    },
+  },
+);
+
+export function buildAgentAutomationOwnerIndexValue(args: {
+  userId: string;
+  ownerAgentKey: string;
+  automationId: string;
+  automationKey: string;
+}): AgentAutomationOwnerIndexValue {
+  return {
+    automationKey: args.automationKey,
+    automationId: args.automationId,
+    userId: args.userId,
+    ownerAgentKey: args.ownerAgentKey,
+  };
+}
+
+export function isAgentAutomationOwnerIndexKey(key: string): boolean {
+  return key.startsWith(`${AGENT_AUTOMATION_OWNER_INDEX_PREFIX}-`);
+}
 
 /* ---- Notification ---- */
 export const createNotificationKey = {

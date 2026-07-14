@@ -42,3 +42,19 @@ export function isLoopbackUrl(value: unknown): boolean {
     return false;
   }
 }
+
+/**
+ * Bare http(s) origins that desktop shells cannot route: LAN IPv4,
+ * localhost, or nolotus.local mDNS (optional port, no path/query).
+ *
+ * Locality: one seam for "is this server URL machine-local / LAN-only"
+ * so app settings selectors, runtime remote-server selection, and desktop
+ * connector profile routing share one definition and cannot drift.
+ */
+export const LOCAL_SERVER_URL_PATTERN =
+  /^https?:\/\/(?:(?:\d{1,3}\.){3}\d{1,3}|localhost|nolotus\.local)(?::\d+)?$/i;
+
+export function isLocalServerUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  return LOCAL_SERVER_URL_PATTERN.test(value.trim());
+}

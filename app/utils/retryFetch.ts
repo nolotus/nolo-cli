@@ -1,3 +1,5 @@
+import { isAbortError } from "../../core/abortError";
+
 export const TRANSIENT_READ_RETRY_STATUSES = new Set([502, 503, 504]);
 
 type RetryFetchOptions = {
@@ -24,11 +26,6 @@ const getRequestMethod = (input: RequestInfo | URL, init?: RequestInit): string 
 
 const isRetryableReadMethod = (method: string): boolean =>
   method === "GET" || method === "HEAD";
-
-const isAbortError = (error: unknown): boolean =>
-  error instanceof DOMException
-    ? error.name === "AbortError"
-    : error instanceof Error && error.name === "AbortError";
 
 export const fetchWithTransientReadRetry = async (
   input: RequestInfo | URL,

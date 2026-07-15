@@ -1,5 +1,6 @@
 // chat/messages/fetchMessages.ts
 import type { Message } from "./types"; // 确保引入你的 Message 类型定义
+import { isRecord } from "../../core/isRecord";
 import { isTombstoneRecord } from "../../database/tombstones";
 import { dialogMessageRange } from "../../database/keys";
 
@@ -69,7 +70,7 @@ export const fetchMessages = async (
         continue;
       }
       // 基本数据校验
-      if (value && typeof value === "object" && value.id && value.createdAt) {
+      if (isRecord(value) && value.id && value.createdAt) {
         // **关键: 将数据库 key 作为 _key 附加到消息对象上**
         messages.push({ ...(value as Message), _key: key });
       }

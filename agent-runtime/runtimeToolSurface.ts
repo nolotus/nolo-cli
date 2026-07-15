@@ -1,3 +1,4 @@
+import { isRecord } from "../core/isRecord";
 import { asTrimmedNonEmptyStringArray } from "../core/stringArray";
 
 export const DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOLS = [
@@ -173,17 +174,18 @@ function isSecretFieldName(key: string) {
 }
 
 export function redactAgentRecordForWorkspaceTool(record: unknown): unknown {
-  if (!record || typeof record !== "object") return record;
   if (Array.isArray(record)) return record.map(redactAgentRecordForWorkspaceTool);
+  if (!isRecord(record)) return record;
   const redacted: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(record)) {
     if (isSecretFieldName(key)) {
       redacted[key] = "[redacted]";
       continue;
     }
-    redacted[key] = value && typeof value === "object"
-      ? redactAgentRecordForWorkspaceTool(value)
-      : value;
+    redacted[key] =
+      Array.isArray(value) || isRecord(value)
+        ? redactAgentRecordForWorkspaceTool(value)
+        : value;
   }
   return redacted;
 }

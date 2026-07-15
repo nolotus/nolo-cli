@@ -2,6 +2,7 @@
 // Platform catalog for Ollama Cloud only (not local 127.0.0.1 Ollama).
 // Public provider id is `nolo` (see providers.ts MODEL_MAP).
 
+import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import {
   OLLAMA_CLOUD_KIMI_K26_MODEL,
   OLLAMA_CLOUD_KIMI_K27_CODE_MODEL,
@@ -85,7 +86,7 @@ export const isPlatformDeepseekFlashHosted = (
   model?: string | null
 ): boolean => {
   if (!isOllamaCloudDeepseekFlashModel(model)) return false;
-  const p = provider?.trim().toLowerCase();
+  const p = asTrimmedLowercaseString(provider);
   return (
     p === "nolo" ||
     p === "ollama-cloud" ||

@@ -745,7 +745,7 @@ function localTurnHasSubjectRefs(input: AgentRuntimeSaveTurnInput) {
 }
 
 function prepareRemoteDialogEvidenceRecord(key: string, value: any) {
-  const record = value && typeof value === "object" ? { ...value } : {};
+  const record = isRecord(value) ? { ...value } : {};
   if (key.includes("-msg-") && typeof record.type !== "string") {
     record.type = "msg";
   }

@@ -1,3 +1,4 @@
+import { isRecord } from "./core/isRecord";
 import { asOptionalTrimmedString } from "./core/optionalString";
 
 /**
@@ -61,10 +62,8 @@ export function getSpaceContentKeys(spaceRecord: any): Set<string> {
     if (trimmedEntryKey) {
       keys.add(trimmedEntryKey);
     }
-    if (value && typeof value === "object") {
-      const contentKey = asOptionalTrimmedString(
-        (value as { contentKey?: unknown }).contentKey,
-      );
+    if (isRecord(value)) {
+      const contentKey = asOptionalTrimmedString(value.contentKey);
       if (contentKey) {
         keys.add(contentKey);
       }

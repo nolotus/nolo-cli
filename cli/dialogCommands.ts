@@ -157,8 +157,8 @@ function writeJsonStream(output: { write(chunk: string): unknown }, value: unkno
     output.write("\n]\n");
     return;
   }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
+  if (isRecord(value)) {
+    const record = value;
     // Stream large dialogs/items arrays field-by-field to avoid one giant intermediate string.
     const largeArrayKey = ["dialogs", "items", "messages"].find((key) => Array.isArray(record[key]));
     if (largeArrayKey && Array.isArray(record[largeArrayKey]) && (record[largeArrayKey] as unknown[]).length > 32) {

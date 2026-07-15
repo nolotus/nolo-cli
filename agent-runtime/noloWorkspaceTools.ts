@@ -208,8 +208,8 @@ export function getNoloSpaceContentKeys(spaceRecord: any) {
   if (!contents || typeof contents !== "object") return keys;
   for (const [entryKey, value] of Object.entries(contents)) {
     keys.add(entryKey);
-    if (value && typeof value === "object") {
-      const contentKey = asOptionalTrimmedString((value as any).contentKey);
+    if (isRecord(value)) {
+      const contentKey = asOptionalTrimmedString(value.contentKey);
       if (contentKey) {
         keys.add(contentKey);
       }

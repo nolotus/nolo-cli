@@ -2,6 +2,8 @@
 // Platform Kimi is Ollama Cloud only. Legacy Fireworks/DeepInfra/Vultr model
 // string helpers remain for request-body compatibility with old agent records.
 
+import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+
 /** Platform-hosted Kimi models (catalog + routing). Upstream is private. */
 export const OLLAMA_CLOUD_KIMI_K26_MODEL = "kimi-k2.6";
 export const OLLAMA_CLOUD_KIMI_K27_CODE_MODEL = "kimi-k2.7-code";
@@ -26,7 +28,7 @@ export const PLATFORM_LLM_CAPACITY_STATUSES = new Set([
 
 /** True for catalog provider id `nolo` and legacy `ollama-cloud` agent records. */
 export const isNoloHostedProvider = (provider?: string | null): boolean => {
-  const normalized = provider?.trim().toLowerCase();
+  const normalized = asTrimmedLowercaseString(provider);
   return (
     normalized === PLATFORM_HOSTED_KIMI_PROVIDER ||
     normalized === LEGACY_OLLAMA_CLOUD_PROVIDER
@@ -90,7 +92,7 @@ export const isPlatformKimiProviderModel = (
   provider?: string | null,
   model?: string | null
 ): boolean => {
-  const normalizedProvider = provider?.trim().toLowerCase();
+  const normalizedProvider = asTrimmedLowercaseString(provider);
   if (
     normalizedProvider === PLATFORM_HOSTED_KIMI_PROVIDER ||
     normalizedProvider === LEGACY_OLLAMA_CLOUD_PROVIDER

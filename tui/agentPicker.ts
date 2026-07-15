@@ -1,3 +1,4 @@
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { resolveCliAgentKeyInput } from "../agentAliases";
 import type { CliFetchImpl } from "../cliFetch";
 import {
@@ -95,7 +96,7 @@ export function resolveAgentSwitchTarget(
   if (resolvedKey !== rawTarget.trim()) {
     const aliasEntry = catalogEntries.find((entry) => entry.key === resolvedKey);
     return {
-      name: aliasEntry?.name ?? rawTarget.trim().toLowerCase(),
+      name: aliasEntry?.name ?? asTrimmedLowercaseString(rawTarget),
       key: resolvedKey,
     };
   }

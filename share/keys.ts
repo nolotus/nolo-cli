@@ -1,5 +1,6 @@
 import { createKey, splitKey, isAgentKey } from "../database/keys";
 import { DataType } from "../create/types";
+import { toTrimmedString } from "../core/toTrimmedString";
 import { normalizeUserId } from "../core/userId";
 import { toSafeAgentKey } from "./helpers";
 
@@ -10,7 +11,7 @@ const TIMESTAMP_MAX = 9_999_999_999_999;
 // ── Normalization ───────────────────────────────────────────────────
 
 const normalizeToken = (value: unknown): string =>
-  String(value || "").trim();
+  toTrimmedString(value);
 
 const normalizeCreatedAt = (value: unknown): number => {
   const parsed = Math.floor(Number(value));

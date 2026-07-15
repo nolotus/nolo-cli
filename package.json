@@ -328,6 +328,7 @@
     "core/compactWhitespace.ts",
     "core/optionalPositiveNumber.ts",
     "core/abortError.ts",
+    "core/toTrimmedString.ts",
     "core/userId.ts",
     "core/optionalPositiveInteger.ts",
     "connector-experimental/heartbeatLoop.ts",

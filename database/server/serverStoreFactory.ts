@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { Level } from "level";
 
+import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import type { AuthorityStore } from "./authorityStoreTypes";
 import { createLegacyServerDb, type LegacyServerDb } from "./legacyServerDb";
 import { createLevelAuthorityStore } from "./levelAuthorityStore";
@@ -56,7 +57,7 @@ export function createLevelBackedAuthorityStore(dbPath: string): AuthorityStore 
 export function resolveServerStoreDriver(
   env: ServerStoreFactoryEnv | NodeJS.ProcessEnv = process.env
 ): ServerStoreDriver {
-  const rawDriver = env.NOLO_SERVER_AUTHORITY_DRIVER?.trim().toLowerCase();
+  const rawDriver = asTrimmedLowercaseString(env.NOLO_SERVER_AUTHORITY_DRIVER);
   if (!rawDriver) return "level";
   if (rawDriver === "level") return "level";
   if (rawDriver === "memory") return "memory";

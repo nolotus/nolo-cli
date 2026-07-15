@@ -16,6 +16,7 @@ import { toErrorMessage } from "../core/errorMessage";
 import { isRecord } from "../core/isRecord";
 import { asOptionalFiniteNumber } from "../core/optionalNumber";
 import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -476,7 +477,7 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
   const limit = resultLimit.unlimited
     ? UNBOUNDED_CLIENT_CAP
     : Math.max(1, resultLimit.limit ?? DEFAULT_TABLE_LIST_LIMIT);
-  const titleQuery = readOption(args, "--title-query").trim().toLowerCase();
+  const titleQuery = asTrimmedLowercaseString(readOption(args, "--title-query"));
   const purpose = readOption(args, "--purpose").trim();
   const spaceId = normalizeSpaceIdInput(readOption(args, "--space") || readOption(args, "--space-id"));
   const scanLimit = titleQuery || purpose ? Math.max(limit * 5, 200) : limit;

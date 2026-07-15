@@ -321,8 +321,6 @@ export const createUserPreferenceKey = {
     createKey("user", "pref", userId, preferenceName),
   authorityHome: (userId: string) =>
     createKey("user", "pref", userId, "authority_home"),
-  defaultSpace: (userId: string) =>
-    createKey("user", "pref", userId, "space_default"),
   defaultAgent: (userId: string) =>
     createKey("user", "pref", userId, "agent_default"),
   rangeOfUser: (userId: string) => ({

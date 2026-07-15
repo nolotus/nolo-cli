@@ -1634,7 +1634,7 @@ async function writeFileTool(args: {
   }
     if (stats.length > 0) diffStat = stats.join("; ");
   } catch (err: unknown) {
-    diffStat = `[git diff unavailable: ${err instanceof Error ? err.message : 'unknown error'}]`;
+    diffStat = `[git diff unavailable: ${toErrorMessage(err)}]`;
   }
 
   return {

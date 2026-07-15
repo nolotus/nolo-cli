@@ -285,7 +285,7 @@ const extractCommentBlock = (
     "i"
   );
   const match = markdown.match(matcher);
-  return typeof match?.[1] === "string" ? match[1].trim() : undefined;
+  return asOptionalTrimmedString(match?.[1]);
 };
 
 const removeCommentBlock = (markdown: string, blockName: string): string =>

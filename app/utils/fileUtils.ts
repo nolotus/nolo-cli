@@ -2,6 +2,7 @@
 
 import type { FileCategory } from "../types";
 import { asOptionalFiniteNumber } from "../../core/optionalNumber";
+import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 
 const fileConstructor =
   typeof globalThis !== "undefined" && typeof globalThis.File === "function"
@@ -71,7 +72,7 @@ export const resolveFileFormatLabel = ({
   }
 
   if (typeof mimeType === "string") {
-    const normalizedMimeType = mimeType.trim().toLowerCase();
+    const normalizedMimeType = asTrimmedLowercaseString(mimeType);
     if (MIME_FORMAT_LABELS[normalizedMimeType]) {
       return MIME_FORMAT_LABELS[normalizedMimeType];
     }

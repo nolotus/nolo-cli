@@ -1,5 +1,6 @@
 import { compactWhitespace } from "../core/compactWhitespace";
 import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { DEFAULT_NOLO_SERVER_URL } from "../defaultServer";
 import type { AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
 import {
@@ -494,7 +495,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           output: `Tool display: ${state.toolDisplay} (hide | compact | verbose)`,
         };
       }
-      const normalizedArg = argText.trim().toLowerCase();
+      const normalizedArg = asTrimmedLowercaseString(argText);
       if (!["hide", "compact", "verbose", "on", "off"].includes(normalizedArg)) {
         return {
           nextState: state,
@@ -514,7 +515,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           output: `Thinking display: ${state.thinkingDisplay} (hide | marker | show)`,
         };
       }
-      const normalizedArg = argText.trim().toLowerCase();
+      const normalizedArg = asTrimmedLowercaseString(argText);
       if (!["hide", "marker", "show", "on", "off"].includes(normalizedArg)) {
         return {
           nextState: state,
@@ -534,7 +535,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           output: `Render display: ${state.renderDisplay} (plain | rich)`,
         };
       }
-      const normalizedArg = argText.trim().toLowerCase();
+      const normalizedArg = asTrimmedLowercaseString(argText);
       if (!["plain", "rich", "on", "off"].includes(normalizedArg)) {
         return {
           nextState: state,

@@ -5,6 +5,7 @@
  * so the endpoint tables / responses heuristic cannot drift.
  */
 
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { getModelConfig } from "../ai/llm/providers";
 
 export const OPENAI_RESPONSES_ENDPOINT =
@@ -37,7 +38,7 @@ export function isOpenAiResponsesModel(args: {
   model?: string;
   endpointKey?: string;
 }): boolean {
-  if ((args.provider ?? "").trim().toLowerCase() !== "openai") return false;
+  if (asTrimmedLowercaseString(args.provider) !== "openai") return false;
   if (args.endpointKey === "responses") return true;
   if (!args.model) return false;
   try {
@@ -51,7 +52,7 @@ export function isOpenAiResponsesModel(args: {
 export function resolvePlatformChatCompletionsEndpoint(
   provider: string,
 ): string | undefined {
-  const key = provider.trim().toLowerCase();
+  const key = asTrimmedLowercaseString(provider);
   if (!key) return undefined;
   return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS[key];
 }

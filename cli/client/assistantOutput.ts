@@ -1,3 +1,5 @@
+import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+
 export type RenderDisplayMode = "plain" | "rich";
 
 const ANSI = {
@@ -11,7 +13,7 @@ export function normalizeRenderDisplayMode(
   raw: string | undefined,
   fallback: RenderDisplayMode = "rich"
 ): RenderDisplayMode {
-  const normalized = raw?.trim().toLowerCase();
+  const normalized = asTrimmedLowercaseString(raw);
   if (normalized === "plain" || normalized === "raw" || normalized === "off" || normalized === "0") {
     return "plain";
   }

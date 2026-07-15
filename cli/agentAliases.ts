@@ -1,3 +1,5 @@
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
+
 export const CURRENT_OPERATOR_USER_ID = "0e95801d90";
 export const NOLO_DEFAULT_AGENT_ID = "01NOLOAPPBLD000000019KCKT0";
 export const NOLO_DEFAULT_AGENT_KEY = `agent-pub-${NOLO_DEFAULT_AGENT_ID}`;
@@ -45,7 +47,7 @@ function parseAgentKeyFromInput(raw: string): string {
 }
 
 export function resolveCliAgentKeyInput(raw: string): string {
-  return AGENT_ALIAS_TO_KEY[raw.trim().toLowerCase()] ?? parseAgentKeyFromInput(raw);
+  return AGENT_ALIAS_TO_KEY[asTrimmedLowercaseString(raw)] ?? parseAgentKeyFromInput(raw);
 }
 
 export function isLocalCliAgentKey(agentKey: string): boolean {

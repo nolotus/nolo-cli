@@ -22,6 +22,7 @@ import {
 } from "./cliEnvHelpers";
 import { toErrorMessage } from "./core/errorMessage";
 import { asRecordOrEmpty } from "./core/recordOrEmpty";
+import { asTrimmedLowercaseString } from "./core/trimmedLowercaseString";
 
 async function defaultExecuteCli(
   provider: string,
@@ -51,7 +52,7 @@ async function detectLaunchableMachineInfo() {
 
 function requiredCapabilityForAgent(agent: any) {
   if (agent?.apiSource !== "cli") return "";
-  const cliProvider = String(agent?.cliProvider || agent?.provider || "").trim().toLowerCase();
+  const cliProvider = asTrimmedLowercaseString(agent?.cliProvider || agent?.provider);
   const capabilityByProvider: Record<string, string> = {
     codex: "codex-cli",
     claude: "claude-code",
@@ -67,7 +68,7 @@ function requiredCapabilityForAgent(agent: any) {
 }
 
 function resolveAgentCliProvider(agent: any) {
-  return String(agent?.cliProvider || agent?.provider || "").trim().toLowerCase();
+  return asTrimmedLowercaseString(agent?.cliProvider || agent?.provider);
 }
 
 function classifyAgentRuntime(agent: any) {

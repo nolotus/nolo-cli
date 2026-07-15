@@ -1,3 +1,5 @@
+import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+
 export type ThinkingDisplayMode = "hide" | "marker" | "show";
 
 const THINK_OPEN = /<think>/i;
@@ -8,7 +10,7 @@ export function normalizeThinkingDisplayMode(
   raw: string | undefined,
   fallback: ThinkingDisplayMode = "hide"
 ): ThinkingDisplayMode {
-  const normalized = raw?.trim().toLowerCase();
+  const normalized = asTrimmedLowercaseString(raw);
   if (normalized === "hide" || normalized === "off" || normalized === "false" || normalized === "0") {
     return "hide";
   }

@@ -1,5 +1,6 @@
 import { DEFAULT_LOCAL_API_ORIGIN } from "../core/localOrigins";
 import { normalizeServerOrigin } from "../core/serverOrigin";
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { NOLO_CLUSTER_SERVERS } from "../database/config";
 import { buildSkillSummaryMarker } from "../ai/skills/skillSummaryMarker";
 import { writeAgentRecord, readDbRecord } from "./agentRecordHelpers";
@@ -46,7 +47,7 @@ export function localBaseFromEnv(env: EnvLike) {
 }
 
 export function targetToBase(target: string, env: EnvLike) {
-  const normalized = target.trim().toLowerCase();
+  const normalized = asTrimmedLowercaseString(target);
   if (normalized === "local") return localBaseFromEnv(env);
   if (normalized === "main") return normalizeBaseUrl(NOLO_CLUSTER_SERVERS[0]);
   if (normalized === "us") return normalizeBaseUrl(NOLO_CLUSTER_SERVERS[1]);

@@ -1,3 +1,5 @@
+import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+
 type CliTextStyle = "dim" | "bold" | "cyan" | "green" | "red" | "yellow" | "magenta" | "white" | "black";
 type CliBgStyle = "bgCyan" | "bgGray" | "bgMagenta" | "bgYellow" | "bgBlue" | "bgGreen" | "bgRed" | "bgWhite";
 
@@ -30,7 +32,7 @@ export function resolveCliColorEnabled(
   env: Record<string, string | undefined> = process.env,
   isTTY: boolean = Boolean(process.stdout.isTTY)
 ) {
-  const setting = (env.NOLO_CLI_COLOR ?? "").trim().toLowerCase();
+  const setting = asTrimmedLowercaseString(env.NOLO_CLI_COLOR);
   if (setting === "0" || setting === "false" || setting === "off") return false;
   if (env.NO_COLOR) return false;
   if (setting === "1" || setting === "true" || setting === "on") return true;

@@ -1,5 +1,6 @@
 import { isGatewayHttpStatus } from "./core/gatewayHttpStatus";
 import { parseRetryAfterHeaderMs } from "./core/retryAfterMs";
+import { asTrimmedLowercaseString } from "./core/trimmedLowercaseString";
 import type { CliFetchImpl } from "./cliFetch";
 
 export class ConnectorWebSocketAuthError extends Error {
@@ -54,11 +55,9 @@ export async function resolveConnectorWebSocketTarget(input: {
   directWsUrl.pathname = "/api/connector/ws";
   directWsUrl.search = "";
   directWsUrl.searchParams.set("machineId", input.machineId);
-  if (input.connectorSurface?.trim()) {
-    directWsUrl.searchParams.set(
-      "connectorSurface",
-      input.connectorSurface.trim().toLowerCase()
-    );
+  const connectorSurface = asTrimmedLowercaseString(input.connectorSurface);
+  if (connectorSurface) {
+    directWsUrl.searchParams.set("connectorSurface", connectorSurface);
   }
 
   const probeUrl = new URL(input.serverUrl);

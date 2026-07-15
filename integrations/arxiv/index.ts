@@ -1,6 +1,10 @@
+import { compactWhitespace } from "../../core/compactWhitespace";
 import { XMLParser } from "fast-xml-parser";
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
+
+const compactOptionalText = (value: unknown): string | undefined =>
+  typeof value === "string" ? compactWhitespace(value) : undefined;
 
 export async function searchArxivPapers(query: string, maxResults: number = 5) {
   try {
@@ -17,8 +21,8 @@ export async function searchArxivPapers(query: string, maxResults: number = 5) {
     const entries = result.feed?.entry || [];
     const papers = (Array.isArray(entries) ? entries : [entries]).map((entry: any) => ({
       id: entry.id,
-      title: entry.title?.replace(/\s+/g, " "),
-      summary: entry.summary?.replace(/\s+/g, " "),
+      title: compactOptionalText(entry.title),
+      summary: compactOptionalText(entry.summary),
       published: entry.published,
       authors: Array.isArray(entry.author) ? entry.author.map((a: any) => a.name) : [entry.author?.name],
       pdfUrl: Array.isArray(entry.link) 

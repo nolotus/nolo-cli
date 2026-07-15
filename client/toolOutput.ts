@@ -1,4 +1,5 @@
 import { clipCompactText } from "../core/clipCompactText";
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../agent-runtime/actionGate";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
@@ -10,7 +11,7 @@ export function normalizeToolDisplayMode(
   raw: string | undefined,
   fallback: ToolDisplayMode = "compact"
 ): ToolDisplayMode {
-  const normalized = raw?.trim().toLowerCase();
+  const normalized = asTrimmedLowercaseString(raw);
   if (normalized === "hide" || normalized === "off" || normalized === "false" || normalized === "0") {
     return "hide";
   }
@@ -29,7 +30,7 @@ export function normalizeToolDisplayMode(
 }
 
 export function resolveToolDisplayMode(env: Record<string, string | undefined> = process.env) {
-  const legacyTrace = env.NOLO_TRACE_TOOLS?.trim().toLowerCase();
+  const legacyTrace = asTrimmedLowercaseString(env.NOLO_TRACE_TOOLS);
   if (legacyTrace === "0" || legacyTrace === "false" || legacyTrace === "off") {
     return "hide";
   }

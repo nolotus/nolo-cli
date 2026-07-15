@@ -1,5 +1,6 @@
 import { asOptionalTrimmedString } from "../core/optionalString";
 import { normalizeServerOrigin } from "../core/serverOrigin";
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { asTrimmedString } from "../core/trimmedString";
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import { pickAgentRuntimeInferenceOptions } from "./agentConfigOptions";
@@ -16,7 +17,9 @@ function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
   const customProviderUrl = agentConfig.customProviderUrl?.trim();
   if (customProviderUrl) return resolveChatCompletionsEndpoint(customProviderUrl);
 
-  const provider = (agentConfig.provider ?? agentConfig.apiSource ?? "openai").toString().trim().toLowerCase();
+  const provider = asTrimmedLowercaseString(
+    agentConfig.provider ?? agentConfig.apiSource ?? "openai"
+  );
   if (!provider) {
     throw new Error("Platform chat provider requires agentConfig.provider.");
   }

@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { normalizeServerOrigin } from "./core/serverOrigin";
+import { asTrimmedLowercaseString } from "./core/trimmedLowercaseString";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import {
   isLocalCliAgentKey,
@@ -83,7 +84,7 @@ export function runtimeModeFromArgs(args: string[]): AgentRuntimeRequestedMode |
 }
 
 export function isFullstackCodingAgentRef(raw: string | undefined, resolved: string) {
-  const normalized = raw?.trim().toLowerCase();
+  const normalized = asTrimmedLowercaseString(raw);
   return (
     normalized === "fullstack" ||
     normalized === "full-stack" ||

@@ -8,6 +8,10 @@
  * resolve via credentialRef + the host file broker only.
  */
 
+import { isRecord } from "../core/isRecord";
+import { asOptionalFiniteNumber } from "../core/optionalNumber";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedString } from "../core/trimmedString";
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import type { AgentRuntimeChatMessage, AgentRuntimeMessageContent } from "./types";
 import { resolveAgentRuntimeConfigFromRecord } from "./agentRecordConfig";
@@ -179,15 +183,11 @@ export function sanitizeToolCallArguments(
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
+  return asOptionalTrimmedString(record[key]);
 }
 
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return asOptionalFiniteNumber(record[key]);
 }
 
 function uniqueToolNames(values: unknown): string[] | undefined {
@@ -196,15 +196,11 @@ function uniqueToolNames(values: unknown): string[] | undefined {
   const seen = new Set<string>();
   for (const value of values) {
     const name =
-      typeof value === "string"
-        ? value.trim()
-        : value && typeof value === "object" && typeof (value as { name?: unknown }).name === "string"
-          ? String((value as { name: string }).name).trim()
-          : value &&
-              typeof value === "object" &&
-              typeof (value as { function?: { name?: unknown } }).function?.name === "string"
-            ? String((value as { function: { name: string } }).function.name).trim()
-            : "";
+      asTrimmedString(value) ||
+      asTrimmedString((value as { name?: unknown } | null)?.name) ||
+      asTrimmedString(
+        (value as { function?: { name?: unknown } } | null)?.function?.name,
+      );
     if (!name || seen.has(name)) continue;
     seen.add(name);
     names.push(name);
@@ -220,10 +216,10 @@ function sanitizePlainObject(
   value: unknown,
   depth = 0,
 ): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   if (depth > 4) return undefined;
   const out: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, child] of Object.entries(value)) {
     if (isForbiddenKey(key)) continue;
     if (child === null) {
       out[key] = null;
@@ -239,7 +235,7 @@ function sanitizePlainObject(
           if (item === null || typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
             return item;
           }
-          if (item && typeof item === "object" && !Array.isArray(item)) {
+          if (isRecord(item)) {
             return sanitizePlainObject(item, depth + 1);
           }
           return undefined;
@@ -310,20 +306,19 @@ export function buildDesktopAgentRuntimeAgentConfigSnapshot(
   source: unknown,
   agentRef: string,
 ): DesktopAgentRuntimeAgentConfigSnapshot | null {
-  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
-  const record = source as Record<string, unknown>;
-  const ref = typeof agentRef === "string" ? agentRef.trim() : "";
+  if (!isRecord(source)) return null;
+  const ref = asTrimmedString(agentRef);
   if (!ref) return null;
 
   // Prefer explicit dbKey/key; fall back to agentRef so short `id` fields never
   // reject a valid client record that uses a different id shape.
   const claimed =
-    stringField(record, "dbKey") ||
-    stringField(record, "key");
+    stringField(source, "dbKey") ||
+    stringField(source, "key");
   if (claimed && claimed !== ref) return null;
   const dbKey = claimed || ref;
 
-  return pickAllowlistedAgentConfigFields(record, dbKey);
+  return pickAllowlistedAgentConfigFields(source, dbKey);
 }
 
 /**
@@ -334,18 +329,18 @@ export function parseDesktopAgentRuntimeAgentConfigSnapshot(
   value: unknown,
   agentRef: string,
 ): ParseDesktopAgentConfigSnapshotResult {
-  const ref = typeof agentRef === "string" ? agentRef.trim() : "";
+  const ref = asTrimmedString(agentRef);
   if (!ref) {
     return { ok: false, error: "agentRef is required for agentConfigSnapshot" };
   }
   if (value === undefined || value === null) {
     return { ok: false, error: "agentConfigSnapshot is required when provided" };
   }
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return { ok: false, error: "agentConfigSnapshot must be an object" };
   }
 
-  const record = value as Record<string, unknown>;
+  const record = value;
   const dbKey =
     stringField(record, "dbKey") ||
     stringField(record, "key") ||
@@ -439,11 +434,11 @@ function sanitizeToolCalls(value: unknown): AgentRuntimeChatMessage["tool_calls"
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const id = asTrimmedString(record.id);
     const fn = record.function && typeof record.function === "object"
       ? (record.function as Record<string, unknown>)
       : null;
-    const name = typeof fn?.name === "string" ? fn.name.trim() : "";
+    const name = asTrimmedString(fn?.name);
     const rawArgs = typeof fn?.arguments === "string" ? fn.arguments : "{}";
     if (!id || !name) continue;
     calls.push({
@@ -456,26 +451,24 @@ function sanitizeToolCalls(value: unknown): AgentRuntimeChatMessage["tool_calls"
 }
 
 function sanitizeChatMessage(value: unknown): AgentRuntimeChatMessage | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const role = record.role;
+  if (!isRecord(value)) return null;
+  const role = value.role;
   if (role !== "system" && role !== "user" && role !== "assistant" && role !== "tool") {
     return null;
   }
-  const content = sanitizeMessageContent(record.content);
+  const content = sanitizeMessageContent(value.content);
   const message: AgentRuntimeChatMessage = {
     role,
     content,
   };
-  if (typeof record.tool_call_id === "string" && record.tool_call_id.trim()) {
-    message.tool_call_id = record.tool_call_id.trim();
-  } else if (typeof record.toolCallId === "string" && record.toolCallId.trim()) {
-    message.tool_call_id = record.toolCallId.trim();
-  }
-  const toolCalls = sanitizeToolCalls(record.tool_calls);
+  const toolCallId =
+    asOptionalTrimmedString(value.tool_call_id) ??
+    asOptionalTrimmedString(value.toolCallId);
+  if (toolCallId) message.tool_call_id = toolCallId;
+  const toolCalls = sanitizeToolCalls(value.tool_calls);
   if (toolCalls) message.tool_calls = toolCalls;
-  if (typeof record.reasoning_content === "string" && record.reasoning_content) {
-    message.reasoning_content = record.reasoning_content;
+  if (typeof value.reasoning_content === "string" && value.reasoning_content) {
+    message.reasoning_content = value.reasoning_content;
   }
   return message;
 }
@@ -490,7 +483,7 @@ export function buildDesktopAgentRuntimeDialogHistorySnapshot(args: {
   messages: unknown[];
   currentInput?: AgentRuntimeMessageContent;
 }): DesktopAgentRuntimeDialogHistorySnapshot | null {
-  const dialogId = typeof args.dialogId === "string" ? args.dialogId.trim() : "";
+  const dialogId = asTrimmedString(args.dialogId);
   if (!dialogId) return null;
   if (!Array.isArray(args.messages)) return null;
 
@@ -531,13 +524,13 @@ export function parseDesktopAgentRuntimeDialogHistorySnapshot(
   if (value === undefined || value === null) {
     return { ok: false, error: "dialogHistorySnapshot is required when provided" };
   }
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return { ok: false, error: "dialogHistorySnapshot must be an object" };
   }
-  const record = value as Record<string, unknown>;
+  const record = value;
   const dialogId =
     stringField(record, "dialogId") ||
-    (typeof continueDialogId === "string" ? continueDialogId.trim() : "");
+    asTrimmedString(continueDialogId);
   if (!dialogId) {
     return { ok: false, error: "dialogHistorySnapshot.dialogId is required" };
   }

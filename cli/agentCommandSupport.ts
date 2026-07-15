@@ -1,3 +1,4 @@
+import { toErrorMessage } from "../core/errorMessage";
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
 import type { CliKvDb } from "./client/hybridRecordStore";
 import type { EnvLike } from "./cliEnvHelpers";
@@ -80,9 +81,7 @@ export async function getReadableCliDb(output: OutputLike) {
     return await getDefaultCliDb();
   } catch (error) {
     output.write(
-      `[nolo] local agent cache unavailable; falling back to remote reads only: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] local agent cache unavailable; falling back to remote reads only: ${toErrorMessage(error)}\n`
     );
     return createNullCliDb();
   }

@@ -1,5 +1,6 @@
 // 文件路径: packages/database/server/db.ts
 
+import { isLevelLockError } from "../levelLockError";
 import { ensureDbOpen } from "./ensureDbOpen";
 import { resolveServerDbPath } from "./dbPath";
 import type { LegacyServerDb } from "./legacyServerDb";
@@ -12,6 +13,11 @@ console.log("数据库配置:");
 console.log("- 当前工作目录:", process.cwd());
 console.log("- 数据库路径:", DB_PATH);
 
+/**
+ * Walk cause / AggregateError chains and detect LevelDB lock/busy via the
+ * shared pure seam. Kept here so migration scripts and server open paths
+ * keep a single exported name without pulling pure detection into db init.
+ */
 export function isServerDbLockError(error: unknown): boolean {
   const queue: unknown[] = [error];
   const seen = new Set<unknown>();
@@ -21,10 +27,7 @@ export function isServerDbLockError(error: unknown): boolean {
     if (!current || seen.has(current)) continue;
     seen.add(current);
 
-    const text = `${(current as any)?.code ?? ""} ${(current as any)?.message ?? current}`;
-    if (/LEVEL_LOCKED|Resource temporarily unavailable|\/LOCK|LOCK:/.test(text)) {
-      return true;
-    }
+    if (isLevelLockError(current)) return true;
 
     if ((current as any)?.cause) queue.push((current as any).cause);
     if (Array.isArray((current as any)?.errors)) {

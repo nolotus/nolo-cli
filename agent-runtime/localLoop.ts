@@ -1,3 +1,8 @@
+import { clipCompactText } from "../core/clipCompactText";
+import { compactWhitespace } from "../core/compactWhitespace";
+import { toErrorMessage } from "../core/errorMessage";
+import { asOptionalTrimmedString } from "../core/optionalString";
+
 import type {
   AgentRuntimeHostAdapter,
   AgentRuntimeToolResult,
@@ -66,7 +71,7 @@ function formatToolExecutionError(args: {
   toolName: string;
   error: unknown;
 }) {
-  const message = args.error instanceof Error ? args.error.message : String(args.error);
+  const message = toErrorMessage(args.error);
   return `${args.toolName} failed: ${message}`;
 }
 
@@ -161,21 +166,17 @@ async function runCompleteWithTimeout(args: {
   }
 }
 
-function compactWhitespace(value: string) {
-  return value.replace(/\s+/g, " ").trim();
+function clip(value: string, max = 240) {
+  return clipCompactText(value, max);
 }
 
-function clip(value: string, max = 240) {
-  const compact = compactWhitespace(value);
-  return compact.length > max ? `${compact.slice(0, max - 3)}...` : compact;
-}
 
 function summarizeToolArguments(toolName: string, rawArgs: string | undefined) {
   const args = parseToolArgumentsJson(rawArgs);
   const pick = (...keys: string[]) => {
     for (const key of keys) {
-      const value = args[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
+      const value = asOptionalTrimmedString(args[key]);
+      if (value) return value;
     }
     return "";
   };
@@ -455,7 +456,7 @@ export async function runLocalAgentTurn(
             toolCallId: toolCall.id,
             toolName,
             elapsedMs: Math.max(0, Date.now() - startedAt),
-            message: error instanceof Error ? error.message : String(error),
+            message: toErrorMessage(error),
           });
           toolResult = {
             content:
@@ -464,7 +465,7 @@ export async function runLocalAgentTurn(
             metadata: {
               error: true,
               toolName,
-              message: error instanceof Error ? error.message : String(error),
+              message: toErrorMessage(error),
               ...(
                 error &&
                 typeof error === "object" &&
@@ -494,7 +495,7 @@ export async function runLocalAgentTurn(
 
   // 即使 provider 循环失败（超时等），也保存 dialog 以便复盘
   if (loopError) {
-    const errorMessage = loopError instanceof Error ? loopError.message : String(loopError);
+    const errorMessage = toErrorMessage(loopError);
     const turnMessages = messages.slice(turnStartIndex);
     await input.adapter.saveTurn({
       agentKey: agentConfig.key,

@@ -1,3 +1,5 @@
+import { toErrorMessage } from "../core/errorMessage";
+import { parsePositiveFiniteNumberOrFallback } from "../core/positiveFiniteNumberOrFallback";
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
 import type { HeartbeatLoopOptions } from "../connector-experimental/heartbeatLoop";
 
@@ -5,8 +7,10 @@ type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
 
 function resolveHeartbeatIntervalMs(env: EnvLike) {
-  const raw = Number(env.NOLO_CONNECT_HEARTBEAT_MS ?? "");
-  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+  return parsePositiveFiniteNumberOrFallback(
+    env.NOLO_CONNECT_HEARTBEAT_MS,
+    30_000,
+  );
 }
 
 export type MachineWatchCommandDeps = {
@@ -32,9 +36,7 @@ export async function runMachineWatchCommand(
     return 0;
   } catch (error) {
     output.write(
-      `[nolo] Machine heartbeat loop failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] Machine heartbeat loop failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

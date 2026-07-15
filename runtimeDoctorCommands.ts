@@ -1,3 +1,4 @@
+import { toErrorMessage } from "./core/errorMessage";
 import { resolveAgentRuntimeDecision } from "./agent-runtime/runtimeDecision";
 import {
   resolveCliAuthorityBrokerEndpoint,
@@ -100,7 +101,7 @@ async function defaultLocalRuntimeProbe(env: EnvLike): Promise<LocalRuntimeProbe
       authorityHealthPath,
       agentFound: false,
       ...(agentKey ? { agentKey } : {}),
-      error: error instanceof Error ? error.message : String(error),
+      error: toErrorMessage(error),
     };
   }
 }

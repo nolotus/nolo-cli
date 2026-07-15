@@ -15,6 +15,7 @@
 
 import { spawn } from "node:child_process";
 
+import { asTrimmedString } from "../core/trimmedString";
 import {
   assertCredentialRef,
   type CredentialBroker,
@@ -240,7 +241,7 @@ function requestStdin(payload: {
  * Never concatenates raw stderr into errors or return values.
  */
 function parseGetSecretFromStdout(stdout: string): string {
-  const trimmed = typeof stdout === "string" ? stdout.trim() : "";
+  const trimmed = asTrimmedString(stdout);
   if (!trimmed) {
     rethrowBrokerError("get");
   }
@@ -382,7 +383,7 @@ export function createWindowsCredentialManagerBroker(
 
     async put(ref, secret) {
       const safeRef = safeCredentialRef(ref);
-      const value = typeof secret === "string" ? secret.trim() : "";
+      const value = asTrimmedString(secret);
       if (!value) {
         throw new Error("Cannot store an empty credential secret.");
       }

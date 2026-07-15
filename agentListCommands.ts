@@ -1,3 +1,4 @@
+import { toErrorMessage } from "./core/errorMessage";
 import { getReadableCliDb, type AgentCommandDeps } from "./agentCommandSupport";
 import {
   decorateAgentsWithPublicStatusAcrossServers,
@@ -84,7 +85,7 @@ export async function runAgentListCommand(
     }
 
     if (!includeLegacy) {
-      agents = agents.filter((agent) => !agent.privateKey.startsWith("cybot-"));
+      agents = agents.filter((agent) => agent.privateKey.startsWith("agent-"));
     }
     let resolvedSpaceId: string | null = null;
     if (spaceInput) {
@@ -176,9 +177,7 @@ export async function runAgentListCommand(
     return 0;
   } catch (error) {
     output.write(
-      `[nolo] agent list failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] agent list failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

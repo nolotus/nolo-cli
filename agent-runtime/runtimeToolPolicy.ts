@@ -1,16 +1,10 @@
+import { isRecord } from "../core/isRecord";
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+import { asNonEmptyStringArray } from "../core/stringArray";
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import type { AgentRuntimeHost, AgentRuntimeToolPolicy } from "./types";
 
 type EnvLike = Record<string, string | undefined>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string" && !!item.trim());
-}
 
 function unique(values: string[]) {
   return [...new Set(values)];
@@ -33,11 +27,11 @@ export function normalizeAgentRuntimeToolPolicy(
   if (!isRecord(value)) return undefined;
   return {
     version: 1,
-    ...(stringArray(value.agentTools).length
-      ? { agentTools: unique(stringArray(value.agentTools)) }
+    ...(asNonEmptyStringArray(value.agentTools).length
+      ? { agentTools: unique(asNonEmptyStringArray(value.agentTools)) }
       : {}),
-    ...(stringArray(value.runtimeTools).length
-      ? { runtimeTools: unique(stringArray(value.runtimeTools)) }
+    ...(asNonEmptyStringArray(value.runtimeTools).length
+      ? { runtimeTools: unique(asNonEmptyStringArray(value.runtimeTools)) }
       : {}),
     ...(isRecord(value.workspace) ? { workspace: { ...value.workspace } } : {}),
     ...(isRecord(value.shell) ? { shell: { ...value.shell } } : {}),
@@ -55,12 +49,11 @@ function runtimeBindingRecord(
 }
 
 function runtimeToolNamesFromPolicy(policy: AgentRuntimeToolPolicy | undefined) {
-  return stringArray(policy?.runtimeTools);
+  return asNonEmptyStringArray(policy?.runtimeTools);
 }
 
 function readPositiveNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  return asOptionalPositiveFiniteNumber(Number(value));
 }
 
 export function mergeAgentRuntimeToolPolicies(
@@ -108,7 +101,7 @@ export function resolveRequestedRuntimeToolNames(args: {
     runtimeBinding?.runtimeToolPolicySnapshot,
   );
   return unique([
-    ...stringArray(args.agentConfig.toolNames),
+    ...asNonEmptyStringArray(args.agentConfig.toolNames),
     ...runtimeToolNamesFromPolicy(
       normalizeAgentRuntimeToolPolicy(args.agentConfig.runtimeToolPolicy),
     ),

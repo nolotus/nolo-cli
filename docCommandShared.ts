@@ -1,4 +1,5 @@
 import { DEFAULT_LOCAL_API_ORIGIN } from "./core/localOrigins";
+import { normalizeServerOrigin } from "./core/serverOrigin";
 import { NOLO_CLUSTER_SERVERS } from "./database/config";
 import { buildSkillSummaryMarker } from "./ai/skills/skillSummaryMarker";
 import { writeAgentRecord, readDbRecord } from "./agentRecordHelpers";
@@ -37,7 +38,7 @@ export function hasFlag(args: string[], flag: string) {
 }
 
 export function normalizeBaseUrl(base: string) {
-  return base.trim().replace(/\/+$/, "");
+  return normalizeServerOrigin(base);
 }
 
 export function localBaseFromEnv(env: EnvLike) {

@@ -1,3 +1,5 @@
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+
 type TimestampRecord = Record<string, unknown> & {
   meta?: Record<string, unknown>;
 };
@@ -11,14 +13,10 @@ const readRecord = (value: unknown): TimestampRecord | null =>
   isRecord(value) ? value : null;
 
 const parseTimestamp = (value: unknown): number => {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return value;
-  }
+  const asNumber = asOptionalPositiveFiniteNumber(value);
+  if (asNumber !== undefined) return asNumber;
   if (typeof value === "string" && value.trim()) {
-    const timestamp = Date.parse(value);
-    if (Number.isFinite(timestamp) && timestamp > 0) {
-      return timestamp;
-    }
+    return asOptionalPositiveFiniteNumber(Date.parse(value)) ?? 0;
   }
   return 0;
 };

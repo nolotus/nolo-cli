@@ -12,6 +12,8 @@ import { resolveAgentRecordFromHybridStore, readDbRecord } from "./agentRecordHe
 import { resolveAuthToken } from "./cliEnvHelpers";
 import { homedir } from "node:os";
 import { getReadableCliDb } from "./agentCommandSupport";
+import { toErrorMessage } from "./core/errorMessage";
+import { parsePositiveFiniteNumberOrFallback } from "./core/positiveFiniteNumberOrFallback";
 
 import {
   buildLocalRunEnv,
@@ -95,13 +97,7 @@ export type AgentRunCommandDeps = {
 } & Pick<AgentRunControlDeps, "homedir" | "spawn" | "fs" | "now" | "generateRunId">;
 
 function resolvePositiveMs(value: unknown, fallback: number): number {
-  const n =
-    typeof value === "string"
-      ? Number(value)
-      : typeof value === "number"
-        ? value
-        : NaN;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  return parsePositiveFiniteNumberOrFallback(value, fallback);
 }
 
 async function resolveAgentRunAgentKey(args: {
@@ -110,7 +106,7 @@ async function resolveAgentRunAgentKey(args: {
   env: EnvLike;
   output: OutputLike;
 }) {
-  if (!args.agentInput.trim() || args.agentInput.startsWith("agent-") || args.agentInput.startsWith("cybot-")) {
+  if (!args.agentInput.trim() || args.agentInput.startsWith("agent-")) {
     return undefined;
   }
   const db = await getReadableCliDb(args.output);
@@ -280,7 +276,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         parsed.workflowRef
       );
     } catch (error) {
-      output.write(`[nolo] ${error instanceof Error ? error.message : String(error)}\n`);
+      output.write(`[nolo] ${toErrorMessage(error)}\n`);
       return 1;
     }
   }
@@ -305,7 +301,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         });
         skills.push(resolved);
       } catch (error) {
-        output.write(`[nolo] ${error instanceof Error ? error.message : String(error)}\n`);
+        output.write(`[nolo] ${toErrorMessage(error)}\n`);
         return 1;
       }
     }
@@ -458,7 +454,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
       }));
     } catch (error) {
       output.write(
-        `\n[nolo] local run summary unavailable: ${error instanceof Error ? error.message : String(error)}\n`
+        `\n[nolo] local run summary unavailable: ${toErrorMessage(error)}\n`
       );
     }
   }

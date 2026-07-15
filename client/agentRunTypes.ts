@@ -8,6 +8,9 @@
  */
 
 import { isLoopbackUrl } from "../core/localOrigins";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
+import { asTrimmedString } from "../core/trimmedString";
 
 export type EnvLike = Record<string, string | undefined>;
 
@@ -45,9 +48,7 @@ export function isMachineBoundLocalhostCustomProvider(agentConfig: any) {
     agentConfig?.runtimeBinding && typeof agentConfig.runtimeBinding === "object"
       ? String(agentConfig.runtimeBinding.machineId ?? "").trim()
       : "";
-  const providerUrl = typeof agentConfig?.customProviderUrl === "string"
-    ? agentConfig.customProviderUrl.trim()
-    : "";
+  const providerUrl = asTrimmedString(agentConfig?.customProviderUrl);
   if (!machineId || !providerUrl) return false;
   return isLoopbackUrl(providerUrl);
 }
@@ -80,12 +81,8 @@ export const CLI_PROVIDER_NAMES = new Set([
  * Check whether the agent config maps to a CLI provider.
  */
 export function isCliProviderAgentConfig(agentConfig: any) {
-  const cliProvider = typeof agentConfig?.cliProvider === "string"
-    ? agentConfig.cliProvider.trim().toLowerCase()
-    : "";
-  const provider = typeof agentConfig?.provider === "string"
-    ? agentConfig.provider.trim().toLowerCase()
-    : "";
+  const cliProvider = asTrimmedLowercaseString(agentConfig?.cliProvider);
+  const provider = asTrimmedLowercaseString(agentConfig?.provider);
   return Boolean(cliProvider) || CLI_PROVIDER_NAMES.has(provider);
 }
 
@@ -98,9 +95,7 @@ export async function detectCurrentMachineId(env: EnvLike): Promise<string | und
   try {
     const { detectMachineInfo } = await import("../connector-experimental/machineInfo");
     const machine = await detectMachineInfo({ probeLaunchable: true });
-    return typeof machine?.machineId === "string" && machine.machineId.trim()
-      ? machine.machineId.trim()
-      : undefined;
+    return asOptionalTrimmedString(machine?.machineId);
   } catch {
     return undefined;
   }

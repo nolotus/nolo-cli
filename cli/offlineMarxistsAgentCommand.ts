@@ -1,3 +1,6 @@
+import { toErrorMessage } from "../core/errorMessage";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { normalizeServerOrigin } from "../core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import type { CliFetchImpl } from "./cliFetch";
 
@@ -47,21 +50,15 @@ function parseUserIdFromToken(token: string) {
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
     const parsed = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
-    return typeof parsed?.userId === "string" && parsed.userId.trim()
-      ? parsed.userId.trim()
-      : undefined;
+    return asOptionalTrimmedString(parsed?.userId);
   } catch {
     return undefined;
   }
 }
 
-function normalizeBaseUrl(value: string) {
-  return value.trim().replace(/\/+$/, "");
-}
-
 function parseArgs(args: string[], env: EnvLike): ParsedArgs | null {
   if (args.includes("--help") || args.includes("-h")) return null;
-  const serverUrl = normalizeBaseUrl(
+  const serverUrl = normalizeServerOrigin(
     readFlagValue(args, "--server") ??
       readFlagValue(args, "--server-url") ??
       env.NOLO_SERVER ??
@@ -310,7 +307,7 @@ export async function runSetupOfflineMarxistsAgentCommand(
     return 0;
   } catch (error) {
     output.write(
-      `setup-offline-marxists failed: ${error instanceof Error ? error.message : String(error)}\n`
+      `setup-offline-marxists failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

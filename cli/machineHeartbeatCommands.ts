@@ -1,3 +1,4 @@
+import { toErrorMessage } from "../core/errorMessage";
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
 
 type OutputLike = { write(chunk: string): unknown };
@@ -18,9 +19,7 @@ export async function runMachineHeartbeatConnectCommand(
     await deps.sendHeartbeat();
   } catch (error) {
     output.write(
-      `[nolo] Machine connect failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] Machine connect failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

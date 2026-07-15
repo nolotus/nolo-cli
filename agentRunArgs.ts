@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { normalizeServerOrigin } from "./core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import {
   isLocalCliAgentKey,
@@ -181,7 +182,9 @@ export function mimeTypeForPath(path: string) {
 }
 
 export function resolveServerUrl(env: EnvLike) {
-  return (env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL).replace(/\/+$/, "");
+  return normalizeServerOrigin(
+    env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL,
+  );
 }
 
 export function buildLocalRunEnv(args: { env: EnvLike; allowShell: boolean }) {

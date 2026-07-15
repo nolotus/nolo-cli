@@ -1,3 +1,5 @@
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
 import type {
   AgentRuntimeChatMessage,
   AgentRuntimeHost,
@@ -40,17 +42,13 @@ function resolveDialogTitle(args: {
   return lastUserText ? lastUserText.slice(0, 80) : "Local agent run";
 }
 
-function normalizeNonEmptyString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function normalizeSubjectRef(ref: unknown): DialogSubjectRef | null {
   if (!ref || typeof ref !== "object") return null;
   const raw = ref as Record<string, unknown>;
-  const kind = normalizeNonEmptyString(raw.kind);
-  const id = normalizeNonEmptyString(raw.id);
+  const kind = asOptionalTrimmedString(raw.kind);
+  const id = asOptionalTrimmedString(raw.id);
   if (!kind || !id) return null;
-  const role = normalizeNonEmptyString(raw.role);
+  const role = asOptionalTrimmedString(raw.role);
   return {
     kind,
     id,
@@ -83,12 +81,12 @@ function buildDialogLineageFields(args: {
   input: AgentRuntimeSaveTurnInput;
   existingDialog?: DialogRecord | null;
 }) {
-  const inheritedFromDialogKey = normalizeNonEmptyString(args.input.inheritedFromDialogKey);
-  const parentDialogId = normalizeNonEmptyString(args.input.parentDialogId);
+  const inheritedFromDialogKey = asOptionalTrimmedString(args.input.inheritedFromDialogKey);
+  const parentDialogId = asOptionalTrimmedString(args.input.parentDialogId);
   if (!inheritedFromDialogKey && !parentDialogId) return {};
   const rootDialogId =
-    normalizeNonEmptyString(args.existingDialog?.rootDialogId) ??
-    normalizeNonEmptyString(args.existingDialog?.parentDialogId) ??
+    asOptionalTrimmedString(args.existingDialog?.rootDialogId) ??
+    asOptionalTrimmedString(args.existingDialog?.parentDialogId) ??
     parentDialogId;
   return {
     ...(inheritedFromDialogKey ? { inheritedFromDialogKey } : {}),
@@ -148,7 +146,7 @@ export function buildAgentRuntimeDialogWritePlan(args: {
   const dialogKey = `dialog-${args.userId}-${dialogId}`;
   const subjectRefs = buildRuntimeSubjectRefs(args.input.runtimeContext);
   const dialogRecord = {
-    ...(args.existingDialog && typeof args.existingDialog === "object" ? args.existingDialog : {}),
+    ...asRecordOrEmpty(args.existingDialog),
     id: dialogId,
     dbKey: dialogKey,
     type: "dialog",
@@ -166,8 +164,12 @@ export function buildAgentRuntimeDialogWritePlan(args: {
     updatedAt: nowIso,
     finishedAt: args.now,
     usage: args.input.result.usage,
-    ...(normalizeNonEmptyString(args.input.spaceId) ? { spaceId: normalizeNonEmptyString(args.input.spaceId) } : {}),
-    ...(normalizeNonEmptyString(args.input.category) ? { category: normalizeNonEmptyString(args.input.category) } : {}),
+    ...(asOptionalTrimmedString(args.input.spaceId)
+      ? { spaceId: asOptionalTrimmedString(args.input.spaceId) }
+      : {}),
+    ...(asOptionalTrimmedString(args.input.category)
+      ? { category: asOptionalTrimmedString(args.input.category) }
+      : {}),
     ...(subjectRefs ? { subjectRefs } : {}),
     ...buildDialogLineageFields({
       input: args.input,
@@ -183,10 +185,7 @@ export function buildAgentRuntimeDialogWritePlan(args: {
     ...(args.input.result.runtimeToolSurface
       ? {
           runtimeCheckpoint: {
-            ...(args.existingDialog?.runtimeCheckpoint &&
-            typeof args.existingDialog.runtimeCheckpoint === "object"
-              ? args.existingDialog.runtimeCheckpoint
-              : {}),
+            ...asRecordOrEmpty(args.existingDialog?.runtimeCheckpoint),
             toolSurface: args.input.result.runtimeToolSurface,
           },
         }

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
+import { toErrorMessage } from "../../core/errorMessage";
 
 import type { AuthorityStore } from "./authorityStoreTypes";
 import type {
@@ -120,7 +121,7 @@ function createErrorResponse(error: unknown): CliAuthorityBrokerResponse {
     ok: false,
     error: {
       code: "BROKER_INTERNAL_ERROR",
-      message: error instanceof Error ? error.message : String(error),
+      message: toErrorMessage(error),
     },
   };
 }

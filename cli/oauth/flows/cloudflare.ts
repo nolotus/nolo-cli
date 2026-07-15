@@ -1,3 +1,5 @@
+import { toErrorMessage } from "../../../core/errorMessage";
+import { asOptionalFiniteNumber } from "../../../core/optionalNumber";
 import { startCallbackServer, type CallbackServerHandle } from "../callback-server";
 import { generatePkcePair } from "../pkce";
 import type {
@@ -125,10 +127,7 @@ async function exchangeCloudflareToken(
     accessToken: data.access_token,
     refreshToken:
       typeof data.refresh_token === "string" ? data.refresh_token : undefined,
-    expiresIn:
-      typeof data.expires_in === "number" && Number.isFinite(data.expires_in)
-        ? data.expires_in
-        : undefined,
+    expiresIn: asOptionalFiniteNumber(data.expires_in),
     scope: typeof data.scope === "string" ? data.scope : undefined,
     idToken: typeof data.id_token === "string" ? data.id_token : undefined,
   };
@@ -161,7 +160,7 @@ export async function runCloudflareOAuthLogin(
     });
   } catch (err) {
     throw new Error(
-      `Failed to start Cloudflare OAuth callback server on ${CLOUDFLARE_OAUTH_REDIRECT_PORT}: ${err instanceof Error ? err.message : String(err)}`
+      `Failed to start Cloudflare OAuth callback server on ${CLOUDFLARE_OAUTH_REDIRECT_PORT}: ${toErrorMessage(err)}`
     );
   }
 
@@ -186,7 +185,7 @@ export async function runCloudflareOAuthLogin(
         await deps.openBrowser(authUrl);
       } catch (err) {
         error.error(
-          `Failed to open browser automatically: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to open browser automatically: ${toErrorMessage(err)}`
         );
       }
     }

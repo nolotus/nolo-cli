@@ -1,3 +1,5 @@
+import { compactWhitespace } from "../../core/compactWhitespace";
+import { asOptionalTrimmedString } from "../../core/optionalString";
 import { DEFAULT_NOLO_SERVER_URL } from "../defaultServer";
 import type { AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
 import {
@@ -130,9 +132,12 @@ export type TuiInputResult = {
 type EnvLike = Record<string, string | undefined>;
 
 export function createInitialTuiState(env: EnvLike = process.env): TuiState {
-  const agentKey = env.NOLO_AGENT?.trim() || DEFAULT_TUI_AGENT_KEY;
-  const agentName = env.NOLO_AGENT_NAME?.trim() || "nolo";
-  const cwd = (env.NOLO_CWD?.trim() || process.cwd()).replace(/\/+$/, "");
+  const agentKey =
+    asOptionalTrimmedString(env.NOLO_AGENT) ?? DEFAULT_TUI_AGENT_KEY;
+  const agentName = asOptionalTrimmedString(env.NOLO_AGENT_NAME) ?? "nolo";
+  const cwd = (
+    asOptionalTrimmedString(env.NOLO_CWD) ?? process.cwd()
+  ).replace(/\/+$/, "");
   const runtimeMode =
     env.NOLO_RUNTIME_MODE === "local" || env.NOLO_RUNTIME_MODE === "server"
       ? env.NOLO_RUNTIME_MODE
@@ -141,19 +146,20 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
   return {
     agentKey,
     agentName,
-    dialogId: env.NOLO_DIALOG_ID?.trim() || undefined,
-    dialogLabel: env.NOLO_DIALOG?.trim() || "new",
-    profileName: env.NOLO_PROFILE?.trim() || "local",
+    dialogId: asOptionalTrimmedString(env.NOLO_DIALOG_ID),
+    dialogLabel: asOptionalTrimmedString(env.NOLO_DIALOG) ?? "new",
+    profileName: asOptionalTrimmedString(env.NOLO_PROFILE) ?? "local",
     serverUrl: (env.NOLO_SERVER || env.BASE_URL || DEFAULT_TUI_SERVER_URL).replace(
       /\/+$/,
       ""
     ),
-    cliVersion: env.NOLO_CLI_VERSION?.trim() || undefined,
+    cliVersion: asOptionalTrimmedString(env.NOLO_CLI_VERSION),
     cwd,
     attachedDocs: [],
     attachedImages: [],
     runtimeMode,
-    modeLabel: env.NOLO_CLI_STATUS_MODE?.trim() || runtimeMode,
+    modeLabel:
+      asOptionalTrimmedString(env.NOLO_CLI_STATUS_MODE) ?? runtimeMode,
     gitStatus:
       env.NOLO_CLI_GIT_STATUS === "0" ? undefined : detectGitStatus(cwd),
     thinkingDisplay: normalizeThinkingDisplayMode(
@@ -427,7 +433,7 @@ export function stripImageTokens(input: string, hints: { raw: string }[]): strin
     const escaped = hint.raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     out = out.replace(new RegExp(escaped, "g"), "");
   }
-  return out.replace(/\s+/g, " ").trim();
+  return compactWhitespace(out);
 }
 
 export function handleTuiInput(input: string, state: TuiState): TuiInputResult {

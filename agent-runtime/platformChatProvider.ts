@@ -11,6 +11,8 @@ import {
   extractToolCallsFromResponseOutput,
   toResponsesTools,
 } from "../integrations/openai/responsesHelpers";
+import { normalizeServerOrigin } from "../core/serverOrigin";
+import { asNonEmptyStringArray } from "../core/stringArray";
 import {
   buildProviderExecutionPlan,
   canUsePlatformChatProvider as canUsePlatformChatProviderFromEnv,
@@ -558,7 +560,7 @@ export async function executePlatformChatCompletionWithFallback(args: {
   stream?: boolean;
   onTextDelta?: (chunk: string) => void;
 }): Promise<AgentRuntimeResult> {
-  const serverUrls = args.serverUrls.filter((url) => typeof url === "string" && url.trim());
+  const serverUrls = asNonEmptyStringArray(args.serverUrls);
   if (serverUrls.length === 0) {
     return executePlatformChatCompletion({
       providerConfig: args.providerConfig,
@@ -581,7 +583,7 @@ export async function executePlatformChatCompletionWithFallback(args: {
       }
     : undefined;
   for (let index = 0; index < serverUrls.length; index += 1) {
-    const serverUrl = serverUrls[index].trim().replace(/\/+$/, "");
+    const serverUrl = normalizeServerOrigin(serverUrls[index]);
     const providerConfig: PlatformChatProviderConfig = {
       ...args.providerConfig,
       serverUrl,

@@ -1,4 +1,6 @@
 import type { Message } from "../../app/types";
+import { isRecord } from "../../core/isRecord";
+import { asOptionalTrimmedString } from "../../core/optionalString";
 
 type MessageContentPart =
   | { type: "text"; text: string }
@@ -48,7 +50,7 @@ export type AssistantToolCall = ToolCall;
 const RESPONSES_TOP_LEVEL_SCHEMA_KEYS = ["anyOf", "oneOf", "allOf", "enum", "not"] as const;
 
 const sanitizeResponsesParameters = (parameters: any): any => {
-  if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) {
+  if (!isRecord(parameters)) {
     return parameters;
   }
 
@@ -221,10 +223,7 @@ export const extractTextFromResponseOutput = (response: any): string => {
 };
 
 const toDataUrl = (base64Data: string, mimeType?: string | null): string => {
-  const normalizedMimeType =
-    typeof mimeType === "string" && mimeType.trim()
-      ? mimeType.trim()
-      : "image/png";
+  const normalizedMimeType = asOptionalTrimmedString(mimeType) ?? "image/png";
   return `data:${normalizedMimeType};base64,${base64Data}`;
 };
 
@@ -235,15 +234,15 @@ export const extractImagePartsFromResponseOutput = (
 
   for (const item of response?.output ?? []) {
     if (item?.type === "image_generation_call") {
-      if (typeof item.result === "string" && item.result.trim()) {
+      const result = asOptionalTrimmedString(item.result);
+      if (result) {
+        const outputFormat = asOptionalTrimmedString(item.output_format);
         images.push({
           type: "image_url",
           image_url: {
             url: toDataUrl(
-              item.result.trim(),
-              typeof item.output_format === "string" && item.output_format.trim()
-                ? `image/${item.output_format.trim()}`
-                : undefined
+              result,
+              outputFormat ? `image/${outputFormat}` : undefined
             ),
           },
         });
@@ -253,16 +252,13 @@ export const extractImagePartsFromResponseOutput = (
 
     if (item?.type !== "message") continue;
     for (const content of item.content ?? []) {
-      if (
-        content?.type === "output_image" &&
-        typeof content.result === "string" &&
-        content.result.trim()
-      ) {
+      const result = asOptionalTrimmedString(content?.result);
+      if (content?.type === "output_image" && result) {
         images.push({
           type: "image_url",
           image_url: {
             url: toDataUrl(
-              content.result.trim(),
+              result,
               content.mime_type ?? content.mimeType ?? null
             ),
           },

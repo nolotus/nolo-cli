@@ -1,3 +1,6 @@
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { normalizeServerOrigin } from "../core/serverOrigin";
+import { asTrimmedString } from "../core/trimmedString";
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import { pickAgentRuntimeInferenceOptions } from "./agentConfigOptions";
 import type { CredentialBroker } from "./credentialBroker";
@@ -50,14 +53,12 @@ export async function resolveCredentialFromBroker(
   broker: CredentialBroker,
   ref: string,
 ): Promise<string | null> {
-  const trimmed = typeof ref === "string" ? ref.trim() : "";
+  const trimmed = asTrimmedString(ref);
   if (!trimmed) return null;
   try {
     if (!(await broker.has(trimmed))) return null;
     const secret = await broker.get(trimmed);
-    if (typeof secret !== "string") return null;
-    const value = secret.trim();
-    return value || null;
+    return asOptionalTrimmedString(secret) ?? null;
   } catch {
     return null;
   }
@@ -125,7 +126,7 @@ export type ProviderExecutionPlan =
   | ProxyProviderExecutionPlan;
 
 export function trimTrailingSlash(value: string) {
-  return value.trim().replace(/\/+$/, "");
+  return normalizeServerOrigin(value);
 }
 
 export function resolveChatCompletionsEndpoint(value: string) {
@@ -180,9 +181,7 @@ export function resolveAgentRuntimeLocation(args: {
   runtimeKind: "local" | "desktop" | "server";
 }): AgentRuntimeLocation {
   const runtimeBinding = args.agentConfig.runtimeBinding;
-  const machineId = typeof runtimeBinding?.machineId === "string"
-    ? runtimeBinding.machineId.trim()
-    : "";
+  const machineId = asTrimmedString(runtimeBinding?.machineId);
   if (machineId) return "bound-machine";
   if (args.runtimeKind === "server") return "server";
   return "local-host";
@@ -308,7 +307,10 @@ export async function buildProviderExecutionPlan(args: {
     }
 
     if (!apiKey) {
-      apiKey = agentConfig.apiKey?.trim() || agentConfig.apiKeyFromAgentKey?.trim() || "";
+      apiKey =
+        asOptionalTrimmedString(agentConfig.apiKey) ??
+        asOptionalTrimmedString(agentConfig.apiKeyFromAgentKey) ??
+        "";
     }
 
     const apiKeyHeader = resolveProviderAuthHeaderName({

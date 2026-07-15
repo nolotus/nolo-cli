@@ -1,3 +1,5 @@
+import { normalizeServerOrigin } from "./serverOrigin";
+
 export const DEFAULT_LOCAL_HOST = "127.0.0.1";
 export const DEFAULT_LOCAL_API_PORT = "38123";
 
@@ -11,7 +13,7 @@ export const LOOPBACK_HOSTNAMES = new Set([
 ]);
 
 export function normalizeOrigin(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+  return normalizeServerOrigin(value);
 }
 
 /**

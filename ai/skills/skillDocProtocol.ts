@@ -1,3 +1,5 @@
+import { asOptionalTrimmedString } from "../../core/optionalString";
+import { asTrimmedNonEmptyStringArray } from "../../core/stringArray";
 import { dump as dumpYaml, load as loadYaml } from "js-yaml";
 
 const SKILL_DOC_ENUMS = {
@@ -102,11 +104,8 @@ export const normalizeStringArray = (
   value: unknown
 ): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
-  const items = value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return items.length > 0 ? Array.from(new Set(items)) : undefined;
+  const items = [...new Set(asTrimmedNonEmptyStringArray(value))];
+  return items.length > 0 ? items : undefined;
 };
 
 const normalizeBoolean = (value: unknown): boolean | undefined =>
@@ -145,14 +144,8 @@ const normalizeSkillConfig = (
 ): SkillDocConfig | undefined => {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
-  const name =
-    typeof record.name === "string" && record.name.trim()
-      ? record.name.trim()
-      : "";
-  const description =
-    typeof record.description === "string" && record.description.trim()
-      ? record.description.trim()
-      : "";
+  const name = asOptionalTrimmedString(record.name) ?? "";
+  const description = asOptionalTrimmedString(record.description) ?? "";
 
   if (!name || !description) return undefined;
 
@@ -180,10 +173,7 @@ const normalizeSkillConfig = (
   return {
     version: "0.1",
     kind: "skill",
-    id:
-      typeof record.id === "string" && record.id.trim()
-        ? record.id.trim()
-        : undefined,
+    id: asOptionalTrimmedString(record.id),
     name,
     description,
     triggerMode,
@@ -194,10 +184,7 @@ const normalizeSkillConfig = (
     modalities,
     requiredSkills: normalizeStringArray(record.requiredSkills),
     recommendedSkills: normalizeStringArray(record.recommendedSkills),
-    promptPatch:
-      typeof record.promptPatch === "string" && record.promptPatch.trim()
-        ? record.promptPatch.trim()
-        : undefined,
+    promptPatch: asOptionalTrimmedString(record.promptPatch),
     discover:
       discover?.keywords || discover?.examples ? discover : undefined,
   };
@@ -211,10 +198,7 @@ const normalizeEvalConfig = (value: unknown): SkillEvalConfig | undefined => {
   for (const item of record.cases) {
     if (!item || typeof item !== "object") continue;
     const testCase = item as Record<string, unknown>;
-    const input =
-      typeof testCase.input === "string" && testCase.input.trim()
-        ? testCase.input.trim()
-        : "";
+    const input = asOptionalTrimmedString(testCase.input) ?? "";
     if (!input) continue;
     cases.push({
       input,
@@ -235,43 +219,25 @@ const normalizeEvalConfig = (value: unknown): SkillEvalConfig | undefined => {
 const normalizeWorkflowConfig = (value: unknown): WorkflowReferenceConfig | undefined => {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
-  const name =
-    typeof record.name === "string" && record.name.trim()
-      ? record.name.trim()
-      : "";
-  const description =
-    typeof record.description === "string" && record.description.trim()
-      ? record.description.trim()
-      : "";
+  const name = asOptionalTrimmedString(record.name) ?? "";
+  const description = asOptionalTrimmedString(record.description) ?? "";
   if (!name || !description) return undefined;
   const budgetTier = normalizeSkillEnumValue("budgetTier", record.budgetTier);
   return {
     version: "0.1",
     kind: "workflow",
-    id:
-      typeof record.id === "string" && record.id.trim()
-        ? record.id.trim()
-        : undefined,
+    id: asOptionalTrimmedString(record.id),
     name,
     description,
-    defaultAgent:
-      typeof record.defaultAgent === "string" && record.defaultAgent.trim()
-        ? record.defaultAgent.trim()
-        : undefined,
+    defaultAgent: asOptionalTrimmedString(record.defaultAgent),
     inputs: normalizeStringArray(record.inputs),
     recommendedTools: normalizeStringArray(record.recommendedTools),
     requiredTools: normalizeStringArray(record.requiredTools),
     requiredOutputs: normalizeStringArray(record.requiredOutputs),
     gates: normalizeStringArray(record.gates),
     budgetTier,
-    contextStrategy:
-      typeof record.contextStrategy === "string" && record.contextStrategy.trim()
-        ? record.contextStrategy.trim()
-        : undefined,
-    failureProtocol:
-      typeof record.failureProtocol === "string" && record.failureProtocol.trim()
-        ? record.failureProtocol.trim()
-        : undefined,
+    contextStrategy: asOptionalTrimmedString(record.contextStrategy),
+    failureProtocol: asOptionalTrimmedString(record.failureProtocol),
   };
 };
 
@@ -474,7 +440,7 @@ export const buildSkillDocMarkdown = (options: {
   workflowConfig?: WorkflowReferenceConfig;
 }): string => {
   const sections = [
-    options.body?.trim() || "",
+    asOptionalTrimmedString(options.body) ?? "",
     buildSkillConfigComment(options.skillConfig),
     options.evalConfig ? buildEvalConfigComment(options.evalConfig) : "",
     options.workflowConfig ? buildWorkflowConfigComment(options.workflowConfig) : "",
@@ -511,20 +477,9 @@ export const parseExternalSkillMarkdown = (
 ): ParsedExternalSkillMarkdown => {
   const { frontmatter, body } = extractFrontmatter(markdown);
   return {
-    name:
-      typeof frontmatter?.name === "string" && frontmatter.name.trim()
-        ? frontmatter.name.trim()
-        : undefined,
-    description:
-      typeof frontmatter?.description === "string" &&
-      frontmatter.description.trim()
-        ? frontmatter.description.trim()
-        : undefined,
-    compatibility:
-      typeof frontmatter?.compatibility === "string" &&
-      frontmatter.compatibility.trim()
-        ? frontmatter.compatibility.trim()
-        : undefined,
+    name: asOptionalTrimmedString(frontmatter?.name),
+    description: asOptionalTrimmedString(frontmatter?.description),
+    compatibility: asOptionalTrimmedString(frontmatter?.compatibility),
     allowedTools: normalizeAllowedTools(frontmatter?.["allowed-tools"]),
     metadata:
       frontmatter?.metadata && typeof frontmatter.metadata === "object"

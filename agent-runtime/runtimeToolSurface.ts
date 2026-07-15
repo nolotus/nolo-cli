@@ -1,3 +1,5 @@
+import { asTrimmedNonEmptyStringArray } from "../core/stringArray";
+
 export const DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOLS = [
   "listDialogs",
   "readDialog",
@@ -61,14 +63,7 @@ export type RuntimeToolSurfaceForAgentInput = {
 };
 
 function uniqueToolNames(values: readonly string[]) {
-  return [
-    ...new Set(
-      values
-        .filter((value) => typeof value === "string")
-        .map((value) => value.trim())
-        .filter(Boolean)
-    ),
-  ];
+  return [...new Set(asTrimmedNonEmptyStringArray(values))];
 }
 
 function canInjectPrivateDefaults(args: RuntimeToolSurfaceInput) {
@@ -122,7 +117,7 @@ export function resolveRuntimeToolSurface(
 export function isPublicRuntimeAgentRef(value: unknown) {
   return (
     typeof value === "string" &&
-    (value.startsWith("agent-pub-") || value.startsWith("cybot-pub-"))
+    (value.startsWith("agent-pub-"))
   );
 }
 
@@ -131,10 +126,6 @@ export function inferOwnerIdFromRuntimeAgentKey(value: unknown) {
   const privateAgentMatch = value.match(/^agent-([^-]+)-(.+)$/);
   if (privateAgentMatch && privateAgentMatch[1] !== "pub") {
     return privateAgentMatch[1];
-  }
-  const privateCybotMatch = value.match(/^cybot-([^-]+)-(.+)$/);
-  if (privateCybotMatch && privateCybotMatch[1] !== "pub") {
-    return privateCybotMatch[1];
   }
   return null;
 }
@@ -146,9 +137,7 @@ export function resolveRuntimeToolSurfaceForAgent(
   const currentUserId = typeof args.currentUserId === "string" ? args.currentUserId : "";
   const inferredOwnerId =
     args.agentOwnerId ??
-    (currentUserId &&
-    (agentKey.startsWith(`agent-${currentUserId}-`) ||
-      agentKey.startsWith(`cybot-${currentUserId}-`))
+    (currentUserId && agentKey.startsWith(`agent-${currentUserId}-`)
       ? currentUserId
       : inferOwnerIdFromRuntimeAgentKey(agentKey));
   const publicRef = isPublicRuntimeAgentRef(agentKey);

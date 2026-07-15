@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
+import { toErrorMessage } from "../core/errorMessage";
 
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"] as const;
 export type ImageExtension = (typeof IMAGE_EXTENSIONS)[number];
@@ -257,7 +258,7 @@ export async function readImageAsDataUrl(
 
 function classifyFsError(error: unknown, path: string): ImageReadError {
   const code = (error as { code?: string } | null)?.code;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = toErrorMessage(error);
   switch (code) {
     case "ENOENT":
       return new ImageReadError("not-found", path, `image not found: ${path}`);

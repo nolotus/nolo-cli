@@ -7,6 +7,8 @@
  * - Broker is device-local and OS-user scoped; cloud vault is out of scope (M6).
  */
 
+import { asTrimmedString } from "../core/trimmedString";
+
 /** Opaque credential reference (e.g. `api-key:agent-foo` or source-owned id). */
 export type CredentialRef = string;
 
@@ -21,7 +23,7 @@ export type CredentialBroker = {
 };
 
 export function assertCredentialRef(ref: CredentialRef): string {
-  const trimmed = typeof ref === "string" ? ref.trim() : "";
+  const trimmed = asTrimmedString(ref);
   if (!trimmed) {
     // Stable code for external surfaces — never echo the raw ref value.
     throw new Error("invalid_ref");

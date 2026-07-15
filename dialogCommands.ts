@@ -19,6 +19,17 @@ import {
   deleteDialogAttachmentCandidates,
   planDialogAttachmentCleanup,
 } from "./dialogAttachmentCleanup";
+import { toErrorMessage } from "./core/errorMessage";
+import { isRecord } from "./core/isRecord";
+import { asOptionalTrimmedString } from "./core/optionalString";
+import { parsePositiveFiniteNumberOrFallback } from "./core/positiveFiniteNumberOrFallback";
+import { parsePositiveIntegerOrFallback } from "./core/positiveIntegerOrFallback";
+import { asRecordOrEmpty } from "./core/recordOrEmpty";
+import {
+  asNonEmptyStringArray,
+  asTrimmedNonEmptyStringArray,
+} from "./core/stringArray";
+import { asTrimmedString } from "./core/trimmedString";
 
 type ReadSource = "http" | "local-db-fallback";
 
@@ -128,8 +139,7 @@ function resolveResultLimit(args: string[], fallback: number): ResultLimit {
 function readOffset(args: string[]) {
   const raw = readOption(args, "--offset");
   if (!raw) return 0;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+  return Math.floor(parsePositiveFiniteNumberOrFallback(raw, 0));
 }
 
 /** Stream pretty JSON without one intermediate stringify of huge nested arrays when possible. */
@@ -231,27 +241,19 @@ function resolveDialogInput(rawInput: string, userId: string) {
 }
 
 function normalizeDialogRecord(record: any, fallbackDbKey?: string): ListedDialog | null {
-  const dbKey =
-    typeof record?.dbKey === "string" && record.dbKey.trim()
-      ? record.dbKey.trim()
-      : fallbackDbKey ?? "";
+  const dbKey = asOptionalTrimmedString(record?.dbKey) ?? fallbackDbKey ?? "";
   const id =
-    typeof record?.id === "string" && record.id.trim()
-      ? record.id.trim()
-      : dbKey
-        ? getDialogIdFromKey(dbKey)
-        : "";
+    asOptionalTrimmedString(record?.id) ??
+    (dbKey ? getDialogIdFromKey(dbKey) : "");
   if (!dbKey || !id) return null;
 
   return {
     id,
     dbKey,
     title:
-      typeof record?.title === "string" && record.title.trim()
-        ? record.title.trim()
-        : typeof record?.taskLabel === "string" && record.taskLabel.trim()
-          ? record.taskLabel.trim()
-          : "(untitled)",
+      asOptionalTrimmedString(record?.title) ??
+      asOptionalTrimmedString(record?.taskLabel) ??
+      "(untitled)",
     status: typeof record?.status === "string" ? record.status : null,
     updatedAt:
       typeof record?.updatedAt === "string" || typeof record?.updatedAt === "number"
@@ -397,8 +399,7 @@ function readDialogLimitArg(args: string[], fallback: number) {
   );
   const raw = explicit ?? positional;
   if (!raw) return fallback;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  return parsePositiveIntegerOrFallback(raw, fallback);
 }
 
 function readDialogOwnerId(args: string[], env: Record<string, string | undefined>, authToken: string) {
@@ -457,7 +458,7 @@ function resolveDialogReadTarget(args: string[], env: Record<string, string | un
 }
 
 function toToolName(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+  return asTrimmedString(value);
 }
 
 function countByName(values: string[]) {
@@ -490,7 +491,7 @@ function deriveWrittenFiles(toolMessages: any[]) {
     const payload = message?.toolPayload ?? {};
     const content = parseJsonObject(message?.content);
     for (const candidate of [payload?.input?.filePath, payload?.response?.filePath, content?.filePath]) {
-      const normalized = typeof candidate === "string" ? candidate.trim() : "";
+      const normalized = asTrimmedString(candidate);
       if (normalized) files.push(normalized);
     }
   }
@@ -615,7 +616,7 @@ async function tryHttpDialogCandidates(args: {
           typeof error === "object" && error !== null && "status" in error
             ? Number((error as any).status)
             : undefined,
-        message: error instanceof Error ? error.message : String(error),
+        message: toErrorMessage(error),
       });
     }
   }
@@ -677,13 +678,13 @@ async function readDialogSnapshot(args: {
 }
 
 function compact(value: unknown, max = 180) {
-  const text = typeof value === "string" ? value.trim() : "";
+  const text = asTrimmedString(value);
   if (!text) return "";
   return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
 function normalizeNonEmptyString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  return asOptionalTrimmedString(value) ?? null;
 }
 
 type DialogSubjectRef = {
@@ -692,26 +693,17 @@ type DialogSubjectRef = {
   role?: string;
 };
 
-function isRecord(value: unknown): value is Record<string, any> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function normalizeSubjectKind(kind: string) {
   return kind === "tableRow" ? "table-row" : kind;
 }
 
 function normalizeDialogSubjectRef(value: unknown): DialogSubjectRef | null {
   if (!isRecord(value)) return null;
-  const kind = typeof value.kind === "string" && value.kind.trim()
-    ? normalizeSubjectKind(value.kind.trim())
-    : "";
-  const id = typeof value.id === "string" && value.id.trim()
-    ? value.id.trim()
-    : "";
+  const kindRaw = asOptionalTrimmedString(value.kind);
+  const kind = kindRaw ? normalizeSubjectKind(kindRaw) : "";
+  const id = asOptionalTrimmedString(value.id) ?? "";
   if (!kind || !id) return null;
-  const role = typeof value.role === "string" && value.role.trim()
-    ? value.role.trim()
-    : "";
+  const role = asOptionalTrimmedString(value.role) ?? "";
   return {
     kind,
     id,
@@ -747,30 +739,22 @@ function artifactEvidenceCount(value: unknown) {
 }
 
 function summarizeDialogEvidence(dialog: any, target: DialogSubjectRef) {
-  const dialogKey = typeof dialog?.dbKey === "string" && dialog.dbKey.trim()
-    ? dialog.dbKey.trim()
-    : "";
-  const checkpoint = isRecord(dialog?.runtimeCheckpoint) ? dialog.runtimeCheckpoint : {};
+  const dialogKey = asOptionalTrimmedString(dialog?.dbKey) ?? "";
+  const checkpoint = asRecordOrEmpty(dialog?.runtimeCheckpoint);
   const matchedSubjectRefs = extractDialogSubjectRefs(dialog).filter(
     (ref) => ref.kind === normalizeSubjectKind(target.kind) && ref.id === target.id
   );
-  const lastToolNames = Array.isArray(checkpoint.lastToolNames)
-    ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0)
-    : [];
+  const lastToolNames = asNonEmptyStringArray(checkpoint.lastToolNames);
 
   return {
     dialogId:
-      typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
-        ? dialog.dialogId.trim()
-        : typeof dialog?.id === "string" && dialog.id.trim()
-          ? dialog.id.trim()
-          : dialogKey
-            ? getDialogIdFromKey(dialogKey)
-            : null,
+      asOptionalTrimmedString(dialog?.dialogId) ??
+      asOptionalTrimmedString(dialog?.id) ??
+      (dialogKey ? getDialogIdFromKey(dialogKey) : null),
     dialogKey: dialogKey || null,
-    title: typeof dialog?.title === "string" && dialog.title.trim() ? dialog.title.trim() : null,
-    status: typeof dialog?.status === "string" && dialog.status.trim() ? dialog.status.trim() : null,
-    checkpointStatus: typeof checkpoint.status === "string" && checkpoint.status.trim() ? checkpoint.status.trim() : null,
+    title: asOptionalTrimmedString(dialog?.title) ?? null,
+    status: asOptionalTrimmedString(dialog?.status) ?? null,
+    checkpointStatus: asOptionalTrimmedString(checkpoint.status) ?? null,
     updatedAt:
       typeof dialog?.updatedAt === "string" || typeof dialog?.updatedAt === "number"
         ? dialog.updatedAt
@@ -787,14 +771,12 @@ function verifyDialogSubjectQuery(dialogs: any[], target: DialogSubjectRef, allo
     .filter((dialog) => !dialogMatchesSubjectRef(dialog, target))
     .map((dialog) => ({
       dialogId:
-        typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
-          ? dialog.dialogId.trim()
-          : typeof dialog?.id === "string" && dialog.id.trim()
-            ? dialog.id.trim()
-            : typeof dialog?.dbKey === "string"
-              ? getDialogIdFromKey(dialog.dbKey)
-              : null,
-      dialogKey: typeof dialog?.dbKey === "string" && dialog.dbKey.trim() ? dialog.dbKey.trim() : null,
+        asOptionalTrimmedString(dialog?.dialogId) ??
+        asOptionalTrimmedString(dialog?.id) ??
+        (typeof dialog?.dbKey === "string"
+          ? getDialogIdFromKey(dialog.dbKey)
+          : null),
+      dialogKey: asOptionalTrimmedString(dialog?.dbKey) ?? null,
       subjectRefs: extractDialogSubjectRefs(dialog),
     }));
   const reason =
@@ -898,31 +880,36 @@ function renderCompactDialogStatus(snapshot: any) {
         : status === "running" || status === "pending" || status === "queued"
           ? "active"
           : "unknown";
-  const tools = Array.isArray(snapshot.toolsUsed)
-    ? snapshot.toolsUsed.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0).slice(0, 8)
-    : Array.isArray(checkpoint.lastToolNames)
-      ? checkpoint.lastToolNames.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0).slice(0, 8)
-      : [];
-  const files = Array.isArray(snapshot.writtenFiles) && snapshot.writtenFiles.length
-    ? snapshot.writtenFiles.filter((file: unknown): file is string => typeof file === "string" && file.trim().length > 0).slice(0, 8)
-    : snapshot.artifacts && typeof snapshot.artifacts === "object" && Array.isArray(snapshot.artifacts.changedFiles ?? snapshot.artifacts.writtenFiles ?? snapshot.artifacts.files)
-      ? (snapshot.artifacts.changedFiles ?? snapshot.artifacts.writtenFiles ?? snapshot.artifacts.files)
-        .filter((file: unknown): file is string => typeof file === "string" && file.trim().length > 0)
-        .slice(0, 8)
-      : [];
+  const tools = (
+    Array.isArray(snapshot.toolsUsed)
+      ? asNonEmptyStringArray(snapshot.toolsUsed)
+      : asNonEmptyStringArray(checkpoint.lastToolNames)
+  ).slice(0, 8);
+  const artifactFiles =
+    snapshot.artifacts && typeof snapshot.artifacts === "object"
+      ? (snapshot.artifacts.changedFiles ??
+        snapshot.artifacts.writtenFiles ??
+        snapshot.artifacts.files)
+      : undefined;
+  const files = (
+    Array.isArray(snapshot.writtenFiles) && snapshot.writtenFiles.length
+      ? asNonEmptyStringArray(snapshot.writtenFiles)
+      : asNonEmptyStringArray(artifactFiles)
+  ).slice(0, 8);
   const subjectRefs = Array.isArray(snapshot.subjectRefs)
     ? snapshot.subjectRefs
       .map((ref: any) => {
-        const kind = typeof ref?.kind === "string" ? ref.kind.trim() : "";
-        const id = typeof ref?.id === "string" ? ref.id.trim() : "";
+        const kind = asTrimmedString(ref?.kind);
+        const id = asTrimmedString(ref?.id);
         if (!kind || !id) return "";
-        const role = typeof ref?.role === "string" && ref.role.trim() ? `#${ref.role.trim()}` : "";
+        const rolePart = asOptionalTrimmedString(ref?.role);
+        const role = rolePart ? `#${rolePart}` : "";
         return `${kind}:${id}${role}`;
       })
       .filter(Boolean)
       .slice(0, 8)
     : [];
-  const runtimeContext = isRecord(snapshot.runtimeContext) ? snapshot.runtimeContext : {};
+  const runtimeContext = asRecordOrEmpty(snapshot.runtimeContext);
   const runtimeFieldLines = [
     ["triggerType", snapshot.triggerType],
     ["executionMode", snapshot.executionMode],
@@ -939,9 +926,7 @@ function renderCompactDialogStatus(snapshot: any) {
       return normalized ? `${label}: ${normalized}` : "";
     })
     .filter(Boolean);
-  const toolErrors = Array.isArray(snapshot.toolErrors)
-    ? snapshot.toolErrors.filter((tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0).slice(0, 8)
-    : [];
+  const toolErrors = asNonEmptyStringArray(snapshot.toolErrors).slice(0, 8);
   const checkpointUpdatedAt = typeof checkpoint.updatedAt === "number" || typeof checkpoint.updatedAt === "string"
     ? Date.parse(String(checkpoint.updatedAt))
     : NaN;
@@ -1044,7 +1029,7 @@ export async function runDialogReadCommand(
   try {
     target = resolveDialogReadTarget(args, env, authToken);
   } catch (error) {
-    output.write(`[nolo] dialog read failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] dialog read failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
   if (!target) {
@@ -1076,10 +1061,10 @@ export async function runDialogReadCommand(
       ? read.meta.toolsUsed.map((tool: unknown) => toToolName(tool)).filter(Boolean)
       : uniq(toolNamesFromMessages);
     const writtenFiles = Array.isArray(read.meta?.writtenFiles) && read.meta.writtenFiles.length > 0
-      ? uniq(read.meta.writtenFiles.map((value: unknown) => (typeof value === "string" ? value.trim() : "")).filter(Boolean))
+      ? uniq(asTrimmedNonEmptyStringArray(read.meta.writtenFiles))
       : deriveWrittenFiles(toolMessages);
     const toolErrors = Array.isArray(read.meta?.toolErrors) && read.meta.toolErrors.length > 0
-      ? uniq(read.meta.toolErrors.map((value: unknown) => (typeof value === "string" ? value.trim() : "")).filter(Boolean))
+      ? uniq(asTrimmedNonEmptyStringArray(read.meta.toolErrors))
       : deriveToolErrors(toolMessages);
 
     output.write(JSON.stringify({
@@ -1134,7 +1119,7 @@ export async function runDialogReadCommand(
     output.write("\n");
     return 0;
   } catch (error) {
-    output.write(`[nolo] dialog read failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] dialog read failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
 }
@@ -1160,7 +1145,7 @@ export async function runDialogStatusCommand(
   try {
     target = resolveDialogReadTarget(args, env, authToken);
   } catch (error) {
-    output.write(`[nolo] dialog status failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] dialog status failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
   if (!target) {
@@ -1185,7 +1170,7 @@ export async function runDialogStatusCommand(
     }));
     return 0;
   } catch (error) {
-    output.write(`[nolo] dialog status failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] dialog status failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
 }
@@ -1291,7 +1276,7 @@ export async function runDialogQueryCommand(
 
     return strict.ok ? 0 : 1;
   } catch (error) {
-    output.write(`[nolo] dialog query failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] dialog query failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
 }
@@ -1427,7 +1412,7 @@ export async function runDialogListCommand(
   } catch (error) {
     output.write(
       `[nolo] dialog list failed: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
     return 1;
@@ -1588,7 +1573,7 @@ export async function runDialogDeleteCommand(
       }
     } catch (error) {
       hasErrors = true;
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = toErrorMessage(error);
       if (hasFlag(args, "--json")) {
         payloads.push({
           rawDialog,

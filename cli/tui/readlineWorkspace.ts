@@ -25,6 +25,7 @@ import {
   type TuiState,
 } from "./session";
 import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
+import { toErrorMessage } from "../../core/errorMessage";
 import { t } from "./i18n";
 
 export type SelfUpdater = (
@@ -291,7 +292,7 @@ function waitForActionGate(
         });
         exitCode = await proc.exited;
       } catch (error) {
-        errorMessage = error instanceof Error ? error.message : String(error);
+        errorMessage = toErrorMessage(error);
       } finally {
         if (restoreRawMode) rawInput.setRawMode?.(true);
         rl.resume();
@@ -890,7 +891,7 @@ function waitForRawActionGate(
         });
         exitCode = await proc.exited;
       } catch (error) {
-        errorMessage = error instanceof Error ? error.message : String(error);
+        errorMessage = toErrorMessage(error);
       } finally {
         hooks?.afterSubprocess?.();
         if (wasRaw) rawInput.setRawMode?.(true);
@@ -975,7 +976,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         };
       } catch (error: any) {
         output.write(
-          `[nolo] Compact failed: ${error?.message ?? String(error)}\n`
+          `[nolo] Compact failed: ${toErrorMessage(error)}\n`
         );
       }
     }
@@ -989,7 +990,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           output.write("Update failed. Check the error above, then run /update again or use nolo update.\n");
         }
       } catch (error) {
-        output.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        output.write(`${toErrorMessage(error)}\n`);
         output.write("Update failed. Check the error above, then run /update again or use nolo update.\n");
       }
     }
@@ -1023,7 +1024,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
       } catch (error) {
         output.write(
-          `[nolo] Agent picker failed: ${error instanceof Error ? error.message : String(error)}\n`
+          `[nolo] Agent picker failed: ${toErrorMessage(error)}\n`
         );
       } finally {
         fixedInput.resumeFromDialog();
@@ -1044,7 +1045,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
       } catch (error) {
         output.write(
-          `[nolo] Agent list failed: ${error instanceof Error ? error.message : String(error)}\n`
+          `[nolo] Agent list failed: ${toErrorMessage(error)}\n`
         );
       }
     }
@@ -1062,7 +1063,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
       } catch (error) {
         output.write(
-          `[nolo] CLI command failed: ${error instanceof Error ? error.message : String(error)}\n`
+          `[nolo] CLI command failed: ${toErrorMessage(error)}\n`
         );
       }
     }

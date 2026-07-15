@@ -36,6 +36,11 @@ import {
   CLI_PROVIDER_NAMES,
   isCliProviderAgentConfig,
 } from "./agentRunTypes";
+import { isGatewayHttpStatus } from "../core/gatewayHttpStatus";
+import { normalizeAgentHandle } from "../core/agentHandle";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedString } from "../core/trimmedString";
+import { toErrorMessage } from "../core/errorMessage";
 
 /** Local loop is heavy; load only when a local turn actually runs. */
 async function loadRunLocalAgentTurn() {
@@ -231,13 +236,9 @@ function resolveServerPlatformToolNames(agentConfig: any) {
   ]);
 }
 
-function normalizeAgentRef(ref?: string) {
-  return ref?.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function isKnownServerPlatformAgent(options: RunAgentTurnOptions) {
   if (KNOWN_SERVER_PLATFORM_AGENT_KEYS.has(options.agentKey)) return true;
-  const normalizedKey = normalizeAgentRef(options.agentKey);
+  const normalizedKey = normalizeAgentHandle(options.agentKey);
   return Boolean(normalizedKey && KNOWN_SERVER_PLATFORM_AGENT_ALIASES.has(normalizedKey));
 }
 
@@ -484,7 +485,7 @@ function formatUsage(usage: any, dialogId: unknown) {
 
 function buildTransportErrorHint(serverUrl: string, error: unknown) {
   const endpoint = `${serverUrl}/api/agent/run`;
-  const reason = error instanceof Error ? error.message : String(error);
+  const reason = toErrorMessage(error);
 
   let detail =
     `[nolo] Could not reach ${endpoint}.\n` +
@@ -507,15 +508,11 @@ function buildTransportErrorHint(serverUrl: string, error: unknown) {
   return detail;
 }
 
-function isGatewayAgentRunStatus(status: number) {
-  return status === 502 || status === 503 || status === 504;
-}
-
 async function readAgentRunFailureMetadata(res: Response): Promise<{ dialogId?: string }> {
   const data = await res.clone().json().catch(() => ({}));
   return {
-    ...(typeof data?.dialogId === "string" && data.dialogId.trim()
-      ? { dialogId: data.dialogId.trim() }
+    ...(asOptionalTrimmedString(data?.dialogId)
+      ? { dialogId: asOptionalTrimmedString(data?.dialogId) }
       : {}),
   };
 }
@@ -575,7 +572,7 @@ async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string)
     return { exitCode: 1 };
   }
 
-  if (shouldStream && isGatewayAgentRunStatus(res.status)) {
+  if (shouldStream && isGatewayHttpStatus(res.status)) {
     const failureMeta = await readAgentRunFailureMetadata(res);
     if (!failureMeta.dialogId) {
       spinner.stop();
@@ -610,11 +607,11 @@ async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string)
 
   if (!res.ok) {
     options.output.write(`[nolo] Agent request failed: HTTP ${res.status}\n`);
-    const errorText = typeof data?.error === "string" ? data.error.trim() : "";
-    const messageText = typeof data?.message === "string" ? data.message.trim() : "";
-    const reasonText = typeof data?.reason === "string" ? data.reason.trim() : "";
-    const codeText = typeof data?.code === "string" ? data.code.trim() : "";
-    const dialogIdText = typeof data?.dialogId === "string" ? data.dialogId.trim() : "";
+    const errorText = asTrimmedString(data?.error);
+    const messageText = asTrimmedString(data?.message);
+    const reasonText = asTrimmedString(data?.reason);
+    const codeText = asTrimmedString(data?.code);
+    const dialogIdText = asTrimmedString(data?.dialogId);
     if (errorText || messageText) {
       options.output.write(`${errorText || messageText}\n`);
       if (messageText && messageText !== errorText) {
@@ -782,7 +779,7 @@ async function runLocalAgentTurnForCli(
     if (settings.reportFailure) {
       options.output.write(
         `[nolo] Local agent run failed: ${
-          error instanceof Error ? error.message : String(error)
+          toErrorMessage(error)
         }\n`
       );
     }
@@ -883,7 +880,7 @@ async function readStreamingAgentRun(
       if (raw) handlePayload(JSON.parse(raw));
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toErrorMessage(error);
     if (dialogId) {
       options.output.write(
         `\n[nolo] Agent stream transport interrupted after dialog ${dialogId} was created: ${message}\n`
@@ -958,11 +955,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
       }
       // M3: no server fallback without an auth token. Surface local failure instead.
       if (!authToken) {
-        const localErrorMessage = localResult.localError instanceof Error
-          ? localResult.localError.message
-          : localResult.localError
-            ? String(localResult.localError)
-            : "local runtime failed";
+        const localErrorMessage = localResult.localError
+          ? toErrorMessage(localResult.localError)
+          : "local runtime failed";
         options.output.write(
           `[nolo] auto runtime: local run unavailable (${localErrorMessage}). ` +
             "No auth token is set, so server fallback is disabled. " +
@@ -975,7 +970,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
       }
       if (localResult.localError) {
         options.output.write(
-          `[nolo] auto runtime: local run unavailable (${localResult.localError instanceof Error ? localResult.localError.message : String(localResult.localError)}); falling back to server.\n`
+          `[nolo] auto runtime: local run unavailable (${toErrorMessage(localResult.localError)}); falling back to server.\n`
         );
       }
     }

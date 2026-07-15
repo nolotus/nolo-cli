@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { clipMultilineText } from "../core/clipMultilineText";
+import { toErrorMessage } from "../core/errorMessage";
 import type { MachineRunPermissionPolicy } from "../ai/agent/machineRunPermissions";
 import { readPipeText, spawnProcess } from "./processSpawn";
 
@@ -94,9 +96,9 @@ export async function collectConnectorRunArtifact(args: {
       runGit(["diff", "--stat"], args.cwd),
       runGit(["diff", "--no-color", "--unified=3"], args.cwd),
     ]);
-    const patchPreview = patchText && patchText.length > MAX_PATCH_PREVIEW_CHARS
-      ? `${patchText.slice(0, MAX_PATCH_PREVIEW_CHARS)}\n...[truncated ${patchText.length - MAX_PATCH_PREVIEW_CHARS} chars]`
-      : patchText || undefined;
+    const patchPreview = patchText
+      ? clipMultilineText(patchText, MAX_PATCH_PREVIEW_CHARS) || undefined
+      : undefined;
     return {
       cwd: args.cwd,
       exitStatus: args.exitStatus,
@@ -116,7 +118,7 @@ export async function collectConnectorRunArtifact(args: {
       collectedAt,
       baseSha: args.baseSha ?? null,
       ...(args.error ? { error: args.error } : {}),
-      artifactError: error instanceof Error ? error.message : String(error),
+      artifactError: toErrorMessage(error),
     };
   }
 }

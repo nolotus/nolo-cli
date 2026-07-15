@@ -1,4 +1,6 @@
 import { DEFAULT_LOCAL_API_ORIGIN } from "../core/localOrigins";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { normalizeServerOrigin } from "../core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { NOLO_CLUSTER_SERVERS } from "../database/config";
 import { dirname, extname, join } from "node:path";
@@ -7,7 +9,9 @@ import { fileURLToPath } from "node:url";
 export type EnvLike = Record<string, string | undefined>;
 
 export function resolveServerUrlFromEnv(env: EnvLike) {
-  return (env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL).replace(/\/+$/, "");
+  return normalizeServerOrigin(
+    env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL,
+  );
 }
 
 type ResolverInput = string[] | EnvLike;
@@ -20,7 +24,7 @@ function buildServerCandidates(values: Array<string | null | undefined>) {
   return [...new Set(
     values
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-      .map((value) => value.replace(/\/+$/, ""))
+      .map((value) => normalizeServerOrigin(value))
   )];
 }
 
@@ -31,7 +35,7 @@ export function resolveServerUrl(input: ResolverInput, env?: EnvLike) {
     const explicit =
       readOption(input, "--server-url") ||
       readOption(input, "--server");
-    return explicit?.replace(/\/+$/, "") || resolveServerUrlFromEnv(env ?? {});
+    return normalizeServerOrigin(explicit) || resolveServerUrlFromEnv(env ?? {});
   }
   return resolveServerUrlFromEnv(input);
 }
@@ -63,7 +67,7 @@ export function resolveServerCandidates(
 
   const env = input;
   return buildServerCandidates([
-    typeof envOrPreferred === "string" ? envOrPreferred.trim() : undefined,
+    asOptionalTrimmedString(envOrPreferred),
     env.NOLO_SERVER,
     env.BASE_URL,
     env.NOLO_SERVER_URL,
@@ -107,7 +111,7 @@ export function resolveDeleteServerCandidates(
   const env = input;
   return resolveDeleteServerCandidatesFromEnv(
     env,
-    typeof envOrPreferred === "string" ? envOrPreferred.trim() : undefined,
+    asOptionalTrimmedString(envOrPreferred),
   );
 }
 

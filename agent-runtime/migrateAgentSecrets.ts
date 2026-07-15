@@ -1,3 +1,4 @@
+import { asTrimmedString } from "../core/trimmedString";
 import type { CredentialBroker, CredentialRef } from "./credentialBroker";
 
 /**
@@ -39,23 +40,21 @@ export type AgentSecretMigrationResult = {
 };
 
 export function buildAgentApiKeyCredentialRef(agentKey: string): CredentialRef {
-  const key = typeof agentKey === "string" ? agentKey.trim() : "";
+  const key = asTrimmedString(agentKey);
   if (!key) throw new Error("agentKey is required to build a credential ref.");
   return `api-key:${key}`;
 }
 
 function readRawApiKey(agent: AgentSecretFields): string {
-  return typeof agent.apiKey === "string" ? agent.apiKey.trim() : "";
+  return asTrimmedString(agent.apiKey);
 }
 
 function resolveTargetRef(agent: AgentSecretFields): CredentialRef {
-  const fromCredential =
-    typeof agent.credentialRef === "string" ? agent.credentialRef.trim() : "";
+  const fromCredential = asTrimmedString(agent.credentialRef);
   if (fromCredential) return fromCredential;
   // Do not reuse OAuth-style apiKeyRef (chatgpt/xai/...) as a file-key path for raw apiKey.
   // Only use apiKeyRef when it already looks like a broker key ref.
-  const fromApiKeyRef =
-    typeof agent.apiKeyRef === "string" ? agent.apiKeyRef.trim() : "";
+  const fromApiKeyRef = asTrimmedString(agent.apiKeyRef);
   if (fromApiKeyRef.startsWith("api-key:")) return fromApiKeyRef;
   return buildAgentApiKeyCredentialRef(agent.key);
 }
@@ -82,10 +81,7 @@ export async function migrateAgentSecrets(args: {
 }): Promise<AgentSecretMigrationResult> {
   const { agent, broker } = args;
   const raw = readRawApiKey(agent);
-  const migration =
-    typeof agent.credentialMigration === "string"
-      ? agent.credentialMigration.trim()
-      : "";
+  const migration = asTrimmedString(agent.credentialMigration);
 
   if (migration === "done" && !raw) {
     const ref =

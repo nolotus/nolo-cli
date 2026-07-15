@@ -1,6 +1,8 @@
 // packages/database/config.ts
 
 // 这个文件现在是前后端通用的，不包含任何后端模块如 'fs' 或 'path'。
+import { normalizeServerOrigin } from "../core/serverOrigin";
+
 export const API_VERSION = "/api/v1";
 export const SERVERS = {
   MAIN: "https://nolo.chat",
@@ -22,7 +24,7 @@ export const normalizeKnownServerOrigin = (server: unknown): string | null => {
   try {
     origin = new URL(trimmed).origin;
   } catch {
-    origin = trimmed.replace(/\/+$/, "");
+    origin = normalizeServerOrigin(trimmed);
   }
   return LEGACY_SERVER_ORIGIN_MAP[origin.toLowerCase()] ?? origin;
 };
@@ -33,14 +35,14 @@ const LOCAL_DEV_SERVER_ORIGIN_PATTERN =
 export const isLocalDevServerOrigin = (server: unknown): boolean => {
   if (typeof server !== "string" || server.trim().length === 0) return false;
   const normalized =
-    normalizeKnownServerOrigin(server) ?? server.trim().replace(/\/+$/, "");
+    normalizeKnownServerOrigin(server) ?? normalizeServerOrigin(server);
   return LOCAL_DEV_SERVER_ORIGIN_PATTERN.test(normalized);
 };
 
 export const isNoloClusterServerOrigin = (server: unknown): boolean => {
   if (typeof server !== "string" || server.trim().length === 0) return false;
   const normalized =
-    normalizeKnownServerOrigin(server) ?? server.trim().replace(/\/+$/, "");
+    normalizeKnownServerOrigin(server) ?? normalizeServerOrigin(server);
   return /^https?:\/\/(?:us\.)?nolo\.chat$/i.test(normalized);
 };
 

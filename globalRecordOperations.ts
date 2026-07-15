@@ -6,6 +6,7 @@ import {
 import { isTombstoneRecord } from "./database/tombstones";
 import { mergeAndDedupUserData } from "./database/userDataMerge";
 import type { CliFetchImpl } from "./cliFetch";
+import { toErrorMessage } from "./core/errorMessage";
 
 export type GlobalRecordFailure = {
   serverUrl: string;
@@ -61,7 +62,7 @@ export async function listUserRecordsFromServers(args: {
       return {
         ok: false,
         serverUrl,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       };
     }
   });
@@ -129,7 +130,7 @@ export async function readDbRecordFromServers(args: {
     } catch (error) {
       failures.push({
         serverUrl,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       });
     }
   }
@@ -167,7 +168,7 @@ export async function readDbRecordVersionsFromServers(args: {
       return {
         ok: false,
         serverUrl,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       };
     }
   });
@@ -281,7 +282,7 @@ export async function deleteDbRecordOnTargets(args: {
       return {
         serverUrl: target.serverUrl,
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       };
     }
   });

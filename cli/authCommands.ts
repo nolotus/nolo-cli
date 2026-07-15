@@ -10,6 +10,7 @@ import {
   loadProfileConfig,
   saveDefaultProfile,
 } from "./client/profileConfig";
+import { normalizeServerOrigin } from "../core/serverOrigin";
 import { resolveAuthTokenFromEnv } from "./cliEnvHelpers";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import type { CliFetchImpl } from "./cliFetch";
@@ -211,7 +212,7 @@ async function runWebLogin(args: {
     if (pollResponse.ok && poll?.token) {
       const approvedServer =
         typeof poll.serverUrl === "string" && poll.serverUrl.trim()
-          ? poll.serverUrl.trim().replace(/\/+$/, "")
+          ? normalizeServerOrigin(poll.serverUrl)
           : args.serverUrl;
       return saveTokenLogin({
         configPath: args.configPath,

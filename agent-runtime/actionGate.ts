@@ -1,3 +1,6 @@
+import { isRecord } from "../core/isRecord";
+import { asOptionalTrimmedString } from "../core/optionalString";
+
 export type PermissionDecision = "allow" | "ask" | "deny";
 
 export type PermissionRequest = {
@@ -36,32 +39,30 @@ export type CommandActionGatePayload = {
 export function readCommandActionGatePayload(
   payload: unknown
 ): CommandActionGatePayload | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const raw = payload as Record<string, unknown>;
-  if (!Array.isArray(raw.command)) return null;
-  const command = raw.command.flatMap((item) =>
-    typeof item === "string" && item.trim() ? [item.trim()] : []
-  );
+  if (!isRecord(payload)) return null;
+  if (!Array.isArray(payload.command)) return null;
+  const command = payload.command.flatMap((item) => {
+    const value = asOptionalTrimmedString(item);
+    return value ? [value] : [];
+  });
   if (command.length === 0) return null;
+  const displayCommand = asOptionalTrimmedString(payload.displayCommand);
   return {
     command,
-    ...(typeof raw.displayCommand === "string" && raw.displayCommand.trim()
-      ? { displayCommand: raw.displayCommand.trim() }
-      : {}),
+    ...(displayCommand ? { displayCommand } : {}),
   };
 }
 
 export function readActionGate(value: unknown): ActionGate | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw.id !== "string" || !raw.id.trim()) return null;
-  if (raw.kind !== "confirm" && raw.kind !== "handoff" && raw.kind !== "input") return null;
-  if (typeof raw.title !== "string" || !raw.title.trim()) return null;
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== "string" || !value.id.trim()) return null;
+  if (value.kind !== "confirm" && value.kind !== "handoff" && value.kind !== "input") return null;
+  if (typeof value.title !== "string" || !value.title.trim()) return null;
   return {
-    id: raw.id.trim(),
-    kind: raw.kind,
-    title: raw.title.trim(),
-    ...(typeof raw.body === "string" && raw.body.trim() ? { body: raw.body.trim() } : {}),
-    ...(Object.prototype.hasOwnProperty.call(raw, "payload") ? { payload: raw.payload } : {}),
+    id: value.id.trim(),
+    kind: value.kind,
+    title: value.title.trim(),
+    ...(asOptionalTrimmedString(value.body) ? { body: asOptionalTrimmedString(value.body) } : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, "payload") ? { payload: value.payload } : {}),
   };
 }

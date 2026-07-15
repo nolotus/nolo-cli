@@ -1,3 +1,5 @@
+import { asOptionalFiniteNumber } from "../../core/optionalNumber";
+import { asOptionalTrimmedString } from "../../core/optionalString";
 import { dialogMessageKey } from "../../database/keys";
 
 const FILE_CONTENT_RE = /(?:https?:\/\/[^/"'\s]+)?\/api\/v1\/db\/file\/content\/([^?#"'\s)]+)/g;
@@ -55,17 +57,15 @@ export function extractFileContentIds(value: unknown): string[] {
 }
 
 function messageDbKey(dialogId: string, message: DialogAttachmentMessage) {
-  if (typeof message.dbKey === "string" && message.dbKey.trim()) {
-    return message.dbKey.trim();
-  }
-  if (typeof message.id === "string" && message.id.trim()) {
-    return dialogMessageKey(dialogId, message.id.trim());
-  }
+  const dbKey = asOptionalTrimmedString(message.dbKey);
+  if (dbKey) return dbKey;
+  const id = asOptionalTrimmedString(message.id);
+  if (id) return dialogMessageKey(dialogId, id);
   return null;
 }
 
 function asText(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  return asOptionalTrimmedString(value) ?? null;
 }
 
 export function buildDialogAttachmentPlan(args: {
@@ -104,7 +104,7 @@ export function buildDialogAttachmentPlan(args: {
     return {
       fileId,
       fileDbKey,
-      size: typeof metadata?.size === "number" && Number.isFinite(metadata.size) ? metadata.size : null,
+      size: asOptionalFiniteNumber(metadata?.size) ?? null,
       ownerType,
       ownerId,
       ownerDbKey,

@@ -1,3 +1,8 @@
+import { isRecord } from "../core/isRecord";
+import { asOptionalFiniteNumber } from "../core/optionalNumber";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
+import { asNonEmptyStringArray } from "../core/stringArray";
 import { spawnToWebStreams } from "./runtimeCompat";
 
 export const NOLO_WORKSPACE_TOOL_NAMES = [
@@ -131,13 +136,12 @@ export function noloPositiveIntegerString(value: unknown) {
 }
 
 export function noloStringArg(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  return asOptionalTrimmedString(value) ?? null;
 }
 
 export function parseNoloWorkspaceToolArguments(raw: string) {
   try {
-    const parsed = JSON.parse(raw || "{}");
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+    return asRecordOrEmpty(JSON.parse(raw || "{}") as unknown);
   } catch {
     return {};
   }
@@ -205,9 +209,9 @@ export function getNoloSpaceContentKeys(spaceRecord: any) {
   for (const [entryKey, value] of Object.entries(contents)) {
     keys.add(entryKey);
     if (value && typeof value === "object") {
-      const contentKey = (value as any).contentKey;
-      if (typeof contentKey === "string" && contentKey.trim()) {
-        keys.add(contentKey.trim());
+      const contentKey = asOptionalTrimmedString((value as any).contentKey);
+      if (contentKey) {
+        keys.add(contentKey);
       }
     }
   }
@@ -216,7 +220,8 @@ export function getNoloSpaceContentKeys(spaceRecord: any) {
 
 export function getNoloComparableUpdatedAt(record: any) {
   const raw = record?.updatedAt ?? record?.updated_at ?? record?.createdAt ?? record?.created;
-  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const asNumber = asOptionalFiniteNumber(raw);
+  if (asNumber !== undefined) return asNumber;
   if (typeof raw === "string") return Date.parse(raw) || 0;
   return 0;
 }
@@ -227,26 +232,17 @@ export type NoloSubjectRef = {
   role?: string;
 };
 
-function isRecord(value: unknown): value is Record<string, any> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function normalizeNoloSubjectKind(kind: string) {
   return kind === "tableRow" ? "table-row" : kind;
 }
 
 function normalizeNoloSubjectRef(value: unknown): NoloSubjectRef | null {
   if (!isRecord(value)) return null;
-  const kind = typeof value.kind === "string" && value.kind.trim()
-    ? normalizeNoloSubjectKind(value.kind.trim())
-    : "";
-  const id = typeof value.id === "string" && value.id.trim()
-    ? value.id.trim()
-    : "";
+  const kindRaw = asOptionalTrimmedString(value.kind);
+  const kind = kindRaw ? normalizeNoloSubjectKind(kindRaw) : "";
+  const id = asOptionalTrimmedString(value.id) ?? "";
   if (!kind || !id) return null;
-  const role = typeof value.role === "string" && value.role.trim()
-    ? value.role.trim()
-    : "";
+  const role = asOptionalTrimmedString(value.role) ?? "";
   return {
     kind,
     id,
@@ -288,33 +284,23 @@ function noloArtifactCount(value: unknown) {
 }
 
 function summarizeNoloDialogSubjectRefEvidence(dialog: any, target: NoloSubjectRef) {
-  const dialogKey = typeof dialog?.dbKey === "string" && dialog.dbKey.trim()
-    ? dialog.dbKey.trim()
-    : "";
-  const checkpoint = isRecord(dialog?.runtimeCheckpoint) ? dialog.runtimeCheckpoint : {};
+  const dialogKey = asOptionalTrimmedString(dialog?.dbKey) ?? "";
+  const checkpoint = asRecordOrEmpty(dialog?.runtimeCheckpoint);
   const matchedSubjectRefs = extractNoloDialogSubjectRefs(dialog).filter(
     (ref) => ref.kind === normalizeNoloSubjectKind(target.kind) && ref.id === target.id
   );
-  const lastToolNames = Array.isArray(checkpoint.lastToolNames)
-    ? checkpoint.lastToolNames.filter(
-        (tool: unknown): tool is string => typeof tool === "string" && tool.trim().length > 0
-      )
-    : [];
+  const lastToolNames = asNonEmptyStringArray(checkpoint.lastToolNames);
   const artifactCount = noloArtifactCount(dialog?.artifacts);
 
   return {
     dialogId:
-      typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
-        ? dialog.dialogId.trim()
-        : typeof dialog?.id === "string" && dialog.id.trim()
-          ? dialog.id.trim()
-          : dialogKey
-            ? getNoloDialogIdFromKey(dialogKey)
-            : null,
+      asOptionalTrimmedString(dialog?.dialogId) ??
+      asOptionalTrimmedString(dialog?.id) ??
+      (dialogKey ? getNoloDialogIdFromKey(dialogKey) : null),
     dialogKey: dialogKey || null,
-    title: typeof dialog?.title === "string" && dialog.title.trim() ? dialog.title.trim() : null,
-    status: typeof dialog?.status === "string" && dialog.status.trim() ? dialog.status.trim() : null,
-    checkpointStatus: typeof checkpoint.status === "string" && checkpoint.status.trim() ? checkpoint.status.trim() : null,
+    title: asOptionalTrimmedString(dialog?.title) ?? null,
+    status: asOptionalTrimmedString(dialog?.status) ?? null,
+    checkpointStatus: asOptionalTrimmedString(checkpoint.status) ?? null,
     updatedAt:
       typeof dialog?.updatedAt === "string" || typeof dialog?.updatedAt === "number"
         ? dialog.updatedAt
@@ -420,14 +406,12 @@ export function verifyNoloDialogSubjectRefQuery(
     if (noloDialogMatchesSubjectRef(dialog, target)) continue;
     unmatchedDialogs.push({
       dialogId:
-        typeof dialog?.dialogId === "string" && dialog.dialogId.trim()
-          ? dialog.dialogId.trim()
-          : typeof dialog?.id === "string" && dialog.id.trim()
-            ? dialog.id.trim()
-            : typeof dialog?.dbKey === "string"
-              ? getNoloDialogIdFromKey(dialog.dbKey)
-              : null,
-      dialogKey: typeof dialog?.dbKey === "string" && dialog.dbKey.trim() ? dialog.dbKey.trim() : null,
+        asOptionalTrimmedString(dialog?.dialogId) ??
+        asOptionalTrimmedString(dialog?.id) ??
+        (typeof dialog?.dbKey === "string"
+          ? getNoloDialogIdFromKey(dialog.dbKey)
+          : null),
+      dialogKey: asOptionalTrimmedString(dialog?.dbKey) ?? null,
       subjectRefs: extractNoloDialogSubjectRefs(dialog),
     });
   }
@@ -459,7 +443,7 @@ export function buildNoloTableQueryRequest(args: Record<string, any>, currentUse
   const tableId = args.tableId
     ?? (tableMetaParts.length >= 3 ? tableMetaParts.slice(2).join("-") : tableInput);
   const filters: Record<string, unknown> = {
-    ...(args.filters && typeof args.filters === "object" ? args.filters : {}),
+    ...asRecordOrEmpty(args.filters),
   };
   const row = noloStringArg(args.row ?? args.rowId);
   if (row) {

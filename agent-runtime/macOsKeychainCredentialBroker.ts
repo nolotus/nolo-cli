@@ -14,6 +14,7 @@
 
 import { spawn } from "node:child_process";
 
+import { asTrimmedString } from "../core/trimmedString";
 import {
   assertCredentialRef,
   type CredentialBroker,
@@ -187,7 +188,7 @@ export function createMacOsKeychainCredentialBroker(
 
     async put(ref, secret) {
       const safeRef = safeCredentialRef(ref);
-      const value = typeof secret === "string" ? secret.trim() : "";
+      const value = asTrimmedString(secret);
       if (!value) {
         throw new Error("Cannot store an empty credential secret.");
       }

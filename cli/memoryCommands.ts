@@ -1,3 +1,5 @@
+import { toErrorMessage } from "../core/errorMessage";
+import { asOptionalTrimmedString } from "../core/optionalString";
 import type { AgentCommandDeps } from "./agentCommandSupport";
 import type { CliFetchImpl } from "./cliFetch";
 import {
@@ -59,7 +61,8 @@ function readRepeated(args: string[], flag: string) {
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] !== flag) continue;
     const value = args[index + 1];
-    if (typeof value === "string" && value.trim()) values.push(value.trim());
+    const trimmed = asOptionalTrimmedString(value);
+    if (trimmed) values.push(trimmed);
   }
   return values;
 }
@@ -216,7 +219,7 @@ export async function runMemoryDeleteCommand(
         return {
           serverUrl: target,
           ok: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: toErrorMessage(error),
         };
       }
     });
@@ -248,7 +251,7 @@ export async function runMemoryDeleteCommand(
     }
     return deleteResults.some((result) => result.ok) ? 0 : 1;
   } catch (error) {
-    output.write(`[nolo] memory delete failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] memory delete failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
 }

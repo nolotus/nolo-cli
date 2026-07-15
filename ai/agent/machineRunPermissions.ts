@@ -1,3 +1,6 @@
+import { asRecordOrEmpty } from "../../core/recordOrEmpty";
+import { asTrimmedNonEmptyStringArray } from "../../core/stringArray";
+
 export type MachineRunPermissionMode = "read_only" | "full_access";
 
 export type MachineRunPermissionPolicy = {
@@ -22,21 +25,13 @@ const WRITE_DENIED =
 const SHELL_DENIED =
   "Machine permission denied: this bound machine agent cannot run arbitrary shell commands. Enable machine shell permission for this agent before asking it to execute commands.";
 
-function asObject(value: unknown): Record<string, any> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
-}
-
 function normalizeWritableRoots(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return asTrimmedNonEmptyStringArray(value);
 }
 
 export function resolveMachineRunPermissionPolicy(agentConfig: any): MachineRunPermissionPolicy {
-  const runtimeBinding = asObject(agentConfig?.runtimeBinding);
-  const raw = asObject(
+  const runtimeBinding = asRecordOrEmpty(agentConfig?.runtimeBinding);
+  const raw = asRecordOrEmpty(
     agentConfig?.machinePermissions ??
       runtimeBinding.permissions ??
       runtimeBinding.machinePermissions

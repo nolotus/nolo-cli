@@ -1,3 +1,5 @@
+import { toErrorMessage } from "./core/errorMessage";
+import { asOptionalTrimmedString } from "./core/optionalString";
 import { deleteDbRecordOnServers, readDbRecordFromServers, type GlobalDeleteResult } from "./globalRecordOperations";
 import type { CliFetchImpl } from "./cliFetch";
 import {
@@ -16,7 +18,7 @@ export type DialogAttachmentDeleteResult = {
 };
 
 function asText(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  return asOptionalTrimmedString(value) ?? null;
 }
 
 async function readDialogMessages(args: {
@@ -110,7 +112,7 @@ export async function planDialogAttachmentCleanup(args: {
       }
       metadataReadFailures.push({
         fileId,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       });
     }
   }

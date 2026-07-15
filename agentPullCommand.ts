@@ -1,3 +1,4 @@
+import { toErrorMessage } from "./core/errorMessage";
 import { getDefaultCliLocalRuntimeDb } from "./localRuntimeDb";
 import type { CliLocalRuntimeDb } from "./client/localRuntimeAdapter";
 import { resolveCliAgentKeyInput } from "./agentAliases";
@@ -124,9 +125,7 @@ export async function runAgentPullCommand(args: string[], deps: AgentPullCommand
     });
   } catch (error) {
     output.write(
-      `[nolo] Failed to pull ${parsed.agentKey} from ${serverUrl}: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] Failed to pull ${parsed.agentKey} from ${serverUrl}: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

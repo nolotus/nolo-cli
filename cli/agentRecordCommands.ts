@@ -10,6 +10,7 @@ import {
 } from "./agentRecordHelpers";
 import { parseUserIdFromAuthToken, resolveAuthToken } from "./cliEnvHelpers";
 import { clearCliLocalRuntimePreparedAgentCache } from "./client/localRuntimeAdapter";
+import { toErrorMessage } from "../core/errorMessage";
 
 export async function runAgentReadCommand(
   args: string[],
@@ -55,7 +56,7 @@ export async function runAgentReadCommand(
   } catch (error) {
     output.write(
       `[nolo] agent read failed: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
     return 1;
@@ -72,7 +73,7 @@ export async function runAgentUpdateCommand(
   try {
     parsed = parseAgentUpdateArgs(args);
   } catch (error) {
-    output.write(`[nolo] agent update failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] agent update failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
   if (!parsed) {
@@ -139,7 +140,7 @@ export async function runAgentUpdateCommand(
   } catch (error) {
     output.write(
       `[nolo] agent update failed: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
     return 1;
@@ -156,7 +157,7 @@ export async function runAgentCreateCommand(
   try {
     parsed = parseAgentUpdateArgs(args);
   } catch (error) {
-    output.write(`[nolo] agent create failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] agent create failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
   if (!parsed) {
@@ -223,7 +224,7 @@ export async function runAgentCreateCommand(
   } catch (error) {
     output.write(
       `[nolo] agent create failed: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
     return 1;

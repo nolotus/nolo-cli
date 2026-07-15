@@ -15,6 +15,7 @@
  *   - 任一服务器失败 -> exit code 1
  */
 
+import { toErrorMessage } from "../core/errorMessage";
 import { resolveCliAgentKeyInput } from "./agentAliases";
 import { getReadableCliDb, type AgentCommandDeps } from "./agentCommandSupport";
 import { resolveAgentRecordFromHybridStore } from "./agentRecordHelpers";
@@ -162,7 +163,7 @@ export async function runAgentDeleteCommand(
       fallbackFetchImpl,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = toErrorMessage(error);
     output.write(`[nolo] agent delete failed to resolve "${agentInput}": ${msg}\n`);
     return 1;
   }
@@ -208,7 +209,7 @@ export async function runAgentDeleteCommand(
         serverUrls,
       });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = toErrorMessage(error);
       output.write(`[nolo] agent delete fan-out failed: ${msg}\n`);
       return 1;
     }
@@ -224,7 +225,7 @@ export async function runAgentDeleteCommand(
         output.write(`Cleaned local LevelDB copies: ${cleanedPaths.length}\n`);
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = toErrorMessage(error);
       if (!json) output.write(`[nolo] local LevelDB cleanup skipped: ${msg}\n`);
     }
   }

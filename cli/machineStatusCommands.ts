@@ -1,3 +1,5 @@
+import { toErrorMessage } from "../core/errorMessage";
+import { normalizeServerOrigin } from "../core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import type { CliFetchImpl } from "./cliFetch";
 
@@ -23,7 +25,9 @@ export type MachineStatusCommandDeps = {
 };
 
 function resolveServerUrl(env: EnvLike) {
-  return (env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL).replace(/\/+$/, "");
+  return normalizeServerOrigin(
+    env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL,
+  );
 }
 
 function resolveAuthToken(env: EnvLike) {
@@ -76,9 +80,7 @@ export async function runMachineStatusCommand(
     });
   } catch (error) {
     output.write(
-      `[nolo] Machine status failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] Machine status failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

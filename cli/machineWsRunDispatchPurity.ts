@@ -12,6 +12,12 @@ import { resolveLocalRuntimeEnvFromPolicy } from "../agent-runtime/runtimeToolPo
 import {
   resolveMachineRunPermissionPolicy as defaultResolveMachineRunPermissionPolicy,
 } from "../ai/agent/machineRunPermissions";
+import { isRecord } from "../core/isRecord";
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
+import { asTrimmedString } from "../core/trimmedString";
+import { summarizeEndpoint } from "../core/summarizeEndpoint";
 import {
   collectConnectorRunArtifact as defaultCollectConnectorRunArtifact,
   readConnectorGitHead as defaultReadConnectorGitHead,
@@ -143,19 +149,11 @@ export function summarizeRuntimePolicyForLogs(policy?: ConnectorRuntimePolicy) {
   };
 }
 
-export function summarizeEndpoint(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  try {
-    const url = new URL(value);
-    return `${url.protocol}//${url.host}${url.pathname}`;
-  } catch {
-    return "invalid-url";
-  }
-}
+export { summarizeEndpoint };
 
 export function summarizeAgentConfigForLogs(agentConfig: unknown) {
-  const config = isRecord(agentConfig) ? agentConfig : {};
-  const runtimeBinding = isRecord(config.runtimeBinding) ? config.runtimeBinding : {};
+  const config = asRecordOrEmpty(agentConfig);
+  const runtimeBinding = asRecordOrEmpty(config.runtimeBinding);
   return {
     apiSource: readField(config, "apiSource") ?? null,
     provider: readField(config, "provider") ?? null,
@@ -176,21 +174,17 @@ export function summarizeAgentConfigForLogs(agentConfig: unknown) {
   };
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function readField(record: unknown, key: string): unknown {
   if (!isRecord(record)) return undefined;
   return record[key];
 }
 
 export function runtimePolicyFromConnectorPayload(parsed: unknown): ConnectorRuntimePolicy | undefined {
-  const obj = isRecord(parsed) ? parsed : {};
-  const payload = isRecord(obj.payload) ? obj.payload : {};
-  const meta = isRecord(payload.meta) ? payload.meta : {};
+  const obj = asRecordOrEmpty(parsed);
+  const payload = asRecordOrEmpty(obj.payload);
+  const meta = asRecordOrEmpty(payload.meta);
   const fromMeta = readField(meta, "runtimeToolPolicySnapshot");
-  const agentConfig = isRecord(payload.agentConfig) ? payload.agentConfig : {};
+  const agentConfig = asRecordOrEmpty(payload.agentConfig);
   const fromAgent = readField(agentConfig, "runtimeToolPolicy");
   const policy = isRecord(fromMeta) ? fromMeta : isRecord(fromAgent) ? fromAgent : null;
   return policy ? (policy as ConnectorRuntimePolicy) : undefined;
@@ -203,12 +197,12 @@ export function requestsLocalWorkspaceRuntime(policy?: ConnectorRuntimePolicy) {
 }
 
 export function isMachineBoundLocalCustomProvider(agentConfig: unknown) {
-  const config = isRecord(agentConfig) ? agentConfig : {};
-  const runtimeBinding = isRecord(config.runtimeBinding) ? config.runtimeBinding : {};
+  const config = asRecordOrEmpty(agentConfig);
+  const runtimeBinding = asRecordOrEmpty(config.runtimeBinding);
   const machineIdRaw = readField(runtimeBinding, "machineId");
-  const machineId = typeof machineIdRaw === "string" ? machineIdRaw.trim() : "";
+  const machineId = asTrimmedString(machineIdRaw);
   const providerUrlRaw = readField(config, "customProviderUrl");
-  const providerUrl = typeof providerUrlRaw === "string" ? providerUrlRaw.trim() : "";
+  const providerUrl = asTrimmedString(providerUrlRaw);
   if (!machineId || !providerUrl) return false;
   try {
     const hostname = new URL(providerUrl).hostname.toLowerCase();
@@ -219,8 +213,8 @@ export function isMachineBoundLocalCustomProvider(agentConfig: unknown) {
 }
 
 export function hasExplicitMachinePermissions(agentConfig: unknown) {
-  const config = isRecord(agentConfig) ? agentConfig : {};
-  const runtimeBinding = isRecord(config.runtimeBinding) ? config.runtimeBinding : {};
+  const config = asRecordOrEmpty(agentConfig);
+  const runtimeBinding = asRecordOrEmpty(config.runtimeBinding);
   return Boolean(
     isRecord(readField(config, "machinePermissions")) ||
       isRecord(readField(runtimeBinding, "permissions")) ||
@@ -294,11 +288,11 @@ export function localRuntimeEnvFromPolicy(runtimeEnv: EnvLike, policy?: Connecto
 }
 
 export function forwardedUserAuthToken(parsed: unknown): string {
-  const obj = isRecord(parsed) ? parsed : {};
-  const payload = isRecord(obj.payload) ? obj.payload : {};
-  const meta = isRecord(payload.meta) ? payload.meta : {};
+  const obj = asRecordOrEmpty(parsed);
+  const payload = asRecordOrEmpty(obj.payload);
+  const meta = asRecordOrEmpty(payload.meta);
   const value = readField(meta, "userAuthToken");
-  return typeof value === "string" ? value.trim() : "";
+  return asTrimmedString(value);
 }
 
 export function withForwardedUserAuthToken(runtimeEnv: EnvLike, parsed: unknown): EnvLike {
@@ -313,7 +307,7 @@ export function runtimeWorkspaceRootFromTrace(trace: unknown): string | undefine
     const metadataValue = readField(message, "tool_result_metadata");
     const metadata = isRecord(metadataValue) ? metadataValue : null;
     const rootRaw = metadata ? readField(metadata, "workspaceRoot") : undefined;
-    const workspaceRoot = typeof rootRaw === "string" ? rootRaw.trim() : "";
+    const workspaceRoot = asTrimmedString(rootRaw);
     if (workspaceRoot) return workspaceRoot;
   }
   return undefined;
@@ -329,7 +323,7 @@ export function buildArtifactProgress(args: {
   const changedFilesRaw = readField(args.artifacts, "changedFiles");
   const changedFiles = Array.isArray(changedFilesRaw) ? changedFilesRaw : [];
   const statusShortRaw = readField(args.artifacts, "statusShort");
-  const statusShort = typeof statusShortRaw === "string" ? statusShortRaw.trim() : "";
+  const statusShort = asTrimmedString(statusShortRaw);
   if (changedFiles.length === 0 && !statusShort) return null;
   const runtimeToolsRaw = args.runtimePolicy?.runtimeTools;
   const runtimeTools = Array.isArray(runtimeToolsRaw) ? runtimeToolsRaw : [];
@@ -353,12 +347,12 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
   fetchImpl?: CliFetchImpl;
   onProgress?: (progress: ConnectorRunProgress) => void;
 }): Promise<ConnectorLocalRunResult> {
-  const obj = isRecord(args.parsed) ? args.parsed : {};
-  const payload = isRecord(obj.payload) ? obj.payload : {};
+  const obj = asRecordOrEmpty(args.parsed);
+  const payload = asRecordOrEmpty(obj.payload);
   const agentKeyRaw = readField(payload, "agentKey");
   const agentKey = typeof agentKeyRaw === "string" ? agentKeyRaw : "";
   const agentConfigRaw = readField(payload, "agentConfig");
-  const payloadAgentConfig = isRecord(agentConfigRaw) ? agentConfigRaw : {};
+  const payloadAgentConfig = asRecordOrEmpty(agentConfigRaw);
   const policy = runtimePolicyFromConnectorPayload(args.parsed);
   const toolNames = mergeToolNames(
     readField(payloadAgentConfig, "toolNames"),
@@ -443,15 +437,11 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
       if (event.type === "tool-call") toolCallCount += 1;
       if (event.type === "tool-result") toolResultCount += 1;
       noteToolName(event.toolName);
-      const metadata = isRecord(event.metadata) ? event.metadata : {};
-      const rootRaw = readField(metadata, "workspaceRoot");
-      if (typeof rootRaw === "string" && rootRaw.trim()) {
-        runtimeWorkspaceRoot = rootRaw.trim();
-      }
-      const kindRaw = readField(metadata, "workspaceKind");
-      if (typeof kindRaw === "string" && kindRaw.trim()) {
-        runtimeWorkspaceKind = kindRaw.trim();
-      }
+      const metadata = asRecordOrEmpty(event.metadata);
+      const rootRaw = asOptionalTrimmedString(readField(metadata, "workspaceRoot"));
+      if (rootRaw) runtimeWorkspaceRoot = rootRaw;
+      const kindRaw = asOptionalTrimmedString(readField(metadata, "workspaceKind"));
+      if (kindRaw) runtimeWorkspaceKind = kindRaw;
       args.onProgress?.({
         eventType: event.type,
         toolCallCount,
@@ -471,10 +461,9 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
 }
 
 export function normalizeConnectorRunTimeoutMs(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return undefined;
-  }
-  return Math.floor(value);
+  const finite = asOptionalPositiveFiniteNumber(value);
+  if (finite === undefined) return undefined;
+  return Math.floor(finite);
 }
 
 type ConnectorUserInputPart =

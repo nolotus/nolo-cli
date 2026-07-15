@@ -1,3 +1,7 @@
+import { toErrorMessage } from "../core/errorMessage";
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+import { normalizeServerOrigin } from "../core/serverOrigin";
+
 export type HybridRecordKvDb = {
   get(key: string): Promise<any>;
   put(key: string, value: any): Promise<unknown>;
@@ -24,10 +28,6 @@ type HybridRecordStoreDeps = {
   requestTimeoutMs?: number;
 };
 
-function normalizeHybridServer(value: string) {
-  return value.trim().replace(/\/+$/, "");
-}
-
 function resolveHybridServers(
   defaultServer: string,
   preferredServerOrigin?: string | null,
@@ -38,7 +38,7 @@ function resolveHybridServers(
     defaultServer,
     ...fallbackServers,
   ].filter((value) => value.trim().length > 0);
-  return [...new Set(raw.map(normalizeHybridServer))];
+  return [...new Set(raw.map(normalizeServerOrigin))];
 }
 
 function normalizeHybridRecord(dbKey: string, record: any, serverOrigin?: string | null) {
@@ -60,10 +60,11 @@ function getHybridRecordTimestamp(record: any): number {
     record?.meta?.createdAt,
   ];
   for (const candidate of candidates) {
-    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) return candidate;
+    const asNumber = asOptionalPositiveFiniteNumber(candidate);
+    if (asNumber !== undefined) return asNumber;
     if (typeof candidate === "string" && candidate.trim()) {
-      const parsed = Date.parse(candidate);
-      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      const parsed = asOptionalPositiveFiniteNumber(Date.parse(candidate));
+      if (parsed !== undefined) return parsed;
     }
   }
   return 0;
@@ -83,7 +84,7 @@ function shouldReplaceWithHybridRecord(nextRecord: any, currentRecord: any): boo
 }
 
 function isHybridNotFoundError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = toErrorMessage(error);
   return /not found|notfound|leveldb: not found|key not found/i.test(message);
 }
 

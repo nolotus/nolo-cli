@@ -7,6 +7,9 @@
  *  3) 收藏（favorite）相关键（区分 id / key）
  * =========================================================================*/
 
+import { asOptionalFiniteNumber } from "../core/optionalNumber";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedString } from "../core/trimmedString";
 import { ulid } from "./utils/ulid";
 import { curry } from "rambda";
 import { DataType } from "../create/types"; // 枚举：DIALOG / PAGE / CYBOT …
@@ -78,15 +81,12 @@ export const isFileKey = (key: string): boolean => {
 };
 
 /**
- * 判断一个 dbKey 是否是 Agent/Cybot 的 key
- * 形如：agent-{userId}-{agentId} 或 cybot-{userId}-{agentId}
+ * 判断一个 dbKey 是否是 Agent 的 key
+ * 形如：agent-{userId}-{agentId} 或 agent-pub-{agentId}
  */
 export const isAgentKey = (key: string): boolean => {
   const parts = splitKey(key);
-  return (
-    parts.length >= 3 &&
-    (parts[0] === DataType.AGENT || parts[0] === DataType.CYBOT)
-  );
+  return parts.length >= 3 && parts[0] === DataType.AGENT;
 };
 
 /**
@@ -455,8 +455,9 @@ export type DialogAgentListIndexOp =
   | { type: "del"; key: string };
 
 export function parseDialogUpdatedAtMs(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.max(0, Math.floor(value));
+  const finite = asOptionalFiniteNumber(value);
+  if (finite !== undefined) {
+    return Math.max(0, Math.floor(finite));
   }
   if (typeof value === "string" && value) {
     const asNumber = Number(value);
@@ -518,18 +519,13 @@ export function createDialogAgentListIndexRange(
 }
 
 /**
- * Expand agent-/cybot- aliases so list-by either form hits the same membership.
+ * Normalize a dialog agent key for list-index membership.
+ * Only agent-* keys are supported (no cybot-* aliases).
  */
 export function expandDialogAgentListIndexAliases(agentKey: string): string[] {
   const key = agentKey.trim();
   if (!key) return [];
-  const aliases = new Set<string>([key]);
-  if (key.startsWith("agent-")) {
-    aliases.add(`cybot-${key.slice("agent-".length)}`);
-  } else if (key.startsWith("cybot-")) {
-    aliases.add(`agent-${key.slice("cybot-".length)}`);
-  }
-  return Array.from(aliases);
+  return [key];
 }
 
 /** Agent keys that should own a list-index row for this dialog. */
@@ -577,8 +573,10 @@ function resolveDialogIdForIndex(
   dialogId: string | undefined,
   record: Record<string, unknown> | null | undefined,
 ): string {
-  if (dialogId && dialogId.trim()) return dialogId.trim();
-  if (typeof record?.id === "string" && record.id.trim()) return record.id.trim();
+  const fromDialogId = asOptionalTrimmedString(dialogId);
+  if (fromDialogId) return fromDialogId;
+  const fromRecordId = asOptionalTrimmedString(record?.id);
+  if (fromRecordId) return fromRecordId;
   // dialog-{userId}-{dialogId} — dialogId is the final segment for record keys.
   const parts = splitKey(dialogKey);
   if (parts.length >= 3 && parts[0] === DataType.DIALOG && !dialogKey.includes("-msg-")) {
@@ -646,7 +644,7 @@ export function buildDialogAgentListIndexOps(args: {
   nextRecord: Record<string, unknown> | null | undefined;
   previousRecord?: Record<string, unknown> | null;
 }): DialogAgentListIndexOp[] {
-  const userId = typeof args.userId === "string" ? args.userId.trim() : "";
+  const userId = asTrimmedString(args.userId);
   const dialogKey = args.dialogKey.trim();
   if (!userId || !dialogKey) return [];
 
@@ -788,10 +786,8 @@ export function buildAgentAutomationOwnerIndexDeleteOps(args: {
   const automationKey = args.automationKey.trim();
   if (!automationKey || !isAgentAutomationKey(automationKey)) return [];
 
-  const userIdFromRecord =
-    typeof args.record?.createdBy === "string" ? args.record.createdBy.trim() : "";
-  const userIdFromArg =
-    typeof args.userId === "string" ? args.userId.trim() : "";
+  const userIdFromRecord = asTrimmedString(args.record?.createdBy);
+  const userIdFromArg = asTrimmedString(args.userId);
   // agent-automation-{userId}-{automationId}; automationId is the final segment.
   const withoutPrefix = automationKey.startsWith(`${DataType.AGENT_AUTOMATION}-`)
     ? automationKey.slice(`${DataType.AGENT_AUTOMATION}-`.length)
@@ -804,12 +800,8 @@ export function buildAgentAutomationOwnerIndexDeleteOps(args: {
 
   const userId = userIdFromArg || userIdFromRecord || userIdFromKey;
   const automationId =
-    (typeof args.record?.id === "string" && args.record.id.trim()) ||
-    automationIdFromKey;
-  const ownerAgentKey =
-    typeof args.record?.ownerAgentKey === "string"
-      ? args.record.ownerAgentKey.trim()
-      : "";
+    asOptionalTrimmedString(args.record?.id) || automationIdFromKey;
+  const ownerAgentKey = asTrimmedString(args.record?.ownerAgentKey);
 
   if (!userId || !automationId || !ownerAgentKey) return [];
 
@@ -864,24 +856,8 @@ export const createPageKey = {
   }),
 };
 
-/* ---- Cybot / Agent ---- */
-// TODO(keys): Agent/Cybot 已采用 DataType.CYBOT 前缀 + userId/cybotId，
-//             后续如果引入多租户组织层，可以考虑把 orgId 作为第二位前缀。
-export const createCybotKey = {
-  private: curry((userId: string, cybotId: string) =>
-    createKey(DataType.CYBOT, userId, cybotId)
-  ),
-  public: (cybotId: string) => createKey(DataType.CYBOT, "pub", cybotId),
-  rangeOfUser: (userId: string) => ({
-    start: createKey(DataType.CYBOT, userId, ""),
-    end: createKey(DataType.CYBOT, userId, "\uffff"),
-  }),
-};
-
-/**
- * 推荐使用：新的 Agent Key 系列
- * 使用 DataType.AGENT ("agent") 前缀
- */
+/* ---- Agent ---- */
+// 仅使用 DataType.AGENT ("agent") 前缀；cybot-* 命名空间已退役，不再生成或兼容。
 export const createAgentKey = {
   private: curry((userId: string, agentId: string) =>
     createKey(DataType.AGENT, userId, agentId)
@@ -894,21 +870,15 @@ export const createAgentKey = {
 };
 
 /**
- * 公开 Agent 列表范围（现有）
- * CYBOT-pub-{id}
+ * 公开 Agent 列表范围：agent-pub-{id}
  */
 export const pubAgentKeys = {
-  single: (cybotId: string) => createKey(DataType.CYBOT, "pub", cybotId),
+  single: (agentId: string) => createAgentKey.public(agentId),
   list: () => ({
-    start: createKey(DataType.CYBOT, "pub", ""),
-    end: createKey(DataType.CYBOT, "pub", "\uffff"),
+    start: createKey(DataType.AGENT, "pub", ""),
+    end: createKey(DataType.AGENT, "pub", "\uffff"),
   }),
-  /** 同时获取 cybot-pub 和 agent-pub 两个前缀的范围 */
   allPublicRanges: () => [
-    {
-      start: createKey(DataType.CYBOT, "pub", ""),
-      end: createKey(DataType.CYBOT, "pub", "\uffff"),
-    },
     {
       start: createKey(DataType.AGENT, "pub", ""),
       end: createKey(DataType.AGENT, "pub", "\uffff"),

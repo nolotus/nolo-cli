@@ -1,3 +1,5 @@
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
+
 /**
  * Pure JSON-object parse for tool-call argument payloads.
  *
@@ -10,10 +12,7 @@ export function parseToolArgumentsJson(
 ): Record<string, unknown> {
   if (!raw?.trim()) return {};
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
+    return asRecordOrEmpty(JSON.parse(raw) as unknown);
   } catch {
     return {};
   }

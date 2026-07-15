@@ -1,3 +1,5 @@
+import { isRecord } from "../core/isRecord";
+import { asOptionalFiniteNumber } from "../core/optionalNumber";
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 
 type AgentRecord = Record<string, unknown>;
@@ -8,15 +10,12 @@ function stringField(record: AgentRecord, key: string) {
 }
 
 function numberField(record: AgentRecord, key: string) {
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return asOptionalFiniteNumber(record[key]);
 }
 
 function objectField(record: AgentRecord, key: string): Record<string, unknown> | undefined {
   const value = record[key];
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+  return isRecord(value) ? value : undefined;
 }
 
 function appendUniqueStrings(values: string[], next: unknown) {

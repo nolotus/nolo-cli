@@ -1,5 +1,6 @@
 import { createKey, splitKey, isAgentKey } from "../database/keys";
 import { DataType } from "../create/types";
+import { normalizeUserId } from "../core/userId";
 import { toSafeAgentKey } from "./helpers";
 
 const SHARE_PREFIX = "share";
@@ -7,11 +8,6 @@ const SHARE_INDEX_PREFIX = "shareidx";
 const TIMESTAMP_MAX = 9_999_999_999_999;
 
 // ── Normalization ───────────────────────────────────────────────────
-
-const normalizeUserId = (value: unknown): string => {
-  const text = String(value || "").trim();
-  return text.startsWith("user:") ? text.slice(5) : text;
-};
 
 const normalizeToken = (value: unknown): string =>
   String(value || "").trim();

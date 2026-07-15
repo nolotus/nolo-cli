@@ -1,3 +1,4 @@
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import type { PermissionDecision, PermissionRequest } from "./actionGate";
 
 export type ShellCommandPolicyVerdict = "allowed" | "forbidden";
@@ -67,7 +68,7 @@ const SHELL_DESTRUCTIVE_PATTERNS = [
 ] as const;
 
 const normalizeUserInput = (value: unknown): string =>
-  typeof value === "string" ? value.trim().toLowerCase() : "";
+  asTrimmedLowercaseString(value);
 
 const containsAny = (text: string, patterns: readonly string[]): boolean =>
   patterns.some((pattern) => text.includes(pattern));

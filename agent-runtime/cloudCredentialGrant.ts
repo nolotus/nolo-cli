@@ -7,6 +7,8 @@
  * - refuses any network secret upload path
  */
 
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+
 export type CloudCredentialGrantStatus =
   | "denied"
   | "pending"
@@ -59,12 +61,10 @@ const normalizeRequired = (value: unknown, field: string): string => {
 };
 
 const parseTosAcceptedAt = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return value;
-  }
+  const asNumber = asOptionalPositiveFiniteNumber(value);
+  if (asNumber !== undefined) return asNumber;
   if (typeof value === "string" && value.trim()) {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    return asOptionalPositiveFiniteNumber(Date.parse(value)) ?? null;
   }
   return null;
 };

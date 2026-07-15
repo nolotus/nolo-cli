@@ -185,7 +185,7 @@ export function findAgentCatalogEntry(
   );
   if (byName) return { name: byName.name, key: byName.key };
 
-  if (target.startsWith("agent-") || target.startsWith("agent-pub-") || target.startsWith("cybot-")) {
+  if (target.startsWith("agent-") || target.startsWith("agent-pub-")) {
     return { name: target, key: target };
   }
 

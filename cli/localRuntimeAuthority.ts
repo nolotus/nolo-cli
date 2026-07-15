@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { toErrorMessage } from "../core/errorMessage";
 import {
   createCliAuthorityBrokerClient,
   createCliAuthorityBrokerSocketInvoker,
@@ -16,6 +17,7 @@ import {
   resolveCliAuthorityBrokerHealthPath,
   resolveCliAuthorityBrokerMetadataPath,
 } from "../database/server/cliAuthorityStoreDriver";
+import { isLevelLockError } from "../database/levelLockError";
 import { resolveNoloHome } from "../database/server/dbPath";
 import type { AuthorityStore } from "../database/server/authorityStoreTypes";
 import { createLevelAuthorityStore } from "../database/server/levelAuthorityStore";
@@ -32,9 +34,11 @@ function ensureDbParentDir(dbPath: string) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 }
 
+/** Level lock (shared pure seam) plus CLI broker bind/start contention shapes. */
 function isCliAuthorityLockError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /LEVEL_LOCKED|Resource temporarily unavailable|\/LOCK|LOCK:|Database failed to open|EADDRINUSE|Failed to listen/i.test(message);
+  if (isLevelLockError(error)) return true;
+  const message = toErrorMessage(error);
+  return /Database failed to open|EADDRINUSE|Failed to listen/i.test(message);
 }
 
 async function sleep(ms: number) {

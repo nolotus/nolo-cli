@@ -21,18 +21,10 @@ export type ListedAgent = {
 function parseAgentRecordId(privateKey: string, explicitId?: string) {
   if (explicitId) return explicitId;
   const agentMatch = privateKey.match(/^agent-[^-]+-(.+)$/i);
-  if (agentMatch?.[1]) return agentMatch[1];
-  const cybotMatch = privateKey.match(/^cybot-[^-]+-([0-9A-HJKMNP-TV-Z]{26})$/i);
-  return cybotMatch?.[1] ?? "";
+  return agentMatch?.[1] ?? "";
 }
 
-function buildCompanionKeys(privateKey: string, rawId: string, userId: string) {
-  if (privateKey.startsWith("cybot-")) {
-    return {
-      privateKey: `cybot-${userId}-${rawId}`,
-      publicKey: `cybot-pub-${rawId}`,
-    };
-  }
+function buildCompanionKeys(rawId: string, userId: string) {
   return {
     privateKey: `agent-${userId}-${rawId}`,
     publicKey: `agent-pub-${rawId}`,
@@ -41,16 +33,16 @@ function buildCompanionKeys(privateKey: string, rawId: string, userId: string) {
 
 export function normalizeListedAgent(record: any): ListedAgent | null {
   const privateKey = typeof record?.dbKey === "string" ? record.dbKey : "";
+  // Legacy cybot-* namespace is unsupported
+  if (privateKey.startsWith("cybot-")) return null;
   const explicitId = typeof record?.id === "string" && record.id ? record.id : undefined;
   const ownerUserId = typeof record?.userId === "string" ? record.userId : "";
   const rawId = explicitId
     || (ownerUserId && privateKey.startsWith(`agent-${ownerUserId}-`)
       ? privateKey.slice(`agent-${ownerUserId}-`.length)
-      : ownerUserId && privateKey.startsWith(`cybot-${ownerUserId}-`)
-        ? privateKey.slice(`cybot-${ownerUserId}-`.length)
-        : parseAgentRecordId(privateKey, explicitId));
+      : parseAgentRecordId(privateKey, explicitId));
   if (!privateKey || !rawId || !ownerUserId) return null;
-  const keys = buildCompanionKeys(privateKey, rawId, ownerUserId);
+  const keys = buildCompanionKeys(rawId, ownerUserId);
   return {
     id: rawId,
     privateKey,
@@ -100,11 +92,11 @@ export async function listLocalCachedAgents(args: {
   const publicKeys = new Set<string>();
   for await (const [key, value] of args.db.iterator({ gte: "", lte: "\uffff" })) {
     if (typeof key !== "string" || !value || typeof value !== "object") continue;
-    if (key.startsWith(`agent-${args.userId}-`) || key.startsWith(`cybot-${args.userId}-`)) {
+    if (key.startsWith(`agent-${args.userId}-`)) {
       privateRecords.set(key, { ...(value as Record<string, unknown>), dbKey: key });
       continue;
     }
-    if (key.startsWith("agent-pub-") || key.startsWith("cybot-pub-")) {
+    if (key.startsWith("agent-pub-")) {
       publicKeys.add(key);
     }
   }
@@ -156,7 +148,7 @@ export async function listRemoteAgents(args: {
     fetchImpl: CliFetchImpl;
     serverUrl: string;
     userId: string;
-    type: "agent" | "cybot";
+    type: "agent";
   }) => Promise<any[]>;
   readDbRecord: (args: {
     authToken: string;
@@ -166,10 +158,8 @@ export async function listRemoteAgents(args: {
     serverUrl: string;
   }) => Promise<any>;
 }) {
+  // includeLegacy is ignored: cybot records are unsupported
   const recordGroups = [await args.queryUserRecords({ ...args, type: "agent" as const })];
-  if (args.includeLegacy) {
-    recordGroups.push(await args.queryUserRecords({ ...args, type: "cybot" as const }));
-  }
   const agents = sortListedAgents(
     recordGroups
       .flat()
@@ -205,7 +195,7 @@ export async function listRemoteAgentsAcrossServers(args: {
     fetchImpl: args.fetchImpl,
     label: "agent query",
     serverUrls: args.serverUrls,
-    type: args.includeLegacy ? ["agent", "cybot"] : "agent",
+    type: "agent",
     userId: args.userId,
   });
   const agents = sortListedAgents(

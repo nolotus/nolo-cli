@@ -1,3 +1,4 @@
+import { normalizeServerOrigin } from "../core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "../defaultServer";
 import { NOLO_CLUSTER_SERVERS } from "../database/config";
 import {
@@ -19,17 +20,13 @@ type CliHybridRecordStoreDeps = {
   fetchImpl?: CliFetchImpl;
 };
 
-function normalizeServer(value: string) {
-  return value.trim().replace(/\/+$/, "");
-}
-
 function resolveFallbackServers(env: EnvLike) {
   const values = [
     env.NOLO_SERVER_URL,
     env.BASE_URL,
     ...NOLO_CLUSTER_SERVERS,
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-  return [...new Set(values.map(normalizeServer))];
+  return [...new Set(values.map(normalizeServerOrigin))];
 }
 
 function resolveAuthToken(env: EnvLike) {
@@ -45,7 +42,9 @@ export function createCliHybridRecordStore(
 ): HybridRecordStore {
   return createHybridRecordStore({
     db: deps.db,
-    defaultServer: normalizeServer(deps.env.NOLO_SERVER || deps.env.BASE_URL || DEFAULT_NOLO_SERVER_URL),
+    defaultServer: normalizeServerOrigin(
+      deps.env.NOLO_SERVER || deps.env.BASE_URL || DEFAULT_NOLO_SERVER_URL
+    ),
     fallbackServers: resolveFallbackServers(deps.env),
     authToken: resolveAuthToken(deps.env),
     fetchImpl: deps.fetchImpl,

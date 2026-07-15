@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { normalizeAgentHandle } from "../core/agentHandle";
+import { toErrorMessage } from "../core/errorMessage";
 import { DataType } from "../create/types";
 import { createAgentKey } from "../database/keys";
 import { resolveCliAgentKeyInput } from "./agentAliases";
@@ -43,12 +45,6 @@ function parseJsonishValue(raw: string) {
   } catch {
     return raw;
   }
-}
-
-function normalizeAgentHandle(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim()
-    ? value.trim().toLowerCase().replace(/\s+/g, " ")
-    : undefined;
 }
 
 function recordHasAgentHandle(record: unknown, handle: string) {
@@ -154,7 +150,7 @@ async function curlFetch(url: string, init?: RequestInit): Promise<Response> {
 function shouldUseCurlTransportFallback(error: unknown) {
   const name = error instanceof Error ? error.name : "";
   if (name === "TimeoutError" || name === "AbortError") return false;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = toErrorMessage(error);
   if (/timed out|Timeout/i.test(message)) return false;
   return /Unable to connect|ConnectionRefused|ECONNREFUSED|Failed to connect|Was there a typo|handshake|certificate|ECONNRESET|socket|network/i.test(message);
 }
@@ -364,7 +360,7 @@ export async function resolveAgentRecordFromHybridStore(args: {
           } catch (err: unknown) {
             // 只在远程确认 404（记录已删除/tombstone）时清缓存
             // 暂态 500/网络错误不清缓存，保持可用性
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toErrorMessage(err);
             if (msg.includes("HTTP 404")) {
               try { await args.db.del(key); } catch {}
               continue;

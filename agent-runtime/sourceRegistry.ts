@@ -7,6 +7,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedString } from "../core/trimmedString";
 
 /**
  * Local inventory of provider *sources* (subscription / API / CLI).
@@ -56,7 +58,7 @@ export function getSourceRegistryPath(homeDir = homedir()): string {
 }
 
 function assertSourceId(sourceId: string): string {
-  const trimmed = typeof sourceId === "string" ? sourceId.trim() : "";
+  const trimmed = asTrimmedString(sourceId);
   if (!trimmed) throw new Error("sourceId must be a non-empty string.");
   if (trimmed.includes("..") || trimmed.includes("/") || trimmed.includes("\\")) {
     throw new Error(`sourceId contains forbidden path characters: ${trimmed}`);
@@ -75,15 +77,12 @@ function normalizeSourceRecord(
   if (!SOURCE_STATUSES.has(input.status)) {
     throw new Error(`Invalid source status: ${String(input.status)}`);
   }
-  const providerId = typeof input.providerId === "string" ? input.providerId.trim() : "";
-  const label = typeof input.label === "string" ? input.label.trim() : "";
+  const providerId = asTrimmedString(input.providerId);
+  const label = asTrimmedString(input.label);
   if (!providerId) throw new Error("providerId must be a non-empty string.");
   if (!label) throw new Error("label must be a non-empty string.");
 
-  const credentialRef =
-    typeof input.credentialRef === "string" && input.credentialRef.trim()
-      ? input.credentialRef.trim()
-      : undefined;
+  const credentialRef = asOptionalTrimmedString(input.credentialRef);
 
   // Guard: never persist values that look like raw API key *secrets* in registry rows.
   // Allow broker refs such as `api-key:agent-foo` (colon-separated id).

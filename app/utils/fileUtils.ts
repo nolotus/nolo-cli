@@ -1,6 +1,7 @@
 // 文件路径: app/utils/fileUtils.ts
 
 import type { FileCategory } from "../types";
+import { asOptionalFiniteNumber } from "../../core/optionalNumber";
 
 const fileConstructor =
   typeof globalThis !== "undefined" && typeof globalThis.File === "function"
@@ -93,10 +94,9 @@ export const getCompactFileMetaLabel = ({
   fileSize?: unknown;
 }): string | null => {
   const formatLabel = resolveFileFormatLabel({ fileName, mimeType });
+  const finiteSize = asOptionalFiniteNumber(fileSize);
   const sizeLabel =
-    typeof fileSize === "number" && Number.isFinite(fileSize)
-      ? formatFileSize(fileSize)
-      : null;
+    finiteSize !== undefined ? formatFileSize(finiteSize) : null;
 
   if (formatLabel && sizeLabel) return `${formatLabel} · ${sizeLabel}`;
   return formatLabel ?? sizeLabel;

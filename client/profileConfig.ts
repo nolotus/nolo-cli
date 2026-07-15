@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { canonicalizeNoloServerUrl } from "../core/noloServerUrl";
 
 export type NoloProfile = {
   serverUrl: string;
@@ -14,20 +15,8 @@ export type NoloProfileConfig = {
   profiles: Record<string, NoloProfile>;
 };
 
-export function normalizeProfileServerUrl(serverUrl: string) {
-  const normalized = serverUrl.trim().replace(/\/+$/, "");
-  if (!normalized) return normalized;
-  try {
-    const url = new URL(normalized);
-    if (url.protocol === "http:" && /\.?nolo\.chat$/i.test(url.hostname)) {
-      url.protocol = "https:";
-      return url.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    return normalized;
-  }
-  return normalized;
-}
+/** Shared pure seam (`core/noloServerUrl`) — keep CLI export name stable. */
+export const normalizeProfileServerUrl = canonicalizeNoloServerUrl;
 
 export function getDefaultProfileConfigPath() {
   return join(homedir(), ".nolo", "config.json");

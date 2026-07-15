@@ -1,6 +1,8 @@
+import { clipCompactText } from "../../core/clipCompactText";
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
+
 
 export type ToolDisplayMode = "hide" | "compact" | "verbose";
 
@@ -42,9 +44,9 @@ export function shouldEmitToolEvents(mode: ToolDisplayMode) {
 }
 
 function clip(value: string, max = 72) {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
+  return clipCompactText(value, max, "…");
 }
+
 
 function compactResultHint(event: LocalAgentToolEvent, toolName: string) {
   const gate = readActionGate(event.metadata?.actionGate);

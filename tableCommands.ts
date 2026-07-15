@@ -5,9 +5,17 @@ import {
   getDefaultProfileConfigPath,
   loadProfileConfig,
 } from "./client/profileConfig";
+import {
+  getSpaceContentKeys,
+  normalizeSpaceIdInput,
+} from "./cliSpaceHelpers";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { includeTableActivityColumns } from "./render/table/activityColumns";
 import type { CliFetchImpl } from "./cliFetch";
+import { toErrorMessage } from "./core/errorMessage";
+import { isRecord } from "./core/isRecord";
+import { asOptionalFiniteNumber } from "./core/optionalNumber";
+import { asOptionalTrimmedString } from "./core/optionalString";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -57,7 +65,7 @@ function parseJsonOption<T>(args: string[], flag: string): T | undefined {
   try {
     return JSON.parse(raw) as T;
   } catch (error) {
-    throw new Error(`${flag} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`${flag} must be valid JSON: ${toErrorMessage(error)}`);
   }
 }
 
@@ -70,7 +78,7 @@ function parseJsonOptionAlias<T>(args: string[], primaryFlag: string, aliasFlag:
     return JSON.parse(raw) as T;
   } catch (error) {
     const usedFlag = primary ? primaryFlag : aliasFlag;
-    throw new Error(`${usedFlag} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`${usedFlag} must be valid JSON: ${toErrorMessage(error)}`);
   }
 }
 
@@ -209,32 +217,6 @@ function parseTableArg(raw: string): { tenantId?: string; tableId?: string } {
   };
 }
 
-function normalizeSpaceInput(raw: string): string {
-  const value = raw.trim();
-  if (!value) return "";
-  if (value.startsWith("http://") || value.startsWith("https://")) {
-    const match = new URL(value).pathname.match(/^\/space\/([^/]+)/);
-    return match?.[1] ? decodeURIComponent(match[1]).replace(/^space-/, "") : "";
-  }
-  return value.replace(/^space-/, "");
-}
-
-function getSpaceContentKeys(spaceRecord: any): Set<string> {
-  const keys = new Set<string>();
-  const contents = spaceRecord?.contents;
-  if (!contents || typeof contents !== "object") return keys;
-  for (const [entryKey, value] of Object.entries(contents)) {
-    keys.add(entryKey);
-    if (value && typeof value === "object") {
-      const contentKey = (value as any).contentKey;
-      if (typeof contentKey === "string" && contentKey.trim()) {
-        keys.add(contentKey.trim());
-      }
-    }
-  }
-  return keys;
-}
-
 function resolveServerUrl(args: string[], env: EnvLike): string {
   return (
     readOption(args, "--server-url") ||
@@ -300,7 +282,7 @@ async function fetchTableRowsFromServer(
     return {
       serverUrl,
       ok: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: toErrorMessage(error),
     };
   }
 }
@@ -337,8 +319,8 @@ function parseJwtTenantId(token: string): string | undefined {
 
 function parseJwtUsername(token: string): string | undefined {
   for (const parsed of parseJwtPayloadCandidates(token)) {
-    const username = parsed.username;
-    if (typeof username === "string" && username.trim()) return username.trim();
+    const username = asOptionalTrimmedString(parsed.username);
+    if (username) return username;
   }
   return undefined;
 }
@@ -353,8 +335,8 @@ function parseJwtPayloadCandidates(token: string): Array<Record<string, unknown>
     try {
       const decoded = Buffer.from(payload, "base64").toString("utf8");
       const value = JSON.parse(decoded);
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        parsed.push(value as Record<string, unknown>);
+      if (isRecord(value)) {
+        parsed.push(value);
       }
     } catch {}
   }
@@ -425,7 +407,8 @@ function tableHasPurpose(table: any, purpose: string): boolean {
 
 function getComparableUpdatedAt(record: TableQueryRow): number {
   const raw = record?.updatedAt ?? record?.updated_at ?? record?.createdAt ?? record?.created;
-  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const asNumber = asOptionalFiniteNumber(raw);
+  if (asNumber !== undefined) return asNumber;
   if (typeof raw === "string") return Date.parse(raw) || 0;
   return 0;
 }
@@ -474,7 +457,7 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
   try {
     outputMode = parseOutputMode(readOption(args, "--output") || "items");
   } catch (error) {
-    output.write(`[nolo] table list failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] table list failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
 
@@ -495,7 +478,7 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
     : Math.max(1, resultLimit.limit ?? DEFAULT_TABLE_LIST_LIMIT);
   const titleQuery = readOption(args, "--title-query").trim().toLowerCase();
   const purpose = readOption(args, "--purpose").trim();
-  const spaceId = normalizeSpaceInput(readOption(args, "--space") || readOption(args, "--space-id"));
+  const spaceId = normalizeSpaceIdInput(readOption(args, "--space") || readOption(args, "--space-id"));
   const scanLimit = titleQuery || purpose ? Math.max(limit * 5, 200) : limit;
   const serverUrl = resolveServerUrl(args, env);
 
@@ -516,7 +499,7 @@ export async function runTableListCommand(args: string[], deps: TableCommandDeps
           userId,
         });
   } catch (error) {
-    output.write(`[nolo] table list failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] table list failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
   const filtered = records
@@ -642,7 +625,7 @@ export async function runTableQueryCommand(args: string[], deps: TableCommandDep
       parseJsonOptionAlias<Record<string, unknown>>(args, "--filters", "--filter")
     );
   } catch (error) {
-    output.write(`[nolo] table query failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] table query failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
 
@@ -848,7 +831,7 @@ export async function runTableDeleteRowsCommand(args: string[], deps: TableComma
       }));
     }
   } catch (error) {
-    output.write(`[nolo] table delete-rows failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    output.write(`[nolo] table delete-rows failed: ${toErrorMessage(error)}\n`);
     return 1;
   }
 
@@ -862,7 +845,7 @@ export async function runTableDeleteRowsCommand(args: string[], deps: TableComma
         deletionSpec = rowDbKeys.map((dbKey) => ({ dbKey, source: "--row-dbkeys" }));
       }
     } catch (error) {
-      output.write(`[nolo] table delete-rows failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      output.write(`[nolo] table delete-rows failed: ${toErrorMessage(error)}\n`);
       return 1;
     }
   }
@@ -982,7 +965,7 @@ export async function runTableDeleteRowsCommand(args: string[], deps: TableComma
       results.push(...deletionSpec.map(({ dbKey, source }) => ({ dbKey, source, ok: false, error })));
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toErrorMessage(error);
     results.push(...deletionSpec.map(({ dbKey, source }) => ({ dbKey, source, ok: false, error: message })));
   }
 
@@ -990,18 +973,14 @@ export async function runTableDeleteRowsCommand(args: string[], deps: TableComma
   return results.every((r) => r.ok) ? 0 : 1;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function parseValuesObject(flag: string, raw: string): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`${flag} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`${flag} must be valid JSON: ${toErrorMessage(error)}`);
   }
-  if (!isPlainObject(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error(`${flag} must be a JSON object`);
   }
   return parsed;
@@ -1012,12 +991,12 @@ function parseRowsArray(flag: string, raw: string): Array<Record<string, unknown
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`${flag} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`${flag} must be valid JSON: ${toErrorMessage(error)}`);
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error(`${flag} must be a non-empty JSON array`);
   }
-  if (!parsed.every(isPlainObject)) {
+  if (!parsed.every(isRecord)) {
     throw new Error(`${flag} must be an array of JSON objects`);
   }
   return parsed as Array<Record<string, unknown>>;
@@ -1029,7 +1008,7 @@ function parseUpdatesArray(flag: string, raw: string): Array<Record<string, unkn
     if (typeof update.rowId !== "string" && typeof update.rowDbKey !== "string") {
       throw new Error(`${flag}[*] must include rowId or rowDbKey`);
     }
-    if (!isPlainObject(update.changes)) {
+    if (!isRecord(update.changes)) {
       throw new Error(`${flag}[*].changes must be a JSON object`);
     }
   }
@@ -1127,7 +1106,7 @@ export async function runTableAddColumnCommand(args: string[], deps: TableComman
     try {
       optionsParsed = JSON.parse(optionsRaw);
     } catch (error) {
-      output.write(`[nolo] table add-column failed: --options must be valid JSON: ${error instanceof Error ? error.message : String(error)}\n`);
+      output.write(`[nolo] table add-column failed: --options must be valid JSON: ${toErrorMessage(error)}\n`);
       return 1;
     }
     if (!Array.isArray(optionsParsed)) {
@@ -1166,7 +1145,7 @@ export async function runTableAddRowCommand(args: string[], deps: TableCommandDe
   try {
     values = parseValuesObject("--values", valuesRaw);
   } catch (error) {
-    output.write(`[nolo] table add-row failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_ADD_ROW_USAGE}`);
+    output.write(`[nolo] table add-row failed: ${toErrorMessage(error)}\n${TABLE_ADD_ROW_USAGE}`);
     return 1;
   }
   const result = await postTableJson(deps, ctx, "/api/table/add-row", { tenantId: ctx.tenantId, tableId: ctx.tableId, values });
@@ -1199,7 +1178,7 @@ export async function runTableAddRowsCommand(args: string[], deps: TableCommandD
   try {
     rows = parseRowsArray("--rows", rowsRaw);
   } catch (error) {
-    output.write(`[nolo] table add-rows failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_ADD_ROWS_USAGE}`);
+    output.write(`[nolo] table add-rows failed: ${toErrorMessage(error)}\n${TABLE_ADD_ROWS_USAGE}`);
     return 1;
   }
   const result = await postTableJson(deps, ctx, "/api/table/add-rows", { tenantId: ctx.tenantId, tableId: ctx.tableId, rows });
@@ -1238,7 +1217,7 @@ export async function runTableUpdateRowCommand(args: string[], deps: TableComman
   try {
     changes = parseValuesObject("--changes", changesRaw);
   } catch (error) {
-    output.write(`[nolo] table update-row failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_UPDATE_ROW_USAGE}`);
+    output.write(`[nolo] table update-row failed: ${toErrorMessage(error)}\n${TABLE_UPDATE_ROW_USAGE}`);
     return 1;
   }
   const result = await postTableJson(deps, ctx, "/api/table/update-row", { tenantId: ctx.tenantId, tableId: ctx.tableId, ...target, changes });
@@ -1271,7 +1250,7 @@ export async function runTableUpdateRowsCommand(args: string[], deps: TableComma
   try {
     updates = parseUpdatesArray("--updates", updatesRaw);
   } catch (error) {
-    output.write(`[nolo] table update-rows failed: ${error instanceof Error ? error.message : String(error)}\n${TABLE_UPDATE_ROWS_USAGE}`);
+    output.write(`[nolo] table update-rows failed: ${toErrorMessage(error)}\n${TABLE_UPDATE_ROWS_USAGE}`);
     return 1;
   }
   const result = await postTableJson(deps, ctx, "/api/table/update-rows", { tenantId: ctx.tenantId, tableId: ctx.tableId, updates });

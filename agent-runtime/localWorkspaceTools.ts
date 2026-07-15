@@ -2,6 +2,14 @@ import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { spawnSync, spawn as spawnChildProcess } from "node:child_process";
 
+import { toErrorMessage } from "../core/errorMessage";
+import { isRecord } from "../core/isRecord";
+import { asOptionalFiniteNumber } from "../core/optionalNumber";
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
+import { asTrimmedNonEmptyStringArray } from "../core/stringArray";
+import { asTrimmedString } from "../core/trimmedString";
 import type {
   AgentRuntimeToolCallInput,
   AgentRuntimeToolResult,
@@ -143,25 +151,15 @@ const REMOVED_WORKSPACE_TOOL_NAMES = new Set([
 ]);
 
 function readTrimmedString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed || undefined;
-}
-
-function readFiniteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return asOptionalTrimmedString(value);
 }
 
 function resolveExecShellTimeoutMs(override: number | undefined) {
-  if (typeof override === "number" && Number.isFinite(override) && override > 0) {
-    return override;
-  }
+  const fromOverride = asOptionalPositiveFiniteNumber(override);
+  if (fromOverride !== undefined) return fromOverride;
   const raw = process.env[EXEC_SHELL_TIMEOUT_ENV];
-  if (raw !== undefined) {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return undefined;
+  if (raw === undefined) return undefined;
+  return asOptionalPositiveFiniteNumber(Number(raw));
 }
 
 function tokenizeShellPrefix(command: string) {
@@ -239,22 +237,21 @@ function buildInteractiveCommandBlockedResult(command: string): AgentRuntimeTool
 function extractActivityRefs(rawRefs: unknown): ActivityRef[] | undefined {
   if (!Array.isArray(rawRefs)) return undefined;
   const refs = rawRefs.flatMap((entry): ActivityRef[] => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-    const ref = entry as Record<string, unknown>;
-    if (ref.type === "file") {
-      const path = readTrimmedString(ref.path);
+    if (!isRecord(entry)) return [];
+    if (entry.type === "file") {
+      const path = readTrimmedString(entry.path);
       return path ? [{ type: "file", path }] : [];
     }
-    if (ref.type === "terminal") {
-      const id = readTrimmedString(ref.id);
-      const label = readTrimmedString(ref.label);
+    if (entry.type === "terminal") {
+      const id = readTrimmedString(entry.id);
+      const label = readTrimmedString(entry.label);
       return id || label
         ? [{ type: "terminal", ...(id ? { id } : {}), ...(label ? { label } : {}) }]
         : [];
     }
-    if (ref.type === "url") {
-      const url = readTrimmedString(ref.url);
-      const label = readTrimmedString(ref.label);
+    if (entry.type === "url") {
+      const url = readTrimmedString(entry.url);
+      const label = readTrimmedString(entry.label);
       return url ? [{ type: "url", url, ...(label ? { label } : {}) }] : [];
     }
     return [];
@@ -263,13 +260,12 @@ function extractActivityRefs(rawRefs: unknown): ActivityRef[] | undefined {
 }
 
 function extractActivityAction(rawAction: unknown): ToolActivityAction | undefined {
-  if (!rawAction || typeof rawAction !== "object" || Array.isArray(rawAction)) return undefined;
-  const obj = rawAction as Record<string, unknown>;
-  const title = readTrimmedString(obj.title);
+  if (!isRecord(rawAction)) return undefined;
+  const title = readTrimmedString(rawAction.title);
   if (!title) return undefined;
-  const kind = readTrimmedString(obj.kind);
-  const detail = readTrimmedString(obj.detail);
-  const refs = extractActivityRefs(obj.refs);
+  const kind = readTrimmedString(rawAction.kind);
+  const detail = readTrimmedString(rawAction.detail);
+  const refs = extractActivityRefs(rawAction.refs);
   return {
     title,
     ...(kind ? { kind } : {}),
@@ -279,19 +275,18 @@ function extractActivityAction(rawAction: unknown): ToolActivityAction | undefin
 }
 
 function extractActivityPhase(rawPhase: unknown): ToolActivityPhase | undefined {
-  if (!rawPhase || typeof rawPhase !== "object" || Array.isArray(rawPhase)) return undefined;
-  const obj = rawPhase as Record<string, unknown>;
-  const title = readTrimmedString(obj.title);
+  if (!isRecord(rawPhase)) return undefined;
+  const title = readTrimmedString(rawPhase.title);
   if (!title) return undefined;
-  const id = readTrimmedString(obj.id) || title.toLowerCase().replace(/\s+/g, "-");
-  const index = readFiniteNumber(obj.index);
-  const total = readFiniteNumber(obj.total);
+  const id = readTrimmedString(rawPhase.id) || title.toLowerCase().replace(/\s+/g, "-");
+  const index = asOptionalFiniteNumber(rawPhase.index);
+  const total = asOptionalFiniteNumber(rawPhase.total);
   const status =
-    obj.status === "pending" ||
-    obj.status === "running" ||
-    obj.status === "success" ||
-    obj.status === "failed"
-      ? obj.status
+    rawPhase.status === "pending" ||
+    rawPhase.status === "running" ||
+    rawPhase.status === "success" ||
+    rawPhase.status === "failed"
+      ? rawPhase.status
       : undefined;
   return {
     id,
@@ -303,10 +298,9 @@ function extractActivityPhase(rawPhase: unknown): ToolActivityPhase | undefined 
 }
 
 function extractActivityPlan(rawPlan: unknown): ActivityPlan | undefined {
-  if (!rawPlan || typeof rawPlan !== "object" || Array.isArray(rawPlan)) return undefined;
-  const obj = rawPlan as Record<string, unknown>;
-  if (!Array.isArray(obj.phases)) return undefined;
-  const phases = obj.phases.flatMap((entry, index): ActivityPlan["phases"] => {
+  if (!isRecord(rawPlan)) return undefined;
+  if (!Array.isArray(rawPlan.phases)) return undefined;
+  const phases = rawPlan.phases.flatMap((entry, index): ActivityPlan["phases"] => {
     const phase = extractActivityPhase(entry);
     if (!phase) return [];
     return [{
@@ -317,7 +311,7 @@ function extractActivityPlan(rawPlan: unknown): ActivityPlan | undefined {
     }];
   });
   if (phases.length === 0) return undefined;
-  const title = readTrimmedString(obj.title);
+  const title = readTrimmedString(rawPlan.title);
   return {
     ...(title ? { title } : {}),
     phases,
@@ -326,13 +320,12 @@ function extractActivityPlan(rawPlan: unknown): ActivityPlan | undefined {
 
 function extractActivity(parsed: WorkspaceFileArgs): ToolActivity | undefined {
   const raw = parsed._activity;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const obj = raw as Record<string, unknown>;
-  const nestedAction = extractActivityAction(obj.action);
-  const legacyAction = extractActivityAction(obj);
+  if (!isRecord(raw)) return undefined;
+  const nestedAction = extractActivityAction(raw.action);
+  const legacyAction = extractActivityAction(raw);
   const action = nestedAction || legacyAction;
-  const phase = extractActivityPhase(obj.phase);
-  const plan = extractActivityPlan(obj.plan);
+  const phase = extractActivityPhase(raw.phase);
+  const plan = extractActivityPlan(raw.plan);
   if (!action && !plan) return undefined;
   return {
     ...(action ? action : {}),
@@ -1033,8 +1026,7 @@ export function buildLocalWorkspaceOpenAiTools(args: {
 
 function parseWorkspaceToolArguments(raw: string): WorkspaceFileArgs {
   try {
-    const parsed = JSON.parse(raw || "{}");
-    return parsed && typeof parsed === "object" ? parsed as WorkspaceFileArgs : {};
+    return asRecordOrEmpty(JSON.parse(raw || "{}") as unknown) as WorkspaceFileArgs;
   } catch {
     return {};
   }
@@ -1069,7 +1061,7 @@ function readWorkspacePathAlias(args: WorkspaceFileArgs) {
     args.filePath ??
     args.filename ??
     args.file;
-  return typeof path === "string" && path.trim() ? path.trim() : undefined;
+  return asOptionalTrimmedString(path);
 }
 
 function requireWorkspaceFileContent(args: WorkspaceFileArgs) {
@@ -1204,17 +1196,16 @@ function pluralizeReplacement(count: number) {
 }
 
 function requireWorkspaceSearchQuery(args: WorkspaceFileArgs) {
-  const query = typeof args.query === "string" ? args.query.trim() : "";
+  const query = asTrimmedString(args.query);
   if (!query) throw new Error("searchFiles requires a non-empty query.");
   return query;
 }
 
 function requireWorkspaceGlobPattern(args: WorkspaceFileArgs) {
-  const pattern = typeof args.pattern === "string" && args.pattern.trim()
-    ? args.pattern.trim()
-    : typeof args.glob === "string" && args.glob.trim()
-      ? args.glob.trim()
-      : "";
+  const pattern =
+    asOptionalTrimmedString(args.pattern) ??
+    asOptionalTrimmedString(args.glob) ??
+    "";
   if (!pattern) throw new Error("globFiles requires a non-empty pattern.");
   return pattern;
 }
@@ -1256,48 +1247,39 @@ function readWorkspaceContextLines(args: WorkspaceFileArgs) {
 
 function readWorkspaceExcludeGlobs(args: WorkspaceFileArgs) {
   if (args.exclude === undefined) return [];
-  if (typeof args.exclude === "string" && args.exclude.trim()) {
-    return [args.exclude.trim()];
+  const singleExclude = asOptionalTrimmedString(args.exclude);
+  if (singleExclude) {
+    return [singleExclude];
   }
   if (!Array.isArray(args.exclude)) {
     throw new Error("exclude must be a glob string or an array of glob strings.");
   }
-  return args.exclude.flatMap((item) =>
-    typeof item === "string" && item.trim() ? [item.trim()] : []
-  );
+  return asTrimmedNonEmptyStringArray(args.exclude);
 }
 
 function requireShellCommand(args: WorkspaceFileArgs, toolName: string) {
-  const command = typeof args.cmd === "string"
-    ? args.cmd.trim()
-    : typeof args.command === "string"
-      ? args.command.trim()
-      : "";
+  const command = asTrimmedString(args.cmd) || asTrimmedString(args.command);
   if (!command) throw new Error(`${toolName} requires a non-empty command.`);
   return command;
 }
 
 function requireVisualWaitSelector(args: WorkspaceFileArgs) {
-  const selector = typeof args.waitSelector === "string" ? args.waitSelector.trim() : "";
+  const selector = asTrimmedString(args.waitSelector);
   if (!selector) throw new Error("captureVisualState requires a non-empty waitSelector.");
   return selector;
 }
 
-function readOptionalStringArg(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function readVisualStateCaptureArgs(args: WorkspaceFileArgs) {
-  const baseUrl = readOptionalStringArg(args.baseUrl) ?? readOptionalStringArg(args.base);
-  const path = readOptionalStringArg(args.path) ?? "/";
+  const baseUrl = asOptionalTrimmedString(args.baseUrl) ?? asOptionalTrimmedString(args.base);
+  const path = asOptionalTrimmedString(args.path) ?? "/";
   const waitSelector = requireVisualWaitSelector(args);
-  const scrollSelector = readOptionalStringArg(args.scrollSelector);
-  const focusSelector = readOptionalStringArg(args.focusSelector);
-  const expectText = readOptionalStringArg(args.expectText);
+  const scrollSelector = asOptionalTrimmedString(args.scrollSelector);
+  const focusSelector = asOptionalTrimmedString(args.focusSelector);
+  const expectText = asOptionalTrimmedString(args.expectText);
   const screenshotPath =
-    readOptionalStringArg(args.screenshotPath) ?? "test-results/frontend-agent/visual-state.png";
+    asOptionalTrimmedString(args.screenshotPath) ?? "test-results/frontend-agent/visual-state.png";
   const metricsPath =
-    readOptionalStringArg(args.metricsPath) ?? "test-results/frontend-agent/visual-state-metrics.json";
+    asOptionalTrimmedString(args.metricsPath) ?? "test-results/frontend-agent/visual-state-metrics.json";
   return {
     baseUrl,
     path,
@@ -1324,7 +1306,7 @@ async function readWorkspacePackageScripts(workspaceRoot: string): Promise<{
   } catch (error) {
     return {
       scripts: [],
-      error: error instanceof Error ? error.message : String(error),
+      error: toErrorMessage(error),
     };
   }
 }
@@ -1437,10 +1419,7 @@ async function runWorkspaceCommand(args: {
   outputLimit?: number;
   commandPrefix?: string[];
 }) {
-  const timeoutMs =
-    typeof args.timeoutMs === "number" && Number.isFinite(args.timeoutMs) && args.timeoutMs > 0
-      ? args.timeoutMs
-      : undefined;
+  const timeoutMs = asOptionalPositiveFiniteNumber(args.timeoutMs);
   const detached = process.platform !== "win32";
   const command = [
     ...(args.commandPrefix ?? []),

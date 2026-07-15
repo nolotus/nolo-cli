@@ -1,6 +1,9 @@
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+import { asNonEmptyStringArray } from "../core/stringArray";
+import { asTrimmedString } from "../core/trimmedString";
 import {
   createAgentKey,
-  createCybotKey,
+
   isAgentKey,
   splitKey,
 } from "../database/keys";
@@ -9,17 +12,14 @@ import type { ShareType } from "./types";
 
 // ── String normalization ────────────────────────────────────────────
 
-export const toSafeString = (value: unknown): string =>
-  typeof value === "string" ? value.trim() : "";
+/** Core pure seam re-export so share callers keep importing from helpers. */
+export { normalizeUserId } from "../core/userId";
+
+export const toSafeString = (value: unknown): string => asTrimmedString(value);
 
 export const toNonEmptyString = (value: unknown): string | undefined => {
   const text = toSafeString(value);
   return text || undefined;
-};
-
-export const normalizeUserId = (value: unknown): string => {
-  const text = toSafeString(value);
-  return text.startsWith("user:") ? text.slice(5) : text;
 };
 
 export const normalizeAuthorName = (value: unknown): string => {
@@ -38,11 +38,12 @@ export const toSafeAgentKey = (value: unknown): string => {
 // ── Time helpers ────────────────────────────────────────────────────
 
 export const toSafeTimestamp = (value: unknown): number => {
-  const num = Number(value);
-  if (Number.isFinite(num) && num > 0) return num;
+  // Number() first so numeric strings (e.g. epoch-ms text) stay accepted;
+  // Date.parse covers ISO / date strings that Number() rejects.
+  const fromNumber = asOptionalPositiveFiniteNumber(Number(value));
+  if (fromNumber !== undefined) return fromNumber;
   if (typeof value !== "string") return 0;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  return asOptionalPositiveFiniteNumber(Date.parse(value)) ?? 0;
 };
 
 const SHARE_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
@@ -219,10 +220,8 @@ export const extractCoverImage = (
     if (image) return image;
 
     if (Array.isArray(msg.images)) {
-      const first = (msg.images as unknown[]).find(
-        (u) => typeof u === "string" && u.trim().length > 0
-      );
-      if (first) return first as string;
+      const first = asNonEmptyStringArray(msg.images)[0];
+      if (first) return first;
     }
   }
   return undefined;
@@ -244,9 +243,6 @@ export const toPublicAgentKey = (value: unknown): string => {
 
   if (type === DataType.AGENT) {
     return createAgentKey.public(agentId);
-  }
-  if (type === DataType.CYBOT) {
-    return createCybotKey.public(agentId);
   }
   return "";
 };

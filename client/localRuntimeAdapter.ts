@@ -21,6 +21,14 @@ import {
 } from "../agentAliases";
 import { isCompiledBinary } from "../cliEnvHelpers";
 import type { CliFetchImpl } from "../cliFetch";
+import { clipCompactText } from "../core/clipCompactText";
+import { normalizeAgentHandle } from "../core/agentHandle";
+import { toErrorMessage } from "../core/errorMessage";
+import { isRecord } from "../core/isRecord";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
+import { asTrimmedNonEmptyStringArray } from "../core/stringArray";
+import { summarizeEndpoint } from "../core/summarizeEndpoint";
 
 /**
  * Heavy agent-runtime / AI / local-DB modules are intentionally NOT top-level
@@ -318,7 +326,7 @@ function assertWithinLocalToolBudget(args: {
 }
 
 function isTransientFetchError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = toErrorMessage(error);
   return /certificate|handshake|network|socket|timed out|timeout|ECONNRESET/i.test(message);
 }
 
@@ -413,20 +421,10 @@ async function fetchWithTransientRetry(
   throw lastError;
 }
 
-function summarizeEndpoint(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  try {
-    const url = new URL(value);
-    return `${url.protocol}//${url.host}${url.pathname}`;
-  } catch {
-    return "invalid-url";
-  }
-}
 
 function parseJsonObject(raw: string) {
   try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return asRecordOrEmpty(JSON.parse(raw) as unknown);
   } catch {
     return {};
   }
@@ -715,10 +713,7 @@ function withResolvedRuntimeToolSurface(
   if (!agentConfig) return agentConfig;
   const currentUserId = resolveLocalUserId(env);
   const rawRecord = (agentConfig as any).rawRecord ?? {};
-  const ownerId =
-    typeof rawRecord.userId === "string" && rawRecord.userId.trim()
-      ? rawRecord.userId.trim()
-      : null;
+  const ownerId = asOptionalTrimmedString(rawRecord.userId) ?? null;
   const toolSurface = resolveRuntimeToolSurfaceForAgent({
     explicitToolNames: agentConfig.toolNames,
     currentUserId,
@@ -757,27 +752,16 @@ function prepareRemoteDialogEvidenceRecord(key: string, value: any) {
   return record;
 }
 
-function normalizeRemoteString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function normalizeRemoteStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  for (const item of value) {
-    const normalized = normalizeRemoteString(item);
-    if (normalized) seen.add(normalized);
-  }
-  return [...seen];
+  return [...new Set(asTrimmedNonEmptyStringArray(value))];
 }
 
 function normalizeRemoteSubjectRef(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const kind = normalizeRemoteString(raw.kind);
-  const id = normalizeRemoteString(raw.id);
+  if (!isRecord(value)) return null;
+  const kind = asOptionalTrimmedString(value.kind);
+  const id = asOptionalTrimmedString(value.id);
   if (!kind || !id) return null;
-  const role = normalizeRemoteString(raw.role);
+  const role = asOptionalTrimmedString(value.role);
   return { kind, id, ...(role ? { role } : {}) };
 }
 
@@ -798,13 +782,13 @@ function mergeRemoteSubjectRefs(...groups: unknown[]) {
   return refs;
 }
 function resolveParentAgentKeyFromDialog(parentDialog: Record<string, any>) {
-  const primaryKey = normalizeRemoteString(parentDialog.primaryAgentKey);
+  const primaryKey = asOptionalTrimmedString(parentDialog.primaryAgentKey);
   if (primaryKey) return primaryKey;
-  const agentKey = normalizeRemoteString(parentDialog.agentKey);
+  const agentKey = asOptionalTrimmedString(parentDialog.agentKey);
   if (agentKey) return agentKey;
   if (Array.isArray(parentDialog.cybots)) {
     for (const item of parentDialog.cybots) {
-      const normalized = normalizeRemoteString(item);
+      const normalized = asOptionalTrimmedString(item);
       if (normalized) return normalized;
     }
   }
@@ -813,9 +797,8 @@ function resolveParentAgentKeyFromDialog(parentDialog: Record<string, any>) {
 
 function clipLocalWakeEvidence(value: unknown, max = 1200) {
   if (typeof value !== "string") return undefined;
-  const compact = value.replace(/\s+/g, " ").trim();
-  if (!compact) return undefined;
-  return compact.length > max ? `${compact.slice(0, max - 3)}...` : compact;
+  const compact = clipCompactText(value, max);
+  return compact || undefined;
 }
 
 function buildLocalParentWakeMessage(args: {
@@ -900,7 +883,7 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
 }) {
   if (args.input.runtimeContext?.parentWakeOnTerminal !== true) return;
   if (args.childDialogRecord.parentWake?.terminalNotifiedAt) return;
-  const parentDialogId = normalizeRemoteString(args.childDialogRecord.parentDialogId);
+  const parentDialogId = asOptionalTrimmedString(args.childDialogRecord.parentDialogId);
   if (!parentDialogId) return;
 
   const parentDialogKey = `dialog-${args.userId}-${parentDialogId}`;
@@ -914,7 +897,7 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
   const parentAgentKey = resolveParentAgentKeyFromDialog(parentDialog);
   if (!parentAgentKey) return;
 
-  const childDialogId = normalizeRemoteString(args.childDialogRecord.id);
+  const childDialogId = asOptionalTrimmedString(args.childDialogRecord.id);
   if (!childDialogId) return;
   const subjectRefs = mergeRemoteSubjectRefs(
     args.childDialogRecord.subjectRefs,
@@ -1035,7 +1018,7 @@ async function syncLocalDialogEvidenceToRemote(args: {
     } catch (error) {
       args.output?.write(
         `[nolo] Parent dialog wake failed; synced local child evidence remains queryable: ${
-          error instanceof Error ? error.message : String(error)
+          toErrorMessage(error)
         }\n`,
       );
     }
@@ -1201,14 +1184,14 @@ async function readAgentFromStore(args: {
     if (!record || typeof record !== "object") continue;
     return resolveAgentRuntimeConfigFromRecord(key, record);
   }
-  const normalizedRef = normalizeRemoteString(args.agentRef)?.toLowerCase().replace(/\s+/g, " ");
+  const normalizedRef = normalizeAgentHandle(args.agentRef);
   if (!normalizedRef) return null;
   try {
     // Async iterator — must consume entries sequentially from the store cursor.
     const iterator = args.store.iterator({ gte: "agent-", lte: "agent-\uffff" });
     for await (const [key, record] of iterator) {
       if (!record || typeof record !== "object") continue;
-      const handle = normalizeRemoteString((record as any).handle)?.toLowerCase().replace(/\s+/g, " ");
+      const handle = normalizeAgentHandle((record as any).handle);
       if (handle !== normalizedRef) continue;
       return resolveAgentRuntimeConfigFromRecord(key, record);
     }
@@ -1281,7 +1264,7 @@ async function writeDialog(args: {
     }
     args.output?.write(
       `[nolo] Remote dialog evidence sync failed; local dialog only: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
   }
@@ -1442,7 +1425,7 @@ export function createCliLocalRuntimeAdapter(
               if (error instanceof CliProviderQuotaError) {
                 throw error;
               }
-              const message = error instanceof Error ? error.message : String(error);
+              const message = toErrorMessage(error);
               throw new Error(
                 `Local CLI provider "${provider}" is unavailable or failed: ${message}`
               );

@@ -1,3 +1,5 @@
+import { toErrorMessage } from "./core/errorMessage";
+import { parsePositiveFiniteNumberOrFallback } from "./core/positiveFiniteNumberOrFallback";
 import type { HeartbeatLoopOptions } from "./connector-experimental/heartbeatLoop";
 import type { MachineHeartbeat } from "./connector-experimental/protocol";
 import {
@@ -28,8 +30,10 @@ function buildConnectorKeepaliveMessage() {
 }
 
 function resolveHeartbeatIntervalMs(env: EnvLike) {
-  const raw = Number(env.NOLO_CONNECT_HEARTBEAT_MS ?? "");
-  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+  return parsePositiveFiniteNumberOrFallback(
+    env.NOLO_CONNECT_HEARTBEAT_MS,
+    30_000,
+  );
 }
 
 export async function defaultConnectWebSocket(
@@ -204,9 +208,7 @@ export async function runMachineWsSession(options: {
       };
     }
     options.output.write(
-      `[nolo] Connector websocket failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] Connector websocket failed: ${toErrorMessage(error)}\n`
     );
     return { exitCode: 1 };
   }

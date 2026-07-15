@@ -1,3 +1,6 @@
+import { asOptionalPositiveInteger } from "../core/optionalPositiveInteger";
+import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
+
 /**
  * Default maxConcurrent used when an agent has no admission config.
  * v0 policy: hard-coded to 2 until per-agent config is widely adopted.
@@ -27,10 +30,7 @@ export type AgentThreadAdmissionDecision =
     };
 
 export function normalizeAgentThreadMaxConcurrent(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    return null;
-  }
-  return value;
+  return asOptionalPositiveInteger(value) ?? null;
 }
 
 export function resolveAgentThreadMaxConcurrent(
@@ -47,11 +47,12 @@ export function decideAgentThreadAdmission(input: {
   agentConfig: AgentThreadAdmissionAgentConfig;
   activeThreadCount: number;
 }): AgentThreadAdmissionDecision {
+  const positiveActiveThreadCount = asOptionalPositiveFiniteNumber(
+    input.activeThreadCount,
+  );
   const activeThreadCount =
-    typeof input.activeThreadCount === "number" &&
-    Number.isFinite(input.activeThreadCount) &&
-    input.activeThreadCount > 0
-      ? Math.floor(input.activeThreadCount)
+    positiveActiveThreadCount !== undefined
+      ? Math.floor(positiveActiveThreadCount)
       : 0;
   const maxConcurrent =
     resolveAgentThreadMaxConcurrent(input.agentConfig) ??

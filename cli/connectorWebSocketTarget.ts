@@ -1,3 +1,5 @@
+import { isGatewayHttpStatus } from "../core/gatewayHttpStatus";
+import { parseRetryAfterHeaderMs } from "../core/retryAfterMs";
 import type { CliFetchImpl } from "./cliFetch";
 
 export class ConnectorWebSocketAuthError extends Error {
@@ -33,17 +35,9 @@ export function isConnectorWebSocketRetryableError(
 }
 
 function parseRetryAfterMs(response: Response, bodyRetryAfterMs?: unknown) {
-  const headerValue = response.headers.get("Retry-After");
-  if (typeof headerValue === "string" && headerValue.trim()) {
-    const asSeconds = Number(headerValue.trim());
-    if (Number.isFinite(asSeconds) && asSeconds >= 0) {
-      return Math.round(asSeconds * 1_000);
-    }
-    const asDateMs = Date.parse(headerValue.trim());
-    if (Number.isFinite(asDateMs)) {
-      return Math.max(0, asDateMs - Date.now());
-    }
-  }
+  const headerDelayMs = parseRetryAfterHeaderMs(response.headers.get("Retry-After"));
+  if (headerDelayMs != null) return headerDelayMs;
+  // Optional body ms: keep undefined when absent/invalid (no invented default).
   const parsed = Number(bodyRetryAfterMs);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : undefined;
 }
@@ -87,9 +81,7 @@ export async function resolveConnectorWebSocketTarget(input: {
     const retryable =
       json?.retryable === true ||
       json?.reason === "core_draining" ||
-      response.status === 502 ||
-      response.status === 503 ||
-      response.status === 504;
+      isGatewayHttpStatus(response.status);
     if (retryable) {
       const reason = typeof json?.reason === "string" ? json.reason : "retryable";
       const message =

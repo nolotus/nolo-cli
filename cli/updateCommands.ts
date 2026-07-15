@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeServerOrigin } from "../core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import { loadProfileConfig } from "./client/profileConfig";
 import { resolveDefaultSpawn, type SpawnFn, type SpawnedProcess } from "./processSpawn";
@@ -51,8 +52,7 @@ function resolvePackageJsonPath(): string | null {
 const PACKAGE_JSON_PATH = resolvePackageJsonPath();
 
 export function getCliInstallChannel(serverUrl?: string | null): CliReleaseChannel {
-  const normalized =
-    typeof serverUrl === "string" ? serverUrl.trim().replace(/\/+$/, "") : "";
+  const normalized = normalizeServerOrigin(serverUrl);
   if (!normalized) {
     return "latest";
   }
@@ -105,16 +105,16 @@ export function resolveSelfUpdateServerUrl(
   override?: string,
 ) {
   if (override?.trim()) {
-    return override.trim().replace(/\/+$/, "");
+    return normalizeServerOrigin(override);
   }
   const fromEnv = env.NOLO_SERVER || env.BASE_URL;
   if (typeof fromEnv === "string" && fromEnv.trim()) {
-    return fromEnv.trim().replace(/\/+$/, "");
+    return normalizeServerOrigin(fromEnv);
   }
   const profile = loadProfileConfig();
   const profileUrl = profile?.profiles?.[profile.currentProfile]?.serverUrl;
   if (profileUrl?.trim()) {
-    return profileUrl.trim().replace(/\/+$/, "");
+    return normalizeServerOrigin(profileUrl);
   }
   return DEFAULT_NOLO_SERVER_URL;
 }

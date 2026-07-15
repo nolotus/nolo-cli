@@ -1,3 +1,6 @@
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asTrimmedNonEmptyStringArray } from "../core/stringArray";
+
 export type MachineHeartbeatInput = {
   machineId?: unknown;
   name?: unknown;
@@ -23,21 +26,8 @@ const normalizeRequiredString = (value: unknown, field: string) => {
   return value.trim();
 };
 
-const normalizeOptionalString = (value: unknown) =>
-  typeof value === "string" && value.trim() ? value.trim() : undefined;
-
 export function normalizeCapabilityList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const item of value) {
-    if (typeof item !== "string") continue;
-    const normalized = item.trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(normalized);
-  }
-  return result;
+  return [...new Set(asTrimmedNonEmptyStringArray(value))];
 }
 
 export function normalizeMachineHeartbeat(input: MachineHeartbeatInput): MachineHeartbeat {
@@ -48,7 +38,7 @@ export function normalizeMachineHeartbeat(input: MachineHeartbeatInput): Machine
     arch: normalizeRequiredString(input.arch, "arch"),
     capabilities: normalizeCapabilityList(input.capabilities),
   };
-  const connectorVersion = normalizeOptionalString(input.connectorVersion);
+  const connectorVersion = asOptionalTrimmedString(input.connectorVersion);
   if (connectorVersion) heartbeat.connectorVersion = connectorVersion;
   return heartbeat;
 }

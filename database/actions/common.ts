@@ -10,6 +10,8 @@ import {
   isNoloClusterServerOrigin,
   normalizeKnownServerOrigin,
 } from "../config";
+import { isAbortError } from "../../core/abortError";
+import { normalizeServerOrigin } from "../../core/serverOrigin";
 import { isLevelNotFoundError } from "../levelNotFoundError";
 
 // RN 下 pino 的 browser 写法可能有兼容性问题
@@ -31,7 +33,7 @@ export const logger = isRN ? {
   // },
 });
 const normalizeServer = (server: string): string =>
-  normalizeKnownServerOrigin(server) ?? server.trim().replace(/\/+$/, "");
+  normalizeKnownServerOrigin(server) ?? normalizeServerOrigin(server);
 
 export const mergeConfiguredServers = (
   currentServer: string | undefined,
@@ -223,7 +225,7 @@ export const fetchFromServer = async (
     if (didTimeout) {
       throw createReadTimeoutError(server, dbKey);
     }
-    if (signal?.aborted || err.name === "AbortError") {
+    if (signal?.aborted || isAbortError(err)) {
       throw err;
     }
     return null;

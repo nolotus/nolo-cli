@@ -11,6 +11,10 @@ import type {
   PkcePair,
 } from "../types";
 import type { CliFetchImpl } from "../../cliFetch";
+import { toErrorMessage } from "../../../core/errorMessage";
+import { isRecord } from "../../../core/isRecord";
+import { asOptionalFiniteNumber } from "../../../core/optionalNumber";
+import { asTrimmedString } from "../../../core/trimmedString";
 
 
 // Hermes hermes_cli/auth.py L93-111
@@ -94,7 +98,7 @@ async function readJsonBody(
     text = await response.text();
   } catch (error) {
     throw new Error(
-      `${context}: failed to read response body: ${error instanceof Error ? error.message : String(error)}`
+      `${context}: failed to read response body: ${toErrorMessage(error)}`
     );
   }
   if (!text.trim()) {
@@ -105,10 +109,10 @@ async function readJsonBody(
   }
   try {
     const parsed = JSON.parse(text) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (!isRecord(parsed)) {
       throw new Error(`${context} returned non-object JSON`);
     }
-    return parsed as Record<string, unknown>;
+    return parsed;
   } catch (error) {
     if (error instanceof Error && error.message.startsWith(context)) {
       throw error;
@@ -119,7 +123,7 @@ async function readJsonBody(
       );
     }
     throw new Error(
-      `${context} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`
+      `${context} returned invalid JSON: ${toErrorMessage(error)}`
     );
   }
 }
@@ -143,29 +147,24 @@ async function xaiOAuthDiscovery(
     });
   } catch (error) {
     throw new Error(
-      `xAI OIDC discovery failed: ${error instanceof Error ? error.message : String(error)}`
+      `xAI OIDC discovery failed: ${toErrorMessage(error)}`
     );
   }
   if (response.status !== 200) {
     throw new Error(`xAI OIDC discovery returned status ${response.status}.`);
   }
   const obj = await readJsonBody(response, "xAI OIDC discovery");
-  const authorizationEndpoint =
-    typeof obj.authorization_endpoint === "string"
-      ? obj.authorization_endpoint.trim()
-      : "";
-  const tokenEndpoint =
-    typeof obj.token_endpoint === "string" ? obj.token_endpoint.trim() : "";
+  const authorizationEndpoint = asTrimmedString(obj.authorization_endpoint);
+  const tokenEndpoint = asTrimmedString(obj.token_endpoint);
   if (!authorizationEndpoint || !tokenEndpoint) {
     throw new Error("xAI OIDC discovery response was missing required endpoints.");
   }
   validateXAIEndpoint(authorizationEndpoint, "authorization_endpoint");
   validateXAIEndpoint(tokenEndpoint, "token_endpoint");
 
-  const deviceAuthorizationEndpoint =
-    typeof obj.device_authorization_endpoint === "string"
-      ? obj.device_authorization_endpoint.trim()
-      : "";
+  const deviceAuthorizationEndpoint = asTrimmedString(
+    obj.device_authorization_endpoint
+  );
   if (options.requireDeviceAuthorization) {
     if (!deviceAuthorizationEndpoint) {
       throw new Error(
@@ -248,13 +247,14 @@ function parseOAuthTokenPayload(
   if (options.requireRefreshToken && !refreshToken) {
     throw new Error(`${context} missing refresh_token`);
   }
-  if (typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in)) {
+  const expiresIn = asOptionalFiniteNumber(data.expires_in);
+  if (expiresIn === undefined) {
     throw new Error(`${context} missing expires_in`);
   }
   return {
     accessToken: data.access_token,
     ...(refreshToken ? { refreshToken } : {}),
-    expiresIn: data.expires_in,
+    expiresIn,
     scope: typeof data.scope === "string" ? data.scope : undefined,
     idToken: typeof data.id_token === "string" ? data.id_token : undefined,
   };
@@ -306,7 +306,7 @@ async function exchangeXAIToken(
     });
   } catch (error) {
     throw new Error(
-      `xAI token exchange failed: ${error instanceof Error ? error.message : String(error)}`
+      `xAI token exchange failed: ${toErrorMessage(error)}`
     );
   }
 
@@ -350,7 +350,7 @@ async function requestXaiDeviceCode(
     });
   } catch (error) {
     throw new Error(
-      `xAI device code request failed: ${error instanceof Error ? error.message : String(error)}`
+      `xAI device code request failed: ${toErrorMessage(error)}`
     );
   }
 
@@ -365,15 +365,12 @@ async function requestXaiDeviceCode(
     );
   }
 
-  const deviceCode =
-    typeof data.device_code === "string" ? data.device_code.trim() : "";
-  const userCode = typeof data.user_code === "string" ? data.user_code.trim() : "";
-  const verificationUri =
-    typeof data.verification_uri === "string" ? data.verification_uri.trim() : "";
-  const verificationUriComplete =
-    typeof data.verification_uri_complete === "string"
-      ? data.verification_uri_complete.trim()
-      : "";
+  const deviceCode = asTrimmedString(data.device_code);
+  const userCode = asTrimmedString(data.user_code);
+  const verificationUri = asTrimmedString(data.verification_uri);
+  const verificationUriComplete = asTrimmedString(
+    data.verification_uri_complete
+  );
 
   if (!deviceCode || !userCode || !verificationUri) {
     throw new Error(
@@ -439,7 +436,7 @@ async function pollXaiDeviceCodeToken(args: {
         signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       if (/abort|timeout/i.test(message)) {
         throw new Error(`xAI device token poll aborted or timed out: ${message}`);
       }
@@ -510,7 +507,7 @@ export async function runXaiOAuthLogin(
     });
   } catch (err) {
     throw new Error(
-      `Failed to start xAI OAuth callback server on ${XAI_OAUTH_REDIRECT_PORT}: ${err instanceof Error ? err.message : String(err)}`
+      `Failed to start xAI OAuth callback server on ${XAI_OAUTH_REDIRECT_PORT}: ${toErrorMessage(err)}`
     );
   }
 
@@ -537,7 +534,7 @@ export async function runXaiOAuthLogin(
         await deps.openBrowser(authUrl);
       } catch (err) {
         error.error(
-          `Failed to open browser automatically: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to open browser automatically: ${toErrorMessage(err)}`
         );
       }
     }
@@ -604,7 +601,7 @@ export async function runXaiOAuthDeviceCode(
       }
     } catch (err) {
       error.error(
-        `Failed to open browser automatically: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to open browser automatically: ${toErrorMessage(err)}`
       );
     }
   } else {
@@ -660,7 +657,7 @@ export async function refreshXaiOAuthToken(
     });
   } catch (error) {
     throw new Error(
-      `xAI token refresh failed: ${error instanceof Error ? error.message : String(error)}`
+      `xAI token refresh failed: ${toErrorMessage(error)}`
     );
   }
 
@@ -678,7 +675,8 @@ export async function refreshXaiOAuthToken(
   if (typeof data.access_token !== "string" || !data.access_token) {
     throw new Error("xAI token refresh response missing access_token");
   }
-  if (typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in)) {
+  const expiresIn = asOptionalFiniteNumber(data.expires_in);
+  if (expiresIn === undefined) {
     throw new Error("xAI token refresh response missing expires_in");
   }
 
@@ -692,7 +690,7 @@ export async function refreshXaiOAuthToken(
     ...credential,
     accessToken: data.access_token,
     refreshToken: newRefresh,
-    expiresAt: now + data.expires_in * 1000 - ACCESS_TOKEN_CLIENT_SKEW_MS,
+    expiresAt: now + expiresIn * 1000 - ACCESS_TOKEN_CLIENT_SKEW_MS,
     obtainedAt: now,
   };
 }

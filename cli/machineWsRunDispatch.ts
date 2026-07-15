@@ -8,6 +8,10 @@
 // `AdvancedSettingsTab.tsx`, not this file — the re-export is purely
 // for API surface continuity).
 
+import { toErrorMessage } from "../core/errorMessage";
+import { isRecord } from "../core/isRecord";
+import { asOptionalTrimmedString } from "../core/optionalString";
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
 import {
   assertMachineRunAllowed as defaultAssertMachineRunAllowed,
   resolveMachineRunPermissionPolicy as defaultResolveMachineRunPermissionPolicy,
@@ -96,10 +100,8 @@ export async function handleConnectorRunMessage(
   }
   if (!isRecord(parsed) || parsed.type !== "agent.run" || typeof parsed.requestId !== "string") return;
   const requestId = parsed.requestId;
-  const payload = isRecord(parsed.payload) ? parsed.payload : {};
-  const agentConfig: Record<string, unknown> = isRecord(payload.agentConfig)
-    ? (payload.agentConfig as Record<string, unknown>)
-    : {};
+  const payload = asRecordOrEmpty(parsed.payload);
+  const agentConfig: Record<string, unknown> = asRecordOrEmpty(payload.agentConfig);
   const sendProgress = (progress: ConnectorRunProgress) => {
     send(JSON.stringify({
       type: "agent.run.progress",
@@ -191,8 +193,8 @@ export async function handleConnectorRunMessage(
       const providerRaw = readField(agentConfig, "cliProvider");
       const fallbackProvider = readField(agentConfig, "provider");
       const provider =
-        (typeof providerRaw === "string" && providerRaw.trim()) ||
-        (typeof fallbackProvider === "string" && fallbackProvider.trim()) ||
+        asOptionalTrimmedString(providerRaw) ??
+        asOptionalTrimmedString(fallbackProvider) ??
         "copilot";
       const finalProvider = provider.trim() || "copilot";
       const payloadAgentKey = readField(payload, "agentKey");
@@ -293,9 +295,7 @@ export async function handleConnectorRunMessage(
       });
       runContent = result.text;
       const explicitModel = readField(agentConfig, "model");
-      runModel = (typeof explicitModel === "string" && explicitModel.trim())
-        ? explicitModel.trim()
-        : finalProvider;
+      runModel = asOptionalTrimmedString(explicitModel) ?? finalProvider;
       runTrace = [{ role: "assistant", content: result.text }];
       const artifacts = await collectConnectorRunArtifact({
         cwd: artifactCwd,
@@ -373,25 +373,18 @@ export async function handleConnectorRunMessage(
       agentKey: readField(payload, "agentKey"),
       ...summarizeAgentConfigForLogs(agentConfig),
       errorName: error instanceof Error ? error.name : null,
-      error: error instanceof Error ? error.message : String(error),
+      error: toErrorMessage(error),
     });
     send(JSON.stringify({
       type: "agent.run.result",
       requestId,
-      error: error instanceof Error ? error.message : String(error),
+      error: toErrorMessage(error),
     }));
   }
 }
 
-// Local helpers kept in this file for now: byteLength (used by the
-// CLI-result log) and `isRecord` (kept private). Re-using the
-// `isRecord` from the purity module would be the next refactor, but
-// moving it would force the source-contract test to change, so we
-// keep the local copy here.
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
+// Local helper kept in this file for now: byteLength (used by the
+// CLI-result log). Record detection uses core/isRecord.
 
 function byteLengthLocal(value: string) {
   return Buffer.byteLength(value, "utf8");

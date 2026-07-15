@@ -1,3 +1,4 @@
+import { toErrorMessage } from "./core/errorMessage";
 import { generateCloudflareEmailRoutingToken } from "./oauth/flows/cloudflare";
 import { upsertEnvVariable } from "./oauth/envFile";
 import { createOAuthTokenStore } from "./oauth/token-store";
@@ -187,9 +188,7 @@ export async function runAgentEmailProvisionCommand(
     return 0;
   } catch (error) {
     output.write(
-      `[nolo] agent email provision failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] agent email provision failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }
@@ -291,9 +290,7 @@ export async function runAgentEmailBindCommand(
     return 0;
   } catch (error) {
     output.write(
-      `[nolo] agent email bind failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
+      `[nolo] agent email bind failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

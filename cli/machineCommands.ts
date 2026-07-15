@@ -1,4 +1,7 @@
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
+import { isRecord } from "../core/isRecord";
+import { normalizeServerOrigin } from "../core/serverOrigin";
+import { asTrimmedString } from "../core/trimmedString";
 import type { CliFetchImpl } from "./cliFetch";
 import { detectMachineInfo } from "../connector-experimental/machineInfo";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
@@ -57,7 +60,9 @@ type MachineCommandDeps = {
 };
 
 function resolveServerUrl(env: EnvLike) {
-  return (env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL).replace(/\/+$/, "");
+  return normalizeServerOrigin(
+    env.NOLO_SERVER || env.BASE_URL || DEFAULT_NOLO_SERVER_URL,
+  );
 }
 
 function resolveAuthToken(env: EnvLike) {
@@ -143,9 +148,9 @@ function detectLaunchableMachineInfo() {
 function findTaskRowSubjectRef(runtimeContext: any) {
   const subjectRefs = Array.isArray(runtimeContext?.subjectRefs) ? runtimeContext.subjectRefs : [];
   for (const ref of subjectRefs) {
-    if (!ref || typeof ref !== "object" || Array.isArray(ref)) continue;
+    if (!isRecord(ref)) continue;
     if (ref.kind !== "table-row") continue;
-    const id = typeof ref.id === "string" ? ref.id.trim() : "";
+    const id = asTrimmedString(ref.id);
     if (id) return id;
   }
   return "";
@@ -182,7 +187,7 @@ function buildConnectorCliPrompt(agentConfig: any, userInput: string, bridgeArgs
 }, permissionPolicy?: ReturnType<typeof resolveMachineRunPermissionPolicy>) {
   const policy = permissionPolicy ?? resolveMachineRunPermissionPolicy(agentConfig);
   return [
-    typeof agentConfig?.prompt === "string" ? agentConfig.prompt.trim() : "",
+    asTrimmedString(agentConfig?.prompt),
     bridgeArgs ? buildTaskEvidencePrompt({
       agentKey: bridgeArgs.agentKey,
       agentConfig,

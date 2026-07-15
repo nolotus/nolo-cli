@@ -14,6 +14,10 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
+import { isRecord } from "../core/isRecord";
+import { asRecordOrEmpty } from "../core/recordOrEmpty";
+import { asTrimmedString } from "../core/trimmedString";
+
 import type { CliFetchImpl } from "./cliFetch";
 import { parseUserIdFromAuthToken } from "./cliEnvHelpers";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
@@ -55,10 +59,6 @@ export type ChatgptWebImageLocalJobDeps = {
   now?: () => number;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 export function readChatgptWebImageLocalJobMeta(
   payload: unknown,
 ): ChatgptWebImageLocalJobInput | null {
@@ -66,14 +66,9 @@ export function readChatgptWebImageLocalJobMeta(
   const meta = isRecord(payload.meta) ? payload.meta : null;
   if (!meta || meta.localJob !== CHATGPT_WEB_IMAGE_LOCAL_JOB) return null;
 
-  const promptRaw = meta.prompt;
-  const prompt = typeof promptRaw === "string" ? promptRaw.trim() : "";
-  const userAuthTokenRaw = meta.userAuthToken;
-  const userAuthToken =
-    typeof userAuthTokenRaw === "string" ? userAuthTokenRaw.trim() : "";
-  const serverBaseRaw = meta.serverBase;
-  const serverBase =
-    typeof serverBaseRaw === "string" ? serverBaseRaw.trim() : "";
+  const prompt = asTrimmedString(meta.prompt);
+  const userAuthToken = asTrimmedString(meta.userAuthToken);
+  const serverBase = asTrimmedString(meta.serverBase);
 
   return {
     prompt,
@@ -230,15 +225,14 @@ async function uploadPngToNoloFs(args: {
     throw new Error(`上传生图结果到 Nolo FS 失败：${message}`);
   }
 
-  const fileIdRaw = body.fileId;
-  const fileId = typeof fileIdRaw === "string" ? fileIdRaw.trim() : "";
+  const fileId = asTrimmedString(body.fileId);
   if (!fileId) {
     throw new Error("上传生图结果成功但响应缺少 fileId");
   }
 
   // Bare fileId (ULID / id) — same shape as openaiImageHandler files[].fileId
   // from saveBufferAsFile; readFileContent expects this bare id.
-  const metadata = isRecord(body.metadata) ? body.metadata : {};
+  const metadata = asRecordOrEmpty(body.metadata);
   return { fileId, metadata };
 }
 
@@ -246,7 +240,7 @@ export async function runChatgptWebImageLocalJob(
   input: ChatgptWebImageLocalJobInput,
   deps: ChatgptWebImageLocalJobDeps = {},
 ): Promise<ChatgptWebImageLocalJobResult> {
-  const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+  const prompt = asTrimmedString(input.prompt);
   if (!prompt) {
     throw new Error("缺少生图 prompt（payload.meta.prompt 必填）");
   }

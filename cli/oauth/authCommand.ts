@@ -5,6 +5,7 @@ import {
 import { runAntigravityOAuthLogin } from "./flows/antigravity";
 import { runXaiOAuthDeviceCode, runXaiOAuthLogin } from "./flows/xai";
 
+import { toErrorMessage } from "../../core/errorMessage";
 import type { CliRuntimeContext } from "../cliCommandTypes";
 import { defaultOpenBrowser } from "../authCommands";
 import type { OAuthFlowDeps, OAuthProvider } from "./types";
@@ -398,7 +399,7 @@ export async function runAuthProviderCommand(
     return 0;
   } catch (err) {
     error.error(
-      `nolo auth ${provider} failed: ${err instanceof Error ? err.message : String(err)}`
+      `nolo auth ${provider} failed: ${toErrorMessage(err)}`
     );
     return 1;
   }

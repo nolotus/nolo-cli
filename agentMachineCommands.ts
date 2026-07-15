@@ -20,6 +20,8 @@ import {
   resolveServerUrl,
   type EnvLike,
 } from "./cliEnvHelpers";
+import { toErrorMessage } from "./core/errorMessage";
+import { asRecordOrEmpty } from "./core/recordOrEmpty";
 
 async function defaultExecuteCli(
   provider: string,
@@ -225,9 +227,7 @@ export async function runAgentBindCurrentCommand(
     const updated = {
       ...existing,
       runtimeBinding: {
-        ...(existing?.runtimeBinding && typeof existing.runtimeBinding === "object"
-          ? existing.runtimeBinding
-          : {}),
+        ...asRecordOrEmpty(existing?.runtimeBinding),
         machineId: machine.machineId,
         ownerUserId: userId,
       },
@@ -245,7 +245,7 @@ export async function runAgentBindCurrentCommand(
   } catch (error) {
     output.write(
       `[nolo] agent bind-current failed: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
     return 1;
@@ -300,9 +300,7 @@ export async function runAgentSmokeCurrentCommand(
       record: {
         ...existing,
         runtimeBinding: {
-          ...(existing?.runtimeBinding && typeof existing.runtimeBinding === "object"
-            ? existing.runtimeBinding
-            : {}),
+          ...asRecordOrEmpty(existing?.runtimeBinding),
           machineId: machine.machineId,
           ownerUserId: userId,
         },
@@ -363,7 +361,7 @@ export async function runAgentSmokeCurrentCommand(
   } catch (error) {
     output.write(
       `[nolo] agent smoke-current failed: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
     return 1;
@@ -428,7 +426,7 @@ export async function runAgentRuntimeDoctorCommand(
   } catch (error) {
     output.write(
       `[nolo] agent runtime-doctor failed: ${
-        error instanceof Error ? error.message : String(error)
+        toErrorMessage(error)
       }\n`
     );
     return 1;

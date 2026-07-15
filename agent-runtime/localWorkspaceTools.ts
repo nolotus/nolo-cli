@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { spawnSync, spawn as spawnChildProcess } from "node:child_process";
@@ -1411,6 +1412,24 @@ function waitForNodeProcessExit(proc: ReturnType<typeof spawnChildProcess>) {
   });
 }
 
+/**
+ * Prefer Desktop-bundled ripgrep (NOLO_BUNDLED_RG / Resources/bin), then PATH +
+ * common install locations. Users do not need a system `rg` install.
+ */
+export function resolveRipgrepBinary(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const fromEnv = asOptionalTrimmedString(env.NOLO_BUNDLED_RG);
+  if (fromEnv) {
+    try {
+      if (existsSync(fromEnv)) return fromEnv;
+    } catch {
+      // ignore
+    }
+  }
+  return resolveExecutableOnPath("rg");
+}
+
 async function runWorkspaceCommand(args: {
   workspaceRoot: string;
   command: string[];
@@ -1512,35 +1531,60 @@ async function runWorkspaceCommandLimitedLines(args: {
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   });
-  const exitPromise = waitForNodeProcessExit(proc);
+  // Settle exit immediately so spawn "Executable not found" cannot become an
+  // unhandledRejection while we are still reading stdout (crashed desktop before).
+  const exitSettled = waitForNodeProcessExit(proc).then(
+    (code) => ({ ok: true as const, code }),
+    (error) => ({ ok: false as const, error }),
+  );
   const stderrPromise = readNodeStream(proc.stderr);
   const lines: string[] = [];
   let pending = "";
   let limitedByMaxResults = false;
-  await new Promise<void>((resolveRead, rejectRead) => {
-    proc.stdout?.on("data", (chunk) => {
-      pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
-      const parts = pending.split(/\r?\n/);
-      pending = parts.pop() ?? "";
-      for (const part of parts) {
-        if (!part) continue;
-        lines.push(part);
-        if (lines.length >= args.maxLines) {
-          limitedByMaxResults = true;
-          try {
-            proc.kill("SIGTERM");
-          } catch {
-            // The command may already have exited.
+  try {
+    await Promise.race([
+      new Promise<void>((resolveRead, rejectRead) => {
+        proc.stdout?.on("data", (chunk) => {
+          pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+          const parts = pending.split(/\r?\n/);
+          pending = parts.pop() ?? "";
+          for (const part of parts) {
+            if (!part) continue;
+            lines.push(part);
+            if (lines.length >= args.maxLines) {
+              limitedByMaxResults = true;
+              try {
+                proc.kill("SIGTERM");
+              } catch {
+                // The command may already have exited.
+              }
+              break;
+            }
           }
-          break;
+        });
+        proc.stdout?.on("error", rejectRead);
+        proc.stdout?.on("end", () => resolveRead());
+        // No stdout pipe (spawn failed early) — wait for exit settlement.
+        if (!proc.stdout) {
+          void exitSettled.then((result) => {
+            if (!result.ok) rejectRead(result.error);
+            else resolveRead();
+          });
         }
-      }
-    });
-    proc.stdout?.on("error", rejectRead);
-    proc.stdout?.on("end", () => resolveRead());
-  });
-    if (!limitedByMaxResults && pending.trim()) lines.push(pending);
-  const exitCode = limitedByMaxResults ? 0 : await exitPromise;
+      }),
+      exitSettled.then((result) => {
+        if (!result.ok) throw result.error;
+      }),
+    ]);
+  } catch (error) {
+    const settled = await exitSettled;
+    if (!settled.ok) throw settled.error;
+    throw error;
+  }
+  if (!limitedByMaxResults && pending.trim()) lines.push(pending);
+  const settled = await exitSettled;
+  if (!settled.ok) throw settled.error;
+  const exitCode = limitedByMaxResults ? 0 : settled.code;
   const stderr = await stderrPromise;
   return {
     stdout: lines.slice(0, args.maxLines).join("\n"),
@@ -1810,26 +1854,30 @@ async function searchFilesTool(args: {
     workspaceRoot: resolve(args.workspaceRoot),
     targetPath: searchPath,
   });
-  const rgCommand = [
-    "rg",
-    "--line-number",
-    "--no-heading",
-    "--hidden",
-    ...(literal ? ["--fixed-strings"] : []),
-    ...(caseSensitive ? [] : ["--ignore-case"]),
-    ...(contextLines !== undefined ? ["--context", String(contextLines)] : []),
-    ...(includeIgnored ? ["--no-ignore"] : []),
-    "--glob",
-    "!node_modules",
-    "--glob",
-    "!.git",
-    ...exclude.flatMap((excludePattern) => ["--glob", `!${excludePattern}`]),
-    "--",
-    query,
-    relativeSearchPath,
-  ];
+  const rgBinary = resolveRipgrepBinary();
+  const grepBinary = resolveExecutableOnPath("grep") || "grep";
+  const rgCommand = rgBinary
+    ? [
+        rgBinary,
+        "--line-number",
+        "--no-heading",
+        "--hidden",
+        ...(literal ? ["--fixed-strings"] : []),
+        ...(caseSensitive ? [] : ["--ignore-case"]),
+        ...(contextLines !== undefined ? ["--context", String(contextLines)] : []),
+        ...(includeIgnored ? ["--no-ignore"] : []),
+        "--glob",
+        "!node_modules",
+        "--glob",
+        "!.git",
+        ...exclude.flatMap((excludePattern) => ["--glob", `!${excludePattern}`]),
+        "--",
+        query,
+        relativeSearchPath,
+      ]
+    : null;
   const grepCommand = [
-    "grep",
+    grepBinary,
     "-R",
     "-n",
     "-I",
@@ -1843,28 +1891,41 @@ async function searchFilesTool(args: {
     relativeSearchPath,
   ];
   const result = await (async () => {
+    if (rgCommand) {
+      try {
+        return maxResults && !contextLines
+          ? await runWorkspaceCommandLimitedLines({
+              workspaceRoot: args.workspaceRoot,
+              command: rgCommand,
+              maxLines: maxResults,
+            })
+          : await runWorkspaceCommand({
+              workspaceRoot: args.workspaceRoot,
+              command: rgCommand,
+            });
+      } catch {
+        // Fall through to grep / scanWorkspaceTextMatches.
+      }
+    }
     try {
       return maxResults && !contextLines
         ? await runWorkspaceCommandLimitedLines({
             workspaceRoot: args.workspaceRoot,
-            command: rgCommand,
+            command: grepCommand,
             maxLines: maxResults,
           })
         : await runWorkspaceCommand({
             workspaceRoot: args.workspaceRoot,
-            command: rgCommand,
+            command: grepCommand,
           });
     } catch {
-      return maxResults && !contextLines
-        ? await runWorkspaceCommandLimitedLines({
-            workspaceRoot: args.workspaceRoot,
-            command: grepCommand,
-            maxLines: maxResults,
-          })
-        : await runWorkspaceCommand({
-            workspaceRoot: args.workspaceRoot,
-            command: grepCommand,
-          });
+      // Final path: pure JS scan below when both binaries fail.
+      return {
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        limitedByMaxResults: false,
+      };
     }
   })();
   let outputLines = result.stdout
@@ -2253,6 +2314,7 @@ async function execShellTool(args: {
   return {
     content: result.content,
     metadata: {
+      command,
       exitCode: result.exitCode,
       timedOut: result.timedOut,
       ...(activity ? { activity } : {}),

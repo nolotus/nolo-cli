@@ -1038,7 +1038,8 @@ export async function runDialogReadCommand(
   }
 
   try {
-    const limit = readDialogLimitArg(args, 50);
+    // Default full message dump so multi-turn tool dialogs are not truncated.
+    const limit = readDialogLimitArg(args, 0);
     const read = await readDialogSnapshot({
       authToken,
       base: target.base,

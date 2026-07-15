@@ -5,6 +5,19 @@ import type { Readable } from "node:stream";
 
 const IS_WINDOWS = process.platform === "win32";
 
+function isExecutableFile(candidate: string): boolean {
+  if (!existsSync(candidate)) return false;
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a binary on PATH, then fall back to common install locations.
+ * Desktop app launches often strip Homebrew from PATH (`/opt/homebrew/bin/rg`).
+ */
 export function resolveExecutableOnPath(name: string): string | null {
   if (IS_WINDOWS && !/\.[a-z]+$/i.test(name)) {
     const exts = (process.env.PATHEXT || ".EXE;.CMD;.BAT")
@@ -19,15 +32,20 @@ export function resolveExecutableOnPath(name: string): string | null {
 
   const pathEnv = process.env.PATH ?? "";
   const sep = pathEnv.includes(";") && IS_WINDOWS ? ";" : ":";
-  for (const dir of pathEnv.split(sep).filter(Boolean)) {
+  const pathDirs = pathEnv.split(sep).filter(Boolean);
+  const fallbackDirs = IS_WINDOWS
+    ? []
+    : [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        `${process.env.HOME ?? ""}/.local/bin`,
+      ].filter(Boolean);
+
+  for (const dir of [...pathDirs, ...fallbackDirs]) {
     const candidate = join(dir, name);
-    if (existsSync(candidate)) {
-      try {
-        if (statSync(candidate).isFile()) return candidate;
-      } catch {
-        // ignore stat errors
-      }
-    }
+    if (isExecutableFile(candidate)) return candidate;
   }
   return null;
 }

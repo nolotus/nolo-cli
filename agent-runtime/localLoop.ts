@@ -33,7 +33,10 @@ export type LocalAgentTurnInput = {
   onActionGate?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   onTextDelta?: (chunk: string) => void;
   onLoopEvent?: (event: LocalAgentLoopEvent) => void;
-  /** 单次 provider.complete 的硬超时；未设置时继承本回合 timeoutMs，再回退到 120_000ms。 */
+  /**
+   * 单次 provider.complete 的可选硬超时。
+   * 未设置时：若本回合传了 timeoutMs 则继承之；否则不限时（coding loop 常跑很久，禁止默认 120s 杀请求）。
+   */
   llmRequestTimeoutMs?: number;
 };
 
@@ -50,6 +53,8 @@ export type LocalAgentToolEvent = {
   argumentsPreview?: string;
   elapsedMs?: number;
   summary?: string;
+  /** Full tool result text for UI expand (model path still uses turn messages). */
+  content?: string;
   message?: string;
   metadata?: Record<string, unknown>;
 };
@@ -113,8 +118,6 @@ function emitToolEvent(
   input.onToolEvent?.(event);
 }
 
-const DEFAULT_LLM_REQUEST_TIMEOUT_MS = 120_000;
-
 function emitLoopEvent(input: LocalAgentTurnInput, event: LocalAgentLoopEvent) {
   if (!input.onLoopEvent) return;
   try {
@@ -126,25 +129,45 @@ function emitLoopEvent(input: LocalAgentTurnInput, event: LocalAgentLoopEvent) {
 
 const LLM_REQUEST_TIMEOUT = "LLM_REQUEST_TIMEOUT";
 
+function resolveLlmRequestTimeoutMs(input: LocalAgentTurnInput): number | undefined {
+  const raw = input.llmRequestTimeoutMs ?? input.timeoutMs;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
+  return raw;
+}
+
 async function runCompleteWithTimeout(args: {
   provider: { complete(messages: AgentRuntimeChatMessage[], options?: any): Promise<AgentRuntimeResult> };
   messages: AgentRuntimeChatMessage[];
   options: Record<string, unknown>;
-  timeoutMs: number;
+  /** 未设置 = 不硬超时，等 provider 自然结束。 */
+  timeoutMs?: number;
   round: number;
   input: LocalAgentTurnInput;
 }): Promise<AgentRuntimeResult> {
   const { provider, messages, options, timeoutMs, round, input } = args;
 
   emitLoopEvent(input, { kind: "llm-start", round, atMs: Date.now() });
+  const complete = provider.complete(messages, options);
+  let ok = false;
+
+  // No default hard timeout: multi-round coding loops regularly exceed minutes.
+  // Only race a timer when the caller explicitly opts in.
+  if (typeof timeoutMs !== "number") {
+    try {
+      const result = await complete;
+      ok = true;
+      return result;
+    } finally {
+      emitLoopEvent(input, { kind: "llm-end", round, atMs: Date.now(), ok });
+    }
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutReject = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       reject(new Error(`__llm_timeout__:${timeoutMs}`));
     }, timeoutMs);
   });
-  const complete = provider.complete(messages, options);
-  let ok = false;
   try {
     const result = await Promise.race([complete, timeoutReject]);
     ok = true;
@@ -390,10 +413,7 @@ export async function runLocalAgentTurn(
           ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
           ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
         },
-        timeoutMs:
-          input.llmRequestTimeoutMs ??
-          input.timeoutMs ??
-          DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+        timeoutMs: resolveLlmRequestTimeoutMs(input),
         round,
         input,
       });
@@ -445,6 +465,9 @@ export async function runLocalAgentTurn(
             toolName,
             elapsedMs: Math.max(0, Date.now() - startedAt),
             summary: summarizeToolResult(toolResult.content, toolResult.metadata),
+            ...(typeof toolResult.content === "string"
+              ? { content: toolResult.content }
+              : {}),
             metadata: toolResult.metadata,
           });
         } catch (error) {

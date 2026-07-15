@@ -14,6 +14,13 @@ export type MessageWithKey = Message & { _key: string };
  * @param options 配置选项 (limit?, beforeKey?, throwOnError?)。
  * @returns Promise<MessageWithKey[]> 消息数组 (带 key, 默认最新在前)。
  */
+/** limit <= 0 / undefined / null → 不限条数（对话默认拉全量，避免 agent 只看到最近 50 条）。 */
+export function isUnboundedMessageLimit(
+  limit: number | null | undefined,
+): boolean {
+  return limit == null || !Number.isFinite(limit) || limit <= 0;
+}
+
 export const fetchMessages = async (
   db: any, // TODO: 替换为具体的数据库实例类型
   dialogId: string,
@@ -24,7 +31,12 @@ export const fetchMessages = async (
     includeDeleted?: boolean;
   } = {}
 ): Promise<MessageWithKey[]> => {
-  const { limit = 30, beforeKey = null, throwOnError = false, includeDeleted = false } = options; // 分页默认 limit 30
+  const {
+    limit,
+    beforeKey = null,
+    throwOnError = false,
+    includeDeleted = false,
+  } = options;
 
   // --- 输入验证 ---
   if (!dialogId || typeof dialogId !== "string") {
@@ -43,7 +55,8 @@ export const fetchMessages = async (
     // TODO: 替换为具体的迭代器选项类型
     gte: start,
     reverse: true, // 总是从新到旧获取
-    limit: limit,
+    // 默认不限条数；仅在显式正数 limit 时分页（load older）。
+    ...(isUnboundedMessageLimit(limit) ? {} : { limit: Math.floor(limit!) }),
   };
 
   if (beforeKey) {

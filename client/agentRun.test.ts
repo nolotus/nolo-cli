@@ -361,7 +361,7 @@ describe("cli agent run client", () => {
       agentKey: NOLO_PROJECT_MANAGER_AGENT_KEY,
       serverUrl: "https://nolo.chat",
       message: "Supervise child dispatch",
-      allowedToolNames: ["startAgentDialog"],
+      allowedToolNames: ["callAgent"],
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
       output,
@@ -373,7 +373,7 @@ describe("cli agent run client", () => {
     });
 
     expect(requests[0]?.body.runtimeContext.allowedToolNames).toEqual([
-      "startAgentDialog",
+      "callAgent",
     ]);
   });
 

@@ -252,7 +252,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // If fallbacks suggested, augment the message so the agent sees the options and is instructed to decide.
   let effectiveMessage = parsed.message;
   if (wantsFallbackSuggestions) {
-    effectiveMessage = `${parsed.message}\n\n[Quota fallback context for agent decision: If this execution for ${parsed.agentKey} hits subscription quota, YOU (the agent) must decide the next agent to use. Do not rely on automatic wrapper. Reason based on the specific task (complexity, length, domain), agent strengths, cost, previous attempt results. Suggested alternatives: ${parsed.fallbackAgentKeys!.join(', ')}. Update the task row with attempt history and dispatch the chosen next (via new agent run or startAgentDialog).]`;
+    effectiveMessage = `${parsed.message}\n\n[Quota fallback context for agent decision: If this execution for ${parsed.agentKey} hits subscription quota, YOU (the agent) must decide the next agent to use. Do not rely on automatic wrapper. Reason based on the specific task (complexity, length, domain), agent strengths, cost, previous attempt results. Suggested alternatives: ${parsed.fallbackAgentKeys!.join(', ')}. Update the task row with attempt history and dispatch the chosen next (via new agent run or callAgent({ background: true })).]`;
   }
 
   // Resolve handle/name -> agent key for any run that may reach the server

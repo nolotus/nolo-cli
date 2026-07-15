@@ -58,6 +58,11 @@ export interface CliExecuteOptions {
   thinkingBudget?: number;
   /** 图片输入（本地路径 / data URL / file URL）。materialize 由内部处理。 */
   imageInputs?: CliImageInput[];
+  /**
+   * When aborted (client stop / request disconnect), kill the running CLI
+   * child process. Desktop stop button depends on this for local CLI agents.
+   */
+  signal?: AbortSignal;
 }
 
 export interface CliExecuteResult {
@@ -963,6 +968,30 @@ function terminateCliProcessGroup(
   }
 }
 
+function createCliAbortError(message = "CLI execution aborted"): DOMException {
+  return new DOMException(message, "AbortError");
+}
+
+/** Kill the CLI child when the caller aborts (user stop / client disconnect). */
+function attachCliAbortSignal(
+  proc: ReturnType<typeof spawn>,
+  signal: AbortSignal | undefined,
+  onAbort: (error: DOMException) => void,
+): () => void {
+  if (!signal) return () => {};
+  if (signal.aborted) {
+    terminateCliProcessGroup(proc, "SIGTERM");
+    onAbort(createCliAbortError());
+    return () => {};
+  }
+  const handleAbort = () => {
+    terminateCliProcessGroup(proc, "SIGTERM");
+    onAbort(createCliAbortError());
+  };
+  signal.addEventListener("abort", handleAbort, { once: true });
+  return () => signal.removeEventListener("abort", handleAbort);
+}
+
 function buildAgyTimeoutError(timeout: number, stdout: string, stderr: string) {
   const parts = [
     `Antigravity CLI timed out after ${timeout}ms.`,
@@ -1814,11 +1843,24 @@ export function executeCliStreaming(
 
     const stdout = createUtf8Collector();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (cb: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      detachAbort();
+      cb();
+    };
+    const detachAbort = attachCliAbortSignal(
+      proc,
+      resolved.options.signal,
+      (error) => finish(() => reject(error)),
+    );
 
     if (timeout > 0) {
       timer = setTimeout(() => {
-        proc.kill("SIGTERM");
-        reject(new Error(`Copilot CLI timed out after ${timeout}ms`));
+        terminateCliProcessGroup(proc, "SIGTERM");
+        finish(() => reject(new Error(`Copilot CLI timed out after ${timeout}ms`)));
       }, timeout);
     }
 
@@ -1833,10 +1875,9 @@ export function executeCliStreaming(
     });
 
     proc.on("close", (code) => {
-      if (timer) clearTimeout(timer);
       const raw = stdout.end();
       if (code !== 0 && code !== null) {
-        reject(new Error(`Copilot CLI exited with code ${code}`));
+        finish(() => reject(new Error(`Copilot CLI exited with code ${code}`)));
         return;
       }
       const text = raw
@@ -1844,17 +1885,18 @@ export function executeCliStreaming(
         .filter(filterNoiseLine)
         .join("\n")
         .trim();
-      resolve({
-        text,
-        raw,
-        elapsed: Date.now() - start,
-        warnings: [...resolved.warnings],
-      });
+      finish(() =>
+        resolve({
+          text,
+          raw,
+          elapsed: Date.now() - start,
+          warnings: [...resolved.warnings],
+        }),
+      );
     });
 
     proc.on("error", (err) => {
-      if (timer) clearTimeout(timer);
-      reject(err);
+      finish(() => reject(err));
     });
   }));
 }
@@ -1889,6 +1931,19 @@ function executeGeminiStreaming(
     const stderr = createUtf8Collector();
     let lineBuffer = "";
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (cb: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      detachAbort();
+      cb();
+    };
+    const detachAbort = attachCliAbortSignal(
+      proc,
+      options.signal,
+      (error) => finish(() => reject(error)),
+    );
 
     const flushLineBuffer = () => {
       const trimmed = lineBuffer.trim();
@@ -1905,8 +1960,8 @@ function executeGeminiStreaming(
 
     if (timeout > 0) {
       timer = setTimeout(() => {
-        proc.kill("SIGTERM");
-        reject(new Error(`Gemini CLI timed out after ${timeout}ms`));
+        terminateCliProcessGroup(proc, "SIGTERM");
+        finish(() => reject(new Error(`Gemini CLI timed out after ${timeout}ms`)));
       }, timeout);
     }
 
@@ -1936,27 +1991,29 @@ function executeGeminiStreaming(
     });
 
     proc.on("close", (code) => {
-      if (timer) clearTimeout(timer);
       lineBuffer += stdout.finish();
       const raw = stdout.text;
       const stderrText = stderr.end();
       flushLineBuffer();
 
       if (code !== 0 && code !== null) {
-        reject(new Error(`Gemini CLI exited with code ${code}\nstderr: ${stderrText}`));
+        finish(() =>
+          reject(new Error(`Gemini CLI exited with code ${code}\nstderr: ${stderrText}`)),
+        );
         return;
       }
 
-      resolve({
-        text: parseGeminiStreamJson(raw),
-        raw,
-        elapsed: Date.now() - start,
-      });
+      finish(() =>
+        resolve({
+          text: parseGeminiStreamJson(raw),
+          raw,
+          elapsed: Date.now() - start,
+        }),
+      );
     });
 
     proc.on("error", (err) => {
-      if (timer) clearTimeout(timer);
-      reject(err);
+      finish(() => reject(err));
     });
   });
 }

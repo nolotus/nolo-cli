@@ -24,10 +24,12 @@ function appendUniqueStrings(values: string[], next: unknown) {
   for (const value of next) {
     const toolName = typeof value === "string"
       ? value
-      : value && typeof value === "object" && typeof (value as any).name === "string"
-        ? (value as any).name
-        : value && typeof value === "object" && typeof (value as any).function?.name === "string"
-          ? (value as any).function.name
+      : isRecord(value) && typeof value.name === "string"
+        ? value.name
+        : isRecord(value) &&
+            isRecord(value.function) &&
+            typeof value.function.name === "string"
+          ? value.function.name
           : "";
     if (toolName && !seen.has(toolName)) {
       seen.add(toolName);

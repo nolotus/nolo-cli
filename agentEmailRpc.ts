@@ -1,3 +1,4 @@
+import { isRecord } from "./core/isRecord";
 import { createAgentKey } from "./database/keys";
 import { resolveCliAgentKeyInput } from "./agentAliases";
 import type { CliKvDb } from "./client/hybridRecordStore";
@@ -29,7 +30,7 @@ export type AgentEmailIdentityRpcData = {
 
 
 function readRpcErrorMessage(body: unknown, status: number): string {
-  if (body && typeof body === "object" && "message" in body) {
+  if (isRecord(body) && "message" in body) {
     const message = body.message;
     if (typeof message === "string" && message.trim()) {
       return message;
@@ -53,10 +54,6 @@ function readNullableString(
   const value = body[key];
   if (value === null || value === undefined) return null;
   return typeof value === "string" ? value : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function parseAgentEmailIdentityRpcData(body: unknown): AgentEmailIdentityRpcData {

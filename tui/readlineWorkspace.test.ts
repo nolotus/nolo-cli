@@ -4,6 +4,7 @@ import {
   ANSI_ESCAPE_REGEX,
   appendToCurrentTurn,
   applyScrollAction,
+  applyTerminalOutputToText,
   createFixedInput,
   createHistoryOutputStream,
   createRawInputDecoder,
@@ -11,6 +12,7 @@ import {
   displayWidth,
   countPhysicalLines,
   finalizeCurrentTurn,
+  fitAnsiLine,
   padOrTruncateToWidth,
   parseScrollAction,
   renderHistory,
@@ -18,8 +20,18 @@ import {
   startTurn,
   stripAnsi,
   takeDisplayWidth,
+  truncateAnsi,
+  visibleWidth,
   wrapTextToLines,
 } from "./readlineWorkspace";
+import { t } from "./i18n";
+
+const TERM_ROWS = 24;
+const TERM_COLS = 120;
+/** Empty OMP composer: top rule + status + input + bottom rule. */
+const EMPTY_COMPOSER_LINES = 4;
+/** With slash completions: completion + top + status + input + bottom. */
+const COMPLETION_COMPOSER_LINES = 5;
 describe("displayWidth", () => {
   test("returns 0 for empty string", () => {
     expect(displayWidth("")).toBe(0);
@@ -95,77 +107,80 @@ describe("countPhysicalLines", () => {
   });
 });
 
-describe("createFixedInput", () => {
-  test("anchors the prompt to the terminal bottom with a scroll region", () => {
-    const chunks: string[] = [];
-    const output = {
-      isTTY: true,
-      rows: 24,
-      columns: 120,
-      write(chunk: string) {
-        chunks.push(chunk);
-        return true;
-      },
-    } as unknown as NodeJS.WritableStream;
+function mockTty(rows = TERM_ROWS, columns = TERM_COLS) {
+  const chunks: string[] = [];
+  const output = {
+    isTTY: true,
+    rows,
+    columns,
+    write(chunk: string) {
+      chunks.push(chunk);
+      return true;
+    },
+  } as unknown as NodeJS.WritableStream;
+  return { output, chunks, stdout: () => chunks.join("") };
+}
 
-    const input = createFixedInput(output, {
+describe("createFixedInput", () => {
+  test("anchors an OMP-style composer to the terminal bottom", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > DeepSeek V4 Flash > ~/tmp > ◫ 1.9%/1M",
     });
 
     input.init();
     input.repaint("");
+    expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES);
+    // enterOutputMode keeps the dock; submitted text is owned by history.
     input.enterOutputMode("hello");
 
-    const stdout = chunks.join("");
-    expect(stdout).toContain("\x1b[1;22r");
-    expect(stdout).toContain("\x1b[23;1H");
+    const lines = input.getInputLines();
+    const scrollEnd = TERM_ROWS - lines;
+    const composerStart = scrollEnd + 1;
+    const stdout = tty.stdout();
+    expect(stdout).toContain(`\x1b[1;${scrollEnd}r`);
+    expect(stdout).toContain(`\x1b[${composerStart};1H`);
     expect(stdout).not.toContain("\x1b 7");
     expect(stdout).not.toContain("\x1b 8");
     expect(stdout).toContain("\x1b7");
     expect(stdout).toContain("DeepSeek V4 Flash");
-    expect(stdout).toContain("hello");
+    expect(stdout).toContain(t("placeholder").slice(0, 12));
+    expect(stdout).toContain("─");
+    expect(stdout).not.toContain("╭");
+    expect(stdout).not.toContain("╰");
   });
 
   test("positions the cursor on the input line when completions are shown", () => {
-    const chunks: string[] = [];
-    const output = {
-      isTTY: true,
-      rows: 24,
-      columns: 120,
-      write(chunk: string) {
-        chunks.push(chunk);
-        return true;
-      },
-    } as unknown as NodeJS.WritableStream;
-
-    const input = createFixedInput(output, {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > minimax-m3 > ~/tmp",
     });
 
     input.init();
     input.repaint("/a");
 
-    const stdout = chunks.join("");
-    expect(stdout).toContain("\x1b[1;21r");
-    expect(stdout).toContain("\x1b[22;1H");
+    expect(input.getInputLines()).toBe(COMPLETION_COMPOSER_LINES);
+    const lines = input.getInputLines();
+    const scrollEnd = TERM_ROWS - lines;
+    const composerStart = scrollEnd + 1;
+    // completion + top rule + status = 3 header rows before the input row
+    const headerRows = 3;
+    const promptWidth = displayWidth(t("promptLabel"));
+    const cursorCol0 = promptWidth + displayWidth("/a");
+    const cursorRow1 = composerStart + headerRows;
+    const cursorCol1 = cursorCol0 + 1;
+
+    const stdout = tty.stdout();
+    expect(stdout).toContain(`\x1b[1;${scrollEnd}r`);
+    expect(stdout).toContain(`\x1b[${composerStart};1H`);
     expect(stdout).toContain("/agent");
     expect(stdout).toContain("/a");
-    expect(stdout).toContain("\x1b[24;6G");
+    expect(stdout).toContain(`\x1b[${cursorRow1};${cursorCol1}G`);
   });
 
-  test("clears the input area when entering output mode", () => {
-    const chunks: string[] = [];
-    const output = {
-      isTTY: true,
-      rows: 24,
-      columns: 120,
-      write(chunk: string) {
-        chunks.push(chunk);
-        return true;
-      },
-    } as unknown as NodeJS.WritableStream;
-
-    const input = createFixedInput(output, {
+  test("keeps the docked composer when entering output mode", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > test",
     });
 
@@ -173,11 +188,37 @@ describe("createFixedInput", () => {
     input.repaint("old buffer");
     input.enterOutputMode("submitted");
 
-    const stdout = chunks.join("");
+    const stdout = tty.stdout();
     expect(stdout).toContain("old buffer");
-    expect(stdout).toContain("\x1b[J");
-    expect(stdout).toContain("submitted");
-    expect(stdout).toMatch(/\x1b\[23;1H\x1b\[J\x1b\[22;1Hsubmitted\n$/);
+    expect(stdout).toContain("nolo > test");
+    expect(stdout).toContain("─");
+    expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES);
+  });
+
+  test("truncates a long status line instead of wrapping and breaking the composer", () => {
+    const tty = mockTty(TERM_ROWS, 40);
+    const longStatus =
+      "nolo > ⬢ minimax-m3 · local > 📁 ~/very/long/path/to/bun-nolo > ⑂ main *99 > ◫ 0.4%/1M";
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => longStatus,
+    });
+    input.repaint("");
+
+    expect(tty.stdout()).toContain("…");
+    expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES);
+  });
+
+  test("does not crash on a 1-column terminal", () => {
+    const tty = mockTty(TERM_ROWS, 1);
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "nolo > agent > path",
+    });
+    expect(() => {
+      input.init();
+      input.repaint("hi");
+      input.enterOutputMode("hi");
+    }).not.toThrow();
+    expect(input.getInputLines()).toBeGreaterThan(0);
   });
 });
 
@@ -192,6 +233,96 @@ describe("stripAnsi", () => {
 
   test("removes multi-code escape sequences", () => {
     expect(stripAnsi("\x1b[1;31;40mbold\x1b[0m")).toBe("bold");
+  });
+
+  test("removes cursor visibility and erase-line sequences used by Spinner", () => {
+    expect(stripAnsi("\x1b[?25lready\x1b[?25h")).toBe("ready");
+    expect(stripAnsi("\r\x1b[K")).toBe("\r");
+    expect(stripAnsi("\x1b[?25l")).toBe("");
+    expect("\x1b[?25l".replace(ANSI_ESCAPE_REGEX, "")).toBe("");
+  });
+
+  test("strips private-mode and intermediate-byte CSI sequences", () => {
+    // bracketed paste enable + secondary DA (intermediate `>`)
+    expect(stripAnsi("a\x1b[?2004hb\x1b[>0cc")).toBe("abc");
+    // mouse tracking private mode; final byte is `h`, trailing `y` is plain text
+    expect(stripAnsi("x\x1b[?1000;1006;1015hy")).toBe("xy");
+  });
+});
+
+describe("truncateAnsi / fitAnsiLine / visibleWidth", () => {
+  test("visibleWidth ignores ANSI color codes", () => {
+    expect(visibleWidth("\x1b[31mhi\x1b[0m")).toBe(2);
+    expect(visibleWidth("你好")).toBe(4);
+  });
+
+  test("truncateAnsi preserves CSI and appends reset when cut", () => {
+    const colored = "\x1b[36mabcdef\x1b[39m";
+    const cut = truncateAnsi(colored, 3);
+    expect(visibleWidth(cut)).toBe(3);
+    expect(cut.startsWith("\x1b[36m")).toBe(true);
+    expect(cut.endsWith("\x1b[0m")).toBe(true);
+    expect(stripAnsi(cut)).toBe("abc");
+  });
+
+  test("truncateAnsi keeps a CSI that sits past the cut boundary intact as prefix only", () => {
+    // Color open, then three letters — cut at 2 keeps open CSI + ab + reset
+    const cut = truncateAnsi("\x1b[32mxyz\x1b[0m", 2);
+    expect(stripAnsi(cut)).toBe("xy");
+    expect(cut.includes("\x1b[32m")).toBe(true);
+  });
+
+  test("fitAnsiLine appends single-width ellipsis by default", () => {
+    expect(fitAnsiLine("abcdefghij", 5)).toBe("abcd…");
+    expect(visibleWidth(fitAnsiLine("abcdefghij", 5))).toBe(5);
+  });
+
+  test("fitAnsiLine with double-width ellipsis does not overflow width", () => {
+    // U+22EF midline horizontal ellipsis is typically width 1 or 2 depending on
+    // font; force a known double-width marker (CJK fullwidth ellipsis U+2026 is 1,
+    // use "……" or a CJK char). Use "…" width check + a wide fallback "口".
+    const wide = "口"; // CJK, displayWidth 2
+    expect(displayWidth(wide)).toBe(2);
+    const fitted = fitAnsiLine("abcdefghij", 1, wide);
+    expect(visibleWidth(fitted)).toBeLessThanOrEqual(1);
+    const fitted2 = fitAnsiLine("abcdefghij", 2, wide);
+    expect(visibleWidth(fitted2)).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("applyTerminalOutputToText", () => {
+  test("appends plain text", () => {
+    expect(applyTerminalOutputToText("hello", " world")).toBe("hello world");
+  });
+
+  test("\\r rewinds to the start of the current line", () => {
+    expect(applyTerminalOutputToText("old status", "\rnew status")).toBe("new status");
+    expect(
+      applyTerminalOutputToText("kept\nold status", "\rnew status")
+    ).toBe("kept\nnew status");
+  });
+
+  test("spinner frames collapse to a single status line then clear", () => {
+    let text = "";
+    text = applyTerminalOutputToText(text, "\x1b[?25l\x1b[36m⠋\x1b[39m agent -> working locally (0s)");
+    text = applyTerminalOutputToText(
+      text,
+      "\r\x1b[36m⠙\x1b[39m agent -> working locally (0s)"
+    );
+    text = applyTerminalOutputToText(
+      text,
+      "\r\x1b[36m⠹\x1b[39m agent -> working locally (1s)"
+    );
+    expect(text).toBe("⠹ agent -> working locally (1s)");
+    text = applyTerminalOutputToText(text, "\r\x1b[K\x1b[?25h");
+    expect(text).toBe("");
+  });
+
+  test("real assistant text still appends after a cleared spinner line", () => {
+    let text = applyTerminalOutputToText("", "⠋ agent -> working locally (0s)");
+    text = applyTerminalOutputToText(text, "\r\x1b[K");
+    text = applyTerminalOutputToText(text, "\nagent > hello");
+    expect(text).toBe("\nagent > hello");
   });
 });
 
@@ -248,8 +379,10 @@ describe("renderHistory", () => {
     renderHistory(output, history, 2);
 
     const stdout = chunks.join("");
+    // Per-row clear (EL) only — full-screen ED would wipe the docked composer.
     expect(stdout).toContain("\x1b[1;1H");
-    expect(stdout).toContain("\x1b[J");
+    expect(stdout).toContain("\x1b[2K");
+    expect(stdout).not.toContain("\x1b[J");
     expect(stdout).toContain("❯ hello");
     expect(stdout).toContain("hi there");
     expect(stdout).toContain("\x1b[22;1H");
@@ -309,6 +442,61 @@ describe("createHistoryOutputStream", () => {
 
     expect(history.currentContent).toBe("hello world");
     expect(updateCount).toBe(2);
+  });
+
+  test("collapses spinner \\r frames instead of appending a wall of status lines", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    let updateCount = 0;
+    const stream = createHistoryOutputStream(history, () => {
+      updateCount += 1;
+    });
+
+    stream.write("\x1b[?25l\x1b[36m⠋\x1b[39m minimax-m3 -> working locally (0s)");
+    stream.write("\r\x1b[36m⠙\x1b[39m minimax-m3 -> working locally (0s)");
+    stream.write("\r\x1b[36m⠹\x1b[39m minimax-m3 -> working locally (1s)");
+    stream.write("\r\x1b[36m⠸\x1b[39m minimax-m3 -> working locally (2s)");
+    expect(history.currentContent).toBe("⠸ minimax-m3 -> working locally (2s)");
+    expect(history.currentContent.match(/working locally/g)?.length).toBe(1);
+
+    stream.write("\r\x1b[K\x1b[?25h");
+    expect(history.currentContent).toBe("");
+
+    stream.write("\nminimax-m3 > 你好");
+    expect(history.currentContent).toBe("\nminimax-m3 > 你好");
+    expect(updateCount).toBeGreaterThanOrEqual(5);
+  });
+
+  test("no-ops update when a chunk has only stripped control sequences", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    history.currentContent = "stable";
+    let updateCount = 0;
+    const stream = createHistoryOutputStream(history, () => {
+      updateCount += 1;
+    });
+
+    stream.write("\x1b[?25l\x1b[?25h");
+    expect(history.currentContent).toBe("stable");
+    expect(updateCount).toBe(0);
+  });
+
+  test("final transcript after spinner stop has no bare \\r and one status collapse", () => {
+    // Mirrors a Spinner writing into the history stream (isTTY virtual).
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    const stream = createHistoryOutputStream(history, () => {});
+
+    stream.write("\x1b[?25l\x1b[36m⠋\x1b[39m agent -> working locally (0s)");
+    for (let i = 0; i < 12; i += 1) {
+      stream.write(`\r\x1b[36m⠙\x1b[39m agent -> working locally (${i % 3}s)`);
+    }
+    stream.write("\r\x1b[K\x1b[?25h");
+    stream.write("\nagent > final answer");
+
+    expect(history.currentContent.includes("\r")).toBe(false);
+    expect(history.currentContent.match(/working locally/g)).toBeNull();
+    expect(history.currentContent).toBe("\nagent > final answer");
   });
 });
 describe("splitRawInput", () => {

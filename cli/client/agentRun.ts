@@ -122,7 +122,12 @@ class Spinner {
     private output: OutputLike,
     private text: string
   ) {
-    this.isTTY = Boolean((output as any).isTTY ?? process.stdout.isTTY);
+    // Prefer the stream's own TTY flag. History capture streams set isTTY so
+    // \\r in-place updates are interpreted; falling back only when unset keeps
+    // plain stdout/file mocks working.
+    const explicit = (output as { isTTY?: boolean }).isTTY;
+    this.isTTY =
+      typeof explicit === "boolean" ? explicit : Boolean(process.stdout.isTTY);
   }
 
   start() {

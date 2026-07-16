@@ -1,12 +1,23 @@
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 
-type CliTextStyle = "dim" | "bold" | "cyan" | "green" | "red" | "yellow" | "magenta" | "white" | "black";
+type CliTextStyle =
+  | "dim"
+  | "bold"
+  | "cyan"
+  | "blue"
+  | "green"
+  | "red"
+  | "yellow"
+  | "magenta"
+  | "white"
+  | "black";
 type CliBgStyle = "bgCyan" | "bgGray" | "bgMagenta" | "bgYellow" | "bgBlue" | "bgGreen" | "bgRed" | "bgWhite";
 
 const ANSI_FG: Record<CliTextStyle, string> = {
   dim: "\x1b[2m",
   bold: "\x1b[1m",
   cyan: "\x1b[36m",
+  blue: "\x1b[34m",
   green: "\x1b[32m",
   red: "\x1b[31m",
   yellow: "\x1b[33m",
@@ -46,6 +57,8 @@ export function styleCliText(
 ) {
   if (!enabled || !text) return text;
   const code = ANSI_FG[style as CliTextStyle] ?? ANSI_BG[style as CliBgStyle];
+  // Guard unknown style names so we never paint the literal "undefined".
+  if (!code) return text;
   return `${code}${text}${RESET}`;
 }
 

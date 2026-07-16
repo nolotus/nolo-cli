@@ -14,7 +14,6 @@ import {
 import {
   dimCliText,
   resolveCliColorEnabled,
-  styleCliSegment,
   styleCliText,
 } from "../client/terminalStyles";
 import {
@@ -180,7 +179,8 @@ function formatCwd(cwd: string) {
   return cwd;
 }
 
-function renderPowerlineTokenStatus(tokens?: TurnTokenUsage) {
+/** Soft token chip for the composer status line (no powerline background). */
+function renderComposerTokenChip(tokens?: TurnTokenUsage) {
   if (!tokens || !tokens.contextWindow) {
     return "◫ —";
   }
@@ -192,14 +192,16 @@ function renderPowerlineTokenStatus(tokens?: TurnTokenUsage) {
 
 export function renderStatusLine(state: TuiState) {
   const colorEnabled = resolveCliColorEnabled();
-  const sep = dimCliText("  > ", colorEnabled);
+  // OMP-style chips: soft fg colors + " > " separators. No solid powerline
+  // backgrounds — those break box layout when the line is long.
+  const sep = dimCliText(" > ", colorEnabled);
 
-  const logoSegment = styleCliSegment("nolo", { fg: "cyan" }, colorEnabled);
+  const logoSegment = styleCliText("nolo", "cyan", colorEnabled);
 
   const agentLabel = `⬢ ${state.agentName}${state.modeLabel ? ` · ${state.modeLabel}` : ""}`;
-  const agentSegment = styleCliSegment(agentLabel, { fg: "white", bg: "bgMagenta" }, colorEnabled);
+  const agentSegment = styleCliText(agentLabel, "magenta", colorEnabled);
 
-  const cwdSegment = styleCliSegment(`📁 ${formatCwd(state.cwd)}`, { fg: "white", bg: "bgBlue" }, colorEnabled);
+  const cwdSegment = styleCliText(`📁 ${formatCwd(state.cwd)}`, "blue", colorEnabled);
 
   const parts: string[] = [logoSegment, agentSegment, cwdSegment];
 
@@ -212,14 +214,10 @@ export function renderStatusLine(state: TuiState) {
       .filter(Boolean)
       .join(" ");
     const gitText = statusMarkers ? `⑂ ${branch} ${statusMarkers}` : `⑂ ${branch}`;
-    parts.push(styleCliSegment(gitText, { fg: "black", bg: "bgYellow" }, colorEnabled));
+    parts.push(styleCliText(gitText, "yellow", colorEnabled));
   }
 
-  const tokenSegment = styleCliSegment(
-    renderPowerlineTokenStatus(state.turnTokens),
-    { fg: "white", bg: "bgGreen" },
-    colorEnabled
-  );
+  const tokenSegment = dimCliText(renderComposerTokenChip(state.turnTokens), colorEnabled);
   parts.push(tokenSegment);
 
   return parts.join(sep);

@@ -120,11 +120,69 @@ export function finalizeCurrentTurn(history: TurnHistory) {
   }
 }
 
+// CSI: ESC [ params intermediates final. Covers colors, cursor, erase, and
+// private modes like hide/show cursor (\x1b[?25l / \x1b[?25h).
 // eslint-disable-next-line no-control-regex
-export const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;]*[a-zA-Z]/g;
+export const ANSI_ESCAPE_REGEX =
+  /\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g;
 
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_REGEX, "");
+}
+
+/**
+ * Apply a terminal-style output chunk onto a plain transcript buffer.
+ *
+ * Spinner / progress writers use `\\r` to redraw one status line in place.
+ * The history stream used to append those frames as plain text, which produced
+ * a wall of "working locally (Ns)" lines and left raw `\\r` artifacts that
+ * broke later rows. Interpret the common control semantics instead:
+ * - strip ANSI first
+ * - `\\r` rewinds to the start of the current line (after the last `\\n`)
+ * - `\\b` deletes one character on the current line
+ * - other C0 controls (except tab/newline) are dropped
+ */
+export function applyTerminalOutputToText(existing: string, chunk: string): string {
+  const cleaned = stripAnsi(chunk);
+  if (!cleaned) return existing;
+
+  let text = existing;
+  for (const ch of cleaned) {
+    if (ch === "\r") {
+      const lastNl = text.lastIndexOf("\n");
+      text = lastNl === -1 ? "" : text.slice(0, lastNl + 1);
+      continue;
+    }
+    if (ch === "\n") {
+      text += "\n";
+      continue;
+    }
+    if (ch === "\b") {
+      if (text.length > 0 && text[text.length - 1] !== "\n") {
+        text = text.slice(0, -1);
+      }
+      continue;
+    }
+    const code = ch.charCodeAt(0);
+    if (code < 0x20 && ch !== "\t") {
+      continue;
+    }
+    if (code === 0x7f) {
+      continue;
+    }
+    text += ch;
+  }
+  return text;
+}
+
+export function applyOutputChunkToCurrentTurn(
+  history: TurnHistory,
+  chunk: string
+): boolean {
+  const next = applyTerminalOutputToText(history.currentContent, chunk);
+  if (next === history.currentContent) return false;
+  history.currentContent = next;
+  return true;
 }
 
 export function renderHistory(
@@ -155,19 +213,18 @@ export function renderHistory(
   const visibleEnd = Math.min(totalLines, visibleStart + visibleHeight);
   const visibleLines = lines.slice(visibleStart, visibleEnd);
 
-  output.write("\x1b[1;1H");
-  output.write("\x1b[J");
-
+  // Clear + paint ONLY the main transcript rows. Never use ED (\x1b[J) from
+  // the top of the screen — many terminals wipe the docked composer below
+  // the scroll region too, which is why the input bar "vanishes" mid-turn.
   for (let i = 0; i < visibleHeight; i++) {
     const line = visibleLines[i] ?? "";
     const padded = padOrTruncateToWidth(line, contentWidth);
     const thumb = renderScrollbarRow(i, visibleHeight, totalLines, history.scrollTop);
+    output.write(`\x1b[${i + 1};1H`);
+    output.write("\x1b[2K");
     output.write(padded);
     output.write(`\x1b[${columns}G`);
     output.write(thumb);
-    if (i < visibleHeight - 1) {
-      output.write("\n");
-    }
   }
 
   const mainBottom = Math.max(1, rows - inputLines);
@@ -179,10 +236,15 @@ export function createHistoryOutputStream(
   onUpdate: () => void
 ): NodeJS.WritableStream {
   return {
+    // Virtual TTY: Spinner uses \\r in-place updates. We honor that via
+    // applyTerminalOutputToText so frames collapse to one status line instead
+    // of spamming the transcript. Do not fall through to process.stdout here.
+    isTTY: true,
     write(chunk: string | Buffer): boolean {
       const text = typeof chunk === "string" ? chunk : chunk.toString();
-      appendToCurrentTurn(history, stripAnsi(text));
-      onUpdate();
+      if (applyOutputChunkToCurrentTurn(history, text)) {
+        onUpdate();
+      }
       return true;
     },
   } as unknown as NodeJS.WritableStream;
@@ -411,6 +473,58 @@ export function displayWidth(str: string): number {
   return width;
 }
 
+/** Visible columns after stripping ANSI (status lines, borders, chips). */
+export function visibleWidth(str: string): number {
+  return displayWidth(stripAnsi(str));
+}
+
+/**
+ * Truncate a possibly-ANSI string to `maxWidth` visible columns.
+ * Preserves CSI sequences so colors don't bleed; always ends with reset when truncated.
+ */
+export function truncateAnsi(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  if (visibleWidth(text) <= maxWidth) return text;
+
+  let width = 0;
+  let out = "";
+  let i = 0;
+  let sawAnsi = false;
+  while (i < text.length) {
+    if (text[i] === "\x1b" && text[i + 1] === "[") {
+      sawAnsi = true;
+      let j = i + 2;
+      while (j < text.length) {
+        const code = text.charCodeAt(j);
+        j += 1;
+        if (code >= 0x40 && code <= 0x7e) break;
+      }
+      out += text.slice(i, j);
+      i = j;
+      continue;
+    }
+    const codePoint = text.codePointAt(i) ?? 0;
+    const char = String.fromCodePoint(codePoint);
+    const charWidth = displayWidth(char);
+    if (width + charWidth > maxWidth) break;
+    out += char;
+    width += charWidth;
+    i += char.length;
+  }
+  // Only force a reset when ANSI was present — plain text should stay plain.
+  return sawAnsi ? `${out}\x1b[0m` : out;
+}
+
+export function fitAnsiLine(text: string, width: number, ellipsis = "…"): string {
+  if (width <= 0) return "";
+  if (visibleWidth(text) <= width) return text;
+  const ellipsisWidth = displayWidth(ellipsis);
+  // Double-width ellipsis (e.g. "⋯") that cannot fit: fall back to a single-width cut.
+  if (width < ellipsisWidth) return truncateAnsi(text, width);
+  if (width === ellipsisWidth) return truncateAnsi(ellipsis, width) || truncateAnsi(text, width);
+  return `${truncateAnsi(text, width - ellipsisWidth)}${ellipsis}`;
+}
+
 export function countPhysicalLines(text: string, columns: number): number {
   const lines = text.split("\n");
   let total = 0;
@@ -601,6 +715,14 @@ function repaintInput(output: NodeJS.WritableStream, buffer: string, renderedLin
 export type FixedInputController = {
   active: boolean;
   init(): void;
+  /**
+   * Enter the mid-turn phase after the user submits a line.
+   *
+   * `submittedText` is accepted for call-site clarity but intentionally not
+   * rendered here — the transcript history owns the submitted user turn. The
+   * docked composer stays visible with an empty draft so the bottom chrome
+   * does not flash away during the agent turn.
+   */
   enterOutputMode(submittedText: string): void;
   exitOutputMode(buffer: string): void;
   repaint(buffer: string): void;
@@ -647,58 +769,69 @@ export function createFixedInput(
   const restoreCursor = () => write("\x1b8");
   const resetScrollRegion = () => write("\x1b[r");
 
+  /**
+   * OMP-style composer:
+   *   ────────────────────────  top rule
+   *   nolo > agent · mode > 📁 path > branch
+   *   ❯ Type a message...
+   *   ────────────────────────  bottom rule
+   * No side borders, no rainbow powerline blocks, status never wraps.
+   */
   const renderInputArea = (buffer: string): { text: string; lines: number; cursorCol: number; cursorRow: number } => {
     const colorEnabled = resolveCliColorEnabled();
-    const cols = getColumns();
-    const statusLine = config.getStatusLine();
+    const cols = Math.max(1, getColumns());
     const completions = completeSlashCommand(buffer);
     const sections: string[] = [];
+
     if (completions.length > 0) {
-      sections.push(dimCliText(completions.join("  ")));
+      sections.push(fitAnsiLine(dimCliText(completions.join("  "), colorEnabled), cols));
     }
 
-    const padToWidth = (content: string, prefix: string, suffix: string) => {
-      const contentWidth = displayWidth(content);
-      const padding = Math.max(0, cols - contentWidth - displayWidth(prefix) - displayWidth(suffix));
-      return `${prefix}${content}${" ".repeat(padding)}${suffix}`;
-    };
+    const rule = colorEnabled
+      ? `\x1b[2m\x1b[35m${"─".repeat(cols)}\x1b[0m`
+      : "─".repeat(cols);
+    sections.push(rule);
+    sections.push(fitAnsiLine(config.getStatusLine(), cols));
 
-    const topBorder = padToWidth(` ${statusLine} `, "╭──", "──╮");
-    sections.push(topBorder);
+    const prompt = t("promptLabel");
+    const promptWidth = displayWidth(prompt);
+    const contentWidth = Math.max(1, cols - promptWidth);
+    const logicalLines = buffer.length === 0 ? [""] : buffer.split("\n");
 
-    let cursorCol: number;
-    let cursorRow: number;
-    const inputLines = buffer.split("\n");
+    let cursorCol = promptWidth;
+    let cursorRow = 0;
+    let inputRows = 0;
 
-    if (inputLines.length === 1) {
-      if (buffer === "") {
+    for (let i = 0; i < logicalLines.length; i += 1) {
+      const logical = logicalLines[i] ?? "";
+      const isFirst = i === 0;
+      const prefix = isFirst ? prompt : " ".repeat(promptWidth);
+      if (buffer.length === 0) {
         const placeholder = dimCliText(t("placeholder"), colorEnabled);
-        const line = padToWidth(placeholder, "╰─ ", " ──╯");
-        sections.push(dimCliText(line, colorEnabled));
-        cursorCol = 3;
+        sections.push(fitAnsiLine(`${prefix}${placeholder}`, cols));
+        cursorCol = promptWidth;
         cursorRow = 0;
-      } else {
-        const line = padToWidth(inputLines[0], "╰─ ", " ──╯");
-        sections.push(line);
-        cursorCol = 3 + displayWidth(inputLines[0]);
-        cursorRow = 0;
+        inputRows = 1;
+        continue;
       }
-    } else {
-      for (let i = 0; i < inputLines.length - 1; i++) {
-        const line = padToWidth(inputLines[i], "│  ", " │");
-        sections.push(line);
+
+      const wrapped = wrapTextToLines(logical, contentWidth);
+      const rows = wrapped.length > 0 ? wrapped : [""];
+      for (let j = 0; j < rows.length; j += 1) {
+        const rowPrefix = j === 0 ? prefix : " ".repeat(promptWidth);
+        sections.push(`${rowPrefix}${rows[j]}`);
+        cursorCol = displayWidth(rowPrefix) + displayWidth(rows[j]);
+        cursorRow = inputRows;
+        inputRows += 1;
       }
-      const lastLine = inputLines[inputLines.length - 1];
-      const line = padToWidth(lastLine, "╰─ ", " ──╯");
-      sections.push(line);
-      cursorCol = 3 + displayWidth(lastLine);
-      cursorRow = inputLines.length - 1;
     }
+
+    sections.push(rule);
 
     const text = sections.join("\n");
-    const lines = countPhysicalLines(text, cols);
-    const promptRow = (completions.length > 0 ? 1 : 0) + 1 + cursorRow;
-    return { text, lines, cursorCol, cursorRow: promptRow };
+    const lines = sections.length;
+    const headerRows = (completions.length > 0 ? 1 : 0) + 2; // completion? + top rule + status
+    return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 
   const repaintAt = (buffer: string) => {
@@ -723,13 +856,11 @@ export function createFixedInput(
       saveCursor();
       setScrollRegion(inputLines);
     },
-    enterOutputMode(submittedText: string) {
-      const startRow = getRows() - inputLines + 1;
-      write(`\x1b[${startRow};1H`);
-      write("\x1b[J");
-      const mainBottom = getRows() - inputLines;
-      write(`\x1b[${mainBottom};1H`);
-      write(`${renderInput(submittedText)}\n`);
+    enterOutputMode(_submittedText: string) {
+      // Keep the docked composer visible while the agent turn runs. The
+      // submitted text is already painted into the history pane; tearing the
+      // bottom chrome down here is what made the bar flash away on Enter.
+      repaintAt("");
     },
     exitOutputMode(buffer: string) {
       saveCursor();
@@ -1092,12 +1223,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       startTurn(history, "user");
       appendToCurrentTurn(history, result.action.message);
       finalizeCurrentTurn(history);
+      // Keep the docked composer painted under the transcript for the whole turn.
       renderHistoryToOutput();
+      if (fixedInput.active) fixedInput.repaint("");
 
       startTurn(history, "assistant");
       const agentOutput = isInteractiveInput(input)
         ? createHistoryOutputStream(history, () => {
             renderHistoryToOutput();
+            if (fixedInput.active) fixedInput.repaint("");
           })
         : output;
       const runResult = await runAgentChat(
@@ -1118,6 +1252,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       if (isInteractiveInput(input)) {
         finalizeCurrentTurn(history);
         renderHistoryToOutput();
+        if (fixedInput.active) fixedInput.repaint("");
       }
       if (runResult.dialogId || runResult.turnTokens) {
         state = {
@@ -1160,8 +1295,23 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       getStatusLine: () => renderStatusLine(state),
     });
     fixedInput.init();
+    const paintFrame = (draft: string) => {
+      renderHistoryToOutput();
+      fixedInput.repaint(draft);
+    };
+    const onResize = () => {
+      if (done) return;
+      // Re-measure rows/cols, rebuild scroll region + full-width rules, repaint.
+      paintFrame(busy ? "" : buffer);
+    };
+    const resizeTarget = output as NodeJS.WritableStream & {
+      on?: (event: string, listener: () => void) => void;
+      off?: (event: string, listener: () => void) => void;
+    };
+    resizeTarget.on?.("resize", onResize);
     const finish = () => {
       done = true;
+      resizeTarget.off?.("resize", onResize);
       input.off("data", onData);
       input.setRawMode?.(false);
     };
@@ -1170,8 +1320,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       const scrollAction = parseScrollAction(sequence);
       if (scrollAction) {
         applyScrollAction(history, scrollAction, output, fixedInput.getInputLines());
-        renderHistoryToOutput();
-        fixedInput.repaint(buffer);
+        paintFrame(buffer);
         return;
       }
       const result = applyTuiInputKey(buffer, sequence);
@@ -1213,6 +1362,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
         input.on("data", onData);
         busy = false;
+        // Status may have picked up token usage during the turn — repaint chips.
         fixedInput.exitOutputMode(buffer);
         return;
       }

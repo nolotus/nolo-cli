@@ -1074,6 +1074,139 @@ const TABLE_ADD_ROWS_USAGE = "Usage:\n  nolo table add-rows --table <tableId|met
 const TABLE_UPDATE_ROW_USAGE = "Usage:\n  nolo table update-row --table <tableId|metaKey> --row <rowId|rowDbKey> --changes <json-object>\n\n";
 const TABLE_UPDATE_ROWS_USAGE = "Usage:\n  nolo table update-rows --table <tableId|metaKey> --updates <non-empty-json-array>\n\n";
 const TABLE_DELETE_ROW_USAGE = "Usage:\n  nolo table delete-row --table <tableId|metaKey> --row <rowId|rowDbKey>\n\n";
+const TABLE_PURGE_ROWS_USAGE = "Usage:\n  nolo table purge-rows --table <exact-meta-dbKey> --row-dbkeys <non-empty-json-array> [--yes] [--json]\n\n";
+const TABLE_REMOVE_ROW_FIELDS_USAGE = "Usage:\n  nolo table remove-row-fields --table <exact-meta-dbKey> --row-dbkeys <non-empty-json-array> --fields <non-empty-json-array> [--yes] [--json]\n\n";
+
+function parseNonEmptyStringArray(flag: string, raw: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${flag} must be valid JSON: ${toErrorMessage(error)}`);
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    !parsed.every((value) => typeof value === "string" && value.trim().length > 0)
+  ) {
+    throw new Error(`${flag} must be a non-empty JSON array of strings.`);
+  }
+  return [...new Set(parsed.map((value) => value.trim()))];
+}
+
+function readAffectedCount(payload: unknown): number {
+  if (!isRecord(payload)) return 0;
+  const direct = asOptionalFiniteNumber(payload.affectedCount);
+  if (direct !== undefined) return direct;
+  if (isRecord(payload.rawData)) {
+    return asOptionalFiniteNumber(payload.rawData.affectedCount) ?? 0;
+  }
+  return 0;
+}
+
+async function runExactTableMaintenanceCommand(input: {
+  args: string[];
+  deps: TableCommandDeps;
+  action: "purge-rows" | "remove-row-fields";
+  path: "/api/table/purge-rows" | "/api/table/remove-row-fields";
+  usage: string;
+  requireFields: boolean;
+}): Promise<number> {
+  const env = input.deps.env ?? process.env;
+  const output = input.deps.output ?? process.stdout;
+  if (hasFlag(input.args, "--help") || hasFlag(input.args, "-h")) {
+    output.write(input.usage);
+    return 0;
+  }
+
+  const tableDbKey = readOption(input.args, "--table").trim();
+  if (!tableDbKey || !tableDbKey.startsWith("meta-")) {
+    output.write(`[nolo] table ${input.action} failed: --table must be an exact table dbKey beginning with "meta-".\n${input.usage}`);
+    return 1;
+  }
+  const authToken = resolveAuthToken(input.args, env);
+  if (!authToken) {
+    output.write(`[nolo] table ${input.action} failed: AUTH_TOKEN is required.\n`);
+    return 1;
+  }
+
+  const rowDbKeysRaw = readOption(input.args, "--row-dbkeys");
+  if (!rowDbKeysRaw) {
+    output.write(`[nolo] table ${input.action} failed: --row-dbkeys is required.\n${input.usage}`);
+    return 1;
+  }
+
+  let rowDbKeys: string[];
+  let fields: string[] | undefined;
+  try {
+    rowDbKeys = parseNonEmptyStringArray("--row-dbkeys", rowDbKeysRaw);
+    if (!rowDbKeys.every((dbKey) => dbKey.startsWith("row-"))) {
+      throw new Error(
+        '--row-dbkeys must contain exact row dbKeys beginning with "row-".'
+      );
+    }
+    if (input.requireFields) {
+      const fieldsRaw = readOption(input.args, "--fields");
+      if (!fieldsRaw) {
+        output.write(`[nolo] table ${input.action} failed: --fields is required.\n${input.usage}`);
+        return 1;
+      }
+      fields = parseNonEmptyStringArray("--fields", fieldsRaw);
+    }
+  } catch (error) {
+    output.write(`[nolo] table ${input.action} failed: ${toErrorMessage(error)}\n${input.usage}`);
+    return 1;
+  }
+
+  const execute = hasFlag(input.args, "--yes");
+  const body: Record<string, unknown> = {
+    tableDbKey,
+    rowDbKeys,
+    ...(fields ? { fields } : {}),
+    dryRun: !execute,
+    ...(execute ? { confirmTableDbKey: tableDbKey } : {}),
+  };
+  const result = await postTableJson(
+    input.deps,
+    { authToken, serverUrl: resolveServerUrl(input.args, env) },
+    input.path,
+    body
+  );
+  if (!result.ok) {
+    output.write(`[nolo] table ${input.action} failed: ${result.message}\n`);
+    return 1;
+  }
+
+  if (hasFlag(input.args, "--json") || readOption(input.args, "--output") === "json") {
+    output.write(`${JSON.stringify(result.payload)}\n`);
+    return 0;
+  }
+  const status = execute ? "EXECUTED" : "DRY RUN";
+  output.write(`[nolo] table ${input.action} ${status}: affectedCount=${readAffectedCount(result.payload)}\n`);
+  return 0;
+}
+
+export async function runTablePurgeRowsCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  return runExactTableMaintenanceCommand({
+    args,
+    deps,
+    action: "purge-rows",
+    path: "/api/table/purge-rows",
+    usage: TABLE_PURGE_ROWS_USAGE,
+    requireFields: false,
+  });
+}
+
+export async function runTableRemoveRowFieldsCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
+  return runExactTableMaintenanceCommand({
+    args,
+    deps,
+    action: "remove-row-fields",
+    path: "/api/table/remove-row-fields",
+    usage: TABLE_REMOVE_ROW_FIELDS_USAGE,
+    requireFields: true,
+  });
+}
 
 export async function runTableAddColumnCommand(args: string[], deps: TableCommandDeps = {}): Promise<number> {
   const env = deps.env ?? process.env;

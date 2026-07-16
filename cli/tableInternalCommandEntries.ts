@@ -14,7 +14,9 @@ export function renderTableHelpText() {
     "  nolo table update-row --table <tableId|metaKey> --row <rowId|rowDbKey> --changes <json-object>",
     "  nolo table update-rows --table <tableId|metaKey> --updates <json-array>",
     "  nolo table delete-row --table <tableId|metaKey> --row <rowId|rowDbKey>",
-  "  nolo table delete-rows --table <tableId|metaKey> (--row-ids <json-array> | --row-dbkeys <json-array> | --filters <json-object>)",
+    "  nolo table delete-rows --table <tableId|metaKey> (--row-ids <json-array> | --row-dbkeys <json-array> | --filters <json-object>)",
+    "  nolo table purge-rows --table <exact-meta-dbKey> --row-dbkeys <json-array> [--yes] [--json]",
+    "  nolo table remove-row-fields --table <exact-meta-dbKey> --row-dbkeys <json-array> --fields <json-array> [--yes] [--json]",
     "",
     "Examples:",
     '  nolo table query --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
@@ -42,6 +44,14 @@ export function getTableInternalCommandEntries(): CommandEntry[] {
       // Dynamic import keeps a broken command module from crashing the whole CLI at startup.
       const { runTableDeleteRowsCommand } = await import("./tableCommands");
       return runTableDeleteRowsCommand(args);
+    }),
+    createEnvCommand(["table", "purge-rows"], "Permanently purge table rows", async (args, deps) => {
+      const { runTablePurgeRowsCommand } = await import("./tableCommands");
+      return runTablePurgeRowsCommand(args, deps);
+    }),
+    createEnvCommand(["table", "remove-row-fields"], "Remove fields from table rows", async (args, deps) => {
+      const { runTableRemoveRowFieldsCommand } = await import("./tableCommands");
+      return runTableRemoveRowFieldsCommand(args, deps);
     }),
     createEnvCommand(["table", "add-column"], "Add a table column", async (args, deps) => {
       const { runTableAddColumnCommand } = await import("./tableCommands");

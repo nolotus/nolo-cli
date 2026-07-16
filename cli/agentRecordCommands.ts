@@ -6,6 +6,7 @@ import {
   normalizeAgentRecordForOutput,
   parseAgentUpdateArgs,
   resolveAgentRecordFromHybridStore,
+  sanitizeAgentRecordForCliOutput,
   writeAgentRecord,
 } from "./agentRecordHelpers";
 import { parseUserIdFromAuthToken, resolveAuthToken } from "./cliEnvHelpers";
@@ -132,8 +133,8 @@ export async function runAgentUpdateCommand(
       ok: true,
       agentKey: built.agentKey,
       baseUrl: built.serverUrl,
-      updates: built.updates,
-      record: built.nextRecord,
+      updates: sanitizeAgentRecordForCliOutput(built.updates),
+      record: sanitizeAgentRecordForCliOutput(built.nextRecord),
     }, null, 2));
     output.write("\n");
     return 0;
@@ -216,8 +217,8 @@ export async function runAgentCreateCommand(
       ok: true,
       agentKey: built.agentKey,
       baseUrl: built.serverUrl,
-      updates: built.updates,
-      record: built.nextRecord,
+      updates: sanitizeAgentRecordForCliOutput(built.updates),
+      record: sanitizeAgentRecordForCliOutput(built.nextRecord),
     }, null, 2));
     output.write("\n");
     return 0;

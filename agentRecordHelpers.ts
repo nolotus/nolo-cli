@@ -455,7 +455,88 @@ export async function resolveAgentRecordFromHybridStore(args: {
   return null;
 }
 
+const CLI_SECRET_FIELD_NAMES = new Set([
+  "apikey",
+  "password",
+  "passwd",
+  "secret",
+  "clientsecret",
+  "accesstoken",
+  "refreshtoken",
+  "sessiontoken",
+  "bearertoken",
+  "authorization",
+  "authheader",
+  "token",
+  "oauthtoken",
+  "idtoken",
+  "credentials",
+  "credential",
+]);
+
+const CLI_CREDENTIAL_REF_FIELDS = new Set(["credentialref", "apikeyref"]);
+
+const normalizeCredentialFieldName = (value: string): string =>
+  value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+function isNonEmptyCredentialValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+export function agentRecordHasConfiguredCredential(record: unknown): boolean {
+  if (!record || typeof record !== "object") return false;
+  if (Array.isArray(record)) {
+    return record.some(agentRecordHasConfiguredCredential);
+  }
+  for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
+    const normalizedKey = normalizeCredentialFieldName(key);
+    if (
+      (CLI_SECRET_FIELD_NAMES.has(normalizedKey) ||
+        CLI_CREDENTIAL_REF_FIELDS.has(normalizedKey)) &&
+      isNonEmptyCredentialValue(value)
+    ) {
+      return true;
+    }
+    if (
+      typeof value === "object" &&
+      value != null &&
+      agentRecordHasConfiguredCredential(value)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function sanitizeAgentRecordForCliOutput(record: unknown): unknown {
+  if (record == null || typeof record !== "object") return record;
+  if (Array.isArray(record)) {
+    return record.map((item) => sanitizeAgentRecordForCliOutput(item));
+  }
+  const source = record as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    const normalizedKey = normalizeCredentialFieldName(key);
+    if (CLI_SECRET_FIELD_NAMES.has(normalizedKey)) continue;
+    if (CLI_CREDENTIAL_REF_FIELDS.has(normalizedKey)) {
+      if (isNonEmptyCredentialValue(value)) out[key] = value;
+      continue;
+    }
+    if (value != null && typeof value === "object") {
+      out[key] = sanitizeAgentRecordForCliOutput(value);
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 export function normalizeAgentRecordForOutput(agentKey: string, authToken: string, agent: any) {
+  const credentialConfigured = agentRecordHasConfiguredCredential(agent);
+  const sanitizedRecord = sanitizeAgentRecordForCliOutput(agent);
   return {
     agentKey,
     baseUrl: agent?.serverOrigin ?? null,
@@ -467,9 +548,12 @@ export function normalizeAgentRecordForOutput(agentKey: string, authToken: strin
     customProviderUrl: agent?.customProviderUrl ?? null,
     tools: agent?.tools ?? [],
     isPublic: agent?.isPublic,
+    credentialConfigured,
+    credentialRef: agent?.credentialRef ?? undefined,
+    apiKeyRef: agent?.apiKeyRef ?? undefined,
     authUserId: parseUserIdFromAuthToken(authToken),
     userId: agent?.userId,
-    record: agent,
+    record: sanitizedRecord,
   };
 }
 

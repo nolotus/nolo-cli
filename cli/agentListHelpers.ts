@@ -4,6 +4,7 @@ import {
   listUserRecordsFromServers,
   readLiveDbRecordAfterTombstoneMerge,
 } from "./globalRecordOperations";
+import { agentRecordHasConfiguredCredential } from "./agentRecordHelpers";
 
 export type ListedAgent = {
   id: string;
@@ -16,6 +17,9 @@ export type ListedAgent = {
   publicRecordExists: boolean;
   type: string | null;
   tools: string[];
+  credentialConfigured: boolean;
+  credentialRef?: string;
+  apiKeyRef?: string;
 };
 
 function parseAgentRecordId(privateKey: string, explicitId?: string) {
@@ -43,6 +47,14 @@ export function normalizeListedAgent(record: any): ListedAgent | null {
       : parseAgentRecordId(privateKey, explicitId));
   if (!privateKey || !rawId || !ownerUserId) return null;
   const keys = buildCompanionKeys(rawId, ownerUserId);
+  const credentialConfigured = agentRecordHasConfiguredCredential(record);
+  const credentialRef = typeof record?.credentialRef === "string" && record.credentialRef
+    ? record.credentialRef
+    : undefined;
+  const apiKeyRef = typeof record?.apiKeyRef === "string" && record.apiKeyRef
+    ? record.apiKeyRef
+    : undefined;
+
   return {
     id: rawId,
     privateKey,
@@ -63,6 +75,9 @@ export function normalizeListedAgent(record: any): ListedAgent | null {
     tools: Array.isArray(record?.tools)
       ? record.tools.filter((tool: unknown): tool is string => typeof tool === "string")
       : [],
+    credentialConfigured,
+    credentialRef,
+    apiKeyRef,
   };
 }
 

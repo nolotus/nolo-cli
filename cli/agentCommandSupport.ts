@@ -32,6 +32,8 @@ export type LocalRuntimeProbeResult = {
   authorityEndpoint?: string;
   authorityMetadataPath?: string;
   authorityHealthPath?: string;
+  authorityHealthy?: boolean;
+  authorityError?: string;
   agentFound: boolean;
   agentKey?: string;
   error?: string;

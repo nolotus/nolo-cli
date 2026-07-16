@@ -15,6 +15,7 @@ import {
   resolveServerUrl,
   type EnvLike,
 } from "./cliEnvHelpers";
+import { probeCliAuthorityBrokerHealth } from "./cliAuthorityBrokerHealth";
 
 function detectLocalAgentConfig(env: EnvLike) {
   return Boolean(readLocalAgentKey(env) || env.NOLO_AGENT_CACHE_READY);
@@ -45,7 +46,15 @@ function detectProviderLabel(env: EnvLike) {
   return "missing";
 }
 
-async function defaultLocalRuntimeProbe(env: EnvLike): Promise<LocalRuntimeProbeResult> {
+type DefaultLocalRuntimeProbeDeps = {
+  getDb?: () => Promise<{ get(key: string): Promise<unknown> }>;
+  probeAuthorityHealth?: typeof probeCliAuthorityBrokerHealth;
+};
+
+export async function defaultLocalRuntimeProbe(
+  env: EnvLike,
+  deps: DefaultLocalRuntimeProbeDeps = {}
+): Promise<LocalRuntimeProbeResult> {
   const { resolveCliLocalRuntimeDbPath } = await import("./localRuntimeDb");
   const dbPath = resolveCliLocalRuntimeDbPath({ env });
   const authorityDriver = resolveCliAuthorityStoreDriver({ env });
@@ -54,8 +63,32 @@ async function defaultLocalRuntimeProbe(env: EnvLike): Promise<LocalRuntimeProbe
   const authorityHealthPath = resolveCliAuthorityBrokerHealthPath({ transport: "tcp", env });
   const agentKey = readLocalAgentKey(env);
   try {
-    const { getDefaultCliLocalRuntimeDb } = await import("./localRuntimeDb");
-    const db = await getDefaultCliLocalRuntimeDb({ env });
+    const db = deps.getDb
+      ? await deps.getDb()
+      : await import("./localRuntimeDb").then(({ getDefaultCliLocalRuntimeDb }) =>
+          getDefaultCliLocalRuntimeDb({ env })
+        );
+    const authorityHealth = await (
+      deps.probeAuthorityHealth ?? probeCliAuthorityBrokerHealth
+    )({
+      endpoint: authorityEndpoint,
+      metadataPath: authorityMetadataPath,
+      healthPath: authorityHealthPath,
+    });
+    if (!authorityHealth.ok) {
+      return {
+        ok: true,
+        dbPath,
+        authorityDriver,
+        authorityEndpoint,
+        authorityMetadataPath,
+        authorityHealthPath,
+        authorityHealthy: false,
+        authorityError: authorityHealth.error,
+        agentFound: false,
+        ...(agentKey ? { agentKey } : {}),
+      };
+    }
     if (!agentKey) {
       return {
         ok: true,
@@ -64,6 +97,7 @@ async function defaultLocalRuntimeProbe(env: EnvLike): Promise<LocalRuntimeProbe
         authorityEndpoint,
         authorityMetadataPath,
         authorityHealthPath,
+        authorityHealthy: true,
         agentFound: false,
       };
     }
@@ -76,6 +110,7 @@ async function defaultLocalRuntimeProbe(env: EnvLike): Promise<LocalRuntimeProbe
         authorityEndpoint,
         authorityMetadataPath,
         authorityHealthPath,
+        authorityHealthy: true,
         agentFound: record != null,
         agentKey,
       };
@@ -87,11 +122,13 @@ async function defaultLocalRuntimeProbe(env: EnvLike): Promise<LocalRuntimeProbe
         authorityEndpoint,
         authorityMetadataPath,
         authorityHealthPath,
+        authorityHealthy: true,
         agentFound: false,
         agentKey,
       };
     }
   } catch (error) {
+    const errorMessage = toErrorMessage(error);
     return {
       ok: false,
       dbPath,
@@ -99,9 +136,11 @@ async function defaultLocalRuntimeProbe(env: EnvLike): Promise<LocalRuntimeProbe
       authorityEndpoint,
       authorityMetadataPath,
       authorityHealthPath,
+      authorityHealthy: false,
+      authorityError: errorMessage,
       agentFound: false,
       ...(agentKey ? { agentKey } : {}),
-      error: toErrorMessage(error),
+      error: errorMessage,
     };
   }
 }
@@ -119,6 +158,7 @@ export async function runDoctorRuntimeCommand(
   const hasLocalProvider = detectLocalProvider(env);
   const missingLocalCapabilities = [
     ...(localProbe.ok ? [] : ["leveldb"]),
+    ...(localProbe.authorityHealthy === false ? ["authority-broker"] : []),
     ...(hasLocalAgentConfig ? [] : ["agent-config"]),
     ...(hasLocalProvider ? [] : ["provider"]),
   ];
@@ -153,6 +193,18 @@ export async function runDoctorRuntimeCommand(
   }
   if (localProbe.authorityHealthPath) {
     output.write(`Authority health: ${localProbe.authorityHealthPath}\n`);
+  }
+  output.write(
+    `Authority broker: ${
+      localProbe.authorityHealthy === true
+        ? "healthy"
+        : localProbe.authorityHealthy === false
+          ? "unhealthy"
+          : "unknown"
+    }\n`
+  );
+  if (localProbe.authorityHealthy === false && localProbe.authorityError) {
+    output.write(`Authority error: ${localProbe.authorityError}\n`);
   }
   if (!localProbe.ok && localProbe.error) {
     output.write(`DB error: ${localProbe.error}\n`);

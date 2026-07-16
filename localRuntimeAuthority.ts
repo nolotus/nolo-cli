@@ -19,7 +19,11 @@ import {
 } from "./database/server/cliAuthorityStoreDriver";
 import { isLevelLockError } from "./database/levelLockError";
 import { resolveNoloHome } from "./database/server/dbPath";
-import type { AuthorityStore } from "./database/server/authorityStoreTypes";
+import type {
+  AuthorityBatchOperation,
+  AuthorityIteratorOptions,
+  AuthorityStore,
+} from "./database/server/authorityStoreTypes";
 import { createLevelAuthorityStore } from "./database/server/levelAuthorityStore";
 import { createLegacyServerDb } from "./database/server/legacyServerDb";
 
@@ -79,71 +83,178 @@ export async function connectCliAuthorityBroker(args: {
     ...defaultCliAuthorityBrokerConnectDeps,
     ...args.deps,
   };
-  const client = deps.createClient({
-    endpoint: args.endpoint,
-    invoke: createCliAuthorityBrokerSocketInvoker({ endpoint: args.endpoint }),
-  });
 
-  async function attachToExistingBroker(attempts: number) {
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      await deps.sleep(100);
-      try {
-        await client.open();
-        return true;
-      } catch (error) {
-        if (!isCliAuthorityBrokerUnavailableError(error)) throw error;
-      }
-    }
-    return false;
-  }
-
-  try {
-    await deps.startBroker({
+  async function connectClient() {
+    const client = deps.createClient({
       endpoint: args.endpoint,
-      metadataPath: args.metadataPath,
-      healthPath: args.healthPath,
-      createStore: () => createLevelAuthorityStore(args.dbPath),
+      invoke: createCliAuthorityBrokerSocketInvoker({ endpoint: args.endpoint }),
     });
-    await client.open();
-    return client;
-  } catch (error) {
-    if (!isCliAuthorityLockError(error)) throw error;
 
-    if (await attachToExistingBroker(5)) {
-      return client;
-    }
-
-    let lastError: unknown = error;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      await deps.sleep(100);
-      try {
-        await deps.startBroker({
-          endpoint: args.endpoint,
-          metadataPath: args.metadataPath,
-          healthPath: args.healthPath,
-          createStore: () => createLevelAuthorityStore(args.dbPath),
-        });
-        await client.open();
-        return client;
-      } catch (retryError) {
-        lastError = retryError;
-        if (isCliAuthorityLockError(retryError)) {
-          if (await attachToExistingBroker(2)) {
-            return client;
-          }
-          continue;
+    async function attachToExistingBroker(attempts: number) {
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        await deps.sleep(100);
+        try {
+          await client.open();
+          return true;
+        } catch (error) {
+          if (!isCliAuthorityBrokerUnavailableError(error)) throw error;
         }
-        if (isCliAuthorityBrokerUnavailableError(retryError)) {
-          continue;
-        }
-        throw retryError;
       }
+      return false;
     }
-    throw new Error(`CLI authority broker could not attach or take ownership for ${args.endpoint}`, {
-      cause: lastError,
-    });
+
+    try {
+      await deps.startBroker({
+        endpoint: args.endpoint,
+        metadataPath: args.metadataPath,
+        healthPath: args.healthPath,
+        createStore: () => createLevelAuthorityStore(args.dbPath),
+      });
+      await client.open();
+      return client;
+    } catch (error) {
+      if (!isCliAuthorityLockError(error)) throw error;
+
+      if (await attachToExistingBroker(5)) {
+        return client;
+      }
+
+      let lastError: unknown = error;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await deps.sleep(100);
+        try {
+          await deps.startBroker({
+            endpoint: args.endpoint,
+            metadataPath: args.metadataPath,
+            healthPath: args.healthPath,
+            createStore: () => createLevelAuthorityStore(args.dbPath),
+          });
+          await client.open();
+          return client;
+        } catch (retryError) {
+          lastError = retryError;
+          if (isCliAuthorityLockError(retryError)) {
+            if (await attachToExistingBroker(2)) {
+              return client;
+            }
+            continue;
+          }
+          if (isCliAuthorityBrokerUnavailableError(retryError)) {
+            continue;
+          }
+          throw retryError;
+        }
+      }
+      throw new Error(`CLI authority broker could not attach or take ownership for ${args.endpoint}`, {
+        cause: lastError,
+      });
+    }
   }
 
+  let client = await connectClient();
+  let reconnecting: Promise<AuthorityStore> | null = null;
+
+  async function reconnect() {
+    reconnecting ??= connectClient();
+    try {
+      client = await reconnecting;
+      return client;
+    } finally {
+      reconnecting = null;
+    }
+  }
+
+  async function runWithSelfHealing<T>(
+    operation: (activeClient: AuthorityStore) => Promise<T>
+  ): Promise<T> {
+    try {
+      return await operation(client);
+    } catch (error) {
+      if (!isCliAuthorityBrokerUnavailableError(error)) throw error;
+      const recoveredClient = await reconnect();
+      return operation(recoveredClient);
+    }
+  }
+
+  return {
+    get location() {
+      return client.location;
+    },
+    get status() {
+      return client.status;
+    },
+    open: () => runWithSelfHealing((activeClient) => activeClient.open()),
+    close: () => runWithSelfHealing((activeClient) => activeClient.close()),
+    get: (key: string) =>
+      runWithSelfHealing((activeClient) => activeClient.get(key)),
+    put: (key: string, value: unknown) =>
+      runWithSelfHealing((activeClient) => activeClient.put(key, value)),
+    del: (key: string) =>
+      runWithSelfHealing((activeClient) => activeClient.del(key)),
+    batchWrite: (ops: AuthorityBatchOperation[]) =>
+      runWithSelfHealing((activeClient) => activeClient.batchWrite(ops)),
+    createBatch() {
+      const ops: AuthorityBatchOperation[] = [];
+      return {
+        put(key: string, value: unknown) {
+          ops.push({ type: "put", key, value });
+        },
+        del(key: string) {
+          ops.push({ type: "del", key });
+        },
+        write: () =>
+          runWithSelfHealing((activeClient) => activeClient.batchWrite(ops)),
+      };
+    },
+    iterator(options: AuthorityIteratorOptions = {}) {
+      return (async function* iterate() {
+        let activeOptions = options;
+        let lastYieldedKey: string | undefined;
+        let skipResumeKey = false;
+        let recovered = false;
+
+        while (true) {
+          try {
+            for await (const entry of client.iterator(activeOptions)) {
+              if (skipResumeKey && entry[0] === lastYieldedKey) {
+                skipResumeKey = false;
+                continue;
+              }
+              skipResumeKey = false;
+              lastYieldedKey = entry[0];
+              yield entry;
+            }
+            return;
+          } catch (error) {
+            if (
+              recovered ||
+              !isCliAuthorityBrokerUnavailableError(error)
+            ) {
+              throw error;
+            }
+            recovered = true;
+            await reconnect();
+            if (lastYieldedKey === undefined) {
+              activeOptions = options;
+              continue;
+            }
+            if (options.reverse) {
+              activeOptions = {
+                ...options,
+                lt: lastYieldedKey,
+              };
+              continue;
+            }
+            activeOptions = {
+              ...options,
+              gte: lastYieldedKey,
+            };
+            skipResumeKey = true;
+          }
+        }
+      })();
+    },
+  } satisfies AuthorityStore;
 }
 
 export async function getDefaultCliLocalRuntimeAuthority(

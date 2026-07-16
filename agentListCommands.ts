@@ -160,6 +160,9 @@ export async function runAgentListCommand(
       const flagMismatch = agent.isPublicFlag !== agent.publicRecordExists
         ? ` flag=${agent.isPublicFlag}`
         : "";
+      const credentialLine = agent.credentialConfigured
+        ? `credentialConfigured=true${agent.credentialRef ? ` credentialRef=${agent.credentialRef}` : ""}${agent.apiKeyRef ? ` apiKeyRef=${agent.apiKeyRef}` : ""}`
+        : "credentialConfigured=false";
       output.write(
         [
           `\n[${status}] ${agent.name}`,
@@ -170,6 +173,7 @@ export async function runAgentListCommand(
           `privateKey=${agent.privateKey}`,
           `publicKey=${agent.publicKey}${flagMismatch}`,
           `tools=${agent.tools.join(", ") || "-"}`,
+          credentialLine,
         ].join("\n")
       );
       output.write("\n");

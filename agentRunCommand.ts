@@ -10,7 +10,6 @@ import { CliProviderQuotaError } from "./ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
 import { resolveAgentRecordFromHybridStore, readDbRecord } from "./agentRecordHelpers";
 import { resolveAuthToken } from "./cliEnvHelpers";
-import { homedir } from "node:os";
 import { getReadableCliDb } from "./agentCommandSupport";
 import { toErrorMessage } from "./core/errorMessage";
 import { parsePositiveFiniteNumberOrFallback } from "./core/positiveFiniteNumberOrFallback";
@@ -309,7 +308,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
   let localRuntimeCwd = parsed.cwd;
   if (!localRuntimeCwd && parsed.runtimeMode === "local") {
-    localRuntimeCwd = homedir();
+    localRuntimeCwd = process.cwd();
   }
   const runEnv = buildLocalRunEnv({
     env,
@@ -326,7 +325,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         commandPath: deps.commandPath,
         cliEntrypointPath: deps.cliEntrypointPath,
         agentKey,
-        cwd: parsed.cwd,
+        cwd: localRuntimeCwd,
         msgFile: readFlagValue(args, "--msg-file"),
         timeoutMs: parsed.timeoutMs,
         output,

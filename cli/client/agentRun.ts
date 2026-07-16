@@ -1,11 +1,25 @@
 import { LOCAL_AGENT_CONFIG_MISSING_CODE } from "../../agent-runtime/localLoop";
-import {
-  NOLO_PROJECT_MANAGER_AGENT_KEY,
-} from "../agentAliases";
-import type { LocalAgentActionGate, LocalAgentLoopEvent, LocalAgentToolEvent } from "../../agent-runtime/localLoop";
+import { NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
+import type {
+  LocalAgentActionGate,
+  LocalAgentLoopEvent,
+  LocalAgentToolEvent,
+} from "../../agent-runtime/localLoop";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
-import type { AgentRuntimeHostAdapter, AgentRuntimeRequestedMode, AgentRuntimeToolResult } from "../agentRuntimeLocal";
-import { createCliLocalRuntimeAdapter, isBuiltinNoloAgentRef } from "./localRuntimeAdapter";
+import type {
+  AgentRuntimeHostAdapter,
+  AgentRuntimeRequestedMode,
+  AgentRuntimeToolResult,
+} from "../agentRuntimeLocal";
+import {
+  createCliCallAgentToolExecutor,
+  createCliLocalRuntimeAdapter,
+  isBuiltinNoloAgentRef,
+} from "./localRuntimeAdapter";
+import type {
+  LocalAgentTurnInput,
+  LocalAgentTurnResult,
+} from "../../agent-runtime/localLoop";
 import type { CliFetchImpl } from "../cliFetch";
 import { createStreamingTextWriter } from "./streamingOutput";
 import {
@@ -18,10 +32,7 @@ import {
   formatAssistantTextForCli,
   resolveThinkingDisplayMode,
 } from "./thinkingOutput";
-import {
-  buildTurnTokenUsage,
-  type TurnTokenUsage,
-} from "./tokenUsage";
+import { buildTurnTokenUsage, type TurnTokenUsage } from "./tokenUsage";
 import {
   createToolEventFormatter,
   resolveToolDisplayMode,
@@ -38,6 +49,7 @@ import {
 } from "./agentRunTypes";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import { normalizeAgentHandle } from "../../core/agentHandle";
+import { ulid } from "ulid";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { asTrimmedString } from "../../core/trimmedString";
 import { toErrorMessage } from "../../core/errorMessage";
@@ -89,7 +101,10 @@ export type RunAgentTurnOptions = {
   output: OutputLike;
   runtimeMode?: AgentRuntimeRequestedMode;
   localRuntimeAdapter?: AgentRuntimeHostAdapter;
-  localRuntimeAdapterFactory?: (env: EnvLike, options?: { cwd?: string }) => AgentRuntimeHostAdapter;
+  localRuntimeAdapterFactory?: (
+    env: EnvLike,
+    options?: { cwd?: string },
+  ) => AgentRuntimeHostAdapter;
   localRuntimeCwd?: string;
   timeoutMs?: number;
   traceTools?: boolean;
@@ -97,7 +112,9 @@ export type RunAgentTurnOptions = {
   taskEvidence?: TaskEvidenceInput;
   fetchImpl?: CliFetchImpl;
   currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
-  actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
+  actionGateHandler?: (
+    gate: LocalAgentActionGate,
+  ) => Promise<AgentRuntimeToolResult | void>;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
   /** Local loop lifecycle events; used by the CLI runner to write heartbeat activity to the registry. */
   onLoopEvent?: (event: LocalAgentLoopEvent) => void;
@@ -120,7 +137,7 @@ class Spinner {
 
   constructor(
     private output: OutputLike,
-    private text: string
+    private text: string,
   ) {
     // Prefer the stream's own TTY flag. History capture streams set isTTY so
     // \\r in-place updates are interpreted; falling back only when unset keeps
@@ -170,7 +187,7 @@ class Spinner {
   private renderLine(frame: string): string {
     const elapsedSeconds = Math.max(
       0,
-      Math.floor((Date.now() - this.startTime) / 1000)
+      Math.floor((Date.now() - this.startTime) / 1000),
     );
     return `\x1b[36m${frame}\x1b[39m ${this.text} (${formatElapsed(elapsedSeconds)})`;
   }
@@ -185,7 +202,6 @@ function formatElapsed(totalSeconds: number): string {
   const mins = minutes % 60;
   return `${hours}h ${mins}m`;
 }
-
 
 // Table mutations require the server runtime.
 // Read-only queryTableRows is intentionally excluded: local CLI executes it via
@@ -226,10 +242,11 @@ const KNOWN_SERVER_PLATFORM_AGENT_ALIASES = new Set([
   "reviewer",
 ]);
 
-
 export function findServerPlatformTools(toolNames?: string[]) {
   if (!Array.isArray(toolNames)) return [];
-  return toolNames.filter((toolName) => SERVER_PLATFORM_TOOL_NAMES.has(toolName));
+  return toolNames.filter((toolName) =>
+    SERVER_PLATFORM_TOOL_NAMES.has(toolName),
+  );
 }
 
 function resolveServerPlatformToolNames(agentConfig: any) {
@@ -244,9 +261,10 @@ function resolveServerPlatformToolNames(agentConfig: any) {
 function isKnownServerPlatformAgent(options: RunAgentTurnOptions) {
   if (KNOWN_SERVER_PLATFORM_AGENT_KEYS.has(options.agentKey)) return true;
   const normalizedKey = normalizeAgentHandle(options.agentKey);
-  return Boolean(normalizedKey && KNOWN_SERVER_PLATFORM_AGENT_ALIASES.has(normalizedKey));
+  return Boolean(
+    normalizedKey && KNOWN_SERVER_PLATFORM_AGENT_ALIASES.has(normalizedKey),
+  );
 }
-
 
 function shouldShowUsage(env: EnvLike) {
   return env.NOLO_DEBUG === "1" || env.NOLO_SHOW_USAGE === "1";
@@ -260,7 +278,8 @@ async function resolveCurrentMachineId(options: RunAgentTurnOptions) {
 function resolveRequestedRuntimeMode(options: RunAgentTurnOptions) {
   const envMode = options.env.NOLO_RUNTIME_MODE;
   if (options.runtimeMode) return options.runtimeMode;
-  if (envMode === "local" || envMode === "server" || envMode === "auto") return envMode;
+  if (envMode === "local" || envMode === "server" || envMode === "auto")
+    return envMode;
   return "auto";
 }
 
@@ -279,12 +298,16 @@ function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
 function resolveLocalRuntimeAdapter(options: RunAgentTurnOptions) {
   return (
     options.localRuntimeAdapter ||
-    options.localRuntimeAdapterFactory?.(options.env, { cwd: options.localRuntimeCwd }) ||
+    options.localRuntimeAdapterFactory?.(options.env, {
+      cwd: options.localRuntimeCwd,
+    }) ||
     buildDefaultLocalRuntimeAdapter(options)
   );
 }
 
-async function shouldSkipAutoLocalForServerPlatformTools(options: RunAgentTurnOptions) {
+async function shouldSkipAutoLocalForServerPlatformTools(
+  options: RunAgentTurnOptions,
+) {
   if (isBuiltinNoloAgentRef(options.agentKey)) return false;
   if (options.localRuntimeCwd) {
     return false;
@@ -299,7 +322,7 @@ async function shouldSkipAutoLocalForServerPlatformTools(options: RunAgentTurnOp
     if (knownServerPlatformAgent) {
       options.output.write(
         `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is a known platform agent. ` +
-          "Use --local explicitly to force local workspace tools.\n"
+          "Use --local explicitly to force local workspace tools.\n",
       );
       return true;
     }
@@ -308,26 +331,27 @@ async function shouldSkipAutoLocalForServerPlatformTools(options: RunAgentTurnOp
   if (isCliProviderAgentConfig(agentConfig)) {
     const boundMachineId = resolveBoundMachineId(agentConfig);
     if (!boundMachineId) return false;
-    const currentMachineId = (await resolveCurrentMachineId(options))?.trim() || "";
+    const currentMachineId =
+      (await resolveCurrentMachineId(options))?.trim() || "";
     if (currentMachineId && currentMachineId === boundMachineId) return false;
     options.output.write(
       `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is bound to ${boundMachineId}` +
         (currentMachineId ? ` and this machine is ${currentMachineId}.` : ".") +
-        " Use --local explicitly to force the current machine.\n"
+        " Use --local explicitly to force the current machine.\n",
     );
     return true;
   }
   if (knownServerPlatformAgent) {
     options.output.write(
       `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is a known platform agent. ` +
-        "Use --local explicitly to force local workspace tools.\n"
+        "Use --local explicitly to force local workspace tools.\n",
     );
     return true;
   }
   if (isMachineBoundLocalhostCustomProvider(agentConfig)) {
     options.output.write(
       `[nolo] auto runtime: skipping local runtime because ${options.agentKey} is a machine-bound localhost custom provider. ` +
-        "Use --local explicitly to force the current machine.\n"
+        "Use --local explicitly to force the current machine.\n",
     );
     return true;
   }
@@ -335,7 +359,7 @@ async function shouldSkipAutoLocalForServerPlatformTools(options: RunAgentTurnOp
   if (serverTools.length === 0) return false;
   options.output.write(
     `[nolo] auto runtime: skipping local runtime because ${options.agentKey} declares server platform tools ` +
-      `(${serverTools.join(", ")}). Use --local explicitly to force local workspace tools.\n`
+      `(${serverTools.join(", ")}). Use --local explicitly to force local workspace tools.\n`,
   );
   return true;
 }
@@ -389,12 +413,15 @@ function buildSubjectRefs(options: RunAgentTurnOptions) {
   return refs.length ? refs : undefined;
 }
 
-function formatAssistantResponseForCli(text: string, options: RunAgentTurnOptions) {
+function formatAssistantResponseForCli(
+  text: string,
+  options: RunAgentTurnOptions,
+) {
   const thinkingMode = resolveThinkingDisplayMode(options.env);
   const renderMode = resolveRenderDisplayMode(options.env);
   return formatAssistantDisplay(
     formatAssistantTextForCli(text, thinkingMode),
-    renderMode
+    renderMode,
   );
 }
 
@@ -406,10 +433,11 @@ function resolveAgentEventMode(options: RunAgentTurnOptions): "text" | "jsonl" {
 function isMissingLocalAgentConfigError(error: unknown, agentRef: string) {
   return Boolean(
     error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: string; agentRef?: string }).code === LOCAL_AGENT_CONFIG_MISSING_CODE &&
-      (error as { code?: string; agentRef?: string }).agentRef === agentRef
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string; agentRef?: string }).code ===
+      LOCAL_AGENT_CONFIG_MISSING_CODE &&
+    (error as { code?: string; agentRef?: string }).agentRef === agentRef,
   );
 }
 
@@ -421,7 +449,9 @@ function formatToolJsonEvent(event: LocalAgentToolEvent) {
     tool: event.toolName,
     toolCallId: event.toolCallId,
     ...(event.argumentsPreview ? { argsPreview: event.argumentsPreview } : {}),
-    ...(typeof event.elapsedMs === "number" ? { elapsedMs: event.elapsedMs } : {}),
+    ...(typeof event.elapsedMs === "number"
+      ? { elapsedMs: event.elapsedMs }
+      : {}),
     ...(event.summary ? { summary: event.summary } : {}),
     ...(event.message ? { message: event.message } : {}),
     ...(event.metadata ? { metadata: event.metadata } : {}),
@@ -429,7 +459,8 @@ function formatToolJsonEvent(event: LocalAgentToolEvent) {
 }
 
 function shouldAttemptAutoLocal(options: RunAgentTurnOptions) {
-  if (options.localRuntimeAdapter || options.localRuntimeAdapterFactory) return true;
+  if (options.localRuntimeAdapter || options.localRuntimeAdapterFactory)
+    return true;
   if (
     options.env.NOLO_DISABLE_CLI_WORKSPACE_TOOLS !== "1" &&
     isBuiltinNoloAgentRef(options.agentKey) &&
@@ -446,26 +477,34 @@ function shouldAttemptAutoLocal(options: RunAgentTurnOptions) {
   }
   return Boolean(
     options.env.NOLO_LOCAL_OPENAI_API_KEY ||
-      options.env.OPENAI_API_KEY ||
-      options.env.NOLO_LOCAL_OPENAI_BASE_URL ||
-      options.env.OPENAI_BASE_URL ||
-      options.env.NOLO_LOCAL_AGENT_KEY
+    options.env.OPENAI_API_KEY ||
+    options.env.NOLO_LOCAL_OPENAI_BASE_URL ||
+    options.env.OPENAI_BASE_URL ||
+    options.env.NOLO_LOCAL_AGENT_KEY,
   );
 }
 
-export function classifyReviewDecisionStatus(summary?: string): ReviewDecisionStatus | undefined {
+export function classifyReviewDecisionStatus(
+  summary?: string,
+): ReviewDecisionStatus | undefined {
   const normalized = summary?.toLowerCase().trim();
   if (!normalized) return undefined;
 
-  const explicit = normalized.match(/review\s+decision\s*:\s*(passed|needs_changes|blocked)/);
+  const explicit = normalized.match(
+    /review\s+decision\s*:\s*(passed|needs_changes|blocked)/,
+  );
   if (explicit?.[1]) return explicit[1] as ReviewDecisionStatus;
 
-  if (/\b(blocked|cannot review|unable to review)\b|无法审查|阻塞/.test(normalized)) {
+  if (
+    /\b(blocked|cannot review|unable to review)\b|无法审查|阻塞/.test(
+      normalized,
+    )
+  ) {
     return "blocked";
   }
   if (
     /\b(needs changes|request changes|changes requested|not approved)\b|需要修改|需修改|发现问题/.test(
-      normalized
+      normalized,
     )
   ) {
     return "needs_changes";
@@ -476,10 +515,10 @@ export function classifyReviewDecisionStatus(summary?: string): ReviewDecisionSt
   return undefined;
 }
 
-
 function formatUsage(usage: any, dialogId: unknown) {
   const parts: string[] = [];
-  if (typeof dialogId === "string" && dialogId) parts.push(`dialog=${dialogId}`);
+  if (typeof dialogId === "string" && dialogId)
+    parts.push(`dialog=${dialogId}`);
 
   const input = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
   const output = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
@@ -492,9 +531,7 @@ function buildTransportErrorHint(serverUrl: string, error: unknown) {
   const endpoint = `${serverUrl}/api/agent/run`;
   const reason = toErrorMessage(error);
 
-  let detail =
-    `[nolo] Could not reach ${endpoint}.\n` +
-    `Reason: ${reason}\n`;
+  let detail = `[nolo] Could not reach ${endpoint}.\n` + `Reason: ${reason}\n`;
 
   try {
     const parsed = new URL(serverUrl);
@@ -513,8 +550,13 @@ function buildTransportErrorHint(serverUrl: string, error: unknown) {
   return detail;
 }
 
-async function readAgentRunFailureMetadata(res: Response): Promise<{ dialogId?: string }> {
-  const data = await res.clone().json().catch(() => ({}));
+async function readAgentRunFailureMetadata(
+  res: Response,
+): Promise<{ dialogId?: string }> {
+  const data = await res
+    .clone()
+    .json()
+    .catch(() => ({}));
   return {
     ...(asOptionalTrimmedString(data?.dialogId)
       ? { dialogId: asOptionalTrimmedString(data?.dialogId) }
@@ -522,52 +564,65 @@ async function readAgentRunFailureMetadata(res: Response): Promise<{ dialogId?: 
   };
 }
 
-async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string) {
-  const spinner = new Spinner(options.output, `${options.agentName} -> working`);
+async function runHttpAgentTurn(
+  options: RunAgentTurnOptions,
+  authToken: string,
+) {
+  const spinner = new Spinner(
+    options.output,
+    `${options.agentName} -> working`,
+  );
   spinner.start();
 
   const fetchImpl = options.fetchImpl ?? fetch;
   const subjectRefs = buildSubjectRefs(options);
-  const allowedChildAgentKeys = options.allowedChildAgentKeys?.filter((key) => key.trim());
-  const allowedToolNames = options.allowedToolNames?.filter((name) => name.trim());
+  const allowedChildAgentKeys = options.allowedChildAgentKeys?.filter((key) =>
+    key.trim(),
+  );
+  const allowedToolNames = options.allowedToolNames?.filter((name) =>
+    name.trim(),
+  );
   const shouldStream = !options.noStream && !options.background;
-  const buildRequestBody = (stream: boolean) => JSON.stringify({
-    agentKey: options.agentKey,
-    userInput: buildUserInputContent(
-      options.message,
-      options.imageUrls
-    ),
-    runtimeContext: {
-      surface: "cli",
-      host: "terminal",
-      runtime: "bun",
-      entrypoint: "nolo-cli",
-      capabilities: ["text-io", "streaming", "slash-commands"],
-      ...(subjectRefs ? { subjectRefs } : {}),
-      ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
-      ...(allowedToolNames?.length ? { allowedToolNames } : {}),
-    },
-    ...(options.continueDialogId
-      ? { continueDialogId: options.continueDialogId }
-      : {}),
-    ...(options.spaceId ? { spaceId: options.spaceId } : {}),
-    ...(options.category ? { category: options.category } : {}),
-    ...(options.inheritedFromDialogKey
-      ? { inheritedFromDialogKey: options.inheritedFromDialogKey }
-      : {}),
-    ...(options.parentDialogId ? { parentDialogId: options.parentDialogId } : {}),
-    ...(options.background ? { background: true } : {}),
-    ...(typeof options.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
-    stream,
-  });
-  const postAgentRun = (stream: boolean) => fetchImpl(`${options.serverUrl}/api/agent/run`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-      "Content-Type": "application/json",
-    },
-    body: buildRequestBody(stream),
-  });
+  const buildRequestBody = (stream: boolean) =>
+    JSON.stringify({
+      agentKey: options.agentKey,
+      userInput: buildUserInputContent(options.message, options.imageUrls),
+      runtimeContext: {
+        surface: "cli",
+        host: "terminal",
+        runtime: "bun",
+        entrypoint: "nolo-cli",
+        capabilities: ["text-io", "streaming", "slash-commands"],
+        ...(subjectRefs ? { subjectRefs } : {}),
+        ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
+        ...(allowedToolNames?.length ? { allowedToolNames } : {}),
+      },
+      ...(options.continueDialogId
+        ? { continueDialogId: options.continueDialogId }
+        : {}),
+      ...(options.spaceId ? { spaceId: options.spaceId } : {}),
+      ...(options.category ? { category: options.category } : {}),
+      ...(options.inheritedFromDialogKey
+        ? { inheritedFromDialogKey: options.inheritedFromDialogKey }
+        : {}),
+      ...(options.parentDialogId
+        ? { parentDialogId: options.parentDialogId }
+        : {}),
+      ...(options.background ? { background: true } : {}),
+      ...(typeof options.timeoutMs === "number"
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      stream,
+    });
+  const postAgentRun = (stream: boolean) =>
+    fetchImpl(`${options.serverUrl}/api/agent/run`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: buildRequestBody(stream),
+    });
   let res: Response;
   try {
     res = await postAgentRun(shouldStream);
@@ -582,7 +637,7 @@ async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string)
     if (!failureMeta.dialogId) {
       spinner.stop();
       options.output.write(
-        `[nolo] streaming request returned HTTP ${res.status}; retrying once without streaming.\n`
+        `[nolo] streaming request returned HTTP ${res.status}; retrying once without streaming.\n`,
       );
       spinner.start();
       try {
@@ -625,22 +680,28 @@ async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string)
       if (codeText && codeText !== errorText && codeText !== messageText) {
         options.output.write(`code=${codeText}\n`);
       }
-      if (reasonText && reasonText !== errorText && reasonText !== messageText) {
+      if (
+        reasonText &&
+        reasonText !== errorText &&
+        reasonText !== messageText
+      ) {
         options.output.write(`reason=${reasonText}\n`);
       }
     }
     if (dialogIdText) {
       options.output.write(`[nolo] failed dialog: ${dialogIdText}\n`);
       options.output.write(
-        `[nolo] continue with: nolo agent run ${options.agentKey} --continue ${dialogIdText} --msg "retry"\n`
+        `[nolo] continue with: nolo agent run ${options.agentKey} --continue ${dialogIdText} --msg "retry"\n`,
       );
     }
-    return dialogIdText ? { exitCode: 1, dialogId: dialogIdText } : { exitCode: 1 };
+    return dialogIdText
+      ? { exitCode: 1, dialogId: dialogIdText }
+      : { exitCode: 1 };
   }
 
   const content = formatAssistantResponseForCli(
     String(data?.content ?? data?.message ?? ""),
-    options
+    options,
   );
   if (content) {
     options.output.write(`\n${options.agentName} > ${content}\n`);
@@ -657,7 +718,7 @@ async function runHttpAgentTurn(options: RunAgentTurnOptions, authToken: string)
       : {}),
     turnTokens: buildTurnTokenUsage(
       data?.usage,
-      typeof data?.model === "string" ? data.model : options.agentKey
+      typeof data?.model === "string" ? data.model : options.agentKey,
     ),
   };
 }
@@ -675,15 +736,104 @@ async function refreshMissingLocalAgentConfig(options: RunAgentTurnOptions) {
 
 async function runLocalAgentTurnForCli(
   options: RunAgentTurnOptions,
-  settings: { reportFailure: boolean }
+  settings: { reportFailure: boolean },
 ) {
-  const adapter = resolveLocalRuntimeAdapter(options);
-  if (!adapter) {
-    options.output.write("[nolo] Local runtime was requested but no local runtime adapter is available.\n");
+  const baseAdapter = resolveLocalRuntimeAdapter(options);
+  if (!baseAdapter) {
+    options.output.write(
+      "[nolo] Local runtime was requested but no local runtime adapter is available.\n",
+    );
     return { exitCode: 1 };
   }
 
-  const spinner = new Spinner(options.output, `${options.agentName} -> working locally`);
+  const subjectRefs = buildSubjectRefs(options);
+  const allowedChildAgentKeys = options.allowedChildAgentKeys?.filter((key) =>
+    key.trim(),
+  );
+  const allowedToolNames = options.allowedToolNames?.filter((name) =>
+    name.trim(),
+  );
+  const runtimeContext: Record<string, any> | undefined =
+    subjectRefs ||
+    allowedChildAgentKeys?.length ||
+    allowedToolNames?.length ||
+    options.parentWakeOnTerminal
+      ? {
+          ...(subjectRefs ? { subjectRefs } : {}),
+          ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
+          ...(allowedToolNames?.length ? { allowedToolNames } : {}),
+          ...(options.parentWakeOnTerminal
+            ? { parentWakeOnTerminal: true }
+            : {}),
+          ...(options.parentDialogId
+            ? { parentThreadId: options.parentDialogId }
+            : {}),
+        }
+      : undefined;
+  const currentDialogId = options.continueDialogId ?? ulid();
+
+  const runChildTurn = async (
+    input: LocalAgentTurnInput,
+  ): Promise<LocalAgentTurnResult> => {
+    const { runLocalAgentTurn } = await import("../agentRuntimeLocal");
+    return runLocalAgentTurn(input);
+  };
+
+  const createFreshChildBaseAdapter = () =>
+    options.localRuntimeAdapterFactory?.(options.env, {
+      cwd: options.localRuntimeCwd,
+    }) ?? buildDefaultLocalRuntimeAdapter(options);
+
+  const withLocalDelegation = (args: {
+    base: AgentRuntimeHostAdapter;
+    dialogId: string;
+    spaceId?: string;
+    runtimeContext?: Record<string, any>;
+  }): AgentRuntimeHostAdapter => {
+    let adapter: AgentRuntimeHostAdapter;
+    const callAgentExecutor = createCliCallAgentToolExecutor(
+      {
+        env: options.env,
+        fetchImpl: options.fetchImpl,
+        cwd: options.localRuntimeCwd,
+        output: options.output,
+      },
+      {
+        createChildAdapter: (child) =>
+          withLocalDelegation({
+            base: createFreshChildBaseAdapter(),
+            dialogId: child.dialogId,
+            spaceId: child.spaceId,
+            runtimeContext: child.runtimeContext,
+          }),
+        runChildTurn,
+        dialogId: args.dialogId,
+        spaceId: args.spaceId,
+        runtimeContext: args.runtimeContext,
+      },
+    );
+    adapter = {
+      ...args.base,
+      executeTool: async (call) => {
+        if (call.name === "callAgent") {
+          return callAgentExecutor(call);
+        }
+        return args.base.executeTool(call);
+      },
+    };
+    return adapter;
+  };
+  const adapter = withLocalDelegation({
+    base: baseAdapter,
+    dialogId: currentDialogId,
+    spaceId: options.spaceId,
+    runtimeContext,
+  });
+
+  const spinner = new Spinner(
+    options.output,
+    `${options.agentName} -> working locally`,
+  );
   spinner.start();
   try {
     const toolDisplayMode = resolveToolDisplayMode(options.env);
@@ -700,38 +850,27 @@ async function runLocalAgentTurnForCli(
     });
     const thinkingFilter = createThinkingAwareStreamFilter(
       (chunk) => renderWriter.push(chunk),
-      thinkingMode
+      thinkingMode,
     );
-    const subjectRefs = buildSubjectRefs(options);
-    const allowedChildAgentKeys = options.allowedChildAgentKeys?.filter((key) => key.trim());
-    const allowedToolNames = options.allowedToolNames?.filter((name) => name.trim());
     const runLocalAgentTurn = await loadRunLocalAgentTurn();
     const result = await runLocalAgentTurn({
       adapter,
       agentRef: options.agentKey,
-      input: buildUserInputContent(
-        options.message,
-        options.imageUrls
-      ),
-      continueDialogId: options.continueDialogId,
+      input: buildUserInputContent(options.message, options.imageUrls),
+      continueDialogId: currentDialogId,
       spaceId: options.spaceId,
       category: options.category,
       inheritedFromDialogKey: options.inheritedFromDialogKey,
       parentDialogId: options.parentDialogId,
       background: options.background,
       noStream: options.noStream,
-      ...(subjectRefs || allowedChildAgentKeys?.length || allowedToolNames?.length
-        ? {
-            runtimeContext: {
-              ...(subjectRefs ? { subjectRefs } : {}),
-              ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
-              ...(allowedToolNames?.length ? { allowedToolNames } : {}),
-              ...(options.parentWakeOnTerminal ? { parentWakeOnTerminal: true } : {}),
-            },
-          }
+      ...(runtimeContext ? { runtimeContext } : {}),
+      ...(typeof options.timeoutMs === "number"
+        ? { timeoutMs: options.timeoutMs }
         : {}),
-      ...(typeof options.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.actionGateHandler ? { onActionGate: options.actionGateHandler } : {}),
+      ...(options.actionGateHandler
+        ? { onActionGate: options.actionGateHandler }
+        : {}),
       ...(options.onLoopEvent ? { onLoopEvent: options.onLoopEvent } : {}),
       ...(traceLocalTools
         ? {
@@ -767,7 +906,10 @@ async function runLocalAgentTurnForCli(
       renderWriter.flush();
       options.output.write("\n");
     } else {
-      const content = formatAssistantResponseForCli(result.content.trim(), options);
+      const content = formatAssistantResponseForCli(
+        result.content.trim(),
+        options,
+      );
       if (content) {
         options.output.write(`\n${options.agentName} > ${content}\n`);
       } else {
@@ -783,9 +925,7 @@ async function runLocalAgentTurnForCli(
     spinner.stop();
     if (settings.reportFailure) {
       options.output.write(
-        `[nolo] Local agent run failed: ${
-          toErrorMessage(error)
-        }\n`
+        `[nolo] Local agent run failed: ${toErrorMessage(error)}\n`,
       );
     }
     return { exitCode: 1, localError: error };
@@ -798,7 +938,9 @@ async function readStreamingAgentRun(
 ): Promise<RunAgentTurnResult> {
   const reader = res.body?.getReader();
   if (!reader) {
-    options.output.write("[nolo] Agent stream response did not include a readable body.\n");
+    options.output.write(
+      "[nolo] Agent stream response did not include a readable body.\n",
+    );
     return { exitCode: 1 };
   }
 
@@ -814,7 +956,7 @@ async function readStreamingAgentRun(
   });
   const thinkingFilter = createThinkingAwareStreamFilter(
     (chunk) => writer.push(chunk),
-    thinkingMode
+    thinkingMode,
   );
   let buffer = "";
   let content = "";
@@ -833,7 +975,9 @@ async function readStreamingAgentRun(
       dialogId = payload.dialogId;
     }
     if (payload?.error || payload?.type === "error") {
-      throw new Error(String(payload.error || payload.message || "Agent stream failed"));
+      throw new Error(
+        String(payload.error || payload.message || "Agent stream failed"),
+      );
     }
     if (payload?.type === "done") {
       usage = payload.usage;
@@ -888,9 +1032,11 @@ async function readStreamingAgentRun(
     const message = toErrorMessage(error);
     if (dialogId) {
       options.output.write(
-        `\n[nolo] Agent stream transport interrupted after dialog ${dialogId} was created: ${message}\n`
+        `\n[nolo] Agent stream transport interrupted after dialog ${dialogId} was created: ${message}\n`,
       );
-      options.output.write("[nolo] The agent run may still finish on the server; read the dialog before retrying.\n");
+      options.output.write(
+        "[nolo] The agent run may still finish on the server; read the dialog before retrying.\n",
+      );
       return { exitCode: 0, dialogId, streamInterrupted: true };
     }
     options.output.write(`\n[nolo] Agent stream failed: ${message}\n`);
@@ -908,7 +1054,8 @@ async function readStreamingAgentRun(
   }
 
   const usageText = formatUsage(usage, dialogId);
-  if (usageText && shouldShowUsage(options.env)) options.output.write(`${usageText}\n`);
+  if (usageText && shouldShowUsage(options.env))
+    options.output.write(`${usageText}\n`);
   return {
     exitCode: 0,
     ...(dialogId ? { dialogId } : {}),
@@ -927,18 +1074,24 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
   if (runtimeMode === "auto" && shouldAttemptAutoLocal(options)) {
     const skipLocal = await shouldSkipAutoLocalForServerPlatformTools(options);
     if (!skipLocal) {
-      const localResult = await runLocalAgentTurnForCli(options, { reportFailure: false });
+      const localResult = await runLocalAgentTurnForCli(options, {
+        reportFailure: false,
+      });
       if (localResult.exitCode === 0) {
         return {
           exitCode: localResult.exitCode,
           ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
-          ...(localResult.turnTokens ? { turnTokens: localResult.turnTokens } : {}),
+          ...(localResult.turnTokens
+            ? { turnTokens: localResult.turnTokens }
+            : {}),
         };
       }
-      if (isMissingLocalAgentConfigError(localResult.localError, options.agentKey)) {
+      if (
+        isMissingLocalAgentConfigError(localResult.localError, options.agentKey)
+      ) {
         // Local config refresh is local-adapter only; still prefer local before any server path.
         options.output.write(
-          `[nolo] Local agent config was missing; refreshing local config and retrying local once.\n`
+          `[nolo] Local agent config was missing; refreshing local config and retrying local once.\n`,
         );
         try {
           const refreshed = await refreshMissingLocalAgentConfig(options);
@@ -949,8 +1102,12 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
             if (retriedLocalResult.exitCode === 0) {
               return {
                 exitCode: retriedLocalResult.exitCode,
-                ...(retriedLocalResult.dialogId ? { dialogId: retriedLocalResult.dialogId } : {}),
-                ...(retriedLocalResult.turnTokens ? { turnTokens: retriedLocalResult.turnTokens } : {}),
+                ...(retriedLocalResult.dialogId
+                  ? { dialogId: retriedLocalResult.dialogId }
+                  : {}),
+                ...(retriedLocalResult.turnTokens
+                  ? { turnTokens: retriedLocalResult.turnTokens }
+                  : {}),
               };
             }
           }
@@ -966,7 +1123,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
         options.output.write(
           `[nolo] auto runtime: local run unavailable (${localErrorMessage}). ` +
             "No auth token is set, so server fallback is disabled. " +
-            "Fix local credentials/config, or run `nolo login` / set AUTH_TOKEN to enable server runtime.\n"
+            "Fix local credentials/config, or run `nolo login` / set AUTH_TOKEN to enable server runtime.\n",
         );
         return {
           exitCode: 1,
@@ -975,7 +1132,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
       }
       if (localResult.localError) {
         options.output.write(
-          `[nolo] auto runtime: local run unavailable (${toErrorMessage(localResult.localError)}); falling back to server.\n`
+          `[nolo] auto runtime: local run unavailable (${toErrorMessage(localResult.localError)}); falling back to server.\n`,
         );
       }
     }
@@ -984,7 +1141,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
   if (!authToken) {
     options.output.write(
       "[nolo] This install needs an auth token before it can talk to agents.\n" +
-        "Run `nolo login`, or set AUTH_TOKEN / NOLO_SERVER for non-interactive runs.\n"
+        "Run `nolo login`, or set AUTH_TOKEN / NOLO_SERVER for non-interactive runs.\n",
     );
     return { exitCode: 1 };
   }

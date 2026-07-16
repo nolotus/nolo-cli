@@ -8,8 +8,17 @@ import { request as httpsRequest } from "node:https";
 import { createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentRuntimeChatMessage, AgentRuntimeToolCall } from "../../agent-runtime";
+import type {
+  AgentRuntimeChatMessage,
+  AgentRuntimeToolCall,
+  AgentRuntimeToolCallInput,
+  AgentRuntimeToolResult,
+} from "../../agent-runtime";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
+import type {
+  LocalAgentTurnInput,
+  LocalAgentTurnResult,
+} from "../../agent-runtime/localLoop";
 import type { CliKvDb, HybridRecordStore } from "./hybridRecordStore";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
 import { dialogMessageRange } from "../../database/keys";
@@ -28,6 +37,7 @@ import { isRecord } from "../../core/isRecord";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { asRecordOrEmpty } from "../../core/recordOrEmpty";
 import { asTrimmedNonEmptyStringArray } from "../../core/stringArray";
+import { asTrimmedString } from "../../core/trimmedString";
 import { summarizeEndpoint } from "../../core/summarizeEndpoint";
 
 /**
@@ -50,7 +60,7 @@ type CliExecuteResult = {
 type CliImageInput = { source: string };
 type ReadToolFn = (
   args: Record<string, unknown>,
-  ctx?: unknown
+  ctx?: unknown,
 ) => Promise<{ rawData: unknown; displayData?: unknown }>;
 
 type EnvLike = Record<string, string | undefined>;
@@ -67,7 +77,7 @@ type LocalCliExecutor = (
     env?: Record<string, string | undefined>;
     reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
     imageInputs?: CliImageInput[];
-  }
+  },
 ) => Promise<CliExecuteResult>;
 
 // Populated by ensureHeavyCliLocalRuntimeModules() before any local-run path.
@@ -123,46 +133,71 @@ function ensureHeavyCliLocalRuntimeModules() {
   heavyCliLocalRuntimeModulesLoaded = true;
 
   const agentRuntimeLocal = requireFromAdapter("../agentRuntimeLocal.ts");
-  buildLocalWorkspacePolicyToolNames = agentRuntimeLocal.buildLocalWorkspacePolicyToolNames;
+  buildLocalWorkspacePolicyToolNames =
+    agentRuntimeLocal.buildLocalWorkspacePolicyToolNames;
   buildLocalWorkspaceToolset = agentRuntimeLocal.buildLocalWorkspaceToolset;
-  buildLocalWorkspaceOpenAiTools = agentRuntimeLocal.buildLocalWorkspaceOpenAiTools;
-  executeOpenAiCompatibleChatCompletion = agentRuntimeLocal.executeOpenAiCompatibleChatCompletion;
-  readOpenAiCompatibleSseCompletion = agentRuntimeLocal.readOpenAiCompatibleSseCompletion;
-  buildPlatformChatCompletionRequest = agentRuntimeLocal.buildPlatformChatCompletionRequest;
-  createLocalWorkspaceToolExecutors = agentRuntimeLocal.createLocalWorkspaceToolExecutors;
-  parsePlatformChatCompletionData = agentRuntimeLocal.parsePlatformChatCompletionData;
-  parsePlatformChatCompletionResponse = agentRuntimeLocal.parsePlatformChatCompletionResponse;
-  resolvePlatformChatProviderConfig = agentRuntimeLocal.resolvePlatformChatProviderConfig;
-  resolveCurrentRunRuntimeToolPolicy = agentRuntimeLocal.resolveCurrentRunRuntimeToolPolicy;
+  buildLocalWorkspaceOpenAiTools =
+    agentRuntimeLocal.buildLocalWorkspaceOpenAiTools;
+  executeOpenAiCompatibleChatCompletion =
+    agentRuntimeLocal.executeOpenAiCompatibleChatCompletion;
+  readOpenAiCompatibleSseCompletion =
+    agentRuntimeLocal.readOpenAiCompatibleSseCompletion;
+  buildPlatformChatCompletionRequest =
+    agentRuntimeLocal.buildPlatformChatCompletionRequest;
+  createLocalWorkspaceToolExecutors =
+    agentRuntimeLocal.createLocalWorkspaceToolExecutors;
+  parsePlatformChatCompletionData =
+    agentRuntimeLocal.parsePlatformChatCompletionData;
+  parsePlatformChatCompletionResponse =
+    agentRuntimeLocal.parsePlatformChatCompletionResponse;
+  resolvePlatformChatProviderConfig =
+    agentRuntimeLocal.resolvePlatformChatProviderConfig;
+  resolveCurrentRunRuntimeToolPolicy =
+    agentRuntimeLocal.resolveCurrentRunRuntimeToolPolicy;
   resolveLocalWorkspaceExecutorOptionsFromPolicy =
     agentRuntimeLocal.resolveLocalWorkspaceExecutorOptionsFromPolicy;
-  resolveRequestedRuntimeToolNames = agentRuntimeLocal.resolveRequestedRuntimeToolNames;
-  resolveRuntimeToolSurfaceForAgent = agentRuntimeLocal.resolveRuntimeToolSurfaceForAgent;
-  shouldUsePlatformChatProvider = agentRuntimeLocal.shouldUsePlatformChatProvider;
+  resolveRequestedRuntimeToolNames =
+    agentRuntimeLocal.resolveRequestedRuntimeToolNames;
+  resolveRuntimeToolSurfaceForAgent =
+    agentRuntimeLocal.resolveRuntimeToolSurfaceForAgent;
+  shouldUsePlatformChatProvider =
+    agentRuntimeLocal.shouldUsePlatformChatProvider;
 
   ({ fetchAntigravityCloudCodeCompletion } = requireFromAdapter(
-    "../../agent-runtime/antigravityCloudCodeProvider.ts"
+    "../../agent-runtime/antigravityCloudCodeProvider.ts",
   ));
-  ({ isAntigravityOAuthAgent } = requireFromAdapter("../../agent-runtime/antigravityOAuth.ts"));
-  ({ readOAuthCredential } = requireFromAdapter("../../agent-runtime/oauthTokenStore.ts"));
-  ({ getDefaultCliLocalRuntimeDb } = requireFromAdapter("../localRuntimeDb.ts"));
-  ({ resolveAgentRuntimeConfigFromRecord } = requireFromAdapter("./agentConfigResolver.ts"));
-  ({ resolveCliOpenAiProviderConfig } = requireFromAdapter("./localProviderResolver.ts"));
+  ({ isAntigravityOAuthAgent } = requireFromAdapter(
+    "../../agent-runtime/antigravityOAuth.ts",
+  ));
+  ({ readOAuthCredential } = requireFromAdapter(
+    "../../agent-runtime/oauthTokenStore.ts",
+  ));
+  ({ getDefaultCliLocalRuntimeDb } = requireFromAdapter(
+    "../localRuntimeDb.ts",
+  ));
+  ({ resolveAgentRuntimeConfigFromRecord } = requireFromAdapter(
+    "./agentConfigResolver.ts",
+  ));
+  ({ resolveCliOpenAiProviderConfig } = requireFromAdapter(
+    "./localProviderResolver.ts",
+  ));
   ({ createFileCredentialBroker } = requireFromAdapter(
-    "../../agent-runtime/fileCredentialBroker.ts"
+    "../../agent-runtime/fileCredentialBroker.ts",
   ));
-  ({ createOAuthApiKeyRefResolver } = requireFromAdapter("../oauth/apiKeyRefResolver.ts"));
-  ({
-    buildLocalDialogWritePlan,
-    localDialogMessageRecordToRuntimeMessage,
-  } = requireFromAdapter("./localDialogRecords.ts"));
-  ({
-    buildLocalAgentLookupKeys,
-    shouldReadAgentKeyRemotely,
-  } = requireFromAdapter("./localAgentRecords.ts"));
-  ({ createCliHybridRecordStore } = requireFromAdapter("./hybridRecordStore.ts"));
+  ({ createOAuthApiKeyRefResolver } = requireFromAdapter(
+    "../oauth/apiKeyRefResolver.ts",
+  ));
+  ({ buildLocalDialogWritePlan, localDialogMessageRecordToRuntimeMessage } =
+    requireFromAdapter("./localDialogRecords.ts"));
+  ({ buildLocalAgentLookupKeys, shouldReadAgentKeyRemotely } =
+    requireFromAdapter("./localAgentRecords.ts"));
+  ({ createCliHybridRecordStore } = requireFromAdapter(
+    "./hybridRecordStore.ts",
+  ));
   ({ executeLocalToolWithPolicy } = requireFromAdapter("./localToolPolicy.ts"));
-  ({ inferCaptureIntent } = requireFromAdapter("../../ai/policy/runtimePolicy.ts"));
+  ({ inferCaptureIntent } = requireFromAdapter(
+    "../../ai/policy/runtimePolicy.ts",
+  ));
   ({ TOOL_PACKS } = requireFromAdapter("../../ai/tools/toolPacks.ts"));
   ({ prepareTools } = requireFromAdapter("../../ai/tools/prepareTools.ts"));
   ({
@@ -175,14 +210,12 @@ function ensureHeavyCliLocalRuntimeModules() {
   defaultExecuteCli = cliExecutor.executeCli;
   CliProviderQuotaError = cliExecutor.CliProviderQuotaError;
   ({ buildCliPrompt } = requireFromAdapter("../../ai/agent/cliPrompt.ts"));
-  ({
-    readXhsProfileFunc,
-    readXhsProfileFunctionSchema,
-  } = requireFromAdapter("../../ai/tools/readXhsProfileTool.ts"));
-  ({
-    readXPostFunc,
-    readXPostFunctionSchema,
-  } = requireFromAdapter("../../ai/tools/readXPostTool.ts"));
+  ({ readXhsProfileFunc, readXhsProfileFunctionSchema } = requireFromAdapter(
+    "../../ai/tools/readXhsProfileTool.ts",
+  ));
+  ({ readXPostFunc, readXPostFunctionSchema } = requireFromAdapter(
+    "../../ai/tools/readXPostTool.ts",
+  ));
   ({ ulid } = requireFromAdapter("ulid"));
 }
 
@@ -197,7 +230,11 @@ const CLI_DIR = isCompiledBinary() ? dirname(process.execPath) : SOURCE_CLI_DIR;
 // packages (node + .js). Using a hardcoded .ts breaks installed packages.
 const CLI_ENTRYPOINT = isCompiledBinary()
   ? process.execPath
-  : join(SOURCE_CLI_DIR, "..", `index${extname(fileURLToPath(import.meta.url)) || ".ts"}`);
+  : join(
+      SOURCE_CLI_DIR,
+      "..",
+      `index${extname(fileURLToPath(import.meta.url)) || ".ts"}`,
+    );
 const LOCAL_SERVER_TABLE_TOOL_NAMES = [
   "createTable",
   "addTableRow",
@@ -205,13 +242,20 @@ const LOCAL_SERVER_TABLE_TOOL_NAMES = [
   "updateTableRow",
   "updateTableRows",
 ] as const;
-const LOCAL_SERVER_TABLE_TOOL_NAME_SET = new Set<string>(LOCAL_SERVER_TABLE_TOOL_NAMES);
+const LOCAL_SERVER_TABLE_TOOL_NAME_SET = new Set<string>(
+  LOCAL_SERVER_TABLE_TOOL_NAMES,
+);
 
 type PreparedAgentRuntime = {
   agentConfig: AgentRuntimeAgentConfig;
   activeAgentToolNames: string[];
   runtimeToolExecutionLimits: Record<string, unknown>;
-  localToolExecutors: Record<string, (call: any) => Promise<{ content: string; metadata?: Record<string, unknown> }>>;
+  localToolExecutors: Record<
+    string,
+    (
+      call: any,
+    ) => Promise<{ content: string; metadata?: Record<string, unknown> }>
+  >;
 };
 
 const preparedAgentRuntimeCache = new Map<string, PreparedAgentRuntime>();
@@ -245,7 +289,12 @@ type CliLocalRuntimeAdapterDeps = {
   fetchImpl?: CliFetchImpl;
   cwd?: string;
   output?: { write(chunk: string): unknown };
-  localToolExecutors?: Record<string, (call: any) => Promise<{ content: string; metadata?: Record<string, unknown> }>>;
+  localToolExecutors?: Record<
+    string,
+    (
+      call: any,
+    ) => Promise<{ content: string; metadata?: Record<string, unknown> }>
+  >;
   readXPost?: ReadToolFn;
   readXhsProfile?: ReadToolFn;
   executeCli?: LocalCliExecutor;
@@ -272,13 +321,20 @@ function resolveLocalUserId(env: EnvLike) {
   return tokenUserId || "local";
 }
 
-function resolveBuiltinLocalCliAgentConfig(agentRef: string, userId: string): AgentRuntimeAgentConfig | null {
+function resolveBuiltinLocalCliAgentConfig(
+  agentRef: string,
+  userId: string,
+): AgentRuntimeAgentConfig | null {
   const normalized = agentRef.trim();
-  if (normalized === LOCAL_CODEX_AGENT_KEY || normalized === LOCAL_CODEX_AGENT_ID) {
+  if (
+    normalized === LOCAL_CODEX_AGENT_KEY ||
+    normalized === LOCAL_CODEX_AGENT_ID
+  ) {
     return {
       key: LOCAL_CODEX_AGENT_KEY,
       name: "Local Codex",
-      prompt: "You are a local Codex CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
+      prompt:
+        "You are a local Codex CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
       apiSource: "cli",
       provider: "cli",
       cliProvider: "codex",
@@ -305,7 +361,8 @@ function parseLocalToolBudgets(env: EnvLike) {
   for (const part of raw.split(",")) {
     const [name, value] = part.split("=").map((item) => item.trim());
     const limit = Number(value);
-    if (name && Number.isFinite(limit) && limit >= 0) budgets[name] = Math.floor(limit);
+    if (name && Number.isFinite(limit) && limit >= 0)
+      budgets[name] = Math.floor(limit);
   }
   return budgets;
 }
@@ -321,13 +378,15 @@ function assertWithinLocalToolBudget(args: {
   args.usage.set(args.toolName, nextCount);
   if (nextCount <= limit) return;
   throw new Error(
-    `${args.toolName} exceeded local tool budget ${limit}. Stop broad discovery; edit the narrowest likely file or report a blocker.`
+    `${args.toolName} exceeded local tool budget ${limit}. Stop broad discovery; edit the narrowest likely file or report a blocker.`,
   );
 }
 
 function isTransientFetchError(error: unknown) {
   const message = toErrorMessage(error);
-  return /certificate|handshake|network|socket|timed out|timeout|ECONNRESET/i.test(message);
+  return /certificate|handshake|network|socket|timed out|timeout|ECONNRESET/i.test(
+    message,
+  );
 }
 
 async function defaultSleep(ms: number) {
@@ -340,11 +399,14 @@ function transientFetchRetryDelayMs(attempt: number) {
 
 function isLoopbackUrl(input: FetchInput) {
   try {
-    const target = typeof input === "string" || input instanceof URL
-      ? new URL(String(input))
-      : new URL(input.url);
+    const target =
+      typeof input === "string" || input instanceof URL
+        ? new URL(String(input))
+        : new URL(input.url);
     const hostname = target.hostname.toLowerCase();
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+    return (
+      hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1"
+    );
   } catch {
     return false;
   }
@@ -358,36 +420,52 @@ function toNodeRequestBody(body: FetchInit["body"]) {
 }
 
 async function defaultLoopbackRequest(input: FetchInput, init?: FetchInit) {
-  const target = typeof input === "string" || input instanceof URL
-    ? new URL(String(input))
-    : new URL(input.url);
+  const target =
+    typeof input === "string" || input instanceof URL
+      ? new URL(String(input))
+      : new URL(input.url);
   const headers = new Headers(init?.headers);
   const body = toNodeRequestBody(init?.body);
   if (body && !headers.has("Content-Length")) {
     headers.set("Content-Length", String(body.byteLength));
   }
   return await new Promise<Response>((resolve, reject) => {
-    const requestImpl = target.protocol === "https:" ? httpsRequest : httpRequest;
-    const req = requestImpl(target, {
-      method: init?.method ?? "GET",
-      headers: Object.fromEntries(headers.entries()),
-    }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-      res.on("end", () => {
-        resolve(new Response(Buffer.concat(chunks), {
-          status: res.statusCode ?? 500,
-          headers: res.headers as Record<string, string>,
-        }));
-      });
-    });
+    const requestImpl =
+      target.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = requestImpl(
+      target,
+      {
+        method: init?.method ?? "GET",
+        headers: Object.fromEntries(headers.entries()),
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) =>
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+        );
+        res.on("end", () => {
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: res.statusCode ?? 500,
+              headers: res.headers as Record<string, string>,
+            }),
+          );
+        });
+      },
+    );
     req.on("error", reject);
-    init?.signal?.addEventListener("abort", () => {
-      req.destroy(
-        init.signal?.reason instanceof Error ? init.signal.reason : new Error("request aborted")
-      );
-      reject(init.signal?.reason ?? new Error("request aborted"));
-    }, { once: true });
+    init?.signal?.addEventListener(
+      "abort",
+      () => {
+        req.destroy(
+          init.signal?.reason instanceof Error
+            ? init.signal.reason
+            : new Error("request aborted"),
+        );
+        reject(init.signal?.reason ?? new Error("request aborted"));
+      },
+      { once: true },
+    );
     if (body) req.write(body);
     req.end();
   });
@@ -399,8 +477,11 @@ async function fetchWithTransientRetry(
   init?: FetchInit,
   options: {
     sleep?: (ms: number) => Promise<void>;
-    loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
-  } = {}
+    loopbackRequest?: (
+      input: FetchInput,
+      init?: FetchInit,
+    ) => Promise<Response>;
+  } = {},
 ) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= TRANSIENT_FETCH_MAX_ATTEMPTS; attempt += 1) {
@@ -414,13 +495,14 @@ async function fetchWithTransientRetry(
       if (!isTransientFetchError(error)) throw error;
       lastError = error;
       if (attempt < TRANSIENT_FETCH_MAX_ATTEMPTS) {
-        await (options.sleep ?? defaultSleep)(transientFetchRetryDelayMs(attempt));
+        await (options.sleep ?? defaultSleep)(
+          transientFetchRetryDelayMs(attempt),
+        );
       }
     }
   }
   throw lastError;
 }
-
 
 function parseJsonObject(raw: string) {
   try {
@@ -433,16 +515,21 @@ function parseJsonObject(raw: string) {
 function isCliProviderAgent(agentConfig: AgentRuntimeAgentConfig) {
   return Boolean(
     agentConfig.apiSource === "cli" ||
-      agentConfig.provider === "cli" ||
-      agentConfig.cliProvider
+    agentConfig.provider === "cli" ||
+    agentConfig.cliProvider,
   );
 }
 
 function resolveCliProviderName(agentConfig: AgentRuntimeAgentConfig) {
-  return (agentConfig.cliProvider || agentConfig.provider || "codex").trim() || "codex";
+  return (
+    (agentConfig.cliProvider || agentConfig.provider || "codex").trim() ||
+    "codex"
+  );
 }
 
-function stringifyRuntimeMessageContent(content: AgentRuntimeChatMessage["content"]) {
+function stringifyRuntimeMessageContent(
+  content: AgentRuntimeChatMessage["content"],
+) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     const parts: string[] = [];
@@ -500,7 +587,10 @@ function collectCliProviderImageInputs(messages: AgentRuntimeChatMessage[]) {
   return urls;
 }
 
-function logLocalRuntimeDiagnostic(event: string, fields: Record<string, unknown>) {
+function logLocalRuntimeDiagnostic(
+  event: string,
+  fields: Record<string, unknown>,
+) {
   if (
     process.env.NOLO_LOCAL_RUNTIME_DEBUG !== "1" &&
     process.env.NOLO_DEBUG !== "1"
@@ -513,39 +603,55 @@ function logLocalRuntimeDiagnostic(event: string, fields: Record<string, unknown
 function summarizeOpenAiToolNames(tools: Array<Record<string, unknown>>) {
   return tools.reduce<string[]>((acc, tool) => {
     const fn = tool.function;
-    const name = fn && typeof fn === "object" && "name" in fn && typeof fn.name === "string"
-      ? fn.name
-      : null;
+    const name =
+      fn &&
+      typeof fn === "object" &&
+      "name" in fn &&
+      typeof fn.name === "string"
+        ? fn.name
+        : null;
     if (name) acc.push(name);
     return acc;
   }, []);
 }
 
-
 function addDefaultLightWebToolsForConfiguredAgents(
   toolNames: string[],
   agentConfig?: AgentRuntimeAgentConfig | null,
 ) {
-  const explicitToolNames = Array.isArray((agentConfig as any)?.toolSurface?.explicitToolNames)
+  const explicitToolNames = Array.isArray(
+    (agentConfig as any)?.toolSurface?.explicitToolNames,
+  )
     ? (agentConfig as any).toolSurface.explicitToolNames
     : agentConfig?.toolNames;
-  if (!Array.isArray(explicitToolNames) || explicitToolNames.length === 0) return toolNames;
-  const webCapable = explicitToolNames.some((toolName) =>
-    toolName === "fetchWebpage" ||
-    toolName === "exa_search" ||
-    toolName === "firecrawl_scrape" ||
-    toolName === "firecrawl_search" ||
-    toolName === "read_x_post" ||
-    toolName === "read_xhs_profile" ||
-    toolName.startsWith("browser_")
+  if (!Array.isArray(explicitToolNames) || explicitToolNames.length === 0)
+    return toolNames;
+  const webCapable = explicitToolNames.some(
+    (toolName) =>
+      toolName === "fetchWebpage" ||
+      toolName === "exa_search" ||
+      toolName === "firecrawl_scrape" ||
+      toolName === "firecrawl_search" ||
+      toolName === "read_x_post" ||
+      toolName === "read_xhs_profile" ||
+      toolName.startsWith("browser_"),
   );
   if (!webCapable) return toolNames;
   return [...new Set([...toolNames, ...TOOL_PACKS.LIGHT_WEB])];
 }
 
-function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: EnvLike }) {
+function buildOpenAiTools(args: {
+  agentKey?: string;
+  toolNames?: string[];
+  env: EnvLike;
+}) {
   const toolset = buildLocalWorkspaceToolsetForEnv(args);
+  const toolNameSet = new Set(args.toolNames ?? []);
+  const callAgentTools = toolNameSet.has("callAgent")
+    ? prepareTools(["callAgent"])
+    : [];
   return [
+    ...callAgentTools,
     ...buildLocalWorkspaceOpenAiTools({
       toolNames: toolset.toolNames,
       exposeShellTools: toolset.exposeShellTools,
@@ -555,7 +661,9 @@ function buildOpenAiTools(args: { agentKey?: string; toolNames?: string[]; env: 
       readFileParameterVariant: resolveReadFileParameterVariant(args.env),
       globFilesDescriptionVariant: resolveGlobFilesDescriptionVariant(args.env),
       globFilesParameterVariant: resolveGlobFilesParameterVariant(args.env),
-      searchFilesDescriptionVariant: resolveSearchFilesDescriptionVariant(args.env),
+      searchFilesDescriptionVariant: resolveSearchFilesDescriptionVariant(
+        args.env,
+      ),
       searchFilesParameterVariant: resolveSearchFilesParameterVariant(args.env),
     }),
     ...buildServerPlatformOpenAiTools({ toolNames: args.toolNames }),
@@ -580,21 +688,31 @@ function resolveProviderOpenAiToolBundle(
   return { requestedToolNames, tools };
 }
 
-function buildLocalWorkspaceToolsetForEnv(args: { toolNames?: string[]; env: EnvLike }) {
+function buildLocalWorkspaceToolsetForEnv(args: {
+  toolNames?: string[];
+  env: EnvLike;
+}) {
   const toolset = buildLocalWorkspaceToolset({
     declaredToolNames: args.toolNames,
     exposeShellTools: true,
-    useDeclaredToolNamesOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(args.env),
+    useDeclaredToolNamesOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(
+      args.env,
+    ),
   });
   return toolset;
 }
 
-function buildLocalPolicyToolNames(args: { toolNames?: string[]; env: EnvLike }) {
+function buildLocalPolicyToolNames(args: {
+  toolNames?: string[];
+  env: EnvLike;
+}) {
   return [
     ...buildLocalWorkspacePolicyToolNames({
       declaredToolNames: args.toolNames,
       exposeShellTools: true,
-      useDeclaredToolNamesOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(args.env),
+      useDeclaredToolNamesOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(
+        args.env,
+      ),
     }),
     ...(() => {
       const extra: string[] = [];
@@ -602,6 +720,7 @@ function buildLocalPolicyToolNames(args: { toolNames?: string[]; env: EnvLike })
       for (const name of names) {
         if (name === "read_x_post") extra.push("read_x_post");
         if (name === "read_xhs_profile") extra.push("read_xhs_profile");
+        if (name === "callAgent") extra.push("callAgent");
         if (LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)) extra.push(name);
       }
       return extra;
@@ -611,69 +730,97 @@ function buildLocalPolicyToolNames(args: { toolNames?: string[]; env: EnvLike })
 }
 
 function shouldUseDeclaredOnlyLocalWorkspaceTools(env: EnvLike) {
-  const value = env.NOLO_LOCAL_WORKSPACE_TOOLSET || env.NOLO_LOCAL_TOOLSET_MODE || "";
+  const value =
+    env.NOLO_LOCAL_WORKSPACE_TOOLSET || env.NOLO_LOCAL_TOOLSET_MODE || "";
   return value === "declared-only" || value === "declared";
 }
 
 function resolveGlobFilesDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(env.NOLO_GLOBFILES_DESCRIPTION_VARIANT);
+  return resolveLocalWorkspaceDescriptionVariant(
+    env.NOLO_GLOBFILES_DESCRIPTION_VARIANT,
+  );
 }
 
 function resolveListFilesDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(env.NOLO_LISTFILES_DESCRIPTION_VARIANT);
+  return resolveLocalWorkspaceDescriptionVariant(
+    env.NOLO_LISTFILES_DESCRIPTION_VARIANT,
+  );
 }
 
 function resolveListFilesParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(env.NOLO_LISTFILES_PARAMETER_VARIANT);
+  return resolveLocalWorkspaceParameterVariant(
+    env.NOLO_LISTFILES_PARAMETER_VARIANT,
+  );
 }
 
 function resolveReadFileDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(env.NOLO_READFILE_DESCRIPTION_VARIANT);
+  return resolveLocalWorkspaceDescriptionVariant(
+    env.NOLO_READFILE_DESCRIPTION_VARIANT,
+  );
 }
 
 function resolveReadFileParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(env.NOLO_READFILE_PARAMETER_VARIANT);
+  return resolveLocalWorkspaceParameterVariant(
+    env.NOLO_READFILE_PARAMETER_VARIANT,
+  );
 }
 
 function resolveGlobFilesParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(env.NOLO_GLOBFILES_PARAMETER_VARIANT);
+  return resolveLocalWorkspaceParameterVariant(
+    env.NOLO_GLOBFILES_PARAMETER_VARIANT,
+  );
 }
 
 function resolveSearchFilesDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(env.NOLO_SEARCHFILES_DESCRIPTION_VARIANT);
+  return resolveLocalWorkspaceDescriptionVariant(
+    env.NOLO_SEARCHFILES_DESCRIPTION_VARIANT,
+  );
 }
 
 function resolveSearchFilesParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(env.NOLO_SEARCHFILES_PARAMETER_VARIANT);
+  return resolveLocalWorkspaceParameterVariant(
+    env.NOLO_SEARCHFILES_PARAMETER_VARIANT,
+  );
 }
 
 function resolveLocalWorkspaceDescriptionVariant(value: string | undefined) {
-  return value === "brief" || value === "strategy" || value === "workflow" || value === "antiShell"
+  return value === "brief" ||
+    value === "strategy" ||
+    value === "workflow" ||
+    value === "antiShell"
     ? value
     : "strategy";
 }
 
 function resolveLocalWorkspaceParameterVariant(value: string | undefined) {
-  return value === "minimal" || value === "scoped" || value === "rich" ? value : "rich";
+  return value === "minimal" || value === "scoped" || value === "rich"
+    ? value
+    : "rich";
 }
 
 function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
   const toolNameSet = new Set(args.toolNames ?? []);
   const tableTools = prepareTools(
-    Array.from(toolNameSet).filter((name) => LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)),
+    Array.from(toolNameSet).filter((name) =>
+      LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name),
+    ),
   );
   return [
     ...(toolNameSet.has("read_xhs_profile")
-      ? [{
-          type: "function",
-          function: readXhsProfileFunctionSchema,
-        }]
+      ? [
+          {
+            type: "function",
+            function: readXhsProfileFunctionSchema,
+          },
+        ]
       : []),
     ...(toolNameSet.has("read_x_post")
-      ? [{
-          type: "function",
-          function: readXPostFunctionSchema,
-        }]
+      ? [
+          {
+            type: "function",
+            function: readXPostFunctionSchema,
+          },
+        ]
       : []),
     ...tableTools,
   ];
@@ -700,15 +847,20 @@ export function isBuiltinNoloAgentRef(ref: unknown) {
   );
 }
 
-function isBuiltinNoloAgentConfig(agentConfig: AgentRuntimeAgentConfig | null | undefined) {
-  const key = agentConfig?.key || agentConfig?.rawRecord?.dbKey || agentConfig?.rawRecord?.agentKey;
+function isBuiltinNoloAgentConfig(
+  agentConfig: AgentRuntimeAgentConfig | null | undefined,
+) {
+  const key =
+    agentConfig?.key ||
+    agentConfig?.rawRecord?.dbKey ||
+    agentConfig?.rawRecord?.agentKey;
   const id = agentConfig?.rawRecord?.id;
   return isBuiltinNoloAgentRef(key) || isBuiltinNoloAgentRef(id);
 }
 
 function withResolvedRuntimeToolSurface(
   agentConfig: AgentRuntimeAgentConfig | null,
-  env: EnvLike
+  env: EnvLike,
 ) {
   if (!agentConfig) return agentConfig;
   const currentUserId = resolveLocalUserId(env);
@@ -719,8 +871,12 @@ function withResolvedRuntimeToolSurface(
     currentUserId,
     agentOwnerId: ownerId,
     agentKey: rawRecord.dbKey ?? agentConfig.key,
-    isPublic: !isBuiltinNoloAgentConfig(agentConfig) && rawRecord.isPublic === true,
-    sharingLevel: typeof rawRecord.sharingLevel === "string" ? rawRecord.sharingLevel : null,
+    isPublic:
+      !isBuiltinNoloAgentConfig(agentConfig) && rawRecord.isPublic === true,
+    sharingLevel:
+      typeof rawRecord.sharingLevel === "string"
+        ? rawRecord.sharingLevel
+        : null,
     trustedPrivateInvocation: isBuiltinNoloAgentConfig(agentConfig),
     runtimeHost: "cli",
   });
@@ -733,7 +889,10 @@ function withResolvedRuntimeToolSurface(
 }
 
 function resolveRuntimeServerUrl(env: EnvLike) {
-  return (env.NOLO_SERVER_URL || env.NOLO_SERVER || env.BASE_URL || "").replace(/\/+$/, "");
+  return (env.NOLO_SERVER_URL || env.NOLO_SERVER || env.BASE_URL || "").replace(
+    /\/+$/,
+    "",
+  );
 }
 
 function resolveRuntimeAuthToken(env: EnvLike) {
@@ -741,7 +900,10 @@ function resolveRuntimeAuthToken(env: EnvLike) {
 }
 
 function localTurnHasSubjectRefs(input: AgentRuntimeSaveTurnInput) {
-  return Array.isArray(input.runtimeContext?.subjectRefs) && input.runtimeContext.subjectRefs.length > 0;
+  return (
+    Array.isArray(input.runtimeContext?.subjectRefs) &&
+    input.runtimeContext.subjectRefs.length > 0
+  );
 }
 
 function prepareRemoteDialogEvidenceRecord(key: string, value: any) {
@@ -815,11 +977,7 @@ function buildLocalParentWakeMessage(args: {
     `childAgentKey: ${args.childAgentKey}`,
     "status: done",
     ...(args.childEvidenceSummary
-      ? [
-          "",
-          "childEvidenceSummary:",
-          args.childEvidenceSummary,
-        ]
+      ? ["", "childEvidenceSummary:", args.childEvidenceSummary]
       : []),
     "",
     "Read the childEvidenceSummary and decide the next step yourself. This wake came from a local CLI run, so completion evidence is the synced child dialog, subjectRefs, commits, artifacts, and test output rather than a server-side child process.",
@@ -848,7 +1006,9 @@ async function postRemoteRecord(args: {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`remote dialog evidence write failed: HTTP ${response.status} ${text.slice(0, 500)}`);
+    throw new Error(
+      `remote dialog evidence write failed: HTTP ${response.status} ${text.slice(0, 500)}`,
+    );
   }
 }
 
@@ -869,7 +1029,9 @@ async function readRemoteRecord(args: {
   );
   if (!response.ok) return null;
   const payload = await response.json().catch(() => null);
-  return payload?.data && typeof payload.data === "object" ? payload.data : null;
+  return payload?.data && typeof payload.data === "object"
+    ? payload.data
+    : null;
 }
 
 async function maybeWakeParentDialogAfterLocalSync(args: {
@@ -883,7 +1045,9 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
 }) {
   if (args.input.runtimeContext?.parentWakeOnTerminal !== true) return;
   if (args.childDialogRecord.parentWake?.terminalNotifiedAt) return;
-  const parentDialogId = asOptionalTrimmedString(args.childDialogRecord.parentDialogId);
+  const parentDialogId = asOptionalTrimmedString(
+    args.childDialogRecord.parentDialogId,
+  );
   if (!parentDialogId) return;
 
   const parentDialogKey = `dialog-${args.userId}-${parentDialogId}`;
@@ -903,8 +1067,12 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
     args.childDialogRecord.subjectRefs,
     [{ kind: "dialog", id: childDialogId, role: "completed-child-dialog" }],
   );
-  const allowedChildAgentKeys = normalizeRemoteStringList(args.input.runtimeContext?.allowedChildAgentKeys);
-  const allowedToolNames = normalizeRemoteStringList(args.input.runtimeContext?.allowedToolNames);
+  const allowedChildAgentKeys = normalizeRemoteStringList(
+    args.input.runtimeContext?.allowedChildAgentKeys,
+  );
+  const allowedToolNames = normalizeRemoteStringList(
+    args.input.runtimeContext?.allowedToolNames,
+  );
   const wakeResponse = await args.fetchImpl(`${args.serverUrl}/api/agent/run`, {
     method: "POST",
     headers: {
@@ -914,7 +1082,8 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
     body: JSON.stringify({
       agentKey: parentAgentKey,
       userInput: buildLocalParentWakeMessage({
-        childAgentKey: args.childDialogRecord.primaryAgentKey ?? args.input.agentKey,
+        childAgentKey:
+          args.childDialogRecord.primaryAgentKey ?? args.input.agentKey,
         childDialogId,
         childDialogKey: args.childDialogKey,
         childEvidenceSummary: clipLocalWakeEvidence(args.input.result.content),
@@ -934,7 +1103,9 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
   });
   if (!wakeResponse.ok) {
     const text = await wakeResponse.text().catch(() => "");
-    throw new Error(`parent dialog wake failed: HTTP ${wakeResponse.status} ${text.slice(0, 500)}`);
+    throw new Error(
+      `parent dialog wake failed: HTTP ${wakeResponse.status} ${text.slice(0, 500)}`,
+    );
   }
 
   const notifiedAt = Date.now();
@@ -996,14 +1167,17 @@ async function syncLocalDialogEvidenceToRemote(args: {
           key: op.key,
           serverUrl,
           userId: args.userId,
-        })
-      )
+        }),
+      ),
   );
 
-  const childDialogOp = args.ops.find((op) => op.type === "put" && !op.key.includes("-msg-"));
-  const childDialogRecord = childDialogOp?.value && typeof childDialogOp.value === "object"
-    ? childDialogOp.value
-    : null;
+  const childDialogOp = args.ops.find(
+    (op) => op.type === "put" && !op.key.includes("-msg-"),
+  );
+  const childDialogRecord =
+    childDialogOp?.value && typeof childDialogOp.value === "object"
+      ? childDialogOp.value
+      : null;
   if (childDialogOp && childDialogRecord) {
     try {
       await maybeWakeParentDialogAfterLocalSync({
@@ -1017,9 +1191,9 @@ async function syncLocalDialogEvidenceToRemote(args: {
       });
     } catch (error) {
       args.output?.write(
-        `[nolo] Parent dialog wake failed; synced local child evidence remains queryable: ${
-          toErrorMessage(error)
-        }\n`,
+        `[nolo] Parent dialog wake failed; synced local child evidence remains queryable: ${toErrorMessage(
+          error,
+        )}\n`,
       );
     }
   }
@@ -1034,8 +1208,14 @@ function buildServerPlatformToolExecutors(args: {
   const postServer = async (path: string, body: object) => {
     const serverUrl = resolveRuntimeServerUrl(args.env);
     const authToken = resolveRuntimeAuthToken(args.env);
-    if (!serverUrl) throw new Error("server platform tools require NOLO_SERVER_URL, NOLO_SERVER, or BASE_URL.");
-    if (!authToken) throw new Error("server platform tools require AUTH_TOKEN or NOLO_MACHINE_API_KEY.");
+    if (!serverUrl)
+      throw new Error(
+        "server platform tools require NOLO_SERVER_URL, NOLO_SERVER, or BASE_URL.",
+      );
+    if (!authToken)
+      throw new Error(
+        "server platform tools require AUTH_TOKEN or NOLO_MACHINE_API_KEY.",
+      );
     const response = await args.fetchImpl(`${serverUrl}${path}`, {
       method: "POST",
       headers: {
@@ -1046,12 +1226,15 @@ function buildServerPlatformToolExecutors(args: {
     });
     const text = await response.text().catch(() => "");
     if (!response.ok) {
-      throw new Error(`server platform tool bridge failed: HTTP ${response.status} ${text.slice(0, 500)}`);
+      throw new Error(
+        `server platform tool bridge failed: HTTP ${response.status} ${text.slice(0, 500)}`,
+      );
     }
     return text;
   };
   const guardExplicitTableCapture = (call: any) => {
-    if (inferCaptureIntent(String(call.userInput ?? "")) === "strong") return null;
+    if (inferCaptureIntent(String(call.userInput ?? "")) === "strong")
+      return null;
     return JSON.stringify({
       error: "knowledge_capture_requires_confirmation",
       message:
@@ -1076,11 +1259,15 @@ function buildServerPlatformToolExecutors(args: {
         }
         const parsed = parseNoloWorkspaceToolArguments(call.arguments);
         const path =
-          toolName === "createTable" ? "/api/table/create"
-          : toolName === "addTableRow" ? "/api/table/add-row"
-          : toolName === "addTableRows" ? "/api/table/add-rows"
-          : toolName === "updateTableRow" ? "/api/table/update-row"
-          : "/api/table/update-rows";
+          toolName === "createTable"
+            ? "/api/table/create"
+            : toolName === "addTableRow"
+              ? "/api/table/add-row"
+              : toolName === "addTableRows"
+                ? "/api/table/add-rows"
+                : toolName === "updateTableRow"
+                  ? "/api/table/update-row"
+                  : "/api/table/update-rows";
         const content = await postServer(path, parsed);
         return {
           content,
@@ -1090,6 +1277,284 @@ function buildServerPlatformToolExecutors(args: {
     ]),
   );
   return tableExecutors;
+}
+
+function buildCliDelegatedAgentInput(task: string, input?: any): string {
+  if (input === undefined || input === null) {
+    return task;
+  }
+  if (typeof input === "string") {
+    return `${task}\n\n--- INPUT (text) ---\n${input}`;
+  }
+  return `${task}\n\n--- INPUT (json) ---\n${JSON.stringify(input, null, 2)}`;
+}
+
+async function persistCliPendingChildDialog(args: {
+  store: HybridRecordStore;
+  userId: string;
+  dialogId: string;
+  agentKey: string;
+  title: string;
+  spaceId?: string;
+  parentDialogId?: string;
+  rootDialogId?: string;
+  workspaceRoot: string;
+  background: boolean;
+  now: number;
+}) {
+  const nowIso = new Date(args.now).toISOString();
+  const dialogKey = `dialog-${args.userId}-${args.dialogId}`;
+  const record: Record<string, unknown> = {
+    id: args.dialogId,
+    dbKey: dialogKey,
+    type: "dialog",
+    userId: args.userId,
+    cybots: [args.agentKey],
+    primaryAgentKey: args.agentKey,
+    title: args.title.slice(0, 80),
+    status: "pending",
+    triggerType: "cli-local",
+    executionMode: args.background ? "background" : "foreground",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    ...(args.spaceId ? { spaceId: args.spaceId } : {}),
+    ...(args.parentDialogId ? { parentDialogId: args.parentDialogId } : {}),
+    ...(args.rootDialogId ? { rootDialogId: args.rootDialogId } : {}),
+    localRuntime: {
+      host: "cli",
+      workspaceRoot: args.workspaceRoot,
+      workspaceKind: "current",
+      workspaceAccess: "inherited",
+    },
+  };
+  await args.store.batch([{ type: "put", key: dialogKey, value: record }]);
+}
+
+async function persistCliFailedChildDialog(args: {
+  store: HybridRecordStore;
+  userId: string;
+  dialogId: string;
+  errorMessage: string;
+  now: number;
+}) {
+  const dialogKey = `dialog-${args.userId}-${args.dialogId}`;
+  const existing = await args.store.read(dialogKey);
+  const existingRecord =
+    existing && typeof existing === "object"
+      ? (existing as Record<string, unknown>)
+      : {};
+  await args.store.batch([
+    {
+      type: "put",
+      key: dialogKey,
+      value: {
+        ...existingRecord,
+        id: args.dialogId,
+        dbKey: dialogKey,
+        status: "failed",
+        errorMessage: args.errorMessage,
+        updatedAt: new Date(args.now).toISOString(),
+        finishedAt: args.now,
+      },
+    },
+  ]);
+}
+
+export type CliCallAgentToolExecutorContext = {
+  createChildAdapter: (context: {
+    dialogId: string;
+    spaceId?: string;
+    runtimeContext: Record<string, any>;
+  }) => AgentRuntimeHostAdapter;
+  runChildTurn: (input: LocalAgentTurnInput) => Promise<LocalAgentTurnResult>;
+  dialogId?: string;
+  spaceId?: string;
+  runtimeContext?: Record<string, any> | null;
+};
+
+export function createCliCallAgentToolExecutor(
+  deps: CliLocalRuntimeAdapterDeps,
+  ctx: CliCallAgentToolExecutorContext,
+): (call: AgentRuntimeToolCallInput) => Promise<AgentRuntimeToolResult> {
+  ensureHeavyCliLocalRuntimeModules();
+  const userId = resolveLocalUserId(deps.env);
+  const workspaceRoot = deps.cwd ?? process.cwd();
+  const now = deps.now ?? Date.now;
+  const createId = deps.createId ?? createFallbackId;
+
+  return async (call) => {
+    const parsed = parseNoloWorkspaceToolArguments(call.arguments);
+    const agentKey = asTrimmedString(parsed.agentKey);
+    const task = asTrimmedString(parsed.task);
+
+    if (!agentKey) {
+      return {
+        content: JSON.stringify({ error: "callAgent: agentKey is required" }),
+        metadata: { callAgent: true },
+      };
+    }
+    if (!task) {
+      return {
+        content: JSON.stringify({ error: "callAgent: task is required" }),
+        metadata: { callAgent: true },
+      };
+    }
+
+    const allowedChildAgentKeys = asTrimmedNonEmptyStringArray(
+      ctx.runtimeContext?.allowedChildAgentKeys,
+    );
+    if (
+      allowedChildAgentKeys.length > 0 &&
+      !allowedChildAgentKeys.includes(agentKey)
+    ) {
+      return {
+        content: JSON.stringify({
+          error:
+            "callAgent: agentKey is not allowed by parent runtimeContext.allowedChildAgentKeys",
+          agentKey,
+          allowedChildAgentKeys,
+        }),
+        metadata: { callAgent: true },
+      };
+    }
+
+    const background = parsed.background === true;
+    const parentDialogId = asOptionalTrimmedString(ctx.dialogId);
+    const parentThreadId =
+      parentDialogId ??
+      asOptionalTrimmedString(ctx.runtimeContext?.parentThreadId);
+    const rootThreadId =
+      asOptionalTrimmedString(ctx.runtimeContext?.rootThreadId) ??
+      asOptionalTrimmedString(ctx.runtimeContext?.parentThreadId) ??
+      parentThreadId;
+    const presentationIntent = background
+      ? "background_handoff"
+      : "inline_result";
+    const threadKind = background ? "background" : "inline";
+
+    const childRuntimeContext = {
+      ...(ctx.runtimeContext ?? {}),
+      surface: "cli",
+      entrypoint: "agent-tool:callAgent",
+      threadKind,
+      presentationIntent,
+      ...(parentThreadId ? { parentThreadId } : {}),
+      ...(rootThreadId ? { rootThreadId } : {}),
+      workspaceRoot,
+      workspaceKind: "current",
+      workspaceAccess: "inherited",
+    };
+
+    const childDialogId = createId();
+    const store = await getOrCreateSharedStore(deps);
+    await persistCliPendingChildDialog({
+      store,
+      userId,
+      dialogId: childDialogId,
+      agentKey,
+      title: task,
+      spaceId: ctx.spaceId,
+      parentDialogId,
+      rootDialogId: rootThreadId,
+      workspaceRoot,
+      background,
+      now: now(),
+    });
+
+    const childAdapter = ctx.createChildAdapter({
+      dialogId: childDialogId,
+      spaceId: ctx.spaceId,
+      runtimeContext: childRuntimeContext,
+    });
+    const childInputBase: LocalAgentTurnInput = {
+      adapter: childAdapter,
+      agentRef: agentKey,
+      input: buildCliDelegatedAgentInput(task, parsed.input),
+      runtimeContext: childRuntimeContext,
+      spaceId: ctx.spaceId,
+      continueDialogId: childDialogId,
+      parentDialogId,
+    };
+
+    if (background) {
+      void ctx.runChildTurn(childInputBase).catch(async (error) => {
+        const errorMessage = toErrorMessage(error);
+        try {
+          await persistCliFailedChildDialog({
+            store,
+            userId,
+            dialogId: childDialogId,
+            errorMessage,
+            now: now(),
+          });
+        } catch (persistError) {
+          deps.output?.write(
+            `[nolo] failed to persist background child failure: ${toErrorMessage(
+              persistError,
+            )}\n`,
+          );
+        }
+      });
+
+      return {
+        content: JSON.stringify({
+          success: true,
+          status: "pending",
+          agentKey,
+          childDialogId,
+          ...(parentDialogId ? { parentDialogId } : {}),
+        }),
+        metadata: { callAgent: true, background: true, localRuntime: true },
+      };
+    }
+
+    try {
+      const childResult = await ctx.runChildTurn(childInputBase);
+      return {
+        content: JSON.stringify({
+          success: true,
+          agentKey,
+          dialogId: childDialogId,
+          model: childResult.model ?? null,
+          provider: childResult.provider ?? null,
+          content: childResult.content ?? "",
+          usage: childResult.usage ?? null,
+        }),
+        metadata: { callAgent: true, background: false, localRuntime: true },
+      };
+    } catch (error) {
+      const errorMessage = toErrorMessage(error);
+      try {
+        await persistCliFailedChildDialog({
+          store,
+          userId,
+          dialogId: childDialogId,
+          errorMessage,
+          now: now(),
+        });
+      } catch (persistError) {
+        deps.output?.write(
+          `[nolo] failed to persist foreground child failure: ${toErrorMessage(
+            persistError,
+          )}\n`,
+        );
+      }
+      return {
+        content: JSON.stringify({
+          success: false,
+          agentKey,
+          dialogId: childDialogId,
+          error: errorMessage,
+        }),
+        metadata: {
+          callAgent: true,
+          background: false,
+          localRuntime: true,
+          error: true,
+        },
+      };
+    }
+  };
 }
 
 function buildLocalToolExecutors(args: {
@@ -1117,7 +1582,11 @@ function buildLocalToolExecutors(args: {
     }),
     read_x_post: async (call: any) => {
       const parsedArgs = (() => {
-        try { return JSON.parse(call.arguments || "{}"); } catch { return {}; }
+        try {
+          return JSON.parse(call.arguments || "{}");
+        } catch {
+          return {};
+        }
       })();
       const result = await (args.readXPost ?? readXPostFunc)(
         parsedArgs,
@@ -1133,7 +1602,11 @@ function buildLocalToolExecutors(args: {
     },
     read_xhs_profile: async (call: any) => {
       const parsedArgs = (() => {
-        try { return JSON.parse(call.arguments || "{}"); } catch { return {}; }
+        try {
+          return JSON.parse(call.arguments || "{}");
+        } catch {
+          return {};
+        }
       })();
       const result = await (args.readXhsProfile ?? readXhsProfileFunc)(
         parsedArgs,
@@ -1154,7 +1627,7 @@ function buildLocalToolExecutors(args: {
 async function resolveStore(deps: CliLocalRuntimeAdapterDeps) {
   if (deps.store) return deps.store;
   return createCliHybridRecordStore({
-    db: deps.db ?? await defaultLocalRuntimeDb(),
+    db: deps.db ?? (await defaultLocalRuntimeDb()),
     env: deps.env,
     fetchImpl: deps.fetchImpl,
   });
@@ -1188,7 +1661,10 @@ async function readAgentFromStore(args: {
   if (!normalizedRef) return null;
   try {
     // Async iterator — must consume entries sequentially from the store cursor.
-    const iterator = args.store.iterator({ gte: "agent-", lte: "agent-\uffff" });
+    const iterator = args.store.iterator({
+      gte: "agent-",
+      lte: "agent-\uffff",
+    });
     for await (const [key, record] of iterator) {
       if (!record || typeof record !== "object") continue;
       const handle = normalizeAgentHandle((record as any).handle);
@@ -1255,7 +1731,7 @@ async function writeDialog(args: {
       : { attempted: false as const };
     if (shouldSyncRemoteEvidence && !syncResult.attempted) {
       args.output?.write(
-        "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n"
+        "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n",
       );
     }
   } catch (error) {
@@ -1263,16 +1739,16 @@ async function writeDialog(args: {
       throw error;
     }
     args.output?.write(
-      `[nolo] Remote dialog evidence sync failed; local dialog only: ${
-        toErrorMessage(error)
-      }\n`
+      `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(
+        error,
+      )}\n`,
     );
   }
   return { dialogId: plan.dialogId };
 }
 
 export function createCliLocalRuntimeAdapter(
-  deps: CliLocalRuntimeAdapterDeps
+  deps: CliLocalRuntimeAdapterDeps,
 ): AgentRuntimeHostAdapter {
   // Defer heavy graph until a local runtime adapter is actually constructed
   // (not when this module is imported for cache-clear / builtin helpers).
@@ -1280,14 +1756,19 @@ export function createCliLocalRuntimeAdapter(
   const now = deps.now ?? Date.now;
   const createId = deps.createId ?? createFallbackId;
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const loopbackRequest = deps.loopbackRequest ?? (deps.fetchImpl ? undefined : defaultLoopbackRequest);
+  const loopbackRequest =
+    deps.loopbackRequest ??
+    (deps.fetchImpl ? undefined : defaultLoopbackRequest);
   const userId = resolveLocalUserId(deps.env);
   const localToolBudgets = parseLocalToolBudgets(deps.env);
   const localToolUsage = new Map<string, number>();
-  const buildProviderOpenAiTools = deps.buildProviderOpenAiTools ?? buildOpenAiTools;
+  const buildProviderOpenAiTools =
+    deps.buildProviderOpenAiTools ?? buildOpenAiTools;
   let activeAgentToolNames: string[] = [];
   const workspaceRoot = deps.cwd ?? process.cwd();
-  let runtimeToolExecutionLimits: ReturnType<typeof resolveLocalWorkspaceExecutorOptionsFromPolicy> = {};
+  let runtimeToolExecutionLimits: ReturnType<
+    typeof resolveLocalWorkspaceExecutorOptionsFromPolicy
+  > = {};
   let localToolExecutors = buildLocalToolExecutors({
     workspaceRoot,
     env: deps.env,
@@ -1300,7 +1781,12 @@ export function createCliLocalRuntimeAdapter(
 
   return {
     host: "cli",
-    capabilities: ["leveldb-agent-config", "local-provider", "leveldb-persistence", "local-tools"],
+    capabilities: [
+      "leveldb-agent-config",
+      "local-provider",
+      "leveldb-persistence",
+      "local-tools",
+    ],
     loadAgentConfig: async (agentRef) => {
       const cacheKey = buildPreparedAgentCacheKey({
         userId,
@@ -1320,11 +1806,12 @@ export function createCliLocalRuntimeAdapter(
         store: await getOrCreateSharedStore(deps),
         userId,
       });
-      const fallbackLocalCliAgentConfig =
-        storedAgentConfig ? null : resolveBuiltinLocalCliAgentConfig(agentRef, userId);
+      const fallbackLocalCliAgentConfig = storedAgentConfig
+        ? null
+        : resolveBuiltinLocalCliAgentConfig(agentRef, userId);
       const agentConfig = withResolvedRuntimeToolSurface(
         storedAgentConfig ?? fallbackLocalCliAgentConfig,
-        deps.env
+        deps.env,
       );
       const requestedToolNames = agentConfig
         ? addDefaultLightWebToolsForConfiguredAgents(
@@ -1336,9 +1823,10 @@ export function createCliLocalRuntimeAdapter(
         toolNames: requestedToolNames,
         env: deps.env,
       });
-      runtimeToolExecutionLimits = resolveLocalWorkspaceExecutorOptionsFromPolicy(
-        resolveCurrentRunRuntimeToolPolicy(agentConfig),
-      );
+      runtimeToolExecutionLimits =
+        resolveLocalWorkspaceExecutorOptionsFromPolicy(
+          resolveCurrentRunRuntimeToolPolicy(agentConfig),
+        );
       localToolExecutors = buildLocalToolExecutors({
         workspaceRoot,
         env: deps.env,
@@ -1358,21 +1846,23 @@ export function createCliLocalRuntimeAdapter(
       }
       return agentConfig;
     },
-    loadDialogHistory: async (dialogId) => readDialogMessages({
-      dialogId,
-      store: await getOrCreateSharedStore(deps),
-    }),
-    saveTurn: async (input) => writeDialog({
-      store: await getOrCreateSharedStore(deps),
-      input,
-      userId,
-      now,
-      createId,
-      env: deps.env,
-      fetchImpl,
-      output: deps.output,
-      cwd: workspaceRoot,
-    }),
+    loadDialogHistory: async (dialogId) =>
+      readDialogMessages({
+        dialogId,
+        store: await getOrCreateSharedStore(deps),
+      }),
+    saveTurn: async (input) =>
+      writeDialog({
+        store: await getOrCreateSharedStore(deps),
+        input,
+        userId,
+        now,
+        createId,
+        env: deps.env,
+        fetchImpl,
+        output: deps.output,
+        cwd: workspaceRoot,
+      }),
     resolveProvider: async (agentConfig) => {
       if (isCliProviderAgent(agentConfig)) {
         const provider = resolveCliProviderName(agentConfig);
@@ -1387,7 +1877,8 @@ export function createCliLocalRuntimeAdapter(
         return {
           model: agentConfig.model || provider,
           complete: async (messages, options) => {
-            const executeCli = deps.executeCli ?? (defaultExecuteCli as LocalCliExecutor);
+            const executeCli =
+              deps.executeCli ?? (defaultExecuteCli as LocalCliExecutor);
             const imageUrls = collectCliProviderImageInputs(messages);
             const imageInputs: CliImageInput[] | undefined =
               imageUrls.length > 0
@@ -1427,7 +1918,7 @@ export function createCliLocalRuntimeAdapter(
               }
               const message = toErrorMessage(error);
               throw new Error(
-                `Local CLI provider "${provider}" is unavailable or failed: ${message}`
+                `Local CLI provider "${provider}" is unavailable or failed: ${message}`,
               );
             }
           },
@@ -1461,7 +1952,8 @@ export function createCliLocalRuntimeAdapter(
           apiSource: agentConfig.apiSource ?? null,
           provider: agentConfig.provider ?? "google-antigravity",
           model: agentConfig.model ?? null,
-          customProviderEndpoint: summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
+          customProviderEndpoint:
+            summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
           hasApiKey: true,
           hasProjectId: Boolean(credential?.metadata?.projectId),
         });
@@ -1499,10 +1991,13 @@ export function createCliLocalRuntimeAdapter(
                 result.body &&
                 typeof result.body === "object" &&
                 result.body.error &&
-                typeof (result.body.error as { message?: unknown }).message === "string"
+                typeof (result.body.error as { message?: unknown }).message ===
+                  "string"
                   ? (result.body.error as { message: string }).message
                   : JSON.stringify(result.body);
-              throw new Error(`local antigravity provider failed: HTTP ${result.status} ${errMsg}`);
+              throw new Error(
+                `local antigravity provider failed: HTTP ${result.status} ${errMsg}`,
+              );
             }
             const choice = Array.isArray(result.body.choices)
               ? (result.body.choices[0] as
@@ -1564,7 +2059,8 @@ export function createCliLocalRuntimeAdapter(
           hasApiKey: Boolean(providerConfig.apiKey),
           apiKeyHeader: providerConfig.apiKeyHeader ?? null,
           useServerProxy: agentConfig.useServerProxy ?? null,
-          customProviderEndpoint: summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
+          customProviderEndpoint:
+            summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
         });
         const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
           agentConfig,
@@ -1574,7 +2070,8 @@ export function createCliLocalRuntimeAdapter(
         return {
           model: providerConfig.model,
           complete: async (messages, options) => {
-            const usesResponsesApi = providerConfig.endpoint.includes("/responses");
+            const usesResponsesApi =
+              providerConfig.endpoint.includes("/responses");
             const stream = Boolean(options?.onTextDelta) && !usesResponsesApi;
             const request = buildPlatformChatCompletionRequest({
               providerConfig,
@@ -1594,16 +2091,23 @@ export function createCliLocalRuntimeAdapter(
               openAiToolNames: summarizeOpenAiToolNames(tools),
               stream,
             });
-            const res = await fetchWithTransientRetry(fetchImpl, request.url, {
-              ...request.init,
-            }, {
-              sleep: deps.sleep,
-              loopbackRequest,
-            });
+            const res = await fetchWithTransientRetry(
+              fetchImpl,
+              request.url,
+              {
+                ...request.init,
+              },
+              {
+                sleep: deps.sleep,
+                loopbackRequest,
+              },
+            );
             if (!res.ok) {
               const raw = await res.text().catch(() => "");
               const data = parsePlatformChatCompletionData(raw);
-              throw new Error(`platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
+              throw new Error(
+                `platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`,
+              );
             }
             const contentType = res.headers.get("content-type") ?? "";
             const shouldStream =
@@ -1626,8 +2130,12 @@ export function createCliLocalRuntimeAdapter(
                 content: streamed.content,
                 model: providerConfig.model,
                 provider: providerConfig.provider,
-                ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
-                ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
+                ...(streamed.tool_calls
+                  ? { tool_calls: streamed.tool_calls }
+                  : {}),
+                ...(streamed.reasoning_content
+                  ? { reasoning_content: streamed.reasoning_content }
+                  : {}),
                 ...(streamed.usage ? { usage: streamed.usage } : {}),
                 trace: messages,
               };
@@ -1666,7 +2174,8 @@ export function createCliLocalRuntimeAdapter(
         hasApiKey: Boolean(providerConfig.apiKey),
         apiKeyHeader: providerConfig.apiKeyHeader ?? null,
         useServerProxy: agentConfig.useServerProxy ?? null,
-        customProviderEndpoint: summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
+        customProviderEndpoint:
+          summarizeEndpoint(agentConfig.customProviderUrl) ?? null,
       });
       const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
         agentConfig,
@@ -1735,17 +2244,24 @@ export function createCliLocalRuntimeAdapter(
         };
       } catch (error) {
         const code =
-          error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+          error &&
+          typeof error === "object" &&
+          typeof (error as { code?: unknown }).code === "string"
             ? (error as { code: string }).code
             : undefined;
         const request =
-          error && typeof error === "object" && (error as { permissionRequest?: unknown }).permissionRequest;
+          error &&
+          typeof error === "object" &&
+          (error as { permissionRequest?: unknown }).permissionRequest;
         if (
           code === "destructive_action_requires_confirmation" &&
           deps.confirmDestructiveAction &&
-          request && typeof request === "object"
+          request &&
+          typeof request === "object"
         ) {
-          const confirmed = await deps.confirmDestructiveAction(request as PermissionRequest);
+          const confirmed = await deps.confirmDestructiveAction(
+            request as PermissionRequest,
+          );
           if (confirmed) {
             const result = await executeLocalToolWithPolicy({
               env: deps.env,

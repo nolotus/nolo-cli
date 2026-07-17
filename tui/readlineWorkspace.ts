@@ -771,9 +771,23 @@ export type ScrollAction =
   | "half-page-up"
   | "half-page-down"
   | "top"
-  | "bottom";
+  | "bottom"
+  | "wheel-up"
+  | "wheel-down";
+
+/** SGR mouse report: ESC [ < button ; col ; row (M=press/wheel, m=release). */
+// eslint-disable-next-line no-control-regex
+const SGR_MOUSE_REGEX = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
 
 export function parseScrollAction(sequence: string): ScrollAction | null {
+  const mouse = SGR_MOUSE_REGEX.exec(sequence);
+  if (mouse) {
+    const button = Number(mouse[1]);
+    // Wheel events carry bit 6 (64): 64=up, 65=down, 66/67=horizontal.
+    if ((button & 64) === 0) return null;
+    if ((button & 2) !== 0) return null; // horizontal wheel: no mapping
+    return (button & 1) !== 0 ? "wheel-down" : "wheel-up";
+  }
   switch (sequence) {
     case "\x1b[5~":
       return "page-up";
@@ -797,6 +811,8 @@ export function parseScrollAction(sequence: string): ScrollAction | null {
       return null;
   }
 }
+
+const WHEEL_SCROLL_LINES = 3;
 
 export function applyScrollAction(
   history: TurnHistory,
@@ -829,6 +845,14 @@ export function applyScrollAction(
         maxScrollTop,
         history.scrollTop + Math.floor(visibleHeight / 2)
       );
+      break;
+    case "wheel-up":
+      history.scrollTop = Math.max(0, history.scrollTop - WHEEL_SCROLL_LINES);
+      break;
+    case "wheel-down":
+      history.scrollTop = Math.min(maxScrollTop, history.scrollTop + WHEEL_SCROLL_LINES);
+      // Scrolling back to the bottom resumes live-tail, like the End key.
+      if (history.scrollTop >= maxScrollTop) history.followBottom = true;
       break;
     case "top":
       history.scrollTop = 0;
@@ -912,6 +936,12 @@ export function createFixedInput(
   const saveCursor = () => write("\x1b7");
   const restoreCursor = () => write("\x1b8");
   const resetScrollRegion = () => write("\x1b[r");
+  // Wheel reporting: SGR format (1006) + basic tracking (1000). Without these
+  // the terminal never delivers wheel events, so the transcript could not be
+  // scrolled by trackpad/mouse at all. Selection still works via the
+  // terminal's bypass modifier (e.g. Shift in Ghostty/iTerm2).
+  const enableMouse = () => write("\x1b[?1006h\x1b[?1000h");
+  const disableMouse = () => write("\x1b[?1000l\x1b[?1006l");
 
   /**
    * OMP-style composer:
@@ -989,7 +1019,10 @@ export function createFixedInput(
     write("\x1b[J");
     write(text);
     const cursorLine = startRow + cursorRow;
-    write(`\x1b[${cursorLine};${cursorCol + 1}G`);
+    // CUP (H), not CHA (G): G takes only a column — extra params make Ghostty
+    // drop the whole sequence (cursor stays at the end of the bottom rule),
+    // and xterm-family would move to column=row on the wrong line.
+    write(`\x1b[${cursorLine};${cursorCol + 1}H`);
   };
 
   if (!isTTY) return createNoopFixedInput();
@@ -999,6 +1032,7 @@ export function createFixedInput(
     init() {
       saveCursor();
       setScrollRegion(inputLines);
+      enableMouse();
     },
     enterOutputMode(_submittedText: string) {
       // Keep the docked composer visible while the agent turn runs. The
@@ -1014,18 +1048,22 @@ export function createFixedInput(
       repaintAt(buffer);
     },
     pause() {
+      disableMouse();
       resetScrollRegion();
     },
     resumeFromSubprocess() {
       setScrollRegion(inputLines);
+      enableMouse();
       const scrollBottom = Math.max(1, getRows() - inputLines);
       write(`\x1b[${scrollBottom};1H\n`);
     },
     resumeFromDialog() {
       saveCursor();
       setScrollRegion(inputLines);
+      enableMouse();
     },
     disable() {
+      disableMouse();
       resetScrollRegion();
       const rows = getRows();
       write(`\x1b[${rows};1H\x1b[2K\x1b[${Math.max(1, rows - 1)};1H`);

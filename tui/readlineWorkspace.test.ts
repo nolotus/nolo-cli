@@ -176,7 +176,7 @@ describe("createFixedInput", () => {
     expect(stdout).toContain(`\x1b[${composerStart};1H`);
     expect(stdout).toContain("/agent");
     expect(stdout).toContain("/a");
-    expect(stdout).toContain(`\x1b[${cursorRow1};${cursorCol1}G`);
+    expect(stdout).toContain(`\x1b[${cursorRow1};${cursorCol1}H`);
   });
 
   test("keeps the docked composer when entering output mode", () => {
@@ -194,6 +194,28 @@ describe("createFixedInput", () => {
     expect(stdout).toContain("nolo > test");
     expect(stdout).toContain("─");
     expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES);
+  });
+
+  test("enables wheel reporting on init and disables it on pause/disable", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "nolo > test",
+    });
+
+    input.init();
+    expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1000h");
+
+    input.pause();
+    expect(tty.stdout()).toContain("\x1b[?1000l\x1b[?1006l");
+
+    input.resumeFromDialog();
+    expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1000h");
+
+    input.disable();
+    const disabled = tty.stdout();
+    expect(disabled.lastIndexOf("\x1b[?1000l\x1b[?1006l")).toBeGreaterThan(
+      disabled.lastIndexOf("\x1b[?1006h\x1b[?1000h")
+    );
   });
 
   test("truncates a long status line instead of wrapping and breaking the composer", () => {
@@ -686,6 +708,43 @@ describe("scroll-aware history", () => {
     expect(parseScrollAction("a")).toBeNull();
   });
 
+  test("parseScrollAction recognizes SGR mouse wheel events", () => {
+    expect(parseScrollAction("\x1b[<64;10;5M")).toBe("wheel-up");
+    expect(parseScrollAction("\x1b[<65;10;5M")).toBe("wheel-down");
+    // modifier bits (shift=4, meta=8, ctrl=16) keep the wheel mapping
+    expect(parseScrollAction("\x1b[<68;10;5M")).toBe("wheel-up");
+    expect(parseScrollAction("\x1b[<81;10;5M")).toBe("wheel-down");
+    // horizontal wheel and plain clicks are not scroll actions
+    expect(parseScrollAction("\x1b[<66;10;5M")).toBeNull();
+    expect(parseScrollAction("\x1b[<67;10;5M")).toBeNull();
+    expect(parseScrollAction("\x1b[<0;10;5M")).toBeNull();
+    expect(parseScrollAction("\x1b[<0;10;5m")).toBeNull();
+  });
+
+  test("applyScrollAction scrolls by wheel lines and refollows at bottom", () => {
+    const { output } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    for (let i = 0; i < 30; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    history.scrollTop = 10;
+    history.followBottom = false;
+
+    applyScrollAction(history, "wheel-up", output, 2);
+    expect(history.scrollTop).toBe(7);
+    expect(history.followBottom).toBe(false);
+
+    applyScrollAction(history, "wheel-down", output, 2);
+    expect(history.scrollTop).toBe(10);
+    expect(history.followBottom).toBe(false);
+
+    // Reaching the bottom via the wheel resumes live-tail.
+    history.scrollTop = 21;
+    applyScrollAction(history, "wheel-down", output, 2);
+    expect(history.scrollTop).toBe(22);
+    expect(history.followBottom).toBe(true);
+  });
+
   test("applyScrollAction moves scrollTop and disables follow bottom", () => {
     const { output } = makeOutput(10, 40);
     const history = createTurnHistory();
@@ -710,5 +769,10 @@ describe("scroll-aware history", () => {
     expect(splitRawInput("\x1b[6;2~")).toEqual(["\x1b[6;2~"]);
     expect(splitRawInput("\x1b[H")).toEqual(["\x1b[H"]);
     expect(splitRawInput("\x1b[F")).toEqual(["\x1b[F"]);
+  });
+
+  test("splitRawInput keeps SGR mouse wheel sequences intact", () => {
+    expect(splitRawInput("\x1b[<64;35;10M")).toEqual(["\x1b[<64;35;10M"]);
+    expect(splitRawInput("\x1b[<65;1;1M")).toEqual(["\x1b[<65;1;1M"]);
   });
 });

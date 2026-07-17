@@ -1245,6 +1245,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   output.write(renderWelcome(state));
 
   let fixedInput: FixedInputController = createNoopFixedInput();
+  // Composer draft buffer. Hoisted to this scope (rather than the
+  // isInteractiveInput block) so that runSubmittedLine's streaming callback
+  // can repaint the user's in-progress draft while an agent turn is running.
+  let buffer = "";
   const history = createTurnHistory();
   const renderHistoryToOutput = () => {
     renderHistory(output, history, fixedInput.getInputLines());
@@ -1427,13 +1431,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       finalizeCurrentTurn(history);
       // Keep the docked composer painted under the transcript for the whole turn.
       renderHistoryToOutput();
-      if (fixedInput.active) fixedInput.repaint("");
+      if (fixedInput.active) fixedInput.repaint(buffer);
 
       startTurn(history, "assistant");
       const agentOutput = isInteractiveInput(input)
         ? createHistoryOutputStream(history, () => {
             renderHistoryToOutput();
-            if (fixedInput.active) fixedInput.repaint("");
+            // Repaint the user's live draft (not "") so typing during the
+            // agent turn is preserved on every streaming update.
+            if (fixedInput.active) fixedInput.repaint(buffer);
           })
         : output;
       const runResult = await runAgentChat(
@@ -1454,7 +1460,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       if (isInteractiveInput(input)) {
         finalizeCurrentTurn(history);
         renderHistoryToOutput();
-        if (fixedInput.active) fixedInput.repaint("");
+        // Show the user's accumulated draft (typed while busy) now that the
+        // turn has finished.
+        if (fixedInput.active) fixedInput.repaint(buffer);
       }
       if (runResult.dialogId || runResult.turnTokens) {
         state = {
@@ -1490,7 +1498,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
   if (isInteractiveInput(input)) {
     input.setRawMode(true);
-    let buffer = "";
     let busy = false;
     let done = false;
     fixedInput = createFixedInput(output, {
@@ -1504,7 +1511,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const onResize = () => {
       if (done) return;
       // Re-measure rows/cols, rebuild scroll region + full-width rules, repaint.
-      paintFrame(busy ? "" : buffer);
+      // Keep the user's current draft visible even during an agent turn so
+      // typing is not lost on terminal resize.
+      paintFrame(buffer);
     };
     const resizeTarget = output as NodeJS.WritableStream & {
       on?: (event: string, listener: () => void) => void;
@@ -1518,9 +1527,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       input.setRawMode?.(false);
     };
     const handleInputToken = async (sequence: string) => {
-      if (busy || done) return;
+      if (done) return;
+      // While an agent turn is running we let the user keep typing into the
+      // docked composer (draft buffer) but ignore submit/scroll so a second
+      // turn cannot race the in-flight one. The draft is preserved and shown
+      // once the turn finishes via fixedInput.exitOutputMode(buffer).
+      const busyLock = busy;
       const scrollAction = parseScrollAction(sequence);
       if (scrollAction) {
+        if (busyLock) return;
         applyScrollAction(history, scrollAction, output, fixedInput.getInputLines());
         paintFrame(buffer);
         return;
@@ -1532,10 +1547,18 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         return;
       }
       if (result.submit !== undefined) {
+        if (busyLock) {
+          // Ignore Enter while the agent is replying; the draft stays intact
+          // and the user can send it after the turn completes.
+          return;
+        }
         busy = true;
         const submittedText = result.submit;
         buffer = "";
-        input.off("data", onData);
+        // Note: we intentionally keep the `data` listener attached. During the
+        // agent turn the user can still type into the composer; submit is
+        // gated by `busy` above. This avoids tearing the input chrome down
+        // and lets the draft persist across the turn.
         fixedInput.enterOutputMode(submittedText);
         const shouldExit = await runSubmittedLine(
           submittedText,
@@ -1562,9 +1585,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           finish();
           return;
         }
-        input.on("data", onData);
         busy = false;
         // Status may have picked up token usage during the turn — repaint chips.
+        // Restore the user's draft (which may have been edited while busy).
         fixedInput.exitOutputMode(buffer);
         return;
       }

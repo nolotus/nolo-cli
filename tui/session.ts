@@ -284,7 +284,6 @@ export function applyTuiInputKey(
 
 export const SLASH_COMMANDS = [
   "/help",
-  "/clear",
   "/compact",
   "/context",
   "/ctx",
@@ -317,8 +316,7 @@ export function renderTuiHelp() {
   return [
     "Commands:",
     "  /help                 Show this help",
-    "  /new                  Start a fresh dialog",
-    "  /clear                Clear screen and start a fresh dialog",
+    "  /new                  Clear screen and start a fresh dialog",
     "  /compact              Compact current dialog and fork a new one",
     "  /context              Show workspace context and next actions",
     "  /runtime <mode>       Use auto, local, or server runtime",
@@ -564,18 +562,6 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           turnTokens: undefined,
         },
         output: t("startedFreshDialog"),
-      };
-    case "/clear":
-      return {
-        nextState: {
-          ...state,
-          dialogId: undefined,
-          dialogLabel: t("newDialog"),
-          attachedDocs: [],
-          attachedImages: [],
-          turnTokens: undefined,
-        },
-        output: "",
         action: { type: "clear" },
       };
     case "/compact":

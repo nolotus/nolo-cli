@@ -58,6 +58,28 @@ describe("handleTuiInput - image attachments", () => {
     const result = handleTuiInput("/new", state);
     expect(result.nextState.attachedImages).toEqual([]);
   });
+
+  test("/clear resets dialog and attached state, emits clear action", () => {
+    const state = {
+      ...createInitialTuiState({}),
+      dialogId: "01TESTDIALOG00000000000000AB",
+      attachedImages: [
+        {
+          dataUrl: "data:image/png;base64,a",
+          mime: "image/png",
+          filename: "a.png",
+          sizeBytes: 100,
+          sourcePath: "/tmp/a.png",
+        },
+      ],
+      attachedDocs: ["note"],
+    };
+    const result = handleTuiInput("/clear", state);
+    expect(result.nextState.dialogId).toBeUndefined();
+    expect(result.nextState.attachedImages).toEqual([]);
+    expect(result.nextState.attachedDocs).toEqual([]);
+    expect(result.action?.type).toBe("clear");
+  });
 });
 
 describe("applyTuiInputKey", () => {
@@ -254,11 +276,12 @@ describe("completeSlashCommand", () => {
     expect(completeSlashCommand("/runtime local")).toEqual([]);
   });
 
-  test("matches /c for context, compact, customize, ctx, compact", () => {
+  test("matches /c for context, compact, clear, customize, ctx", () => {
     const matches = completeSlashCommand("/c");
     expect(matches).toContain("/context");
     expect(matches).toContain("/ctx");
     expect(matches).toContain("/compact");
+    expect(matches).toContain("/clear");
     expect(matches).toContain("/customize");
   });
 });

@@ -1272,6 +1272,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
     if (result.action?.type === "exit") return true;
 
+    if (result.action?.type === "clear") {
+      history.turns.length = 0;
+      history.currentRole = null;
+      history.currentContent = "";
+      history.scrollTop = 0;
+      history.followBottom = true;
+      renderHistoryToOutput();
+      output.write(`${t("startedFreshDialog")}\n`);
+    }
     if (result.action?.type === "compact") {
       const runner = options.compactRunner ?? compactDialog;
       const authToken =

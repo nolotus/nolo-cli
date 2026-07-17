@@ -327,7 +327,7 @@ async function exchangeXAIToken(
 }
 
 async function requestXaiDeviceCode(
-  fetchImpl: typeof fetch,
+  fetchImpl: CliFetchImpl,
   deviceAuthorizationEndpoint: string
 ): Promise<XAIDeviceCodeStart> {
   const endpoint = validateXAIEndpoint(
@@ -400,7 +400,7 @@ async function requestXaiDeviceCode(
 }
 
 async function pollXaiDeviceCodeToken(args: {
-  fetchImpl: typeof fetch;
+  fetchImpl: CliFetchImpl;
   tokenEndpoint: string;
   deviceCode: string;
   expiresInMs: number;

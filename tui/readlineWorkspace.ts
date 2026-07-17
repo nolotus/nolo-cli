@@ -130,47 +130,76 @@ export function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_REGEX, "");
 }
 
+/** SGR (color/style) sequences only: ESC [ params m. */
+// eslint-disable-next-line no-control-regex
+const SGR_SEQUENCE_REGEX = /^\x1b\[[0-9;]*m/;
+// eslint-disable-next-line no-control-regex
+const TRAILING_SGR_REGEX = /(?:\x1b\[[0-9;]*m)+$/;
+
 /**
- * Apply a terminal-style output chunk onto a plain transcript buffer.
+ * Apply a terminal-style output chunk onto a transcript buffer.
  *
  * Spinner / progress writers use `\\r` to redraw one status line in place.
  * The history stream used to append those frames as plain text, which produced
  * a wall of "working locally (Ns)" lines and left raw `\\r` artifacts that
  * broke later rows. Interpret the common control semantics instead:
- * - strip ANSI first
+ * - keep SGR color/style sequences (the transcript renderer is ANSI-aware);
+ *   strip every other escape sequence (cursor moves, erase, private modes)
  * - `\\r` rewinds to the start of the current line (after the last `\\n`)
  * - `\\b` deletes one character on the current line
  * - other C0 controls (except tab/newline) are dropped
  */
 export function applyTerminalOutputToText(existing: string, chunk: string): string {
-  const cleaned = stripAnsi(chunk);
-  if (!cleaned) return existing;
+  if (!chunk) return existing;
 
   let text = existing;
-  for (const ch of cleaned) {
+  let index = 0;
+  while (index < chunk.length) {
+    if (chunk[index] === "\x1b") {
+      const sgr = SGR_SEQUENCE_REGEX.exec(chunk.slice(index));
+      if (sgr) {
+        text += sgr[0];
+        index += sgr[0].length;
+        continue;
+      }
+      const csi = chunk.slice(index).match(/^\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/);
+      if (csi) {
+        index += csi[0].length;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    const ch = chunk[index];
     if (ch === "\r") {
       const lastNl = text.lastIndexOf("\n");
       text = lastNl === -1 ? "" : text.slice(0, lastNl + 1);
+      index += 1;
       continue;
     }
     if (ch === "\n") {
       text += "\n";
+      index += 1;
       continue;
     }
     if (ch === "\b") {
-      if (text.length > 0 && text[text.length - 1] !== "\n") {
-        text = text.slice(0, -1);
+      // Delete the last visible character, keeping any trailing SGR codes.
+      const trailing = TRAILING_SGR_REGEX.exec(text);
+      const sgrTail = trailing ? trailing[0] : "";
+      const head = sgrTail ? text.slice(0, -sgrTail.length) : text;
+      if (head.length > 0 && head[head.length - 1] !== "\n") {
+        text = head.slice(0, -1) + sgrTail;
       }
+      index += 1;
       continue;
     }
     const code = ch.charCodeAt(0);
-    if (code < 0x20 && ch !== "\t") {
-      continue;
-    }
-    if (code === 0x7f) {
+    if ((code < 0x20 && ch !== "\t") || code === 0x7f) {
+      index += 1;
       continue;
     }
     text += ch;
+    index += 1;
   }
   return text;
 }
@@ -551,11 +580,124 @@ export function takeDisplayWidth(
 }
 
 export function padOrTruncateToWidth(text: string, width: number): string {
-  const textWidth = displayWidth(text);
+  const textWidth = visibleWidth(text);
   if (textWidth > width) {
-    return takeDisplayWidth(text, width).prefix;
+    return truncateAnsi(text, width);
   }
   return `${text}${" ".repeat(width - textWidth)}`;
+}
+
+const SGR_RESET_REGEX = /^\x1b\[0?m$/;
+
+type WrapToken = { kind: "sgr" | "char"; value: string; width: number };
+
+function tokenizeAnsiLine(line: string): WrapToken[] {
+  const tokens: WrapToken[] = [];
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] === "\x1b") {
+      const sgr = SGR_SEQUENCE_REGEX.exec(line.slice(index));
+      if (sgr) {
+        tokens.push({ kind: "sgr", value: sgr[0], width: 0 });
+        index += sgr[0].length;
+        continue;
+      }
+    }
+    const codePoint = line.codePointAt(index) ?? 0;
+    const value = String.fromCodePoint(codePoint);
+    tokens.push({ kind: "char", value, width: displayWidth(value) });
+    index += value.length;
+  }
+  return tokens;
+}
+
+/**
+ * Wrap one transcript line to `columns` visible cells.
+ *
+ * Unlike `wrapTextToLines` (composer draft; must stay byte-per-cell simple so
+ * cursor math holds), this wrapper:
+ * - treats SGR color sequences as zero-width and re-opens the active style on
+ *   the continuation line, closing every styled line with a reset so colors
+ *   never bleed into the scrollbar column or the next row;
+ * - prefers breaking after the last space/tab so latin words survive wrapping
+ *   (CJK breaks anywhere, which is correct for those scripts).
+ */
+export function wrapTranscriptLine(line: string, columns: number): string[] {
+  if (line === "") return [""];
+  const tokens = tokenizeAnsiLine(line);
+  const result: string[] = [];
+
+  let activeStyles: string[] = [];
+  const applyStyleToken = (value: string) => {
+    if (SGR_RESET_REGEX.test(value)) {
+      activeStyles = [];
+    } else {
+      activeStyles.push(value);
+    }
+  };
+
+  let start = 0;
+  while (start < tokens.length) {
+    // Only zero-width style tokens left: fold them into the previous line
+    // instead of emitting a visually blank row.
+    if (tokens.slice(start).every((token) => token.kind === "sgr")) {
+      if (result.length > 0) break;
+    }
+    const openingStyles = [...activeStyles];
+    let width = 0;
+    let end = start;
+    let lastBreak = -1; // index just after a breakable char
+    while (end < tokens.length) {
+      const token = tokens[end];
+      if (token.kind === "sgr") {
+        end += 1;
+        continue;
+      }
+      if (width + token.width > columns && width > 0) break;
+      width += token.width;
+      end += 1;
+      if (token.value === " " || token.value === "\t") {
+        lastBreak = end;
+      }
+    }
+
+    let segmentEnd = end;
+    if (end < tokens.length && lastBreak > start) {
+      // Mid-word overflow with a space earlier in the segment: break there.
+      const overflowToken = tokens[end];
+      if (overflowToken.kind === "char" && overflowToken.value !== " " && overflowToken.width === 1) {
+        segmentEnd = lastBreak;
+      }
+    }
+    if (segmentEnd === start) segmentEnd = start + 1;
+
+    let segment = "";
+    let sawStyle = openingStyles.length > 0;
+    for (let i = start; i < segmentEnd; i += 1) {
+      const token = tokens[i];
+      segment += token.value;
+      if (token.kind === "sgr") {
+        sawStyle = true;
+        applyStyleToken(token.value);
+      }
+    }
+    const prefix = openingStyles.join("");
+    const needsReset =
+      (sawStyle || activeStyles.length > 0) && !segment.endsWith("\x1b[0m");
+    result.push(`${prefix}${segment}${needsReset ? "\x1b[0m" : ""}`);
+    start = segmentEnd;
+    // Continuation rows never start with the space we just wrapped at.
+    while (start < tokens.length) {
+      const token = tokens[start];
+      if (token.kind === "char" && token.value === " ") {
+        start += 1;
+        continue;
+      }
+      break;
+    }
+  }
+
+  return result.length > 0 ? result : [""];
 }
 
 export function wrapTextToLines(text: string, columns: number): string[] {
@@ -592,8 +734,10 @@ function buildHistoryLines(history: TurnHistory, contentWidth: number): string[]
     }
   }
   const wrapped: string[] = [];
-  for (const line of lines) {
-    wrapped.push(...wrapTextToLines(line, contentWidth));
+  for (const entry of lines) {
+    for (const logicalLine of entry.split("\n")) {
+      wrapped.push(...wrapTranscriptLine(logicalLine, contentWidth));
+    }
   }
   return wrapped;
 }

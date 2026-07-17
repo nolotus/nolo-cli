@@ -1,3 +1,5 @@
+import type { Model } from "./types";
+
 // ai/llm/cloudflare.ts
 // Docs: https://developers.cloudflare.com/workers-ai/models/glm-5.2/
 // GLM removed — platform GLM 5.2 is nolo (Ollama Cloud) only.
@@ -16,4 +18,4 @@ export const getCloudflareWorkersAiChatCompletionsUrl = (
   return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
 };
 
-export const cloudflareModels: Array<Record<string, unknown>> = [];
+export const cloudflareModels: Model[] = [];

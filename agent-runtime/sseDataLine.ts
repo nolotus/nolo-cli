@@ -27,9 +27,9 @@ export function parseSseDataLineJson(line: string): unknown | null {
  */
 export function parseSseDataLineObject(
   line: string,
-): Record<string, unknown> | null {
+): Record<string, unknown> | unknown[] | null {
   const parsed = parseSseDataLineJson(line);
   return parsed && typeof parsed === "object"
-    ? (parsed as Record<string, unknown>)
+    ? (parsed as Record<string, unknown> | unknown[])
     : null;
 }

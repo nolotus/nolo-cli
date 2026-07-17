@@ -23,6 +23,7 @@ import {
   truncateAnsi,
   visibleWidth,
   wrapTextToLines,
+  wrapTranscriptLine,
 } from "./readlineWorkspace";
 import { t } from "./i18n";
 
@@ -313,9 +314,18 @@ describe("applyTerminalOutputToText", () => {
       text,
       "\r\x1b[36m⠹\x1b[39m agent -> working locally (1s)"
     );
-    expect(text).toBe("⠹ agent -> working locally (1s)");
+    expect(text).toBe("\x1b[36m⠹\x1b[39m agent -> working locally (1s)");
+    expect(stripAnsi(text)).toBe("⠹ agent -> working locally (1s)");
     text = applyTerminalOutputToText(text, "\r\x1b[K\x1b[?25h");
     expect(text).toBe("");
+  });
+
+  test("keeps SGR color codes but strips cursor and erase sequences", () => {
+    const text = applyTerminalOutputToText(
+      "",
+      "\x1b[?25l\x1b[2mdim tool line\x1b[0m\x1b[3;1H\x1b[2Kplain"
+    );
+    expect(text).toBe("\x1b[2mdim tool line\x1b[0mplain");
   });
 
   test("real assistant text still appends after a cleared spinner line", () => {
@@ -440,7 +450,9 @@ describe("createHistoryOutputStream", () => {
     stream.write("\x1b[32mhello\x1b[0m");
     stream.write(Buffer.from(" world"));
 
-    expect(history.currentContent).toBe("hello world");
+    // SGR color codes survive into the transcript (the renderer is ANSI-aware).
+    expect(history.currentContent).toBe("\x1b[32mhello\x1b[0m world");
+    expect(stripAnsi(history.currentContent)).toBe("hello world");
     expect(updateCount).toBe(2);
   });
 
@@ -456,7 +468,7 @@ describe("createHistoryOutputStream", () => {
     stream.write("\r\x1b[36m⠙\x1b[39m minimax-m3 -> working locally (0s)");
     stream.write("\r\x1b[36m⠹\x1b[39m minimax-m3 -> working locally (1s)");
     stream.write("\r\x1b[36m⠸\x1b[39m minimax-m3 -> working locally (2s)");
-    expect(history.currentContent).toBe("⠸ minimax-m3 -> working locally (2s)");
+    expect(stripAnsi(history.currentContent)).toBe("⠸ minimax-m3 -> working locally (2s)");
     expect(history.currentContent.match(/working locally/g)?.length).toBe(1);
 
     stream.write("\r\x1b[K\x1b[?25h");
@@ -583,6 +595,44 @@ describe("scroll-aware history", () => {
     expect(padOrTruncateToWidth("hi", 5)).toBe("hi   ");
     expect(padOrTruncateToWidth("hello world", 5)).toBe("hello");
     expect(padOrTruncateToWidth("你好世界", 3)).toBe("你");
+  });
+
+  test("padOrTruncateToWidth measures ANSI text by visible width", () => {
+    const styled = "\x1b[2mhi\x1b[0m";
+    expect(padOrTruncateToWidth(styled, 4)).toBe(`${styled}  `);
+    const long = "\x1b[31mhello world\x1b[0m";
+    const cut = padOrTruncateToWidth(long, 5);
+    expect(stripAnsi(cut)).toBe("hello");
+    expect(cut.endsWith("\x1b[0m")).toBe(true);
+  });
+
+  test("wrapTranscriptLine breaks latin text at word boundaries", () => {
+    expect(wrapTranscriptLine("hello brave world", 11)).toEqual([
+      "hello brave",
+      "world",
+    ]);
+    expect(wrapTranscriptLine("aaa bbbb", 6)).toEqual(["aaa ", "bbbb"]);
+  });
+
+  test("wrapTranscriptLine hard-breaks words longer than the row", () => {
+    expect(wrapTranscriptLine("abcdefghij", 4)).toEqual(["abcd", "efgh", "ij"]);
+  });
+
+  test("wrapTranscriptLine wraps CJK anywhere by display width", () => {
+    expect(wrapTranscriptLine("你好世界", 4)).toEqual(["你好", "世界"]);
+  });
+
+  test("wrapTranscriptLine keeps style on continuation rows without bleeding", () => {
+    const wrapped = wrapTranscriptLine("\x1b[2mhello brave world\x1b[0m", 11);
+    expect(wrapped).toHaveLength(2);
+    expect(wrapped[0].startsWith("\x1b[2m")).toBe(true);
+    expect(wrapped[0].endsWith("\x1b[0m")).toBe(true);
+    expect(wrapped[1].startsWith("\x1b[2m")).toBe(true);
+    expect(wrapped[1].endsWith("\x1b[0m")).toBe(true);
+    expect(wrapped.map((line) => stripAnsi(line))).toEqual([
+      "hello brave",
+      "world",
+    ]);
   });
 
   test("renderHistory shows scrollbar when history exceeds viewport", () => {

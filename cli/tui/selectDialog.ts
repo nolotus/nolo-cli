@@ -7,7 +7,10 @@ export type SelectDialogResult<T extends SelectDialogItem> =
   | { kind: "selected"; index: number; item: T }
   | { kind: "cancelled" };
 
-export type KeyReader = () => Promise<string | null>;
+export type KeyReader = (() => Promise<string | null>) & {
+  /** Detach any stream listeners the reader installed. */
+  dispose?: () => void;
+};
 
 const CSI_ARROW_UP = "\x1b[A";
 const CSI_ARROW_DOWN = "\x1b[B";
@@ -143,39 +146,40 @@ export function createRawKeyReader(input: NodeJS.ReadStream): KeyReader {
     return sequence;
   };
 
-  return () =>
+  // Deliver keys via 'data' events. The TUI workspace drives stdin in flowing
+  // mode with 'data' listeners; mixing in 'readable'/read() here left the
+  // dialog deaf to every keypress under Bun (the 'readable' event never fires
+  // once the stream has been flowing), so /agent showed a picker that ignored
+  // arrows and Enter. A persistent 'data' listener uses the same delivery
+  // path as the rest of the TUI and never drops bytes between reads.
+  let waiter: ((sequence: string | null) => void) | null = null;
+
+  const tryDeliver = () => {
+    if (!waiter || !buffer) return;
+    const parsed = tryParseSequence();
+    if (parsed === undefined) return;
+    const resolve = waiter;
+    waiter = null;
+    resolve(parsed);
+  };
+
+  const onData = (chunk: Buffer | string) => {
+    buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    tryDeliver();
+  };
+  input.on("data", onData);
+  input.resume?.();
+
+  const reader: KeyReader = () =>
     new Promise((resolve) => {
-      const finalize = (sequence: string | null | undefined) => {
-        cleanup();
-        resolve(sequence ?? null);
-      };
-
-      const onReadable = () => {
-        while (true) {
-          const chunk = input.read();
-          if (chunk == null) break;
-          buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-          const parsed = tryParseSequence();
-          if (parsed === undefined) return;
-          finalize(parsed);
-          return;
-        }
-      };
-
-      const cleanup = () => {
-        input.off("readable", onReadable);
-      };
-
-      onReadable();
-      if (buffer) {
-        const parsed = tryParseSequence();
-        if (parsed !== undefined) {
-          finalize(parsed);
-          return;
-        }
-      }
-      input.on("readable", onReadable);
+      waiter = resolve;
+      tryDeliver();
     });
+  reader.dispose = () => {
+    waiter = null;
+    input.off("data", onData);
+  };
+  return reader;
 }
 
 export function drainInputBuffer(input: NodeJS.ReadStream) {
@@ -215,7 +219,6 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   const readKey = args.readKey ?? createRawKeyReader(input);
 
   const wasRaw = Boolean(input.isTTY && input.isRaw);
-  const wasPaused = typeof input.isPaused === "function" ? input.isPaused() : false;
   let renderedLineCount = 0;
   const bottomAnchored = Boolean(args.bottomAnchored && args.bottomRow && args.bottomRow > 0);
   const bottomRow = args.bottomRow ?? 0;
@@ -255,9 +258,10 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
     renderedLineCount = lineCount;
   };
 
-  if (input.isTTY) {
-    if (!wasRaw) input.setRawMode(true);
-    if (!wasPaused) input.pause();
+  // Do not pause the stream here: the key reader listens via 'data' events,
+  // which an explicit pause() would silence.
+  if (input.isTTY && !wasRaw) {
+    input.setRawMode(true);
   }
   paint();
 
@@ -286,10 +290,10 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       }
     }
   } finally {
+    readKey.dispose?.();
     if (input.isTTY) {
       drainInputBuffer(input);
       if (!wasRaw) input.setRawMode(false);
-      if (!wasPaused) input.resume();
       if (bottomAnchored) {
         clearAnchoredLines(output, bottomRow, renderedLineCount);
       } else {

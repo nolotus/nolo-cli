@@ -1980,7 +1980,7 @@ export function createCliLocalRuntimeAdapter(
               accessToken,
               metadata: credential?.metadata ?? null,
               openAiBody,
-              fetchImpl: (url, init) =>
+              fetchImpl: (url: string | URL | Request, init?: RequestInit) =>
                 fetchWithTransientRetry(fetchImpl, url, init, {
                   sleep: deps.sleep,
                   loopbackRequest,
@@ -2201,7 +2201,7 @@ export function createCliLocalRuntimeAdapter(
             providerConfig,
             messages,
             tools,
-            fetchImpl: (url, init) =>
+            fetchImpl: (url: string | URL | Request, init?: RequestInit) =>
               fetchWithTransientRetry(fetchImpl, url, init, {
                 sleep: deps.sleep,
                 loopbackRequest,

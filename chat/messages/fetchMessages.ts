@@ -85,7 +85,7 @@ export const fetchMessages = async (
       // 基本数据校验
       if (isRecord(value) && value.id && value.createdAt) {
         // **关键: 将数据库 key 作为 _key 附加到消息对象上**
-        messages.push({ ...(value as Message), _key: key });
+        messages.push({ ...(value as unknown as Message), _key: key });
       }
     }
 

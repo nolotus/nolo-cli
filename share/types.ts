@@ -3,7 +3,8 @@ import { DataType } from "../create/types";
 export type ShareType =
   | DataType.DOC
   | DataType.DIALOG
-  | DataType.CYBOT
+  // 历史分享记录的 type 字段可能是已退役的 "cybot"（即现在的 agent），仅保留读取兼容
+  | "cybot"
   | DataType.IMAGE
   | DataType.APP
   | DataType.TABLE;
@@ -82,7 +83,7 @@ export interface ShareSummary {
 export const isShareType = (type: unknown): type is ShareType =>
   type === DataType.DOC ||
   type === DataType.DIALOG ||
-  type === DataType.CYBOT ||
+  type === "cybot" ||
   type === DataType.IMAGE ||
   type === DataType.APP ||
   type === DataType.TABLE;
@@ -91,7 +92,7 @@ export const SHARE_TYPE_LABELS: Record<ShareType, string> = {
   [DataType.DOC]: "文章",
   [DataType.DIALOG]: "对话",
   [DataType.IMAGE]: "图片",
-  [DataType.CYBOT]: "AI",
+  cybot: "AI",
   [DataType.APP]: "应用",
   [DataType.TABLE]: "表格",
 };

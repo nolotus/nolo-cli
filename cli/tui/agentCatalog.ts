@@ -120,7 +120,6 @@ export async function loadAgentCatalog(args: {
       authToken,
       fallbackFetchImpl,
       fetchImpl,
-      includeLegacy: false,
       serverUrls,
       userId,
     });
@@ -136,7 +135,6 @@ export async function loadAgentCatalog(args: {
           authToken,
           fallbackFetchImpl,
           fetchImpl,
-          includeLegacy: false,
           serverUrl,
           userId,
           queryUserRecords,

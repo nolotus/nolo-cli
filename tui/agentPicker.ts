@@ -40,12 +40,15 @@ export async function runAgentPicker(args: {
   fallbackFetchImpl?: CliFetchImpl;
   readKey?: () => Promise<string | null>;
   interactive?: boolean;
+  /** Dock the list above the composer; see runSelectDialog.bottomAnchored. */
+  bottomAnchored?: boolean;
+  bottomRow?: number;
 }) {
   const output = args.output ?? process.stdout;
   const input = args.input ?? process.stdin;
   const interactive =
     args.interactive ??
-    Boolean((input as any).isTTY && (output as any).isTTY);
+    ("isTTY" in input && Boolean(input.isTTY) && "isTTY" in output && Boolean(output.isTTY));
   const entries = await loadAgentCatalog({
     env: args.env,
     currentKey: args.currentKey,
@@ -73,8 +76,9 @@ export async function runAgentPicker(args: {
     input,
     output,
     readKey: args.readKey,
+    bottomAnchored: args.bottomAnchored,
+    bottomRow: args.bottomRow,
   });
-
   if (result.kind === "cancelled") {
     return { kind: "cancelled" as const, entries };
   }

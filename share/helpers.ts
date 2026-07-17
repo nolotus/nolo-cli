@@ -126,7 +126,7 @@ export const extractAgentInfo = (
     data.sourceAgentKey,
     data.agentKey,
     data.cybotKey,
-    type === DataType.CYBOT ? (data.dbKey ?? data.id) : undefined,
+    type === "cybot" ? (data.dbKey ?? data.id) : undefined,
   ];
 
   let agentKey = "";
@@ -154,7 +154,7 @@ export const extractAgentInfo = (
     data.sourceAgentName,
     data.agentName,
     data.cybotName,
-    type === DataType.CYBOT ? data.name : undefined,
+    type === "cybot" ? data.name : undefined,
   ];
 
   let agentName = "";

@@ -1,7 +1,6 @@
 // create/types.ts
 export enum DataType {
   AGENT = "agent",
-  CYBOT = "cybot",
   DOC = "page",
   DIALOG = "dialog",
   NOTIFICATION = "notification",

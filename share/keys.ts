@@ -1,5 +1,5 @@
 import { createKey, splitKey, isAgentKey } from "../database/keys";
-import { DataType } from "../create/types";
+
 import { toTrimmedString } from "../core/toTrimmedString";
 import { normalizeUserId } from "../core/userId";
 import { toSafeAgentKey } from "./helpers";
@@ -112,7 +112,7 @@ const resolveAgentKeyFromPayload = (data: any): string => {
   const directCandidates: unknown[] = [
     meta?.sourceAgentKey, meta?.agentKey,
     data?.sourceAgentKey, data?.agentKey, data?.cybotKey,
-    data?.type === DataType.CYBOT ? (data?.dbKey ?? data?.id) : "",
+    data?.type === "cybot" ? (data?.dbKey ?? data?.id) : "",
   ];
 
   for (const c of directCandidates) {
@@ -124,7 +124,7 @@ const resolveAgentKeyFromPayload = (data: any): string => {
     const payloadCandidates: unknown[] = [
       payload?.sourceAgentKey, payload?.agentKey, payload?.cybotKey,
       payload?.meta?.sourceAgentKey, payload?.meta?.agentKey,
-      data?.type === DataType.CYBOT ? (payload?.dbKey ?? payload?.id) : "",
+      data?.type === "cybot" ? (payload?.dbKey ?? payload?.id) : "",
     ];
     for (const c of payloadCandidates) {
       const key = toSafeAgentKey(c);

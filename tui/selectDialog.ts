@@ -66,14 +66,31 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
   return lines.join("\n");
 }
 
-function countRenderedLines(text: string) {
-  return text.split("\n").length;
+function outputIsTty(output: NodeJS.WritableStream): boolean {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "isTTY" in output &&
+    Boolean(output.isTTY)
+  );
 }
 
 function clearRenderedLines(output: NodeJS.WritableStream, lineCount: number) {
-  if (!(output as any).isTTY || lineCount <= 0) return;
+  if (!outputIsTty(output) || lineCount <= 0) return;
   for (let index = 0; index < lineCount; index += 1) {
     output.write("\x1b[1A\x1b[2K");
+  }
+}
+function clearAnchoredLines(
+  output: NodeJS.WritableStream,
+  bottomRow: number,
+  lineCount: number
+) {
+  if (!outputIsTty(output) || lineCount <= 0) return;
+  for (let index = 0; index < lineCount; index += 1) {
+    const row = bottomRow - index;
+    if (row < 1) break;
+    output.write(`\x1b[${row};1H\x1b[2K`);
   }
 }
 
@@ -176,6 +193,13 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   input?: NodeJS.ReadStream;
   output?: NodeJS.WritableStream;
   readKey?: KeyReader;
+  /**
+   * Dock the list above the composer instead of letting it scroll to the top
+   * of the terminal. When true, `bottomRow` (1-indexed absolute cursor row)
+   * is the row the last line of the frame sits on; the rest stack upward.
+   */
+  bottomAnchored?: boolean;
+  bottomRow?: number;
 }): Promise<SelectDialogResult<T>> {
   const items = args.items;
   if (items.length === 0) {
@@ -193,6 +217,8 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   const wasRaw = Boolean(input.isTTY && input.isRaw);
   const wasPaused = typeof input.isPaused === "function" ? input.isPaused() : false;
   let renderedLineCount = 0;
+  const bottomAnchored = Boolean(args.bottomAnchored && args.bottomRow && args.bottomRow > 0);
+  const bottomRow = args.bottomRow ?? 0;
 
   const paint = () => {
     const frame = renderSelectDialog({
@@ -201,16 +227,32 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       title: args.title,
       maxVisible: args.maxVisible,
     });
-    if ((output as any).isTTY && typeof output.write === "function") {
-      clearRenderedLines(output, renderedLineCount);
-      output.write(`${frame}\n`);
-      renderedLineCount = countRenderedLines(frame);
+    const lines = frame.split("\n");
+    const lineCount = lines.length;
+    const canPosition = outputIsTty(output) && typeof output.write === "function";
+
+    if (bottomAnchored && canPosition) {
+      clearAnchoredLines(output, bottomRow, renderedLineCount);
+      for (let i = 0; i < lines.length; i += 1) {
+        const row = bottomRow - (lines.length - 1 - i);
+        if (row < 1) break;
+        output.write(`\x1b[${row};1H\x1b[2K${lines[i]}`);
+      }
+      renderedLineCount = lineCount;
       return;
     }
+
+    if (canPosition) {
+      clearRenderedLines(output, renderedLineCount);
+      output.write(`${frame}\n`);
+      renderedLineCount = lineCount;
+      return;
+    }
+
     if (typeof output.write === "function") {
       output.write(`${frame}\n`);
     }
-    renderedLineCount = countRenderedLines(frame);
+    renderedLineCount = lineCount;
   };
 
   if (input.isTTY) {
@@ -248,7 +290,11 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       drainInputBuffer(input);
       if (!wasRaw) input.setRawMode(false);
       if (!wasPaused) input.resume();
-      clearRenderedLines(output, renderedLineCount);
+      if (bottomAnchored) {
+        clearAnchoredLines(output, bottomRow, renderedLineCount);
+      } else {
+        clearRenderedLines(output, renderedLineCount);
+      }
       renderedLineCount = 0;
     }
   }

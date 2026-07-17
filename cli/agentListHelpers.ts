@@ -37,8 +37,6 @@ function buildCompanionKeys(rawId: string, userId: string) {
 
 export function normalizeListedAgent(record: any): ListedAgent | null {
   const privateKey = typeof record?.dbKey === "string" ? record.dbKey : "";
-  // Legacy cybot-* namespace is unsupported
-  if (privateKey.startsWith("cybot-")) return null;
   const explicitId = typeof record?.id === "string" && record.id ? record.id : undefined;
   const ownerUserId = typeof record?.userId === "string" ? record.userId : "";
   const rawId = explicitId
@@ -95,7 +93,6 @@ export function parseAgentListArgs(args: string[]) {
     wantJson: args.includes("--json"),
     publicOnly: args.includes("--public-only"),
     idsOnly: args.includes("--ids-only"),
-    includeLegacy: args.includes("--include-legacy"),
   };
 }
 
@@ -154,7 +151,6 @@ export async function listRemoteAgents(args: {
   authToken: string;
   fallbackFetchImpl?: CliFetchImpl;
   fetchImpl: CliFetchImpl;
-  includeLegacy: boolean;
   serverUrl: string;
   userId: string;
   queryUserRecords: (args: {
@@ -173,7 +169,6 @@ export async function listRemoteAgents(args: {
     serverUrl: string;
   }) => Promise<any>;
 }) {
-  // includeLegacy is ignored: cybot records are unsupported
   const recordGroups = [await args.queryUserRecords({ ...args, type: "agent" as const })];
   const agents = sortListedAgents(
     recordGroups
@@ -200,7 +195,6 @@ export async function listRemoteAgentsAcrossServers(args: {
   authToken: string;
   fallbackFetchImpl?: CliFetchImpl;
   fetchImpl: CliFetchImpl;
-  includeLegacy: boolean;
   serverUrls: string[];
   userId: string;
 }) {

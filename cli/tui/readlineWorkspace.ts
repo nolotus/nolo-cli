@@ -1127,6 +1127,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }
 
     if (result.action?.type === "pick-agent") {
+      const pickerInputLines = fixedInput.getInputLines();
+      const ttyRows =
+        typeof output === "object" &&
+        output !== null &&
+        "rows" in output &&
+        typeof output.rows === "number"
+          ? output.rows
+          : 24;
+      const bottomRow = Math.max(1, ttyRows - pickerInputLines);
       fixedInput.pause();
       try {
         const pickResult = await runAgentPicker({
@@ -1134,6 +1143,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           env: options.env ?? process.env,
           input: input as NodeJS.ReadStream,
           output: output as NodeJS.WritableStream,
+          bottomAnchored: true,
+          bottomRow,
         });
         if (pickResult.kind === "list") {
           output.write(`${pickResult.output}\n`);

@@ -3,7 +3,7 @@
 /* ===========================================================================
  *  keys.ts —— 统一的 Key 辅助函数集合
  *  1) 通用存储键（row / idx / dir / meta / view / 
- *  2) 现有业务键（user / tx / token / dialog / page / cybot …）
+ *  2) 现有业务键（user / tx / token / dialog / page / agent …）
  *  3) 收藏（favorite）相关键（区分 id / key）
  * =========================================================================*/
 
@@ -12,7 +12,7 @@ import { asOptionalTrimmedString } from "../core/optionalString";
 import { asTrimmedString } from "../core/trimmedString";
 import { ulid } from "./utils/ulid";
 import { curry } from "rambda";
-import { DataType } from "../create/types"; // 枚举：DIALOG / PAGE / CYBOT …
+import { DataType } from "../create/types";
 
 /* --------------------------------------------------------------------------
  * 基础工具
@@ -518,7 +518,7 @@ export function createDialogAgentListIndexRange(
 
 /**
  * Normalize a dialog agent key for list-index membership.
- * Only agent-* keys are supported (no cybot-* aliases).
+ * Only agent-* keys are supported.
  */
 export function expandDialogAgentListIndexAliases(agentKey: string): string[] {
   const key = agentKey.trim();
@@ -855,7 +855,7 @@ export const createPageKey = {
 };
 
 /* ---- Agent ---- */
-// 仅使用 DataType.AGENT ("agent") 前缀；cybot-* 命名空间已退役，不再生成或兼容。
+// 仅使用 DataType.AGENT ("agent") 前缀。
 export const createAgentKey = {
   private: curry((userId: string, agentId: string) =>
     createKey(DataType.AGENT, userId, agentId)
@@ -895,7 +895,7 @@ export { shareKey } from "../share/keys";
 
 const FAV_PREFIX = "fav";
 
-// 类型区分：AgentId 是“逻辑 ID”（比如 cybotId），AgentKey 是“存储键 / dbKey”
+// 类型区分：AgentId 是“逻辑 ID”，AgentKey 是“存储键 / dbKey”
 export type AgentId = string;
 export type AgentKey = string;
 // TODO(keys): 将来如果 Page/File 也有单独逻辑 ID，可以在这里增加 PageId/FileId 类型。

@@ -18,7 +18,6 @@ describe("CLI local agent records", () => {
   test("only remote reads concrete agent keys", () => {
     expect(shouldReadAgentKeyRemotely("agent-user-1-frontend")).toBe(true);
     expect(shouldReadAgentKeyRemotely("agent-pub-01ABC")).toBe(true);
-    expect(shouldReadAgentKeyRemotely("cybot-user-1-frontend")).toBe(false);
     expect(shouldReadAgentKeyRemotely("frontend")).toBe(false);
     expect(shouldReadAgentKeyRemotely("dialog-user-1-frontend")).toBe(false);
   });

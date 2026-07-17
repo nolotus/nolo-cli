@@ -28,7 +28,7 @@ export async function runAgentListCommand(
 ) {
   const env = deps.env ?? process.env;
   const output = deps.output ?? process.stdout;
-  const { wantJson, publicOnly, idsOnly, includeLegacy } = parseAgentListArgs(args);
+  const { wantJson, publicOnly, idsOnly } = parseAgentListArgs(args);
   const spaceInput = readOption(args, "--space") ?? readOption(args, "--space-id");
 
   const authToken = resolveAuthToken(args, env);
@@ -57,7 +57,6 @@ export async function runAgentListCommand(
         authToken,
         fallbackFetchImpl,
         fetchImpl,
-        includeLegacy,
         serverUrls,
         userId,
       });
@@ -74,7 +73,6 @@ export async function runAgentListCommand(
           authToken,
           fallbackFetchImpl,
           fetchImpl,
-          includeLegacy,
           serverUrl,
           userId,
           queryUserRecords,
@@ -84,9 +82,7 @@ export async function runAgentListCommand(
       }
     }
 
-    if (!includeLegacy) {
-      agents = agents.filter((agent) => agent.privateKey.startsWith("agent-"));
-    }
+    agents = agents.filter((agent) => agent.privateKey.startsWith("agent-"));
     let resolvedSpaceId: string | null = null;
     if (spaceInput) {
       const { spaceId, spaceKey } = buildSpaceLookup(spaceInput);

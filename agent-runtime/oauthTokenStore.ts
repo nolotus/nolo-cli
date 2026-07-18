@@ -9,7 +9,12 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type OAuthProvider = "chatgpt" | "xai" | "antigravity" | "cloudflare";
+export type OAuthProvider =
+  | "chatgpt"
+  | "xai"
+  | "antigravity"
+  | "claude"
+  | "cloudflare";
 
 export type OAuthCredential = {
   provider: OAuthProvider;

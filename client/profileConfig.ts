@@ -8,6 +8,8 @@ export type NoloProfile = {
   authToken?: string;
   agentKey?: string;
   agentName?: string;
+  /** TUI interface language saved by /lang; surfaces as NOLO_LANG. */
+  locale?: "zh" | "en";
 };
 
 export type NoloProfileConfig = {
@@ -79,6 +81,7 @@ export function buildEnvFromProfile(
     ...(profile.authToken?.trim() ? { AUTH_TOKEN: profile.authToken.trim() } : {}),
     ...(profile.agentKey ? { NOLO_AGENT: profile.agentKey } : {}),
     ...(profile.agentName ? { NOLO_AGENT_NAME: profile.agentName } : {}),
+    ...(profile.locale ? { NOLO_LANG: profile.locale } : {}),
   };
 }
 
@@ -104,6 +107,20 @@ export function buildCliRuntimeEnv(
 export function getCurrentProfile(config: NoloProfileConfig | null) {
   if (!config) return null;
   return config.profiles[config.currentProfile] ?? null;
+}
+
+export function saveProfileLocale(
+  locale: "zh" | "en",
+  path = getDefaultProfileConfigPath()
+): NoloProfileConfig | null {
+  const config = loadProfileConfig(path);
+  if (!config) return null;
+  const profile = config.profiles[config.currentProfile];
+  if (!profile) return null;
+  profile.locale = locale;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  return config;
 }
 
 export function saveProfileAgentSelection(

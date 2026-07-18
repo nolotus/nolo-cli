@@ -67,6 +67,11 @@ describe("displayWidth", () => {
     expect(displayWidth("♠")).toBe(2);
     expect(displayWidth("a📁b")).toBe(4);
   });
+
+  test("counts the ❯ prompt ornament as width 1", () => {
+    expect(displayWidth("❯")).toBe(1);
+    expect(displayWidth("❯ ")).toBe(2);
+  });
 });
 
 describe("countPhysicalLines", () => {
@@ -738,10 +743,11 @@ describe("scroll-aware history", () => {
     expect(history.scrollTop).toBe(10);
     expect(history.followBottom).toBe(false);
 
-    // Reaching the bottom via the wheel resumes live-tail.
-    history.scrollTop = 21;
+    // Reaching the bottom via the wheel resumes live-tail. 30 assistant
+    // turns render as 59 lines (blank separators), viewport 8 → max 51.
+    history.scrollTop = 50;
     applyScrollAction(history, "wheel-down", output, 2);
-    expect(history.scrollTop).toBe(22);
+    expect(history.scrollTop).toBe(51);
     expect(history.followBottom).toBe(true);
   });
 
@@ -761,7 +767,8 @@ describe("scroll-aware history", () => {
 
     applyScrollAction(history, "bottom", output, 2);
     expect(history.followBottom).toBe(true);
-    expect(history.scrollTop).toBe(22);
+    // 59 transcript lines (30 turns + blank separators) - 8 visible = 51.
+    expect(history.scrollTop).toBe(51);
   });
 
   test("splitRawInput keeps CSI scroll sequences intact", () => {

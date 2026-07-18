@@ -29,7 +29,8 @@ import { DEFAULT_TUI_AGENT_KEY, PLATFORM_AGENTS } from "./agentCatalog";
 import { resolveAgentSwitchTarget } from "./agentPicker";
 import type { AttachedImage } from "./pasteImage";
 import { detectImagePaths, summarizeAttachment } from "./pasteImage";
-import { t } from "./i18n";
+import { parseCliLocale, setCliLocale, t } from "./i18n";
+import { themeText } from "./theme";
 import { detectGitStatus, type GitStatus } from "./gitStatus";
 
 export { DEFAULT_TUI_AGENT_KEY };
@@ -110,6 +111,20 @@ export type TuiAction =
     }
   | {
       type: "list-agents";
+    }
+  | {
+      type: "pick-dialog";
+    }
+  | {
+      type: "set-locale";
+      locale: "zh" | "en";
+    }
+  | {
+      type: "copy-last";
+    }
+  | {
+      type: "set-mouse";
+      enabled: boolean;
     }
   | {
       type: "attach-images";
@@ -202,7 +217,8 @@ export function renderStatusLine(state: TuiState) {
   const logoSegment = styleCliText("nolo", "cyan", colorEnabled);
 
   const agentLabel = `⬢ ${state.agentName}${state.modeLabel ? ` · ${state.modeLabel}` : ""}`;
-  const agentSegment = styleCliText(agentLabel, "magenta", colorEnabled);
+  // Theme accent (catppuccin primary) instead of terminal magenta — see tui/theme.ts.
+  const agentSegment = themeText(agentLabel, "accent", colorEnabled);
 
   const cwdSegment = styleCliText(`📁 ${formatCwd(state.cwd)}`, "blue", colorEnabled);
 
@@ -295,6 +311,11 @@ export const SLASH_COMMANDS = [
   "/agents",
   "/switch",
   "/dialog",
+  "/history",
+  "/resume",
+  "/lang",
+  "/copy",
+  "/mouse",
   "/doc",
   "/customize",
   "/login",
@@ -313,33 +334,7 @@ export function completeSlashCommand(buffer: string): string[] {
 }
 
 export function renderTuiHelp() {
-  return [
-    "Commands:",
-    "  /help                 Show this help",
-    "  /new                  Clear screen and start a fresh dialog",
-    "  /compact              Compact current dialog and fork a new one",
-    "  /context              Show workspace context and next actions",
-    "  /runtime <mode>       Use auto, local, or server runtime",
-    "  /tools <mode>         Control tool trace: hide, compact, verbose",
-    "  /thinking <mode>      Control thinking output: hide, marker, show",
-    "  /render <mode>        Control assistant output: plain, rich",
-    "  /agent                Pick an agent interactively (↑↓, Enter)",
-    "  /agent list           List agents as text",
-    "  /agent <name>         Switch directly by name, alias, or key",
-    "  /agents               List platform agent shortcuts",
-    "  /switch <agent>       Switch the current agent (alias of /agent <name>)",
-    "  /dialog               Show the current dialog",
-    "  /doc                  List attached docs",
-    "  /doc attach <doc>     Attach a doc to this workspace",
-    "  /customize            Describe how you want to tune nolo",
-    "  /login                Show login/profile hint",
-    "  /profile              Show active profile (显示当前配置环境)",
-    "  /update               Update the nolo CLI install",
-    "  /version              Show version/update hint",
-    "  /exit                 Leave the workspace",
-    "",
-    "You can also type normally. nolo routes simple read/status requests to CLI commands and sends the rest to the current agent.",
-  ].join("\n");
+  return t("helpText");
 }
 
 export function renderContextPanel(state: TuiState) {
@@ -641,9 +636,67 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       return {
         nextState: state,
         output: state.dialogId
-          ? `Current dialog: ${state.dialogId}`
-          : "Current dialog: new",
+          ? `${t("currentDialogPrefix")}: ${state.dialogId}`
+          : t("currentDialogNew"),
       };
+    case "/lang": {
+      const locale = parseCliLocale(argText);
+      if (!locale) {
+        return { nextState: state, output: t("langUsage") };
+      }
+      setCliLocale(locale);
+      return {
+        nextState: state,
+        output: t("langSwitched"),
+        action: { type: "set-locale", locale },
+      };
+    }
+    case "/history":
+      return {
+        nextState: state,
+        output: "",
+        action: { type: "pick-dialog" },
+      };
+    case "/copy":
+      return {
+        nextState: state,
+        output: "",
+        action: { type: "copy-last" },
+      };
+    case "/mouse": {
+      if (argText !== "on" && argText !== "off") {
+        return { nextState: state, output: t("mouseUsage") };
+      }
+      return {
+        nextState: state,
+        output: argText === "on" ? t("mouseOn") : t("mouseOff"),
+        action: { type: "set-mouse", enabled: argText === "on" },
+      };
+    }
+    case "/resume": {
+      if (!argText) {
+        return {
+          nextState: state,
+          output: "",
+          action: { type: "pick-dialog" },
+        };
+      }
+      if (!/^[0-9A-HJKMNP-TV-Z]{26}$/i.test(argText)) {
+        return {
+          nextState: state,
+          output: `"${argText}" ${t("resumeInvalidId")}`,
+        };
+      }
+      return {
+        nextState: {
+          ...state,
+          dialogId: argText,
+          dialogLabel: argText,
+          turnTokens: undefined,
+        },
+        output: `${t("resumedDialogPrefix")}: ${argText}`,
+      };
+    }
     case "/doc": {
       if (rest[0] === "attach") {
         const docName = rest.slice(1).join(" ").trim();

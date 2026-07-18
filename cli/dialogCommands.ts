@@ -40,7 +40,7 @@ type HttpAttempt = {
   message?: string;
 };
 
-type ListedDialog = {
+export type ListedDialog = {
   id: string;
   dbKey: string;
   title: string;
@@ -240,7 +240,7 @@ function resolveDialogInput(rawInput: string, userId: string) {
   };
 }
 
-function normalizeDialogRecord(record: any, fallbackDbKey?: string): ListedDialog | null {
+export function normalizeDialogRecord(record: any, fallbackDbKey?: string): ListedDialog | null {
   const dbKey = asOptionalTrimmedString(record?.dbKey) ?? fallbackDbKey ?? "";
   const id =
     asOptionalTrimmedString(record?.id) ??
@@ -279,7 +279,7 @@ function normalizeDialogRecord(record: any, fallbackDbKey?: string): ListedDialo
   };
 }
 
-function sortDialogs(dialogs: ListedDialog[]) {
+export function sortDialogs(dialogs: ListedDialog[]) {
   return dialogs.sort((a, b) => {
     const ta = a.updatedAt ?? a.createdAt ?? 0;
     const tb = b.updatedAt ?? b.createdAt ?? 0;
@@ -289,7 +289,7 @@ function sortDialogs(dialogs: ListedDialog[]) {
   });
 }
 
-function isScheduledDialog(record: ListedDialog) {
+export function isScheduledDialog(record: ListedDialog) {
   return (
     record.triggerType === "automation_run" ||
     record.triggerType === "scheduled_run" ||

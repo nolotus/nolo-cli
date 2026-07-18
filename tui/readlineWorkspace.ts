@@ -13,6 +13,7 @@ import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
+import { runDialogPicker } from "./dialogPicker";
 import { mergeAttachedImages, readImagePaths, resolveImageSource, summarizeAttachment } from "./pasteImage";
 import {
   applyTuiInputKey,
@@ -24,9 +25,11 @@ import {
   renderWelcome,
   type TuiState,
 } from "./session";
-import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
+import { dimCliText, resolveCliColorEnabled, styleCliText } from "../client/terminalStyles";
+import { themeColorSequence } from "./theme";
 import { toErrorMessage } from "../core/errorMessage";
-import { t } from "./i18n";
+import { initCliLocale, t } from "./i18n";
+import { saveProfileLocale } from "../client/profileConfig";
 
 export type SelfUpdater = (
   output: NodeJS.WritableStream
@@ -290,6 +293,7 @@ async function runAgentChat(
     imageUrls?: string[];
     actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
     confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+    abortSignal?: AbortSignal;
   } = {}
 ) {
   const result: RunAgentTurnResult = await agentRunner({
@@ -315,6 +319,7 @@ async function runAgentChat(
     ...(options.confirmDestructiveAction
       ? { confirmDestructiveAction: options.confirmDestructiveAction }
       : {}),
+    ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
   });
   return result;
 }
@@ -480,7 +485,9 @@ export function displayWidth(str: string): number {
     if (code < 0x20 || code === 0x7f) continue;
     if (
       (code >= 0x1100 && code <= 0x115f) ||
-      (code >= 0x2600 && code <= 0x27bf) ||
+      // 0x2768-0x2775 (ornamental brackets, incl. the ❯ prompt at U+276F)
+      // render narrow in terminals; counting them wide drifts the cursor.
+      (code >= 0x2600 && code <= 0x27bf && !(code >= 0x2768 && code <= 0x2775)) ||
       (code >= 0x2e80 && code <= 0x303e) ||
       (code >= 0x3040 && code <= 0x33bf) ||
       (code >= 0x3400 && code <= 0x4dbf) ||
@@ -718,20 +725,30 @@ export function wrapTextToLines(text: string, columns: number): string[] {
 }
 
 function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
-  const lines: string[] = [];
-  for (const turn of history.turns) {
-    if (turn.role === "user") {
-      lines.push("", `❯ ${turn.content}`);
-    } else {
-      lines.push(turn.content);
+  const colorEnabled = resolveCliColorEnabled();
+  // Visual rhythm: every turn is separated by a blank line, user turns carry a
+  // colored ❯ marker, and [nolo] system notices render dim so questions,
+  // answers, and plumbing are distinguishable at a glance.
+  const styleTurn = (role: TurnRole, content: string): string => {
+    if (role === "user") {
+      return styleCliText(`❯ ${content}`, "cyan", colorEnabled);
     }
+    if (!colorEnabled) return content;
+    return content
+      .split("\n")
+      .map((line) => (line.startsWith("[nolo]") ? dimCliText(line, true) : line))
+      .join("\n");
+  };
+  const lines: string[] = [];
+  const pushTurn = (role: TurnRole, content: string) => {
+    if (lines.length > 0 || role === "user") lines.push("");
+    lines.push(styleTurn(role, content));
+  };
+  for (const turn of history.turns) {
+    pushTurn(turn.role, turn.content);
   }
   if (history.currentRole !== null && history.currentContent) {
-    if (history.currentRole === "user") {
-      lines.push("", `❯ ${history.currentContent}`);
-    } else {
-      lines.push(history.currentContent);
-    }
+    pushTurn(history.currentRole, history.currentContent);
   }
   const wrapped: string[] = [];
   for (const entry of lines) {
@@ -899,6 +916,14 @@ export type FixedInputController = {
   resumeFromDialog(): void;
   disable(): void;
   getInputLines(): number;
+  /** True while a picker/confirm dialog or subprocess owns the screen. */
+  isPaused(): boolean;
+  /**
+   * Toggle terminal mouse reporting. Off = the terminal handles drag-select
+   * natively (copy works without Shift) but the wheel no longer scrolls the
+   * transcript; keyboard scrolling stays available.
+   */
+  setMouseEnabled(enabled: boolean): void;
 };
 export function createNoopFixedInput(): FixedInputController {
   return {
@@ -912,6 +937,8 @@ export function createNoopFixedInput(): FixedInputController {
     resumeFromDialog() {},
     disable() {},
     getInputLines: () => 1,
+    isPaused: () => false,
+    setMouseEnabled() {},
   };
 }
 
@@ -927,6 +954,7 @@ export function createFixedInput(
   const getRows = () => (output as { rows?: number }).rows ?? 24;
   const getColumns = () => (output as { columns?: number }).columns ?? 80;
   let inputLines = 1;
+  let paused = false;
   const write = (seq: string) => { output.write(seq); };
 
   const setScrollRegion = (lines: number) => {
@@ -939,8 +967,12 @@ export function createFixedInput(
   // Wheel reporting: SGR format (1006) + basic tracking (1000). Without these
   // the terminal never delivers wheel events, so the transcript could not be
   // scrolled by trackpad/mouse at all. Selection still works via the
-  // terminal's bypass modifier (e.g. Shift in Ghostty/iTerm2).
-  const enableMouse = () => write("\x1b[?1006h\x1b[?1000h");
+  // terminal's bypass modifier (e.g. Shift in Ghostty/iTerm2), and /mouse off
+  // flips mouseEnabled so drag-select works without a modifier.
+  let mouseEnabled = true;
+  const enableMouse = () => {
+    if (mouseEnabled) write("\x1b[?1006h\x1b[?1000h");
+  };
   const disableMouse = () => write("\x1b[?1000l\x1b[?1006l");
 
   /**
@@ -962,7 +994,7 @@ export function createFixedInput(
     }
 
     const rule = colorEnabled
-      ? `\x1b[2m\x1b[35m${"─".repeat(cols)}\x1b[0m`
+      ? `\x1b[2m${themeColorSequence("chrome")}${"─".repeat(cols)}\x1b[0m`
       : "─".repeat(cols);
     sections.push(rule);
     sections.push(fitAnsiLine(config.getStatusLine(), cols));
@@ -1048,16 +1080,19 @@ export function createFixedInput(
       repaintAt(buffer);
     },
     pause() {
+      paused = true;
       disableMouse();
       resetScrollRegion();
     },
     resumeFromSubprocess() {
+      paused = false;
       setScrollRegion(inputLines);
       enableMouse();
       const scrollBottom = Math.max(1, getRows() - inputLines);
       write(`\x1b[${scrollBottom};1H\n`);
     },
     resumeFromDialog() {
+      paused = false;
       saveCursor();
       setScrollRegion(inputLines);
       enableMouse();
@@ -1069,6 +1104,15 @@ export function createFixedInput(
       write(`\x1b[${rows};1H\x1b[2K\x1b[${Math.max(1, rows - 1)};1H`);
     },
     getInputLines: () => inputLines,
+    isPaused: () => paused,
+    setMouseEnabled(enabled: boolean) {
+      mouseEnabled = enabled;
+      if (enabled) {
+        write("\x1b[?1006h\x1b[?1000h");
+      } else {
+        write("\x1b[?1000l\x1b[?1006l");
+      }
+    },
   };
 }
 
@@ -1232,6 +1276,9 @@ function waitForRawActionGate(
 }
 
 export async function startTuiWorkspace(options: WorkspaceOptions) {
+  // Locale detection at module load only sees process.env; the workspace env
+  // merges the profile config (NOLO_LANG from /lang) on top.
+  initCliLocale(options.env ?? process.env);
   let state = createInitialTuiState(options.env ?? process.env);
   const input = options.input ?? defaultInput;
   const output = options.output ?? defaultOutput;
@@ -1242,6 +1289,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   const selfUpdater: SelfUpdater =
     options.selfUpdater ?? ((target) => runSelfUpdate({ output: target }));
 
+  if ((output as { isTTY?: boolean }).isTTY) {
+    // Clear screen + scrollback so the TUI opens on a clean canvas instead of
+    // stacking below whatever the shell printed before launch.
+    output.write("\x1b[2J\x1b[3J\x1b[H");
+  }
   output.write(renderWelcome(state));
 
   let fixedInput: FixedInputController = createNoopFixedInput();
@@ -1249,6 +1301,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // isInteractiveInput block) so that runSubmittedLine's streaming callback
   // can repaint the user's in-progress draft while an agent turn is running.
   let buffer = "";
+  // Cooperative stop for the in-flight agent turn (Esc while busy).
+  let activeTurnAbort: AbortController | null = null;
   const history = createTurnHistory();
   const renderHistoryToOutput = () => {
     renderHistory(output, history, fixedInput.getInputLines());
@@ -1263,8 +1317,36 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const previousAgentKey = state.agentKey;
     state = result.nextState;
 
+    // In interactive mode the transcript pane is owned by renderHistory; a raw
+    // output.write lands inside the scroll region and is wiped by the next
+    // composer repaint (\x1b[J), which made /context et al invisible. Route
+    // command echo + output through history instead.
+    const interactive = isInteractiveInput(input);
+    const emitCommandOutput = (text: string) => {
+      if (!text) return;
+      if (!interactive) {
+        output.write(`${text}\n`);
+        return;
+      }
+      history.followBottom = true;
+      startTurn(history, "assistant");
+      appendToCurrentTurn(history, text);
+      finalizeCurrentTurn(history);
+      renderHistoryToOutput();
+      if (fixedInput.active) fixedInput.repaint(buffer);
+    };
+
+    if (interactive && result.action?.type !== "chat") {
+      history.followBottom = true;
+      startTurn(history, "user");
+      appendToCurrentTurn(history, line.trim());
+      finalizeCurrentTurn(history);
+      renderHistoryToOutput();
+      if (fixedInput.active) fixedInput.repaint(buffer);
+    }
+
     if (result.output) {
-      output.write(`${result.output}\n`);
+      emitCommandOutput(result.output);
     }
 
     if (
@@ -1283,7 +1365,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       history.scrollTop = 0;
       history.followBottom = true;
       renderHistoryToOutput();
-      output.write(`${t("startedFreshDialog")}\n`);
+      // Re-emit after the wipe: the pre-clear echo of /new was just discarded
+      // along with the rest of the transcript.
+      emitCommandOutput(t("startedFreshDialog"));
     }
     if (result.action?.type === "compact") {
       const runner = options.compactRunner ?? compactDialog;
@@ -1357,7 +1441,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             })}\n`
           );
         } else {
-          output.write("Agent switch cancelled.\n");
+          output.write(`${t("agentSwitchCancelled")}\n`);
         }
       } catch (error) {
         output.write(
@@ -1365,6 +1449,95 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         );
       } finally {
         fixedInput.resumeFromDialog();
+      }
+    }
+
+    if (result.action?.type === "set-locale") {
+      try {
+        saveProfileLocale(result.action.locale);
+      } catch {
+        // Locale still applies for this session; persistence is best-effort.
+      }
+    }
+
+    if (result.action?.type === "set-mouse") {
+      fixedInput.setMouseEnabled(result.action.enabled);
+    }
+
+    if (result.action?.type === "copy-last") {
+      const lastReply = [...history.turns]
+        .reverse()
+        .find((turn) => turn.role === "assistant")?.content;
+      const text = lastReply ? stripAnsi(lastReply).trim() : "";
+      if (!text) {
+        emitCommandOutput(t("copyNothing"));
+      } else {
+        try {
+          const { default: clipboard } = await import("clipboardy");
+          await clipboard.write(text);
+          emitCommandOutput(t("copiedLastReply"));
+        } catch (error) {
+          // Headless / container shells often lack xclip/pbcopy; surface the
+          // reply text so the user can still copy it manually instead of only
+          // seeing a raw "spawn xclip ENOENT".
+          const message = toErrorMessage(error);
+          const missingClipboard =
+            /ENOENT|not found|no such file|clipboard|spawn|EPIPE|EACCES/i.test(message) ||
+            /clipboard/i.test(String(error?.constructor?.name ?? ""));
+          if (missingClipboard) {
+            emitCommandOutput(t("copyUnavailable"));
+            emitCommandOutput(text);
+          } else {
+            emitCommandOutput(`[nolo] ${t("copyFailed")}: ${message}`);
+          }
+        }
+      }
+    }
+
+    if (result.action?.type === "pick-dialog") {
+      const pickerInputLines = fixedInput.getInputLines();
+      const ttyRows =
+        typeof output === "object" &&
+        output !== null &&
+        "rows" in output &&
+        typeof output.rows === "number"
+          ? output.rows
+          : 24;
+      const bottomRow = Math.max(1, ttyRows - pickerInputLines);
+      const interactivePicker = isInteractiveInput(input);
+      if (interactivePicker) fixedInput.pause();
+      try {
+        const pickResult = await runDialogPicker({
+          env: options.env ?? process.env,
+          input: input as NodeJS.ReadStream,
+          output: output as NodeJS.WritableStream,
+          interactive: interactivePicker,
+          bottomAnchored: interactivePicker,
+          bottomRow,
+        });
+        if (interactivePicker) fixedInput.resumeFromDialog();
+        if (pickResult.kind === "selected") {
+          state = {
+            ...state,
+            dialogId: pickResult.dialog.id,
+            dialogLabel: pickResult.dialog.id,
+            turnTokens: undefined,
+          };
+          emitCommandOutput(
+            `${t("resumedDialogPrefix")}: ${pickResult.dialog.title} (${pickResult.dialog.id})`,
+          );
+        } else if (pickResult.kind === "list") {
+          emitCommandOutput(pickResult.output);
+        } else if (pickResult.kind === "error") {
+          emitCommandOutput(`[nolo] ${pickResult.message}`);
+        } else {
+          emitCommandOutput(t("dialogResumeCancelled"));
+        }
+      } catch (error) {
+        if (interactivePicker) fixedInput.resumeFromDialog();
+        emitCommandOutput(
+          `[nolo] Dialog picker failed: ${toErrorMessage(error)}`,
+        );
       }
     }
 
@@ -1442,6 +1615,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             if (fixedInput.active) fixedInput.repaint(buffer);
           })
         : output;
+      activeTurnAbort = new AbortController();
       const runResult = await runAgentChat(
         options.scriptDir,
         state,
@@ -1455,14 +1629,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(confirmDestructiveAction
             ? { confirmDestructiveAction }
             : {}),
+          abortSignal: activeTurnAbort.signal,
         }
       );
+      const wasAborted = activeTurnAbort.signal.aborted;
+      activeTurnAbort = null;
       if (isInteractiveInput(input)) {
         finalizeCurrentTurn(history);
         renderHistoryToOutput();
         // Show the user's accumulated draft (typed while busy) now that the
         // turn has finished.
         if (fixedInput.active) fixedInput.repaint(buffer);
+      }
+      if (wasAborted) {
+        emitCommandOutput(t("turnStopped"));
       }
       if (runResult.dialogId || runResult.turnTokens) {
         state = {
@@ -1501,7 +1681,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     let busy = false;
     let done = false;
     fixedInput = createFixedInput(output, {
-      getStatusLine: () => renderStatusLine(state),
+      getStatusLine: () =>
+        busy
+          ? `${renderStatusLine(state)}${dimCliText(` · ${t("stopHint")}`, resolveCliColorEnabled())}`
+          : renderStatusLine(state),
     });
     fixedInput.init();
     const paintFrame = (draft: string) => {
@@ -1529,15 +1712,25 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const handleInputToken = async (sequence: string) => {
       if (done) return;
       // While an agent turn is running we let the user keep typing into the
-      // docked composer (draft buffer) but ignore submit/scroll so a second
-      // turn cannot race the in-flight one. The draft is preserved and shown
+      // docked composer (draft buffer) but ignore submit so a second turn
+      // cannot race the in-flight one. The draft is preserved and shown
       // once the turn finishes via fixedInput.exitOutputMode(buffer).
       const busyLock = busy;
       const scrollAction = parseScrollAction(sequence);
       if (scrollAction) {
-        if (busyLock) return;
+        // Scrolling only reads history state, so it stays available during an
+        // agent turn; block it only while a picker/confirm dialog or
+        // subprocess owns the screen (repainting would corrupt their UI).
+        if (fixedInput.isPaused()) return;
         applyScrollAction(history, scrollAction, output, fixedInput.getInputLines());
         paintFrame(buffer);
+        return;
+      }
+      // Esc while a turn is running = cooperative stop. A lone \x1b token is
+      // only produced for a real Esc press (arrow keys arrive as full CSI
+      // sequences), so this cannot swallow other keys.
+      if (busyLock && sequence === "\x1b" && activeTurnAbort) {
+        activeTurnAbort.abort();
         return;
       }
       const result = applyTuiInputKey(buffer, sequence);

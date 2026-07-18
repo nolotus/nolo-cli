@@ -247,14 +247,10 @@ export function renderStatusLine(state: TuiState) {
 
   if (state.gitStatus) {
     const { branch, modified, untracked } = state.gitStatus;
-    const statusMarkers = [
-      modified > 0 ? `*${modified}` : "",
-      untracked > 0 ? `?${untracked}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    const gitText = statusMarkers ? `⑂ ${branch} ${statusMarkers}` : `⑂ ${branch}`;
-    parts.push(styleCliText(gitText, "yellow", colorEnabled));
+    const branchText = styleCliText(`⑂ ${branch}`, "yellow", colorEnabled);
+    const modifiedText = modified > 0 ? ` ${styleCliText(`*${modified}`, "red", colorEnabled)}` : "";
+    const untrackedText = untracked > 0 ? ` ${styleCliText(`?${untracked}`, "dim", colorEnabled)}` : "";
+    parts.push(`${branchText}${modifiedText}${untrackedText}`);
   }
 
   const tokenSegment = dimCliText(renderComposerTokenChip(state.turnTokens), colorEnabled);
@@ -397,6 +393,8 @@ export function completeSlashPrefix(buffer: string): string | null {
 export const SLASH_COMMANDS = [
   "/help",
   "/compact",
+  "/theme",
+  "/density",
   "/context",
   "/ctx",
   "/runtime",

@@ -140,6 +140,12 @@ export function buildAgentRuntimeDialogWritePlan(args: {
   runtimeHost: AgentRuntimeHost;
   runtimeMetadata?: Record<string, unknown>;
   existingDialog?: DialogRecord | null;
+  /**
+   * Pre-computed dialog title (e.g. from an async LLM title generator).
+   * When provided, overrides the default resolveDialogTitle fallback.
+   * Existing dialogs with a non-empty title always keep their title regardless.
+   */
+  titleOverride?: string;
 }): { dialogId: string; ops: DialogWriteOp[] } {
   const dialogId = args.input.continueDialogId || args.createId();
   const nowIso = new Date(args.now).toISOString();
@@ -153,10 +159,16 @@ export function buildAgentRuntimeDialogWritePlan(args: {
     userId: args.userId,
     cybots: [args.input.agentKey],
     primaryAgentKey: args.input.agentKey,
-    title: resolveDialogTitle({
-      existingDialog: args.existingDialog,
-      messages: args.input.messages,
-    }),
+    title:
+      typeof args.existingDialog?.title === "string" &&
+      args.existingDialog.title.trim()
+        ? args.existingDialog.title.trim()
+        : args.titleOverride?.trim()
+          ? args.titleOverride.trim()
+          : resolveDialogTitle({
+              existingDialog: args.existingDialog,
+              messages: args.input.messages,
+            }),
     status: args.input.result.error === true ? "failed" : "done",
     triggerType: `${args.runtimeHost}-local`,
     executionMode: args.existingDialog?.executionMode ?? "foreground",

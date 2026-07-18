@@ -2,6 +2,10 @@ import { compactWhitespace } from "../core/compactWhitespace";
 import { asOptionalTrimmedString } from "../core/optionalString";
 import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { DEFAULT_NOLO_SERVER_URL } from "../defaultServer";
+import {
+  parseUserIdFromAuthToken,
+  resolveAuthToken,
+} from "../cliEnvHelpers";
 import type { AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
 import {
   normalizeRenderDisplayMode,
@@ -36,22 +40,12 @@ import { detectGitStatus, type GitStatus } from "./gitStatus";
 export { DEFAULT_TUI_AGENT_KEY };
 export const DEFAULT_TUI_SERVER_URL = DEFAULT_NOLO_SERVER_URL;
 
-function shortenDialogId(dialogId: string) {
-  return dialogId.length > 12
-    ? `${dialogId.slice(0, 6)}...${dialogId.slice(-4)}`
-    : dialogId;
-}
-
-export function resolveDialogLabel(
-  state: Pick<TuiState, "dialogId" | "dialogLabel">
-) {
-  return state.dialogId ? shortenDialogId(state.dialogId) : state.dialogLabel;
-}
-
 export type TuiState = {
   agentKey: string;
   agentName: string;
   dialogId?: string;
+  dialogKey?: string;
+  dialogOwnerId?: string;
   dialogLabel: string;
   profileName: string;
   serverUrl: string;
@@ -123,6 +117,9 @@ export type TuiAction =
       type: "copy-last";
     }
   | {
+      type: "copy-view";
+    }
+  | {
       type: "set-mouse";
       enabled: boolean;
     }
@@ -160,12 +157,27 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
     env.NOLO_RUNTIME_MODE === "local" || env.NOLO_RUNTIME_MODE === "server"
       ? env.NOLO_RUNTIME_MODE
       : "auto";
+  const dialogId = asOptionalTrimmedString(env.NOLO_DIALOG_ID);
+  const dialogOwnerId =
+    parseUserIdFromAuthToken(
+      resolveAuthToken(env, ["BENCHMARK_AUTH_TOKEN"])
+    ) || undefined;
+  const dialogEnvValue = asOptionalTrimmedString(env.NOLO_DIALOG);
+  const explicitDialogKey =
+    asOptionalTrimmedString(env.NOLO_DIALOG_KEY) ??
+    (dialogEnvValue?.startsWith("dialog-") ? dialogEnvValue : undefined);
 
   return {
     agentKey,
     agentName,
-    dialogId: asOptionalTrimmedString(env.NOLO_DIALOG_ID),
-    dialogLabel: asOptionalTrimmedString(env.NOLO_DIALOG) ?? "new",
+    dialogId,
+    dialogKey:
+      explicitDialogKey ??
+      (dialogId && dialogOwnerId
+        ? `dialog-${dialogOwnerId}-${dialogId}`
+        : undefined),
+    dialogOwnerId,
+    dialogLabel: dialogEnvValue ?? "new",
     profileName: asOptionalTrimmedString(env.NOLO_PROFILE) ?? "local",
     serverUrl: (env.NOLO_SERVER || env.BASE_URL || DEFAULT_TUI_SERVER_URL).replace(
       /\/+$/,
@@ -212,17 +224,18 @@ export function renderStatusLine(state: TuiState) {
   const colorEnabled = resolveCliColorEnabled();
   // OMP-style chips: soft fg colors + " > " separators. No solid powerline
   // backgrounds — those break box layout when the line is long.
-  const sep = dimCliText(" > ", colorEnabled);
+  //
+  // Status line uses ANSI-16 colors: they are saturated and read well on both
+  // light and dark terminals without needing truecolor detection. The theme
+  // accent token is kept for the agent segment to tie it to the app brand.
+  const sep = dimCliText(" · ", colorEnabled);
 
-  const logoSegment = styleCliText("nolo", "cyan", colorEnabled);
-
-  const agentLabel = `⬢ ${state.agentName}${state.modeLabel ? ` · ${state.modeLabel}` : ""}`;
-  // Theme accent (catppuccin primary) instead of terminal magenta — see tui/theme.ts.
-  const agentSegment = themeText(agentLabel, "accent", colorEnabled);
+  const agentLabel = `🏔 ${state.agentName}${state.modeLabel ? ` · ${state.modeLabel}` : ""}`;
+  const agentSegment = styleCliText(agentLabel, "cyan", colorEnabled);
 
   const cwdSegment = styleCliText(`📁 ${formatCwd(state.cwd)}`, "blue", colorEnabled);
 
-  const parts: string[] = [logoSegment, agentSegment, cwdSegment];
+  const parts: string[] = [agentSegment, cwdSegment];
 
   if (state.gitStatus) {
     const { branch, modified, untracked } = state.gitStatus;
@@ -244,9 +257,21 @@ export function renderStatusLine(state: TuiState) {
 
 export function renderWelcome(state: TuiState) {
   const versionStr = state.cliVersion ? `nolo ${state.cliVersion}` : "nolo";
+  const colorEnabled = resolveCliColorEnabled();
+
+  const mountainArt = [
+    "       🏔",
+    "      / \\_",
+    "    _/    \\_/\x1b[1m nolo\x1b[22m",
+    "  _/        \\_",
+    "_/            \\_______________________",
+  ].map(line => themeText(line, "chrome", colorEnabled)).join("\n");
+
   return [
+    mountainArt,
     `${versionStr} | server ${state.serverUrl}`,
     t("welcomeHint"),
+    "",
   ].join("\n");
 }
 
@@ -265,6 +290,7 @@ export type TuiInputKeyResult = {
   buffer: string;
   submit?: string;
   abort?: boolean;
+  copyView?: boolean;
 };
 
 export function applyTuiInputKey(
@@ -275,6 +301,9 @@ export function applyTuiInputKey(
   const seq = sequence ?? "";
   if (seq === "\u0003" || (key.ctrl && key.name === "c")) {
     return { buffer, abort: true };
+  }
+  if (seq === "\u000f" || (key.ctrl && key.name === "o")) {
+    return { buffer, copyView: true };
   }
   if (
     seq === "\x1b[13;2~" ||
@@ -289,13 +318,72 @@ export function applyTuiInputKey(
   if (key.name === "enter" || key.name === "return" || seq === "\r") {
     return { buffer: "", submit: buffer };
   }
-  if (key.name === "backspace" || key.name === "delete" || seq === "\b" || seq === "\x7f") {
-    return { buffer: buffer.slice(0, -1) };
+  // Backspace / Delete (incl. modifier variants).
+  // Plain: \b (0x08), \x7f (DEL). Alt+Backspace: \x1b\x7f / \x1b\b (split into
+  // ESC + DEL by splitRawInput, so the DEL half reaches here as \x7f/\b).
+  // Ctrl/Shift+Backspace on modern terminals: \x1b[3;5~ / \x1b[27;2;8~.
+  // Forward Delete and modifier Delete: \x1b[3~ and \x1b[3;{modifier}~.
+  // In a single-line buffer, forward-delete behaves like backspace.
+  if (
+    key.name === "backspace" ||
+    key.name === "delete" ||
+    seq === "\b" ||
+    seq === "\x7f" ||
+    isDeleteFamilyCsi(seq)
+  ) {
+    if (buffer.length > 0) {
+      return { buffer: buffer.slice(0, -1) };
+    }
+    return { buffer };
+  }
+  if (seq === "\t" || key.name === "tab") {
+    // Tab-complete slash commands: unique match fills the whole command
+    // (plus a trailing space, ready for arguments), multiple matches extend
+    // to their longest common prefix. Never inserts a literal tab.
+    return { buffer: completeSlashPrefix(buffer) ?? buffer };
   }
   if (!seq || key.ctrl || key.meta || seq.startsWith("\x1b")) {
     return { buffer };
   }
   return { buffer: `${buffer}${seq}` };
+}
+
+/**
+ * Match CSI sequences for Backspace/Delete with modifier keys.
+ *
+ * Terminals encode modifier keys in the CSI parameter: `\x1b[3;{m}~` for
+ * Delete variants and some terminals use `\x1b[27;{m};{code}~` for Backspace
+ * variants. We accept any modifier (2=shift, 3=alt, 5=ctrl, etc.) and any
+ * base (3=Delete, 8=Backspace), since in a single-line TUI buffer they all
+ * just delete the last character.
+ */
+function isDeleteFamilyCsi(seq: string): boolean {
+  // Delete family: ESC [ 3 [; modifier] ~  (e.g. \x1b[3~, \x1b[3;2~, \x1b[3;5~)
+  // eslint-disable-next-line no-control-regex
+  if (/^\x1b\[3(?:;\d+)*~$/.test(seq)) return true;
+  // Backspace family: ESC [ 27 ; modifier ; 8 ~ (e.g. \x1b[27;2;8~)
+  // eslint-disable-next-line no-control-regex
+  if (/^\x1b\[27;\d+;8~$/.test(seq)) return true;
+  return false;
+}
+
+/**
+ * Tab completion for a partial slash command. Returns the new buffer, or
+ * null when the buffer is not a completable command prefix (not a slash
+ * command, already has arguments, or nothing matches).
+ */
+export function completeSlashPrefix(buffer: string): string | null {
+  if (!buffer.startsWith("/") || /\s/.test(buffer)) return null;
+  const matches = SLASH_COMMANDS.filter((cmd) => cmd.startsWith(buffer));
+  if (matches.length === 0) return null;
+  if (matches.length === 1) {
+    return `${matches[0]} `;
+  }
+  let prefix: string = matches[0];
+  for (const cmd of matches) {
+    while (!cmd.startsWith(prefix)) prefix = prefix.slice(0, -1);
+  }
+  return prefix.length > buffer.length ? prefix : null;
 }
 
 export const SLASH_COMMANDS = [
@@ -310,7 +398,6 @@ export const SLASH_COMMANDS = [
   "/agent",
   "/agents",
   "/switch",
-  "/dialog",
   "/history",
   "/resume",
   "/lang",
@@ -346,7 +433,9 @@ export function renderContextPanel(state: TuiState) {
     "-----------------",
     `agent    ${state.agentName}`,
     `tokens   ${renderTokenStatus(state.turnTokens)}`,
-    `dialog   ${resolveDialogLabel(state)}`,
+    `dialog   ${
+      state.dialogKey ?? (state.dialogId ? "unavailable" : state.dialogLabel)
+    }`,
     `docs     ${docs}`,
     `配置     ${state.profileName}`,
     `runtime  ${state.runtimeMode}`,
@@ -551,6 +640,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         nextState: {
           ...state,
           dialogId: undefined,
+          dialogKey: undefined,
           dialogLabel: t("newDialog"),
           attachedDocs: [],
           attachedImages: [],
@@ -632,13 +722,6 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       }
       return applyAgentSwitch(state, resolvedTarget);
     }
-    case "/dialog":
-      return {
-        nextState: state,
-        output: state.dialogId
-          ? `${t("currentDialogPrefix")}: ${state.dialogId}`
-          : t("currentDialogNew"),
-      };
     case "/lang": {
       const locale = parseCliLocale(argText);
       if (!locale) {
@@ -658,6 +741,16 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         action: { type: "pick-dialog" },
       };
     case "/copy":
+      if (argText === "view") {
+        return {
+          nextState: state,
+          output: "",
+          action: { type: "copy-view" },
+        };
+      }
+      if (argText) {
+        return { nextState: state, output: t("copyUsage") };
+      }
       return {
         nextState: state,
         output: "",
@@ -691,6 +784,9 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         nextState: {
           ...state,
           dialogId: argText,
+          dialogKey: state.dialogOwnerId
+            ? `dialog-${state.dialogOwnerId}-${argText}`
+            : undefined,
           dialogLabel: argText,
           turnTokens: undefined,
         },

@@ -1,4 +1,7 @@
-import { LOCAL_AGENT_CONFIG_MISSING_CODE } from "../agent-runtime/localLoop";
+import {
+  LOCAL_AGENT_CONFIG_MISSING_CODE,
+  LOCAL_TURN_ABORTED_CODE,
+} from "../agent-runtime/localLoop";
 import { NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
 import type {
   LocalAgentActionGate,
@@ -35,6 +38,7 @@ import {
 import { buildTurnTokenUsage, type TurnTokenUsage } from "./tokenUsage";
 import {
   createToolEventFormatter,
+  formatActiveToolLabel,
   resolveToolDisplayMode,
   shouldEmitToolEvents,
 } from "./toolOutput";
@@ -116,6 +120,8 @@ export type RunAgentTurnOptions = {
     gate: LocalAgentActionGate,
   ) => Promise<AgentRuntimeToolResult | void>;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  /** Cooperative stop (TUI Esc): aborted turns return exitCode 0 + streamInterrupted. */
+  abortSignal?: AbortSignal;
   /** Local loop lifecycle events; used by the CLI runner to write heartbeat activity to the registry. */
   onLoopEvent?: (event: LocalAgentLoopEvent) => void;
 };
@@ -132,7 +138,7 @@ class Spinner {
   private timer: any = null;
   private startTime = 0;
   private frameIndex = 0;
-  private frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  private frames = ["·", "~", "≈", "∿", "≈", "~"];
   private isTTY: boolean;
 
   constructor(
@@ -182,6 +188,18 @@ class Spinner {
       this.output.write("\r\x1b[K");
       this.output.write("\x1b[?25h");
     }
+  }
+
+  show(text: string) {
+    this.text = text;
+    if (!this.isTTY) return;
+    if (!this.timer) {
+      this.start();
+      return;
+    }
+    this.frameIndex = 0;
+    this.startTime = Date.now();
+    this.output.write(`\r${this.renderLine(this.frames[0])}`);
   }
 
   private renderLine(frame: string): string {
@@ -622,12 +640,16 @@ async function runHttpAgentTurn(
         "Content-Type": "application/json",
       },
       body: buildRequestBody(stream),
+      ...(options.abortSignal ? { signal: options.abortSignal } : {}),
     });
   let res: Response;
   try {
     res = await postAgentRun(shouldStream);
   } catch (error) {
     spinner.stop();
+    if (options.abortSignal?.aborted) {
+      return { exitCode: 0, streamInterrupted: true };
+    }
     options.output.write(buildTransportErrorHint(options.serverUrl, error));
     return { exitCode: 1 };
   }
@@ -830,10 +852,8 @@ async function runLocalAgentTurnForCli(
     runtimeContext,
   });
 
-  const spinner = new Spinner(
-    options.output,
-    `${options.agentName} -> working locally`,
-  );
+  const workingLabel = `${options.agentName} -> working locally`;
+  const spinner = new Spinner(options.output, workingLabel);
   spinner.start();
   try {
     const toolDisplayMode = resolveToolDisplayMode(options.env);
@@ -848,8 +868,18 @@ async function runLocalAgentTurnForCli(
       write: (chunk) => options.output.write(chunk),
       renderMode,
     });
+    const writeVisibleAssistantChunk = (chunk: string) => {
+      if (!chunk) return;
+      spinner.stop();
+      if (!printedAssistantLabel) {
+        options.output.write(`\n${options.agentName} > `);
+        printedAssistantLabel = true;
+      }
+      streamedAssistantText = true;
+      renderWriter.push(chunk);
+    };
     const thinkingFilter = createThinkingAwareStreamFilter(
-      (chunk) => renderWriter.push(chunk),
+      writeVisibleAssistantChunk,
       thinkingMode,
     );
     const runLocalAgentTurn = await loadRunLocalAgentTurn();
@@ -871,17 +901,42 @@ async function runLocalAgentTurnForCli(
       ...(options.actionGateHandler
         ? { onActionGate: options.actionGateHandler }
         : {}),
-      ...(options.onLoopEvent ? { onLoopEvent: options.onLoopEvent } : {}),
+      onLoopEvent: (event) => {
+        if (event.kind === "llm-start") {
+          spinner.show(workingLabel);
+        }
+        options.onLoopEvent?.(event);
+      },
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
       ...(traceLocalTools
         ? {
             onToolEvent: (event) => {
-              spinner.stop();
+              if (event.type === "tool-call") {
+                thinkingFilter.flush();
+                renderWriter.flush();
+                if (streamedAssistantText) {
+                  options.output.write("\n");
+                  streamedAssistantText = false;
+                  printedAssistantLabel = false;
+                }
+              }
               const chunk =
                 eventMode === "jsonl"
                   ? formatToolJsonEvent(event)
                   : formatToolEvent(event);
-              if (chunk) {
-                options.output.write(chunk);
+              if (
+                eventMode !== "jsonl" &&
+                toolDisplayMode === "compact" &&
+                event.type === "tool-call"
+              ) {
+                spinner.show(formatActiveToolLabel(event));
+                return;
+              }
+              if (!chunk) return;
+              spinner.stop();
+              options.output.write(chunk);
+              if (event.type === "tool-call") {
+                spinner.show(formatActiveToolLabel(event));
               }
             },
           }
@@ -889,12 +944,6 @@ async function runLocalAgentTurnForCli(
       ...(!options.noStream
         ? {
             onTextDelta: (chunk) => {
-              spinner.stop();
-              if (!printedAssistantLabel) {
-                options.output.write(`\n${options.agentName} > `);
-                printedAssistantLabel = true;
-              }
-              streamedAssistantText = true;
               thinkingFilter.push(chunk);
             },
           }
@@ -923,6 +972,13 @@ async function runLocalAgentTurnForCli(
     };
   } catch (error) {
     spinner.stop();
+    if (
+      (error as { code?: string })?.code === LOCAL_TURN_ABORTED_CODE ||
+      options.abortSignal?.aborted
+    ) {
+      // User-initiated stop: the TUI reports it; nothing failed.
+      return { exitCode: 0, streamInterrupted: true };
+    }
     if (settings.reportFailure) {
       options.output.write(
         `[nolo] Local agent run failed: ${toErrorMessage(error)}\n`,
@@ -1029,6 +1085,14 @@ async function readStreamingAgentRun(
       if (raw) handlePayload(JSON.parse(raw));
     }
   } catch (error) {
+    if (options.abortSignal?.aborted) {
+      // User-initiated stop; the server may still finish the dialog.
+      return {
+        exitCode: 0,
+        ...(dialogId ? { dialogId } : {}),
+        streamInterrupted: true,
+      };
+    }
     const message = toErrorMessage(error);
     if (dialogId) {
       options.output.write(

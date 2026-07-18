@@ -1,13 +1,24 @@
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+import { themeColorSequence, resolveTuiBrightness, type TuiBrightness } from "../tui/theme";
 
 export type RenderDisplayMode = "plain" | "rich";
 
-const ANSI = {
+// ANSI style codes that don't depend on color (bold, dim, reset).
+const STYLE = {
   reset: "\x1b[0m",
   bold: "\x1b[1m",
   dim: "\x1b[2m",
-  cyan: "\x1b[36m",
 };
+
+/**
+ * Color SGR sequences resolved from the TUI theme. assistantOutput is used both
+ * inside the TUI (where theme brightness is known) and in one-shot CLI output
+ * (where we fall back to default brightness). The brightness is resolved once
+ * per call chain so a single assistant reply stays internally consistent.
+ */
+function colorSeq(token: "accent" | "chrome" | "info" | "muted", brightness: TuiBrightness) {
+  return themeColorSequence(token, process.env, brightness);
+}
 
 export function normalizeRenderDisplayMode(
   raw: string | undefined,
@@ -68,6 +79,39 @@ function tableRowToBullet(line: string) {
   return detail ? `  • ${label} — ${detail}` : `  • ${label}`;
 }
 
+// ─── List rendering ─────────────────────────────────────────────────────────
+// Normalize markdown list markers so bullet style stays consistent and
+// indentation is preserved across levels. We keep the original leading
+// whitespace as the indentation (it's what AI models produce), and only
+// swap the marker.
+//   "- item"   / "* item"  / "+ item"  →  "• item"
+//   "1. item" / "2. item"             →  "1. item"  (keep number)
+//   "- [ ] item"                      →  "☐ item"
+//   "- [x] item"                      →  "☑ item"
+// Nested lists keep their leading spaces, so multi-level structure is visible.
+const UNORDERED_LIST_RE = /^(\s*)([-*+])\s+(.+)$/;
+const ORDERED_LIST_RE = /^(\s*)(\d+)\.\s+(.+)$/;
+const TASK_LIST_RE = /^(\s*)([-*+])\s+\[([ xX])\]\s+(.+)$/;
+
+function normalizeListLine(line: string): string {
+  // Task list: "- [ ] item" / "- [x] item" → "☐ item" / "☑ item"
+  const task = line.match(TASK_LIST_RE);
+  if (task) {
+    const checked = task[3] === "x" || task[3] === "X";
+    return `${task[1]}${checked ? "☑" : "☐"} ${task[4]}`;
+  }
+  const unordered = line.match(UNORDERED_LIST_RE);
+  if (unordered) {
+    return `${unordered[1]}• ${unordered[3]}`;
+  }
+  // Ordered list: keep the number but ensure consistent ". " spacing.
+  const ordered = line.match(ORDERED_LIST_RE);
+  if (ordered) {
+    return `${ordered[1]}${ordered[2]}. ${ordered[3]}`;
+  }
+  return line;
+}
+
 export function convertMarkdownTablesForTerminal(text: string) {
   const lines = text.split("\n");
   const out: string[] = [];
@@ -100,7 +144,7 @@ export function convertMarkdownTablesForTerminal(text: string) {
       if (!isTableSeparator(line)) out.push(tableRowToBullet(line));
       continue;
     }
-    out.push(line);
+    out.push(normalizeListLine(line));
   }
 
   return out.join("\n");
@@ -119,25 +163,48 @@ export function polishAssistantStructure(
   return options.trimEdges === false ? polished : polished.trim();
 }
 
-function styleInlineMarkdown(line: string, mode: RenderDisplayMode) {
-  if (mode === "plain") return line;
-  return line
-    .replace(/`([^`]+)`/g, `${ANSI.cyan}$1${ANSI.reset}`)
-    .replace(/\*\*(.+?)\*\*/g, `${ANSI.bold}$1${ANSI.reset}`);
+/**
+ * Render a markdown link `[text](url)` as a clickable OSC 8 hyperlink.
+ * Terminals that support OSC 8 (iTerm2, Ghostty, WezTerm, Kitty, Windows
+ * Terminal, etc.) let the user Ctrl/Cmd-Click to open the URL. Unsupported
+ * terminals ignore the escape sequences and see plain "text (url)".
+ *
+ * We always emit the visible fallback "text (url)" inside the hyperlink so
+ * the URL is readable even when OSC 8 is not available — the link layer is
+ * purely additive.
+ */
+function renderMarkdownLink(match: string, text: string, url: string): string {
+  const visible = `${text} (${url})`;
+  // OSC 8: ESC ] 8 ; params URI ST  text  ESC ] 8 ; ; ST
+  // ST (string terminator) is ESC \ — most terminals also accept BEL (\a).
+  return `\x1b]8;;${url}\x1b\\${visible}\x1b]8;;\x1b\\`;
 }
 
-function styleRichMarkdownLine(line: string) {
+const MARKDOWN_LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)/g;
+
+function styleInlineMarkdown(line: string, mode: RenderDisplayMode, brightness: TuiBrightness) {
+  if (mode === "plain") return line;
+  const info = colorSeq("info", brightness);
+  const reset = STYLE.reset;
+  const bold = STYLE.bold;
+  return line
+    .replace(MARKDOWN_LINK_RE, (m, t, u) => renderMarkdownLink(m, t, u))
+    .replace(/`([^`]+)`/g, `${info}$1${reset}`)
+    .replace(/\*\*(.+?)\*\*/g, `${bold}$1${reset}`);
+}
+
+function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
   const heading = line.match(/^(#{1,3})\s+(.+)$/);
   if (heading) {
     const level = heading[1].length;
     const title = heading[2];
-    if (level <= 2) return `${ANSI.bold}${title}${ANSI.reset}`;
-    return `${ANSI.cyan}${title}${ANSI.reset}`;
+    if (level <= 2) return `${STYLE.bold}${title}${STYLE.reset}`;
+    return `${colorSeq("info", brightness)}${title}${STYLE.reset}`;
   }
   if (/^---+$/.test(line.trim())) {
-    return `${ANSI.dim}${line}${ANSI.reset}`;
+    return `${STYLE.dim}${line}${STYLE.reset}`;
   }
-  return styleInlineMarkdown(line, "rich");
+  return styleInlineMarkdown(line, "rich", brightness);
 }
 
 export function formatAssistantDisplay(
@@ -145,6 +212,7 @@ export function formatAssistantDisplay(
   mode: RenderDisplayMode = "rich",
   options: { trimEdges?: boolean } = {}
 ) {
+  const brightness = resolveTuiBrightness();
   const polished = polishAssistantStructure(text, options);
   let inFence = false;
   return polished
@@ -152,11 +220,11 @@ export function formatAssistantDisplay(
     .map((line) => {
       if (isCodeFenceLine(line)) {
         inFence = !inFence;
-        return mode === "plain" ? line : `${ANSI.dim}${line}${ANSI.reset}`;
+        return mode === "plain" ? line : `${STYLE.dim}${line}${STYLE.reset}`;
       }
       if (inFence) return line;
-      if (mode === "plain") return styleInlineMarkdown(line, "plain");
-      return styleRichMarkdownLine(line);
+      if (mode === "plain") return styleInlineMarkdown(line, "plain", brightness);
+      return styleRichMarkdownLine(line, brightness);
     })
     .join("\n");
 }
@@ -176,6 +244,7 @@ export function createRenderAwareStreamWriter(args: {
   write: (chunk: string) => void;
   renderMode: RenderDisplayMode;
 }) {
+  const brightness = resolveTuiBrightness();
   let buffer = "";
   let inFence = false;
 
@@ -194,7 +263,7 @@ export function createRenderAwareStreamWriter(args: {
 
       if (isCodeFenceLine(firstLine)) {
         inFence = !inFence;
-        args.write(`${ANSI.dim}${firstLine}${ANSI.reset}\n`);
+        args.write(`${STYLE.dim}${firstLine}${STYLE.reset}\n`);
         buffer = lines.slice(1).join("\n");
         continue;
       }

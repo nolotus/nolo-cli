@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import {
   createToolEventFormatter,
+  formatActiveToolLabel,
   formatToolEventForCli,
   normalizeToolDisplayMode,
   resolveToolDisplayMode,
@@ -60,6 +61,21 @@ describe("toolOutput", () => {
         })
       )
     ).toContain("✓");
+  });
+
+  test("formats a clipped label for an in-flight compact tool", () => {
+    expect(
+      formatActiveToolLabel({
+        toolName: "execShell",
+        argumentsPreview: "bun test tui/session.test.ts",
+      })
+    ).toBe("execShell bun test tui/session.test.ts");
+    expect(
+      formatActiveToolLabel({
+        toolName: "execShell",
+        argumentsPreview: "x".repeat(100),
+      })
+    ).toBe(`execShell ${"x".repeat(71)}…`);
   });
 
   test("compact mode marks shell result with non-zero exit code as failed", () => {

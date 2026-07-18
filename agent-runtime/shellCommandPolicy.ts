@@ -67,6 +67,51 @@ const SHELL_DESTRUCTIVE_PATTERNS = [
   /\bgit\s+restore\s+--source=/i,
 ] as const;
 
+// Contexts where a quoted string may itself be executed as code; when any of
+// these appear we must NOT strip quoted segments before scanning.
+const SHELL_STRING_EXECUTION_PATTERNS = [
+  /\b(?:ba|da|z|k)?sh\b/i,
+  /\beval\b/i,
+  /\bexec\b/i,
+  /\bxargs\b/i,
+  /\bsource\s/i,
+  /\b(?:node|deno|bun)\s+(?:-\S+\s+)*(?:-e|--eval)\b/i,
+  /\bpython[\d.]*\s+(?:-\S+\s+)*-c\b/i,
+  /\b(?:perl|ruby)\s+(?:-\S+\s+)*-e\b/i,
+] as const;
+
+// Blank out the contents of single/double-quoted segments so that merely
+// *mentioning* a destructive command (e.g. in a git commit message) does not
+// trip the destructive-command patterns. Quote delimiters are kept.
+const stripQuotedSegments = (text: string): string => {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\") {
+      out += text.slice(i, i + 2);
+      i += 2;
+    } else if (ch === "'") {
+      const end = text.indexOf("'", i + 1);
+      if (end === -1) return out + text.slice(i);
+      out += "''";
+      i = end + 1;
+    } else if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        j += text[j] === "\\" ? 2 : 1;
+      }
+      if (j >= text.length) return out + text.slice(i);
+      out += '""';
+      i = j + 1;
+    } else {
+      out += ch;
+      i += 1;
+    }
+  }
+  return out;
+};
+
 const normalizeUserInput = (value: unknown): string =>
   asTrimmedLowercaseString(value);
 
@@ -97,7 +142,12 @@ export function isDestructiveShellCommand(args: {
 }): boolean {
   const combined = buildCombinedShellInput(args);
   if (!combined.trim()) return false;
-  return SHELL_DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(combined));
+  const scannable = SHELL_STRING_EXECUTION_PATTERNS.some((pattern) =>
+    pattern.test(combined),
+  )
+    ? combined
+    : stripQuotedSegments(combined);
+  return SHELL_DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(scannable));
 }
 
 export function evaluateShellCommandPolicy(args: {

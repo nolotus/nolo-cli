@@ -608,6 +608,155 @@ describe("cli agent run client", () => {
     expect(output.text()).not.toContain("[nolo:tool]");
   });
 
+  test("shows the active execShell command before the tool resolves", async () => {
+    const output = new CaptureOutput();
+    (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
+    let completeCalls = 0;
+    let releaseTool!: () => void;
+    const toolReleased = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    let markToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      markToolStarted = resolve;
+    });
+
+    const run = runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "run tests",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["execShell"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-live-shell" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-shell",
+                  type: "function",
+                  function: {
+                    name: "execShell",
+                    arguments: JSON.stringify({ cmd: "bun test tui/session.test.ts" }),
+                  },
+                }],
+              };
+            }
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => {
+          markToolStarted();
+          await toolReleased;
+          return { content: "1 pass\n", metadata: { exitCode: 0 } };
+        },
+      },
+    });
+
+    await toolStarted;
+    expect(output.text()).toContain("execShell bun test tui/session.test.ts");
+
+    releaseTool();
+    expect(await run).toMatchObject({ exitCode: 0, dialogId: "dialog-live-shell" });
+  });
+
+  test("restores the spinner for the next LLM round after hidden thinking and a tool", async () => {
+    const output = new CaptureOutput();
+    (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
+    let completeCalls = 0;
+    let markSecondRoundStarted!: () => void;
+    const secondRoundStarted = new Promise<void>((resolve) => {
+      markSecondRoundStarted = resolve;
+    });
+    let releaseSecondRound!: () => void;
+    const secondRoundReleased = new Promise<void>((resolve) => {
+      releaseSecondRound = resolve;
+    });
+
+    const run = runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "run tests",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["execShell"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-next-round-spinner" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async (_messages, providerOptions) => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              providerOptions?.onTextDelta?.(
+                "<think>choose a command</think>I'll run the focused test."
+              );
+              return {
+                content: "",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-shell",
+                  type: "function",
+                  function: { name: "execShell", arguments: JSON.stringify({ cmd: "bun test" }) },
+                }],
+              };
+            }
+            markSecondRoundStarted();
+            await secondRoundReleased;
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({
+          content: "1 pass\n",
+          metadata: { exitCode: 0 },
+        }),
+      },
+    });
+
+    await secondRoundStarted;
+    const inFlightOutput = output.text();
+    releaseSecondRound();
+    expect(await run).toMatchObject({
+      exitCode: 0,
+      dialogId: "dialog-next-round-spinner",
+    });
+
+    const completedToolAt = inFlightOutput.lastIndexOf("✓");
+    expect(completedToolAt).toBeGreaterThanOrEqual(0);
+    expect(inFlightOutput.slice(completedToolAt)).toContain("working locally");
+    expect(inFlightOutput).not.toContain("choose a command");
+    expect(inFlightOutput).toContain("frontend > I'll run the focused test.\n");
+  });
+
   test("prints verbose local tool trace when requested", async () => {
     const output = new CaptureOutput();
     let completeCalls = 0;

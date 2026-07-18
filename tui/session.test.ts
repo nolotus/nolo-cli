@@ -94,6 +94,47 @@ describe("applyTuiInputKey", () => {
     });
     expect(applyTuiInputKey("abc", "\u0003").abort).toBe(true);
   });
+
+  test("opens copy view with Ctrl+O without changing the draft", () => {
+    expect(applyTuiInputKey("draft", "\u000f")).toEqual({
+      buffer: "draft",
+      copyView: true,
+    });
+  });
+
+  test("handles forward Delete key and modifier Delete/Backspace variants", () => {
+    // Forward Delete (basic)
+    expect(applyTuiInputKey("abc", "\x1b[3~").buffer).toBe("ab");
+    // Ctrl+Delete
+    expect(applyTuiInputKey("abc", "\x1b[3;5~").buffer).toBe("ab");
+    // Alt+Delete
+    expect(applyTuiInputKey("abc", "\x1b[3;3~").buffer).toBe("ab");
+    // Shift+Delete
+    expect(applyTuiInputKey("abc", "\x1b[3;2~").buffer).toBe("ab");
+    // Shift+Backspace (xterm modifier encoding)
+    expect(applyTuiInputKey("abc", "\x1b[27;2;8~").buffer).toBe("ab");
+    // Ctrl+Backspace (xterm modifier encoding)
+    expect(applyTuiInputKey("abc", "\x1b[27;5;8~").buffer).toBe("ab");
+  });
+
+  test("Delete on empty buffer is a no-op", () => {
+    expect(applyTuiInputKey("", "\x1b[3~").buffer).toBe("");
+    expect(applyTuiInputKey("", "\x1b[3;5~").buffer).toBe("");
+  });
+});
+
+describe("handleTuiInput - copy view", () => {
+  test("keeps /copy as direct copy and routes /copy view separately", () => {
+    const state = createInitialTuiState({});
+    expect(handleTuiInput("/copy", state).action).toEqual({ type: "copy-last" });
+    expect(handleTuiInput("/copy view", state).action).toEqual({ type: "copy-view" });
+  });
+
+  test("rejects unsupported /copy arguments", () => {
+    const result = handleTuiInput("/copy something", createInitialTuiState({}));
+    expect(result.action).toBeUndefined();
+    expect(result.output).toContain("/copy view");
+  });
 });
 
 describe("handleTuiInput - inline image detection in chat path", () => {

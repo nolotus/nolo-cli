@@ -9,9 +9,11 @@ import { listUserRecordsFromServers } from "../globalRecordOperations";
 import {
   isScheduledDialog,
   normalizeDialogRecord,
+  readDialogSnapshot,
   sortDialogs,
   type ListedDialog,
 } from "../dialogCommands";
+import { serializeMessageContent } from "../../chat/messages/messageContent";
 import { clipCompactText } from "../../core/clipCompactText";
 import { t } from "./i18n";
 import { runSelectDialog, type KeyReader, type SelectDialogItem } from "./selectDialog";
@@ -105,6 +107,38 @@ export type DialogPickerResult =
   | { kind: "cancelled" }
   | { kind: "list"; output: string }
   | { kind: "error"; message: string };
+
+export type DialogHistoryTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export async function loadDialogHistory(args: {
+  dialog: ListedDialog;
+  env: EnvLike;
+  fetchImpl?: CliFetchImpl;
+}): Promise<DialogHistoryTurn[]> {
+  const authToken = resolveAuthToken(args.env);
+  if (!authToken) throw new Error(t("historyNoToken"));
+
+  const read = await readDialogSnapshot({
+    authToken,
+    base: resolveServerUrl(args.env),
+    dialogId: args.dialog.id,
+    dialogKey: args.dialog.dbKey,
+    fetchImpl: args.fetchImpl ?? fetch,
+    limit: 0,
+  });
+  const messages = Array.isArray(read.msgs) ? [...read.msgs].reverse() : [];
+  const turns: DialogHistoryTurn[] = [];
+  for (const message of messages) {
+    const role = message?.role ?? message?.authorRole;
+    if (role !== "user" && role !== "assistant") continue;
+    const content = serializeMessageContent(message?.content, "[image]");
+    if (content) turns.push({ role, content });
+  }
+  return turns;
+}
 
 export async function runDialogPicker(args: {
   env?: EnvLike;

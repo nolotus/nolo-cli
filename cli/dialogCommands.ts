@@ -632,7 +632,7 @@ async function readDialogFromLocalDb(dialogKey: string, dialogId: string, limit:
   };
 }
 
-async function readDialogSnapshot(args: {
+export async function readDialogSnapshot(args: {
   authToken: string;
   base: string;
   dialogId: string;

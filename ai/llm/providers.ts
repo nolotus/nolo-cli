@@ -11,9 +11,9 @@ import type { Model } from "./types";
 import type { Agent } from "../../app/types";
 import { fireworksModels } from "./fireworks";
 import {
-  OLLAMA_CLOUD_CHAT_COMPLETIONS_URL,
-  ollamaCloudModels,
-} from "./ollamaCloud";
+  PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
+  platformHostedModels,
+} from "./platformHosted";
 import { mistralModels } from "./mistral";
 import { mimoModels } from "./mimo";
 import {
@@ -24,7 +24,7 @@ import { gmiModels, GMI_CHAT_COMPLETIONS_URL } from "./gmi";
 import { zaiModels } from "./zai";
 import type { ModelPrice } from "./types";
 import {
-  OLLAMA_CLOUD_KIMI_K26_MODEL,
+  PLATFORM_HOSTED_KIMI_K26_MODEL,
   PLATFORM_HOSTED_KIMI_PROVIDER,
 } from "./kimi";
 export { supportedReasoningModels } from "./reasoningModels";
@@ -45,7 +45,7 @@ const MODEL_MAP = {
   deepinfra: deepinfraModels,
   openrouter: openrouterModels,
   fireworks: fireworksModels,
-  nolo: ollamaCloudModels,
+  nolo: platformHostedModels,
   mistral: mistralModels,
   mimo: mimoModels,
   cloudflare: cloudflareModels,
@@ -229,11 +229,11 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
     default: "https://api.fireworks.ai/inference/v1/chat/completions"
   },
   nolo: {
-    default: OLLAMA_CLOUD_CHAT_COMPLETIONS_URL,
+    default: PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
   },
   // Legacy agent records may still store provider=ollama-cloud
   "ollama-cloud": {
-    default: OLLAMA_CLOUD_CHAT_COMPLETIONS_URL,
+    default: PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
   },
   mimo: {
     default: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
@@ -277,7 +277,7 @@ export function getProviderByModelName(modelName: string): Provider | undefined 
 /** 默认模型配置（provider + model 成对出现，避免分散硬编码） */
 export const DEFAULT_MODEL = {
   provider: PLATFORM_HOSTED_KIMI_PROVIDER as Provider,
-  name: OLLAMA_CLOUD_KIMI_K26_MODEL,
+  name: PLATFORM_HOSTED_KIMI_K26_MODEL,
 } as const;
 
 /** 统一获取 ChatCompletion / Responses 等端点 */

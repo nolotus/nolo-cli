@@ -13,7 +13,7 @@ import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
-import { runDialogPicker } from "./dialogPicker";
+import { loadDialogHistory, runDialogPicker } from "./dialogPicker";
 import { mergeAttachedImages, readImagePaths, resolveImageSource, summarizeAttachment } from "./pasteImage";
 import {
   applyTuiInputKey,
@@ -26,9 +26,9 @@ import {
   type TuiState,
 } from "./session";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "../client/terminalStyles";
-import { themeColorSequence } from "./theme";
+import { themeColorSequence, themeText, highlightMarkdown } from "./theme";
 import { toErrorMessage } from "../core/errorMessage";
-import { initCliLocale, t } from "./i18n";
+import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
 
 export type SelfUpdater = (
@@ -48,6 +48,8 @@ type WorkspaceOptions = {
     authToken: string;
     dialogId: string;
   }) => Promise<CompactDialogResult>;
+  dialogPickerRunner?: typeof runDialogPicker;
+  dialogHistoryLoader?: typeof loadDialogHistory;
   selfUpdater?: SelfUpdater;
   spawnRunner?: typeof spawnProcess;
 };
@@ -80,6 +82,8 @@ export type TurnHistory = {
   currentContent: string;
   scrollTop: number;
   followBottom: boolean;
+  hasMoreAbove?: boolean;
+  hasMoreBelow?: boolean;
 };
 
 const MAX_TUI_HISTORY_TURNS = 500;
@@ -129,8 +133,16 @@ export function finalizeCurrentTurn(history: TurnHistory) {
 export const ANSI_ESCAPE_REGEX =
   /\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g;
 
+// OSC 8 hyperlinks: ESC ] 8 ; ; params URI ST ... ESC ] 8 ; ; ST
+// ST (string terminator) is ESC \ or BEL. Match both open and close in one
+// regex so stripAnsi / visibleWidth drop them along with CSI sequences.
+// eslint-disable-next-line no-control-regex
+const OSC_HYPERLINK_REGEX = /\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)\x1b\]8;;(?:\x07|\x1b\\)|\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
 export function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE_REGEX, "");
+  return text
+    .replace(OSC_HYPERLINK_REGEX, "")
+    .replace(ANSI_ESCAPE_REGEX, "");
 }
 
 /** SGR (color/style) sequences only: ESC [ params m. */
@@ -163,6 +175,12 @@ export function applyTerminalOutputToText(existing: string, chunk: string): stri
       if (sgr) {
         text += sgr[0];
         index += sgr[0].length;
+        continue;
+      }
+      // OSC 8 hyperlinks: strip entirely (not a visible style for transcript).
+      const osc = chunk.slice(index).match(/^\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/);
+      if (osc) {
+        index += osc[0].length;
         continue;
       }
       const csi = chunk.slice(index).match(/^\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/);
@@ -240,6 +258,9 @@ export function renderHistory(
       Math.min(history.scrollTop, Math.max(0, totalLines - visibleHeight))
     );
   }
+
+  history.hasMoreAbove = history.scrollTop > 0;
+  history.hasMoreBelow = history.scrollTop + visibleHeight < totalLines;
 
   const visibleStart = history.scrollTop;
   const visibleEnd = Math.min(totalLines, visibleStart + visibleHeight);
@@ -488,6 +509,10 @@ export function displayWidth(str: string): number {
       // 0x2768-0x2775 (ornamental brackets, incl. the ❯ prompt at U+276F)
       // render narrow in terminals; counting them wide drifts the cursor.
       (code >= 0x2600 && code <= 0x27bf && !(code >= 0x2768 && code <= 0x2775)) ||
+      // 0x2B00-0x2BFF (Misc Symbols and Arrows, incl. ⬢ U+2B22 used as the
+      // status-line agent icon) render double-wide in common monospace fonts;
+      // counting ⬢ as width 1 drifts the whole status line right of the icon.
+      (code >= 0x2b00 && code <= 0x2bff) ||
       (code >= 0x2e80 && code <= 0x303e) ||
       (code >= 0x3040 && code <= 0x33bf) ||
       (code >= 0x3400 && code <= 0x4dbf) ||
@@ -499,7 +524,13 @@ export function displayWidth(str: string): number {
       (code >= 0xffe0 && code <= 0xffe6) ||
       (code >= 0x1f300 && code <= 0x1faff) ||
       (code >= 0x20000 && code <= 0x2fffd) ||
-      (code >= 0x30000 && code <= 0x3fffd)
+      (code >= 0x30000 && code <= 0x3fffd) ||
+      // East Asian Ambiguous CJK quotation marks (U+201C/D “ ”, U+2018/9 ‘ ’).
+      // In CJK locale + CJK fonts these render double-wide like 全角 punctuation;
+      // in English fonts they stay width 1. Follow the active locale so Chinese
+      // replies align correctly without breaking English terminal output.
+      (getCliLocale() === "zh" &&
+        (code === 0x201c || code === 0x201d || code === 0x2018 || code === 0x2019))
     ) {
       width += 2;
     } else {
@@ -603,6 +634,13 @@ function tokenizeAnsiLine(line: string): WrapToken[] {
   let index = 0;
   while (index < line.length) {
     if (line[index] === "\x1b") {
+      // OSC 8 hyperlinks (ESC ]8;;...ST) are zero-width style tokens.
+      const osc = line.slice(index).match(/^\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/);
+      if (osc) {
+        tokens.push({ kind: "sgr", value: osc[0], width: 0 });
+        index += osc[0].length;
+        continue;
+      }
       const sgr = SGR_SEQUENCE_REGEX.exec(line.slice(index));
       if (sgr) {
         tokens.push({ kind: "sgr", value: sgr[0], width: 0 });
@@ -729,14 +767,25 @@ function buildHistoryLines(history: TurnHistory, contentWidth: number): string[]
   // Visual rhythm: every turn is separated by a blank line, user turns carry a
   // colored ❯ marker, and [nolo] system notices render dim so questions,
   // answers, and plumbing are distinguishable at a glance.
+  //
+  // Colors use theme tokens (tui/theme.ts) so the history area stays in the
+  // same hue family as the status line — accent for the user marker, chrome
+  // (muted gray) for system notices.
   const styleTurn = (role: TurnRole, content: string): string => {
     if (role === "user") {
-      return styleCliText(`❯ ${content}`, "cyan", colorEnabled);
+      // Color the ❯ marker and the user's text in accent so user turns
+      // visually stand apart from assistant replies (default fg). If the
+      // content already carries ANSI codes the reset after ❯ lets it pass
+      // through faithfully; plain content inherits the accent color.
+      const accent = themeColorSequence("accent");
+      const reset = "\x1b[39m";
+      return `${accent}❯ ${content}${reset}`;
     }
-    if (!colorEnabled) return content;
-    return content
+    const highlighted = highlightMarkdown(content, colorEnabled);
+    if (!colorEnabled) return highlighted;
+    return highlighted
       .split("\n")
-      .map((line) => (line.startsWith("[nolo]") ? dimCliText(line, true) : line))
+      .map((line) => (line.startsWith("[nolo]") ? themeText(line, "chrome", true) : line))
       .join("\n");
   };
   const lines: string[] = [];
@@ -994,7 +1043,7 @@ export function createFixedInput(
     }
 
     const rule = colorEnabled
-      ? `\x1b[2m${themeColorSequence("chrome")}${"─".repeat(cols)}\x1b[0m`
+      ? `\x1b[2m\x1b[90m${"─".repeat(cols)}\x1b[0m`
       : "─".repeat(cols);
     sections.push(rule);
     sections.push(fitAnsiLine(config.getStatusLine(), cols));
@@ -1303,9 +1352,41 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   let buffer = "";
   // Cooperative stop for the in-flight agent turn (Esc while busy).
   let activeTurnAbort: AbortController | null = null;
+  let copyViewExitResolver: (() => void) | null = null;
   const history = createTurnHistory();
   const renderHistoryToOutput = () => {
     renderHistory(output, history, fixedInput.getInputLines());
+  };
+  const readLatestAssistantReply = () => {
+    const lastReply = [...history.turns]
+      .reverse()
+      .find((turn) => turn.role === "assistant")?.content;
+    const text = lastReply ? stripAnsi(lastReply).trim() : "";
+    return text || null;
+  };
+  const openCopyView = async () => {
+    const text = readLatestAssistantReply();
+    if (!text) return false;
+    if (!isInteractiveInput(input)) {
+      output.write(`${text}\n`);
+      return true;
+    }
+
+    fixedInput.pause();
+    try {
+      output.write("\x1b[2J\x1b[H");
+      output.write(`${t("copyViewTitle")}\n\n${text}\n\n${t("copyViewHint")}\n`);
+      await new Promise<void>((resolve) => {
+        copyViewExitResolver = resolve;
+      });
+    } finally {
+      copyViewExitResolver = null;
+      output.write("\x1b[2J\x1b[H");
+      fixedInput.resumeFromDialog();
+      renderHistoryToOutput();
+      fixedInput.repaint(buffer);
+    }
+    return true;
   };
   const runSubmittedLine = async (
     line: string,
@@ -1382,6 +1463,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         state = {
           ...state,
           dialogId: compactResult.dialogId,
+          dialogKey: compactResult.dialogKey,
           dialogLabel: compactResult.dialogId,
         };
       } catch (error: any) {
@@ -1464,11 +1546,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       fixedInput.setMouseEnabled(result.action.enabled);
     }
 
+    if (result.action?.type === "copy-view") {
+      const opened = await openCopyView();
+      if (!opened) emitCommandOutput(t("copyNothing"));
+    }
+
     if (result.action?.type === "copy-last") {
-      const lastReply = [...history.turns]
-        .reverse()
-        .find((turn) => turn.role === "assistant")?.content;
-      const text = lastReply ? stripAnsi(lastReply).trim() : "";
+      const text = readLatestAssistantReply() ?? "";
       if (!text) {
         emitCommandOutput(t("copyNothing"));
       } else {
@@ -1507,7 +1591,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       const interactivePicker = isInteractiveInput(input);
       if (interactivePicker) fixedInput.pause();
       try {
-        const pickResult = await runDialogPicker({
+        const pickResult = await (options.dialogPickerRunner ?? runDialogPicker)({
           env: options.env ?? process.env,
           input: input as NodeJS.ReadStream,
           output: output as NodeJS.WritableStream,
@@ -1517,9 +1601,22 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         });
         if (interactivePicker) fixedInput.resumeFromDialog();
         if (pickResult.kind === "selected") {
+          const loadedTurns = await (
+            options.dialogHistoryLoader ?? loadDialogHistory
+          )({
+            dialog: pickResult.dialog,
+            env: options.env ?? process.env,
+          });
+          history.turns.length = 0;
+          history.turns.push(...loadedTurns.slice(-MAX_TUI_HISTORY_TURNS));
+          history.currentRole = null;
+          history.currentContent = "";
+          history.scrollTop = 0;
+          history.followBottom = true;
           state = {
             ...state,
             dialogId: pickResult.dialog.id,
+            dialogKey: pickResult.dialog.dbKey,
             dialogLabel: pickResult.dialog.id,
             turnTokens: undefined,
           };
@@ -1536,7 +1633,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       } catch (error) {
         if (interactivePicker) fixedInput.resumeFromDialog();
         emitCommandOutput(
-          `[nolo] Dialog picker failed: ${toErrorMessage(error)}`,
+          `[nolo] History failed: ${toErrorMessage(error)}`,
         );
       }
     }
@@ -1645,11 +1742,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         emitCommandOutput(t("turnStopped"));
       }
       if (runResult.dialogId || runResult.turnTokens) {
+        const nextDialogKey = runResult.dialogId
+          ? runResult.dialogId === state.dialogId && state.dialogKey
+            ? state.dialogKey
+            : state.dialogOwnerId
+              ? `dialog-${state.dialogOwnerId}-${runResult.dialogId}`
+              : undefined
+          : state.dialogKey;
         state = {
           ...state,
           ...(runResult.dialogId
             ? {
                 dialogId: runResult.dialogId,
+                dialogKey: nextDialogKey,
                 dialogLabel: runResult.dialogId,
               }
             : {}),
@@ -1681,10 +1786,18 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     let busy = false;
     let done = false;
     fixedInput = createFixedInput(output, {
-      getStatusLine: () =>
-        busy
+      getStatusLine: () => {
+        let base = busy
           ? `${renderStatusLine(state)}${dimCliText(` · ${t("stopHint")}`, resolveCliColorEnabled())}`
-          : renderStatusLine(state),
+          : renderStatusLine(state);
+        if (history.hasMoreAbove || history.hasMoreBelow) {
+          const scrollHints: string[] = [];
+          if (history.hasMoreAbove) scrollHints.push("▲ PgUp");
+          if (history.hasMoreBelow) scrollHints.push("▼ PgDn");
+          base += dimCliText(` · ↕ ${scrollHints.join("/")}`, resolveCliColorEnabled());
+        }
+        return base;
+      },
     });
     fixedInput.init();
     const paintFrame = (draft: string) => {
@@ -1692,7 +1805,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       fixedInput.repaint(draft);
     };
     const onResize = () => {
-      if (done) return;
+      if (done || copyViewExitResolver) return;
       // Re-measure rows/cols, rebuild scroll region + full-width rules, repaint.
       // Keep the user's current draft visible even during an agent turn so
       // typing is not lost on terminal resize.
@@ -1711,6 +1824,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     const handleInputToken = async (sequence: string) => {
       if (done) return;
+      if (copyViewExitResolver) {
+        if (
+          sequence === "\x1b" ||
+          sequence === "\r" ||
+          sequence === "\n" ||
+          sequence === "\u0003"
+        ) {
+          const exitCopyView = copyViewExitResolver;
+          copyViewExitResolver = null;
+          exitCopyView();
+        }
+        return;
+      }
       // While an agent turn is running we let the user keep typing into the
       // docked composer (draft buffer) but ignore submit so a second turn
       // cannot race the in-flight one. The draft is preserved and shown
@@ -1734,6 +1860,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         return;
       }
       const result = applyTuiInputKey(buffer, sequence);
+      if (result.copyView) {
+        if (busyLock) return;
+        busy = true;
+        const opened = await openCopyView();
+        busy = false;
+        if (!opened) {
+          history.followBottom = true;
+          startTurn(history, "assistant");
+          appendToCurrentTurn(history, t("copyNothing"));
+          finalizeCurrentTurn(history);
+          paintFrame(buffer);
+        }
+        return;
+      }
       if (result.abort) {
         fixedInput.disable();
         finish();
@@ -1809,8 +1949,21 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
   try {
     for await (const line of rl) {
-      const shouldExit = await runSubmittedLine(line, (gate) =>
-        waitForActionGate(rl, input, output, gate, spawnRunner)
+      const shouldExit = await runSubmittedLine(
+        line,
+        (gate) => waitForActionGate(rl, input, output, gate, spawnRunner),
+        async (request) => {
+          rl.pause();
+          try {
+            return await runConfirmDialog({
+              request,
+              input: input as any,
+              output: output as any,
+            });
+          } finally {
+            rl.resume();
+          }
+        },
       );
       if (shouldExit) break;
       output.write(`\n${renderStatusLine(state)}\n`);

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   fetchRecentDialogs,
   formatDialogTimestamp,
+  loadDialogHistory,
   renderDialogList,
   toDialogPickerItems,
 } from "./dialogPicker";
@@ -101,6 +102,45 @@ describe("fetchRecentDialogs error messages", () => {
     } finally {
       setCliLocale("en");
     }
+  });
+});
+
+describe("loadDialogHistory", () => {
+  test("reads persisted messages oldest-first and keeps only visible chat turns", async () => {
+    const dialog = makeDialog();
+    const result = await loadDialogHistory({
+      dialog,
+      env: {
+        AUTH_TOKEN: `${Buffer.from(JSON.stringify({ userId: "user" })).toString("base64")}.sig`,
+        NOLO_SERVER: "https://history.test",
+      },
+      fetchImpl: (async (url: string | URL | Request) => {
+        const value = String(url);
+        if (value.endsWith(`/api/v1/db/read/${dialog.dbKey}`)) {
+          return Response.json({ title: dialog.title });
+        }
+        if (value.endsWith("/rpc/getConvMsgs")) {
+          return Response.json([
+            {
+              role: "assistant",
+              content: [
+                { type: "text", text: "persisted answer" },
+                { type: "image_url", image_url: { url: "https://image.test/a.png" } },
+              ],
+            },
+            { role: "tool", content: "tool trace" },
+            { role: "system", content: "system prompt" },
+            { role: "user", content: "persisted question" },
+          ]);
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch,
+    });
+
+    expect(result).toEqual([
+      { role: "user", content: "persisted question" },
+      { role: "assistant", content: "persisted answer\n[image]" },
+    ]);
   });
 });
 

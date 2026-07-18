@@ -38,6 +38,12 @@ export type LocalAgentTurnInput = {
    * 未设置时：若本回合传了 timeoutMs 则继承之；否则不限时（coding loop 常跑很久，禁止默认 120s 杀请求）。
    */
   llmRequestTimeoutMs?: number;
+  /**
+   * 协作式停止（用户按 Esc 等）。在轮次边界和每个工具执行前检查，并与
+   * provider.complete race。provider 没有取消契约，在途请求会被放弃而不是
+   * 真正撤销；中断的回合仍会 saveTurn 留档。
+   */
+  abortSignal?: AbortSignal;
 };
 
 export type LocalAgentTurnResult = AgentRuntimeResult & {
@@ -129,6 +135,20 @@ function emitLoopEvent(input: LocalAgentTurnInput, event: LocalAgentLoopEvent) {
 
 const LLM_REQUEST_TIMEOUT = "LLM_REQUEST_TIMEOUT";
 
+export const LOCAL_TURN_ABORTED_CODE = "LOCAL_TURN_ABORTED";
+
+function buildAbortedError(): Error & { code?: string } {
+  const error = new Error("local agent turn aborted by user") as Error & {
+    code?: string;
+  };
+  error.code = LOCAL_TURN_ABORTED_CODE;
+  return error;
+}
+
+function throwIfAborted(input: LocalAgentTurnInput) {
+  if (input.abortSignal?.aborted) throw buildAbortedError();
+}
+
 function resolveLlmRequestTimeoutMs(input: LocalAgentTurnInput): number | undefined {
   const raw = input.llmRequestTimeoutMs ?? input.timeoutMs;
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
@@ -150,26 +170,38 @@ async function runCompleteWithTimeout(args: {
   const complete = provider.complete(messages, options);
   let ok = false;
 
-  // No default hard timeout: multi-round coding loops regularly exceed minutes.
-  // Only race a timer when the caller explicitly opts in.
-  if (typeof timeoutMs !== "number") {
-    try {
-      const result = await complete;
-      ok = true;
-      return result;
-    } finally {
-      emitLoopEvent(input, { kind: "llm-end", round, atMs: Date.now(), ok });
-    }
+  const signal = input.abortSignal;
+  let abortListener: (() => void) | undefined;
+  const racers: Promise<never>[] = [];
+  if (signal) {
+    racers.push(
+      new Promise<never>((_resolve, reject) => {
+        abortListener = () => reject(buildAbortedError());
+        if (signal.aborted) {
+          abortListener();
+          return;
+        }
+        signal.addEventListener("abort", abortListener, { once: true });
+      }),
+    );
   }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutReject = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`__llm_timeout__:${timeoutMs}`));
-    }, timeoutMs);
-  });
+  // No default hard timeout: multi-round coding loops regularly exceed minutes.
+  // Only race a timer when the caller explicitly opts in.
+  if (typeof timeoutMs === "number") {
+    racers.push(
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`__llm_timeout__:${timeoutMs}`));
+        }, timeoutMs);
+      }),
+    );
+  }
+
   try {
-    const result = await Promise.race([complete, timeoutReject]);
+    const result =
+      racers.length === 0 ? await complete : await Promise.race([complete, ...racers]);
     ok = true;
     return result;
   } catch (error) {
@@ -185,6 +217,7 @@ async function runCompleteWithTimeout(args: {
     throw timeoutError;
   } finally {
     if (timer) clearTimeout(timer);
+    if (signal && abortListener) signal.removeEventListener("abort", abortListener);
     emitLoopEvent(input, { kind: "llm-end", round, atMs: Date.now(), ok });
   }
 }
@@ -406,6 +439,7 @@ export async function runLocalAgentTurn(
   let round = 0;
   try {
     while (true) {
+      throwIfAborted(input);
       result = await runCompleteWithTimeout({
         provider,
         messages: prepareMessagesForProviderCall(messages),
@@ -428,6 +462,7 @@ export async function runLocalAgentTurn(
         tool_calls: toolCalls,
       });
       for (const toolCall of toolCalls) {
+        throwIfAborted(input);
         const toolName = toolCall.function.name;
         let toolResult;
         const startedAt = Date.now();

@@ -25,7 +25,7 @@ import {
   wrapTextToLines,
   wrapTranscriptLine,
 } from "./readlineWorkspace";
-import { t } from "./i18n";
+import { getCliLocale, setCliLocale, t } from "./i18n";
 
 const TERM_ROWS = 24;
 const TERM_COLS = 120;
@@ -71,6 +71,35 @@ describe("displayWidth", () => {
   test("counts the ❯ prompt ornament as width 1", () => {
     expect(displayWidth("❯")).toBe(1);
     expect(displayWidth("❯ ")).toBe(2);
+  });
+
+  test("counts the 🏔 status-line icon as width 2", () => {
+    expect(displayWidth("🏔")).toBe(2);
+    expect(displayWidth("🏔 minimax-m3")).toBe(13); // 2 + " minimax-m3" (11)
+  });
+
+  test("counts CJK quotation marks as width 2 in zh locale", () => {
+    const prev = getCliLocale();
+    setCliLocale("zh");
+    try {
+      expect(displayWidth("“”")).toBe(4);
+      expect(displayWidth("‘’")).toBe(4);
+      // mixed CJK + ASCII: “你好”a => 2+2+2+2+1 = 9
+      expect(displayWidth("“你好”a")).toBe(9);
+    } finally {
+      setCliLocale(prev);
+    }
+  });
+
+  test("counts CJK quotation marks as width 1 in en locale", () => {
+    const prev = getCliLocale();
+    setCliLocale("en");
+    try {
+      expect(displayWidth("“”")).toBe(2);
+      expect(displayWidth("‘’")).toBe(2);
+    } finally {
+      setCliLocale(prev);
+    }
   });
 });
 
@@ -226,7 +255,7 @@ describe("createFixedInput", () => {
   test("truncates a long status line instead of wrapping and breaking the composer", () => {
     const tty = mockTty(TERM_ROWS, 40);
     const longStatus =
-      "nolo > ⬢ minimax-m3 · local > 📁 ~/very/long/path/to/bun-nolo > ⑂ main *99 > ◫ 0.4%/1M";
+      "nolo · 🏔 minimax-m3 · local · 📁 ~/very/long/path/to/bun-nolo · ⑂ main *99 · ◫ 0.4%/1M";
     const input = createFixedInput(tty.output, {
       getStatusLine: () => longStatus,
     });
@@ -275,6 +304,17 @@ describe("stripAnsi", () => {
     expect(stripAnsi("a\x1b[?2004hb\x1b[>0cc")).toBe("abc");
     // mouse tracking private mode; final byte is `h`, trailing `y` is plain text
     expect(stripAnsi("x\x1b[?1000;1006;1015hy")).toBe("xy");
+  });
+
+  test("strips OSC 8 hyperlink sequences", () => {
+    // Open + close hyperlink: ESC ]8;;url ESC \ text ESC ]8;; ESC \
+    const link = "\x1b]8;;https://nolo.chat\x1b\\docs (https://nolo.chat)\x1b]8;;\x1b\\";
+    expect(stripAnsi(link)).toBe("docs (https://nolo.chat)");
+    // visibleWidth also ignores OSC 8
+    expect(visibleWidth(link)).toBe("docs (https://nolo.chat)".length);
+    // Link embedded in a styled line
+    const mixed = `\x1b[1mSee \x1b]8;;https://x\x1b\\x (https://x)\x1b]8;;\x1b\\\x1b[0m`;
+    expect(stripAnsi(mixed)).toBe("See x (https://x)");
   });
 });
 
@@ -420,7 +460,8 @@ describe("renderHistory", () => {
     expect(stdout).toContain("\x1b[1;1H");
     expect(stdout).toContain("\x1b[2K");
     expect(stdout).not.toContain("\x1b[J");
-    expect(stdout).toContain("❯ hello");
+    expect(stdout).toContain("❯"); // user marker (theme-colored)
+    expect(stdout).toContain("hello"); // user content
     expect(stdout).toContain("hi there");
     expect(stdout).toContain("\x1b[22;1H");
   });
@@ -498,6 +539,12 @@ describe("createHistoryOutputStream", () => {
     expect(stripAnsi(history.currentContent)).toBe("⠸ minimax-m3 -> working locally (2s)");
     expect(history.currentContent.match(/working locally/g)?.length).toBe(1);
 
+    stream.write("\r\x1b[36m⠋\x1b[39m execShell bun test tui/session.test.ts (0s)");
+    expect(stripAnsi(history.currentContent)).toBe(
+      "⠋ execShell bun test tui/session.test.ts (0s)"
+    );
+    expect(history.currentContent).not.toContain("working locally");
+
     stream.write("\r\x1b[K\x1b[?25h");
     expect(history.currentContent).toBe("");
 
@@ -547,6 +594,17 @@ describe("splitRawInput", () => {
     expect(splitRawInput("\x1b[13;2~")).toEqual(["\x1b[13;2~"]);
     expect(splitRawInput("\x1b[27;2;13~")).toEqual(["\x1b[27;2;13~"]);
     expect(splitRawInput("\x1b\r")).toEqual(["\x1b\r"]);
+  });
+
+  test("keeps modifier Delete / Backspace CSI sequences intact as single tokens", () => {
+    // Forward Delete variants — must arrive as one token so applyTuiInputKey
+    // can match them, not split into ESC + leftover.
+    expect(splitRawInput("\x1b[3~")).toEqual(["\x1b[3~"]);
+    expect(splitRawInput("\x1b[3;5~")).toEqual(["\x1b[3;5~"]);
+    expect(splitRawInput("\x1b[3;3~")).toEqual(["\x1b[3;3~"]);
+    // Backspace modifier variants
+    expect(splitRawInput("\x1b[27;2;8~")).toEqual(["\x1b[27;2;8~"]);
+    expect(splitRawInput("\x1b[27;5;8~")).toEqual(["\x1b[27;5;8~"]);
   });
 });
 

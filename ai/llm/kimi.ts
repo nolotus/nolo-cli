@@ -5,12 +5,18 @@
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 
 /** Platform-hosted Kimi models (catalog + routing). Upstream is private. */
-export const OLLAMA_CLOUD_KIMI_K26_MODEL = "kimi-k2.6";
-export const OLLAMA_CLOUD_KIMI_K27_CODE_MODEL = "kimi-k2.7-code";
-/** User-facing / catalog provider id — never show "ollama" to end users. */
+export const PLATFORM_HOSTED_KIMI_K26_MODEL = "kimi-k2.6";
+export const PLATFORM_HOSTED_KIMI_K27_CODE_MODEL = "kimi-k2.7-code";
+/** @deprecated Kept for backward compatibility. */
+export const OLLAMA_CLOUD_KIMI_K26_MODEL = PLATFORM_HOSTED_KIMI_K26_MODEL;
+/** @deprecated Kept for backward compatibility. */
+export const OLLAMA_CLOUD_KIMI_K27_CODE_MODEL = PLATFORM_HOSTED_KIMI_K27_CODE_MODEL;
+/** User-facing / catalog provider id. */
 export const PLATFORM_HOSTED_KIMI_PROVIDER = "nolo";
 /** @deprecated Use PLATFORM_HOSTED_KIMI_PROVIDER ("nolo"). Kept as alias for imports. */
-export const OLLAMA_CLOUD_PROVIDER = PLATFORM_HOSTED_KIMI_PROVIDER;
+export const PLATFORM_HOSTED_PROVIDER = PLATFORM_HOSTED_KIMI_PROVIDER;
+/** @deprecated Kept for backward compatibility. */
+export const OLLAMA_CLOUD_PROVIDER = PLATFORM_HOSTED_PROVIDER;
 /** Legacy agent records may still store this provider string. */
 export const LEGACY_OLLAMA_CLOUD_PROVIDER = "ollama-cloud";
 
@@ -31,6 +37,7 @@ export const isNoloHostedProvider = (provider?: string | null): boolean => {
   const normalized = asTrimmedLowercaseString(provider);
   return (
     normalized === PLATFORM_HOSTED_KIMI_PROVIDER ||
+    normalized === "nolo-hosted" ||
     normalized === LEGACY_OLLAMA_CLOUD_PROVIDER
   );
 };
@@ -113,3 +120,4 @@ export const shouldHideKimiAliasFromPricing = (
   provider?: string | null,
   model?: string | null
 ): boolean => provider === "fireworks" && model === FIREWORKS_KIMI_LATEST_MODEL;
+

@@ -15,6 +15,7 @@ export function buildLocalDialogWritePlan(args: {
   createId: () => string;
   existingDialog?: LocalDialogRecord | null;
   cwd?: string;
+  titleOverride?: string;
 }) {
   return buildAgentRuntimeDialogWritePlan({
     input: args.input,
@@ -26,5 +27,6 @@ export function buildLocalDialogWritePlan(args: {
     runtimeMetadata: {
       ...(args.cwd ? { worktreePath: args.cwd } : {}),
     },
+    ...(args.titleOverride ? { titleOverride: args.titleOverride } : {}),
   });
 }

@@ -261,7 +261,7 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   // Do not pause the stream here: the key reader listens via 'data' events,
   // which an explicit pause() would silence.
   if (input.isTTY && !wasRaw) {
-    input.setRawMode(true);
+    input.setRawMode?.(true);
   }
   paint();
 
@@ -293,7 +293,7 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
     readKey.dispose?.();
     if (input.isTTY) {
       drainInputBuffer(input);
-      if (!wasRaw) input.setRawMode(false);
+      if (!wasRaw) input.setRawMode?.(false);
       if (bottomAnchored) {
         clearAnchoredLines(output, bottomRow, renderedLineCount);
       } else {

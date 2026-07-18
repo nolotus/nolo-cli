@@ -48,6 +48,13 @@ function clip(value: string, max = 72) {
   return clipCompactText(value, max, "…");
 }
 
+export function formatActiveToolLabel(
+  event: Pick<LocalAgentToolEvent, "toolName" | "argumentsPreview">
+) {
+  const toolName = event.toolName || "tool";
+  const args = clip(event.argumentsPreview ?? "");
+  return args ? `${toolName} ${args}` : toolName;
+}
 
 function compactResultHint(event: LocalAgentToolEvent, toolName: string) {
   const gate = readActionGate(event.metadata?.actionGate);
@@ -123,8 +130,10 @@ function formatCompactToolLine(
   colorEnabled: boolean
 ) {
   const toolName = event.toolName || pending?.toolName || "tool";
-  const args = clip(event.argumentsPreview || pending?.argumentsPreview || "");
-  const label = args ? `${toolName} ${args}` : toolName;
+  const label = formatActiveToolLabel({
+    toolName,
+    argumentsPreview: event.argumentsPreview || pending?.argumentsPreview,
+  });
   const ms = typeof event.elapsedMs === "number" ? `${event.elapsedMs}ms` : "";
 
   if (event.type === "tool-error") {

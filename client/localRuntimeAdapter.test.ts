@@ -2927,7 +2927,7 @@ describe("CLI local runtime adapter", () => {
           .find((message: any) => message.role === "tool");
         if (lastToolMessage) {
           expect(String(lastToolMessage.content)).toContain(
-            "destructive_action_requires_confirmation",
+            "destructive shell command blocked",
           );
           return Response.json({
             choices: [{ message: { content: "guard ok" } }],

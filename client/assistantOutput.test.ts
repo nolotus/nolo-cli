@@ -49,6 +49,56 @@ describe("assistantOutput", () => {
     expect(convertMarkdownTablesForTerminal("a | b")).toBe("a | b");
   });
 
+  test("normalizes unordered list markers to bullet", () => {
+    expect(convertMarkdownTablesForTerminal("- first\n* second\n+ third")).toBe(
+      "• first\n• second\n• third"
+    );
+  });
+
+  test("preserves ordered list numbers", () => {
+    expect(convertMarkdownTablesForTerminal("1. first\n2. second\n3. third")).toBe(
+      "1. first\n2. second\n3. third"
+    );
+  });
+
+  test("preserves nested list indentation", () => {
+    const nested = [
+      "- top",
+      "  - child",
+      "    - grandchild",
+      "1. ordered top",
+      "  2. ordered child",
+    ].join("\n");
+    expect(convertMarkdownTablesForTerminal(nested)).toBe(
+      [
+        "• top",
+        "  • child",
+        "    • grandchild",
+        "1. ordered top",
+        "  2. ordered child",
+      ].join("\n")
+    );
+  });
+
+  test("leaves non-list lines untouched", () => {
+    expect(convertMarkdownTablesForTerminal("just plain text")).toBe("just plain text");
+    expect(convertMarkdownTablesForTerminal("- not a list-dash in mid")).toBe(
+      "• not a list-dash in mid"
+    );
+    // Lines with dash not at start are not list items
+    expect(convertMarkdownTablesForTerminal("text - with dash")).toBe("text - with dash");
+  });
+
+  test("converts task list checkboxes to symbols", () => {
+    expect(convertMarkdownTablesForTerminal("- [ ] undone")).toBe("☐ undone");
+    expect(convertMarkdownTablesForTerminal("- [x] done")).toBe("☑ done");
+    expect(convertMarkdownTablesForTerminal("* [X] capital done")).toBe("☑ capital done");
+    // Nested task list keeps indentation
+    expect(convertMarkdownTablesForTerminal("  - [ ] nested")).toBe("  ☐ nested");
+    // Task list takes priority over unordered marker normalization
+    expect(convertMarkdownTablesForTerminal("- [ ] a\n- [x] b")).toBe("☐ a\n☑ b");
+  });
+
   test("leaves fenced code blocks untouched", () => {
     const text = [
       "```ts",
@@ -65,9 +115,27 @@ describe("assistantOutput", () => {
 
   test("rich mode styles inline code spans", () => {
     const rich = formatAssistantDisplay("run `nolo update` now", "rich");
-    expect(rich).toContain("\x1b[36mnolo update\x1b[0m");
+    // Info token wraps inline code with the theme color (truecolor in
+    // environments that support it, ANSI-16 fallback otherwise).
+    expect(rich).toMatch(/nolo update/);
+    expect(rich).toContain("\x1b[0m");
     expect(formatAssistantDisplay("run `nolo update` now", "plain")).toBe(
       "run `nolo update` now"
+    );
+  });
+
+  test("rich mode renders markdown links as OSC 8 clickable hyperlinks", () => {
+    const rich = formatAssistantDisplay("See [docs](https://nolo.chat/docs) here", "rich");
+    // OSC 8 escape wraps the visible text — Cmd/Ctrl-Click opens the URL in
+    // supporting terminals (iTerm2, Ghostty, WezTerm, etc.).
+    expect(rich).toContain("\x1b]8;;https://nolo.chat/docs\x1b\\");
+    expect(rich).toContain("docs (https://nolo.chat/docs)");
+    expect(rich).toContain("\x1b]8;;\x1b\\");
+  });
+
+  test("plain mode leaves links as raw markdown", () => {
+    expect(formatAssistantDisplay("See [docs](https://nolo.chat/docs) here", "plain")).toBe(
+      "See [docs](https://nolo.chat/docs) here"
     );
   });
 

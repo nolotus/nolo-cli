@@ -96,6 +96,7 @@ let resolveLocalWorkspaceExecutorOptionsFromPolicy: any;
 let resolveRequestedRuntimeToolNames: any;
 let resolveRuntimeToolSurfaceForAgent: any;
 let shouldUsePlatformChatProvider: any;
+let canUsePlatformChatProvider: any;
 let fetchAntigravityCloudCodeCompletion: any;
 let isAntigravityOAuthAgent: any;
 let fetchAnthropicMessagesCompletion: any;
@@ -108,6 +109,7 @@ let createFileCredentialBroker: any;
 let createOAuthApiKeyRefResolver: any;
 let buildLocalDialogWritePlan: any;
 let localDialogMessageRecordToRuntimeMessage: any;
+let generateLocalDialogTitle: any;
 let buildLocalAgentLookupKeys: any;
 let shouldReadAgentKeyRemotely: any;
 let createCliHybridRecordStore: any;
@@ -164,6 +166,8 @@ function ensureHeavyCliLocalRuntimeModules() {
     agentRuntimeLocal.resolveRuntimeToolSurfaceForAgent;
   shouldUsePlatformChatProvider =
     agentRuntimeLocal.shouldUsePlatformChatProvider;
+  canUsePlatformChatProvider =
+    agentRuntimeLocal.canUsePlatformChatProvider;
 
   ({ fetchAntigravityCloudCodeCompletion } = requireFromAdapter(
     "../../agent-runtime/antigravityCloudCodeProvider.ts",
@@ -194,6 +198,9 @@ function ensureHeavyCliLocalRuntimeModules() {
   ));
   ({ buildLocalDialogWritePlan, localDialogMessageRecordToRuntimeMessage } =
     requireFromAdapter("./localDialogRecords.ts"));
+  ({ generateLocalDialogTitle } = requireFromAdapter(
+    "../../agent-runtime/dialogTitleLlm.ts",
+  ));
   ({ buildLocalAgentLookupKeys, shouldReadAgentKeyRemotely } =
     requireFromAdapter("./localAgentRecords.ts"));
   ({ createCliHybridRecordStore } = requireFromAdapter(
@@ -902,6 +909,20 @@ function resolveRuntimeServerUrl(env: EnvLike) {
 
 function resolveRuntimeAuthToken(env: EnvLike) {
   return env.AUTH_TOKEN || env.AUTH || env.NOLO_MACHINE_API_KEY || "";
+}
+
+/** Extract plain text from the last user message for fallback dialog titles. */
+function extractLastUserText(messages: AgentRuntimeChatMessage[]): string {
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  if (!lastUser) return "";
+  if (typeof lastUser.content === "string") return lastUser.content;
+  if (Array.isArray(lastUser.content)) {
+    return lastUser.content
+      .filter((part: any) => part?.type === "text")
+      .map((part: any) => part.text ?? "")
+      .join(" ");
+  }
+  return "";
 }
 
 function localTurnHasSubjectRefs(input: AgentRuntimeSaveTurnInput) {
@@ -1697,6 +1718,68 @@ async function readDialogMessages(args: {
   return messages;
 }
 
+/**
+ * Build a title generator closure for CLI-local dialog title generation.
+ * Uses the Nolo platform chat proxy (same route as agent inference) with
+ * the builtin title LLM config (deepseek-v4-flash).
+ *
+ * Returns null when platform chat provider is unavailable (no AUTH_TOKEN).
+ */
+function createLocalDialogTitleGenerator(
+  deps: CliLocalRuntimeAdapterDeps,
+  ctx: {
+    apiKeyRefResolver: any;
+    credentialBroker: any;
+    loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
+  },
+): ((input: {
+  messages: AgentRuntimeChatMessage[];
+  fallbackTitle: string;
+}) => Promise<string | null>) | null {
+  // Defer until first call — modules are loaded by ensureHeavyCliLocalRuntimeModules().
+  return async (input) => {
+    if (!canUsePlatformChatProvider(deps.env as any)) {
+      return null;
+    }
+    const result = await generateLocalDialogTitle({
+      messages: input.messages,
+      env: deps.env,
+      fetchImpl: async (url: RequestInfo | URL, init?: RequestInit) =>
+        fetchWithTransientRetry(
+          deps.fetchImpl ?? fetch,
+          url as FetchInput,
+          init as FetchInit | undefined,
+          {
+            sleep: deps.sleep,
+            loopbackRequest: ctx.loopbackRequest,
+          },
+        ),
+      resolveProviderConfig: async (args: { agentConfig: any; env: any }) =>
+        resolvePlatformChatProviderConfig({
+          agentConfig: args.agentConfig,
+          env: args.env,
+          apiKeyRefResolver: ctx.apiKeyRefResolver,
+          credentialBroker: ctx.credentialBroker,
+        }),
+      buildRequest: (args: { providerConfig: any; messages: any; stream?: boolean }) =>
+        buildPlatformChatCompletionRequest({
+          providerConfig: args.providerConfig,
+          messages: args.messages,
+          stream: false,
+        }),
+      parseResponse: (args: { providerConfig: any; data: any }) =>
+        parsePlatformChatCompletionResponse({
+          providerConfig: args.providerConfig,
+          data: args.data,
+          trace: [],
+        }),
+      fallbackTitle: input.fallbackTitle,
+      timeoutMs: 15_000,
+    });
+    return result.source === "llm" ? result.title : null;
+  };
+}
+
 async function writeDialog(args: {
   store: HybridRecordStore;
   input: AgentRuntimeSaveTurnInput;
@@ -1707,12 +1790,46 @@ async function writeDialog(args: {
   fetchImpl: CliFetchImpl;
   output?: { write(chunk: string): unknown };
   cwd?: string;
+  /**
+   * Optional async title generator for new dialogs.
+   * Only invoked when: (1) user is logged in, (2) existing dialog has no title.
+   * Returns a title string, or null/empty to use the built-in fallback.
+   */
+  titleGenerator?: ((input: {
+    messages: AgentRuntimeChatMessage[];
+    fallbackTitle: string;
+  }) => Promise<string | null>) | null;
 }) {
   let existingDialog: any = null;
   if (args.input.continueDialogId) {
     const dialogKey = `dialog-${args.userId}-${args.input.continueDialogId}`;
     existingDialog = await args.store.read(dialogKey);
   }
+
+  // Login gate: only logged-in users get LLM-generated titles.
+  // Unauthenticated runs fall back to the built-in resolveDialogTitle.
+  const authToken = resolveRuntimeAuthToken(args.env);
+  const isLoggedIn = Boolean(authToken && parseUserIdFromAuthToken(authToken));
+  const hasExistingTitle =
+    typeof existingDialog?.title === "string" && existingDialog.title.trim();
+
+  let titleOverride: string | undefined;
+  if (isLoggedIn && !hasExistingTitle && args.titleGenerator) {
+    const fallbackTitle = extractLastUserText(args.input.messages).trim().slice(0, 80) || "Local agent run";
+    try {
+      const generated = await args.titleGenerator({
+        messages: args.input.messages,
+        fallbackTitle,
+      });
+      if (generated) {
+        titleOverride = generated;
+      }
+    } catch {
+      // Title generation failure must never block dialog persistence.
+      // Falls back to built-in resolveDialogTitle inside buildLocalDialogWritePlan.
+    }
+  }
+
   const plan = buildLocalDialogWritePlan({
     input: args.input,
     userId: args.userId,
@@ -1720,6 +1837,7 @@ async function writeDialog(args: {
     createId: args.createId,
     existingDialog,
     cwd: args.cwd,
+    ...(titleOverride ? { titleOverride } : {}),
   });
   await args.store.batch(plan.ops);
   const shouldSyncRemoteEvidence = localTurnHasSubjectRefs(args.input);
@@ -1867,6 +1985,11 @@ export function createCliLocalRuntimeAdapter(
         fetchImpl,
         output: deps.output,
         cwd: workspaceRoot,
+        titleGenerator: createLocalDialogTitleGenerator(deps, {
+          apiKeyRefResolver: createOAuthApiKeyRefResolver(),
+          credentialBroker: createFileCredentialBroker(),
+          loopbackRequest,
+        }),
       }),
     resolveProvider: async (agentConfig) => {
       if (isCliProviderAgent(agentConfig)) {
@@ -2339,10 +2462,14 @@ export function createCliLocalRuntimeAdapter(
           (error as { permissionRequest?: unknown }).permissionRequest;
         if (
           code === "destructive_action_requires_confirmation" &&
-          deps.confirmDestructiveAction &&
           request &&
           typeof request === "object"
         ) {
+          if (!deps.confirmDestructiveAction) {
+            throw new Error(
+              "destructive shell command blocked: no confirmation callback is wired in this runtime mode; run in an interactive TTY to get a confirm prompt",
+            );
+          }
           const confirmed = await deps.confirmDestructiveAction(
             request as PermissionRequest,
           );

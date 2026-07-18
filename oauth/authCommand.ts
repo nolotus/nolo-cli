@@ -4,6 +4,7 @@ import {
 } from "./flows/cloudflare";
 import { runAntigravityOAuthLogin } from "./flows/antigravity";
 import { runXaiOAuthDeviceCode, runXaiOAuthLogin } from "./flows/xai";
+import { runAnthropicOAuthLogin } from "./flows/anthropic";
 
 import { toErrorMessage } from "../core/errorMessage";
 import type { CliRuntimeContext } from "../cliCommandTypes";
@@ -109,6 +110,25 @@ Agents can reference the stored token by setting apiKeyRef: "antigravity" with
 apiSource: "custom" and provider: "google-antigravity".
 `;
 
+const CLAUDE_HELP_TEXT = `Authorize nolo-cli to call Anthropic Claude with your Claude Pro/Max subscription.
+
+Usage:
+  nolo auth claude [--browser] [--no-browser] [--sync-to-server] [--help]
+
+The default flow returns to a loopback callback on localhost:54545. With
+--no-browser, paste the final callback URL or authorization code into the
+terminal. Tokens are stored in ~/.nolo/credentials/claude.json.
+
+Options:
+  --browser         Open the Anthropic authorization page (default).
+  --no-browser      Print the authorization URL without opening a browser.
+${SYNC_HELP_LINE}
+  --help, -h        Show this help and exit.
+
+Agents can reference the stored token with apiKeyRef: "claude", provider:
+"anthropic", and model such as "claude-sonnet-5".
+`;
+
 const CLOUDFLARE_HELP_TEXT = `Authorize nolo-cli to manage Cloudflare resources on your behalf.
 
 Usage:
@@ -152,6 +172,7 @@ const HELP_BY_PROVIDER: Record<OAuthProvider, string> = {
   chatgpt: CHATGPT_HELP_TEXT,
   xai: XAI_HELP_TEXT,
   antigravity: ANTIGRAVITY_HELP_TEXT,
+  claude: CLAUDE_HELP_TEXT,
   cloudflare: CLOUDFLARE_HELP_TEXT,
 };
 
@@ -160,6 +181,7 @@ function isOAuthProvider(value: string): value is OAuthProvider {
     value === "chatgpt" ||
     value === "xai" ||
     value === "antigravity" ||
+    value === "claude" ||
     value === "cloudflare"
   );
 }
@@ -312,6 +334,8 @@ export async function runAuthProviderCommand(
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
     ...(deps.now ? { now: deps.now } : {}),
+    ...(deps.readLine ? { readLine: deps.readLine } : {}),
+    ...(noBrowser ? { manualCode: true } : {}),
     openBrowser,
     output,
     error,
@@ -347,6 +371,8 @@ export async function runAuthProviderCommand(
       credential = useDeviceCode
         ? await runXaiOAuthDeviceCode(flowDeps)
         : await runXaiOAuthLogin(flowDeps);
+    } else if (provider === "claude") {
+      credential = await runAnthropicOAuthLogin(flowDeps);
     } else if (provider === "cloudflare") {
       credential = await runCloudflareOAuthLogin({
         ...flowDeps,
@@ -435,4 +461,12 @@ export async function runAuthCloudflareCommand(
   deps?: AuthProviderCommandDeps
 ): Promise<number> {
   return runAuthProviderCommand("cloudflare", args, ctx, deps);
+}
+
+export async function runAuthClaudeCommand(
+  args: string[],
+  ctx?: CliRuntimeContext,
+  deps?: AuthProviderCommandDeps
+): Promise<number> {
+  return runAuthProviderCommand("claude", args, ctx, deps);
 }

@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import type { OAuthCallbackResult } from "./types";
 
@@ -7,10 +8,14 @@ export type CallbackServerOptions = {
   hostname?: string;
   timeoutMs?: number;
   now?: () => number;
+  /** Retry with an OS-assigned loopback port when the preferred port is busy. */
+  fallbackToRandomPort?: boolean;
 };
 
 export type CallbackServerHandle = {
   server: Server;
+  /** Actual bound TCP port (important when fallbackToRandomPort is enabled). */
+  port: number;
   waitForCode(): Promise<OAuthCallbackResult>;
   close(): Promise<void>;
 };
@@ -37,7 +42,9 @@ const ERROR_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Authorization error</title></head>
 <body><h2>Authorization error</h2><p>No authorization code was received. Please try again.</p></body></html>`;
 
-export function startCallbackServer(options: CallbackServerOptions): Promise<CallbackServerHandle> {
+function startCallbackServerOnPort(
+  options: CallbackServerOptions,
+): Promise<CallbackServerHandle> {
   const hostname = options.hostname ?? "localhost";
   const timeoutMs = options.timeoutMs ?? DEFAULT_CALLBACK_TIMEOUT_MS;
   const now = options.now ?? Date.now;
@@ -48,6 +55,7 @@ export function startCallbackServer(options: CallbackServerOptions): Promise<Cal
     let resultResolve: ((value: OAuthCallbackResult) => void) | null = null;
     let resultReject: ((error: Error) => void) | null = null;
     let settled = false;
+    let listening = false;
 
     const codePromise = new Promise<OAuthCallbackResult>((res, rej) => {
       resultResolve = res;
@@ -91,13 +99,27 @@ export function startCallbackServer(options: CallbackServerOptions): Promise<Cal
       settled = true;
       clearTimeout(timeoutTimer);
       server.close();
-      resultReject?.(err);
-      reject(err);
+      if (listening) {
+        resultReject?.(err);
+      } else {
+        reject(err);
+      }
     });
 
     server.listen(options.port, hostname, () => {
+      listening = true;
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        const err = new Error("OAuth callback server did not bind a TCP port.");
+        settled = true;
+        clearTimeout(timeoutTimer);
+        server.close();
+        reject(err);
+        return;
+      }
       resolve({
         server,
+        port: (address as AddressInfo).port,
         waitForCode: () => codePromise,
         close: () => {
           clearTimeout(timeoutTimer);
@@ -107,4 +129,30 @@ export function startCallbackServer(options: CallbackServerOptions): Promise<Cal
       });
     });
   });
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "EADDRINUSE"
+  );
+}
+
+export async function startCallbackServer(
+  options: CallbackServerOptions,
+): Promise<CallbackServerHandle> {
+  try {
+    return await startCallbackServerOnPort(options);
+  } catch (error) {
+    if (
+      !options.fallbackToRandomPort ||
+      options.port === 0 ||
+      !isAddressInUse(error)
+    ) {
+      throw error;
+    }
+    return startCallbackServerOnPort({ ...options, port: 0 });
+  }
 }

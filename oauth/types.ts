@@ -38,6 +38,10 @@ export type OAuthFlowDeps = {
   now?: () => number;
   output?: Pick<Console, "log">;
   error?: Pick<Console, "error">;
+  /** Interactive authorization-code input (used by providers without loopback redirects). */
+  readLine?: (prompt: string) => Promise<string>;
+  /** Skip loopback waiting and accept a pasted callback URL/code. */
+  manualCode?: boolean;
 };
 
 export type OAuthFlowController = {

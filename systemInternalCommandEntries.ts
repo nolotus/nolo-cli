@@ -25,6 +25,10 @@ export function getSystemInternalCommandEntries(renderHelpText: () => string): C
       const { runAuthAntigravityCommand } = await import("./oauth/authCommand");
       return runAuthAntigravityCommand(args);
     }),
+    createArgsCommand(["auth", "claude"], "Authorize Claude Pro/Max OAuth", async (args) => {
+      const { runAuthClaudeCommand } = await import("./oauth/authCommand");
+      return runAuthClaudeCommand(args);
+    }),
     createArgsCommand(["login"], "Log in to Nolo", async (args) => {
       const { runLoginCommand } = await import("./authCommands");
       return runLoginCommand(args);

@@ -12,6 +12,7 @@ import {
   stripImageTokens,
 } from "./session";
 import { detectImagePaths } from "./pasteImage";
+import { getActiveThemeName, getActiveDensity } from "./theme";
 
 // 1x1 transparent PNG
 const TINY_PNG_BASE64 =
@@ -367,5 +368,41 @@ describe("handleTuiInput - path-vs-slash disambiguation", () => {
       expect(result.action.message).toBe("这个图是啥");
     }
     expect(result.output).toContain("found image");
+  });
+
+  test("prefixing input with ! returns shell-command action", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("!git status", state);
+    expect(result.action).toEqual({
+      type: "shell-command",
+      command: "git status",
+    });
+  });
+
+  test("handles /theme command to list or switch themes", () => {
+    const state = createInitialTuiState({});
+    const listResult = handleTuiInput("/theme", state);
+    expect(listResult.output).toContain("Current theme: trail");
+    expect(listResult.output).toContain("Available themes: trail, catppuccin, wave, iris, rose, mono");
+
+    const switchResult = handleTuiInput("/theme wave", state);
+    expect(switchResult.output).toContain("Switched to theme: wave");
+    expect(getActiveThemeName()).toBe("wave");
+
+    const invalidResult = handleTuiInput("/theme unknown-theme", state);
+    expect(invalidResult.output).toContain("Unknown theme: unknown-theme");
+  });
+
+  test("handles /density command to view or switch density", () => {
+    const state = createInitialTuiState({});
+    const viewResult = handleTuiInput("/density", state);
+    expect(viewResult.output).toContain("Current density: spacious");
+
+    const switchResult = handleTuiInput("/density cozy", state);
+    expect(switchResult.output).toContain("Switched to layout density: cozy");
+    expect(getActiveDensity()).toBe("cozy");
+
+    const invalidResult = handleTuiInput("/density unknown-density", state);
+    expect(invalidResult.output).toContain("Unknown density: unknown-density");
   });
 });

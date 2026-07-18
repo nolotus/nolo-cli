@@ -815,8 +815,7 @@
     "integrations/yahoo-finance/index.ts",
     "integrations/arxiv/index.ts",
     "integrations/world-bank/index.ts",
-    "integrations/serpapi/index.ts",
-    "server/handlers/agentRun/types.ts"
+    "integrations/serpapi/index.ts"
   ],
   "publishConfig": {
     "access": "public"

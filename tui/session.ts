@@ -34,7 +34,14 @@ import { resolveAgentSwitchTarget } from "./agentPicker";
 import type { AttachedImage } from "./pasteImage";
 import { detectImagePaths, summarizeAttachment } from "./pasteImage";
 import { parseCliLocale, setCliLocale, t } from "./i18n";
-import { themeText } from "./theme";
+import {
+  themeText,
+  getActiveThemeName,
+  setActiveThemeName,
+  getActiveDensity,
+  setActiveDensity,
+  THEME_PALETTES,
+} from "./theme";
 import { detectGitStatus, type GitStatus } from "./gitStatus";
 
 export { DEFAULT_TUI_AGENT_KEY };
@@ -95,6 +102,10 @@ export type TuiAction =
     }
   | {
       type: "self-update";
+    }
+  | {
+      type: "shell-command";
+      command: string;
     }
   | {
       type: "cli-command";
@@ -202,11 +213,8 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
 }
 
 function formatCwd(cwd: string) {
-  const home = process.env.HOME || process.env.USERPROFILE;
-  if (home && cwd.startsWith(home)) {
-    return `~${cwd.slice(home.length)}`;
-  }
-  return cwd;
+  const parts = cwd.split(/[/\\]/);
+  return parts.pop() || cwd;
 }
 
 /** Soft token chip for the composer status line (no powerline background). */
@@ -527,6 +535,18 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
     return { nextState: state, output: "" };
   }
 
+  if (trimmed.startsWith("!")) {
+    const cmd = trimmed.slice(1).trim();
+    return {
+      nextState: state,
+      output: "",
+      action: {
+        type: "shell-command",
+        command: cmd,
+      },
+    };
+  }
+
   if (!isLikelySlashCommand(trimmed)) {
     const hints = detectImagePaths(trimmed, state.cwd);
     const stripped = stripImageTokens(trimmed, hints);
@@ -557,6 +577,50 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
   switch (command) {
     case "/help":
       return { nextState: state, output: renderTuiHelp() };
+    case "/theme": {
+      const parts = argText.split(/\s+/);
+      const sub = parts[0]?.trim();
+      const available = Object.keys(THEME_PALETTES).join(", ");
+      if (!sub) {
+        return {
+          nextState: state,
+          output: `Current theme: ${getActiveThemeName()}\nUsage: /theme <name>\nAvailable themes: ${available}`,
+        };
+      }
+      if (setActiveThemeName(sub)) {
+        return {
+          nextState: state,
+          output: `Switched to theme: ${sub}`,
+        };
+      } else {
+        return {
+          nextState: state,
+          output: `Unknown theme: ${sub}. Available themes: ${available}`,
+        };
+      }
+    }
+    case "/density": {
+      const parts = argText.split(/\s+/);
+      const sub = parts[0]?.trim();
+      if (!sub) {
+        return {
+          nextState: state,
+          output: `Current density: ${getActiveDensity()}\nUsage: /density <cozy|spacious>`,
+        };
+      }
+      if (sub === "cozy" || sub === "spacious") {
+        setActiveDensity(sub);
+        return {
+          nextState: state,
+          output: `Switched to layout density: ${sub}`,
+        };
+      } else {
+        return {
+          nextState: state,
+          output: `Unknown density: ${sub}. Use 'cozy' or 'spacious'.`,
+        };
+      }
+    }
     case "/context":
     case "/ctx":
       return { nextState: state, output: renderContextPanel(state) };

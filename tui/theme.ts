@@ -27,26 +27,156 @@ type PaletteEntry = { hex: string; ansiFallback: string };
  * Light = Trail Light, Dark = Trail Dark (see colors.ts).
  * ANSI-16 fallbacks are chosen so the hue family stays close across terminals.
  */
-const TUI_THEME: Record<TuiBrightness, Record<TuiThemeToken, PaletteEntry>> = {
-  light: {
-    accent: { hex: "2E7DB5", ansiFallback: "\x1b[34m" }, // ocean blue
-    chrome: { hex: "A3B0BD", ansiFallback: "\x1b[90m" }, // gray
-    success: { hex: "3F8F5C", ansiFallback: "\x1b[32m" }, // moss green
-    warning: { hex: "D4A054", ansiFallback: "\x1b[33m" }, // amber/orange
-    info: { hex: "4A9FD4", ansiFallback: "\x1b[36m" }, // sky blue
-    danger: { hex: "C45C4A", ansiFallback: "\x1b[31m" }, // reddish
-    muted: { hex: "7A8796", ansiFallback: "\x1b[90m" }, // slate gray
+export type TuiThemeColors = Record<TuiThemeToken, PaletteEntry>;
+
+export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors>> = {
+  trail: {
+    light: {
+      accent: { hex: "2E7DB5", ansiFallback: "\x1b[34m" }, // ocean blue
+      chrome: { hex: "A3B0BD", ansiFallback: "\x1b[90m" }, // gray
+      success: { hex: "3F8F5C", ansiFallback: "\x1b[32m" }, // moss green
+      warning: { hex: "D4A054", ansiFallback: "\x1b[33m" }, // amber/orange
+      info: { hex: "4A9FD4", ansiFallback: "\x1b[36m" }, // sky blue
+      danger: { hex: "C45C4A", ansiFallback: "\x1b[31m" }, // reddish
+      muted: { hex: "7A8796", ansiFallback: "\x1b[90m" }, // slate gray
+    },
+    dark: {
+      accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // blue
+      chrome: { hex: "6C7086", ansiFallback: "\x1b[90m" },
+      success: { hex: "A6E3A1", ansiFallback: "\x1b[32m" },
+      warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
+      info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
+      danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
+      muted: { hex: "A6ADC8", ansiFallback: "\x1b[37m" },
+    },
   },
-  dark: {
-    accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // blue
-    chrome: { hex: "6C7086", ansiFallback: "\x1b[90m" },
-    success: { hex: "A6E3A1", ansiFallback: "\x1b[32m" },
-    warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
-    info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
-    danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
-    muted: { hex: "A6ADC8", ansiFallback: "\x1b[37m" },
+  catppuccin: {
+    light: {
+      accent: { hex: "1E66F5", ansiFallback: "\x1b[34m" },
+      chrome: { hex: "9CCFD8", ansiFallback: "\x1b[90m" },
+      success: { hex: "40A02B", ansiFallback: "\x1b[32m" },
+      warning: { hex: "DF8E1D", ansiFallback: "\x1b[33m" },
+      info: { hex: "04A5E5", ansiFallback: "\x1b[36m" },
+      danger: { hex: "D20F39", ansiFallback: "\x1b[31m" },
+      muted: { hex: "7C7F93", ansiFallback: "\x1b[90m" },
+    },
+    dark: {
+      accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // mocha blue
+      chrome: { hex: "6C7086", ansiFallback: "\x1b[90m" },
+      success: { hex: "A6E3A1", ansiFallback: "\x1b[32m" },
+      warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
+      info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
+      danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
+      muted: { hex: "A6ADC8", ansiFallback: "\x1b[37m" },
+    },
+  },
+  wave: {
+    light: {
+      accent: { hex: "4D699B", ansiFallback: "\x1b[34m" }, // ink blue
+      chrome: { hex: "9E9B8E", ansiFallback: "\x1b[90m" },
+      success: { hex: "6F894E", ansiFallback: "\x1b[32m" },
+      warning: { hex: "836F4A", ansiFallback: "\x1b[33m" },
+      info: { hex: "4D699B", ansiFallback: "\x1b[36m" },
+      danger: { hex: "C84053", ansiFallback: "\x1b[31m" },
+      muted: { hex: "716E61", ansiFallback: "\x1b[90m" },
+    },
+    dark: {
+      accent: { hex: "7E9CD8", ansiFallback: "\x1b[34m" }, // crystalBlue
+      chrome: { hex: "727169", ansiFallback: "\x1b[90m" },
+      success: { hex: "98BB6C", ansiFallback: "\x1b[32m" },
+      warning: { hex: "E6C384", ansiFallback: "\x1b[33m" },
+      info: { hex: "7FB4CA", ansiFallback: "\x1b[36m" },
+      danger: { hex: "E82424", ansiFallback: "\x1b[31m" },
+      muted: { hex: "938AA9", ansiFallback: "\x1b[37m" },
+    },
+  },
+  iris: {
+    light: {
+      accent: { hex: "5E6AD2", ansiFallback: "\x1b[34m" },
+      chrome: { hex: "9E9AB5", ansiFallback: "\x1b[90m" },
+      success: { hex: "16A34A", ansiFallback: "\x1b[32m" },
+      warning: { hex: "D97706", ansiFallback: "\x1b[33m" },
+      info: { hex: "5E6AD2", ansiFallback: "\x1b[36m" },
+      danger: { hex: "E5484D", ansiFallback: "\x1b[31m" },
+      muted: { hex: "6E6A8A", ansiFallback: "\x1b[90m" },
+    },
+    dark: {
+      accent: { hex: "8B9CF4", ansiFallback: "\x1b[34m" },
+      chrome: { hex: "5A5772", ansiFallback: "\x1b[90m" },
+      success: { hex: "26BD6C", ansiFallback: "\x1b[32m" },
+      warning: { hex: "F5A623", ansiFallback: "\x1b[33m" },
+      info: { hex: "8B9CF4", ansiFallback: "\x1b[36m" },
+      danger: { hex: "EC5B6E", ansiFallback: "\x1b[31m" },
+      muted: { hex: "938AA9", ansiFallback: "\x1b[37m" },
+    },
+  },
+  rose: {
+    light: {
+      accent: { hex: "D14D72", ansiFallback: "\x1b[35m" },
+      chrome: { hex: "9893A5", ansiFallback: "\x1b[90m" },
+      success: { hex: "56949F", ansiFallback: "\x1b[32m" },
+      warning: { hex: "EA9D34", ansiFallback: "\x1b[33m" },
+      info: { hex: "286983", ansiFallback: "\x1b[36m" },
+      danger: { hex: "B4637A", ansiFallback: "\x1b[31m" },
+      muted: { hex: "797593", ansiFallback: "\x1b[90m" },
+    },
+    dark: {
+      accent: { hex: "EB6F92", ansiFallback: "\x1b[35m" },
+      chrome: { hex: "6E6A86", ansiFallback: "\x1b[90m" },
+      success: { hex: "9CCFD8", ansiFallback: "\x1b[32m" },
+      warning: { hex: "F6C177", ansiFallback: "\x1b[33m" },
+      info: { hex: "C4A7E7", ansiFallback: "\x1b[36m" },
+      danger: { hex: "EB6F92", ansiFallback: "\x1b[31m" },
+      muted: { hex: "908CAA", ansiFallback: "\x1b[37m" },
+    },
+  },
+  mono: {
+    light: {
+      accent: { hex: "FF9500", ansiFallback: "\x1b[33m" },
+      chrome: { hex: "9DA6AF", ansiFallback: "\x1b[90m" },
+      success: { hex: "16A34A", ansiFallback: "\x1b[32m" },
+      warning: { hex: "D97706", ansiFallback: "\x1b[33m" },
+      info: { hex: "2563EB", ansiFallback: "\x1b[34m" },
+      danger: { hex: "DC2626", ansiFallback: "\x1b[31m" },
+      muted: { hex: "7B8793", ansiFallback: "\x1b[90m" },
+    },
+    dark: {
+      accent: { hex: "FFBF66", ansiFallback: "\x1b[33m" },
+      chrome: { hex: "7B8793", ansiFallback: "\x1b[90m" },
+      success: { hex: "4DE800", ansiFallback: "\x1b[32m" },
+      warning: { hex: "FCD34D", ansiFallback: "\x1b[33m" },
+      info: { hex: "60A5FA", ansiFallback: "\x1b[34m" },
+      danger: { hex: "F87171", ansiFallback: "\x1b[31m" },
+      muted: { hex: "C1C7CD", ansiFallback: "\x1b[37m" },
+    },
   },
 };
+
+let activeThemeName = "trail";
+
+export function getActiveThemeName(): string {
+  return activeThemeName;
+}
+
+export function setActiveThemeName(name: string): boolean {
+  if (THEME_PALETTES[name]) {
+    activeThemeName = name;
+    return true;
+  }
+  return false;
+}
+
+export type TuiDensity = "cozy" | "spacious";
+
+let activeDensity: TuiDensity = "spacious";
+
+export function getActiveDensity(): TuiDensity {
+  return activeDensity;
+}
+
+export function setActiveDensity(density: TuiDensity) {
+  activeDensity = density;
+}
 
 export function supportsTruecolor(env: Record<string, string | undefined> = process.env) {
   return /truecolor|24bit/i.test(env.COLORTERM ?? "");
@@ -91,7 +221,8 @@ export function themeColorSequence(
   env: Record<string, string | undefined> = process.env,
   brightness: TuiBrightness = resolveTuiBrightness(env),
 ): string {
-  const entry = TUI_THEME[brightness][token];
+  const palette = THEME_PALETTES[activeThemeName] ?? THEME_PALETTES.trail;
+  const entry = palette[brightness][token];
   return supportsTruecolor(env) ? hexToSgr(entry.hex) : entry.ansiFallback;
 }
 

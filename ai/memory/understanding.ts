@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../../server/handlers/agentRun/types";
+import type { AgentRuntimeChatMessage as ChatMessage } from "../../agent-runtime/types";
 import { compactWhitespace } from "../../core/compactWhitespace";
 import { createMemoryItem, writeMemoryItemWithIndexesToDb } from "./storeShared";
 import { loadMemoryCandidatesFromDb } from "./queryShared";

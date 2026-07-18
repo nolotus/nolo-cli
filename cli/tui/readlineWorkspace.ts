@@ -26,7 +26,7 @@ import {
   type TuiState,
 } from "./session";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "../client/terminalStyles";
-import { themeColorSequence, themeText, highlightMarkdown } from "./theme";
+import { themeColorSequence, themeText, highlightMarkdown, getActiveDensity } from "./theme";
 import { toErrorMessage } from "../../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
@@ -790,7 +790,9 @@ function buildHistoryLines(history: TurnHistory, contentWidth: number): string[]
   };
   const lines: string[] = [];
   const pushTurn = (role: TurnRole, content: string) => {
-    if (lines.length > 0 || role === "user") lines.push("");
+    if (getActiveDensity() === "spacious") {
+      if (lines.length > 0 || role === "user") lines.push("");
+    }
     lines.push(styleTurn(role, content));
   };
   for (const turn of history.turns) {
@@ -1448,7 +1450,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       renderHistoryToOutput();
       // Re-emit after the wipe: the pre-clear echo of /new was just discarded
       // along with the rest of the transcript.
-      emitCommandOutput(t("startedFreshDialog"));
+      const sparkle = [
+        "",
+        `     🏔  ${t("startedFreshDialog")}`,
+        "     ────────────────────────────",
+        "",
+      ].join("\n");
+      emitCommandOutput(themeText(sparkle, "chrome", resolveCliColorEnabled()));
     }
     if (result.action?.type === "compact") {
       const runner = options.compactRunner ?? compactDialog;
@@ -1672,6 +1680,45 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         output.write(
           `[nolo] CLI command failed: ${toErrorMessage(error)}\n`
         );
+      }
+    }
+
+    if (result.action?.type === "shell-command") {
+      const shellCmd = result.action.command;
+      if (!shellCmd) {
+        emitCommandOutput("[nolo] Error: No command specified after !");
+      } else {
+        emitCommandOutput(`Executing: ${shellCmd}`);
+        try {
+          const proc = spawnRunner({
+            cmd: ["/bin/sh", "-c", shellCmd],
+            cwd: state.cwd,
+            env: options.env ?? process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdoutText, stderrText] = await Promise.all([
+            readPipeText(proc.stdout),
+            readPipeText(proc.stderr),
+          ]);
+
+          const exitCode = await proc.exited;
+
+          if (stdoutText) {
+            emitCommandOutput(`\`\`\`\n${stdoutText.trim()}\n\`\`\``);
+          }
+          if (stderrText) {
+            emitCommandOutput(themeText(`\`\`\`\nError:\n${stderrText.trim()}\n\`\`\``, "danger", resolveCliColorEnabled()));
+          }
+          if (exitCode !== 0) {
+            emitCommandOutput(themeText(`[nolo] Command exited with code ${exitCode}.`, "warning", resolveCliColorEnabled()));
+          }
+        } catch (error) {
+          emitCommandOutput(
+            themeText(`[nolo] Command execution failed: ${toErrorMessage(error)}`, "danger", resolveCliColorEnabled())
+          );
+        }
       }
     }
 

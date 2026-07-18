@@ -3,6 +3,8 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { toErrorMessage } from "../core/errorMessage";
+import { themeText } from "./theme";
+import { resolveCliColorEnabled } from "../client/terminalStyles";
 
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"] as const;
 export type ImageExtension = (typeof IMAGE_EXTENSIONS)[number];
@@ -287,7 +289,29 @@ export function formatBytes(bytes: number): string {
 }
 
 export function summarizeAttachment(img: AttachedImage): string {
-  return `📎 ${img.filename} (${formatBytes(img.sizeBytes)})`;
+  const colorEnabled = resolveCliColorEnabled();
+  const boxWidth = 40;
+  const border = "┌" + "─".repeat(boxWidth - 2) + "┐";
+  const bottom = "└" + "─".repeat(boxWidth - 2) + "┘";
+
+  const padLine = (content: string) => {
+    const padded = content.padEnd(boxWidth - 4, " ");
+    return `│ ${padded} │`;
+  };
+
+  const title = padLine("📷 [Attached Image]");
+  const name = padLine(`Name: ${img.filename}`);
+  const size = padLine(`Size: ${formatBytes(img.sizeBytes)}`);
+
+  const text = [
+    border,
+    title,
+    name,
+    size,
+    bottom
+  ].join("\n");
+
+  return themeText(text, "chrome", colorEnabled);
 }
 
 /**

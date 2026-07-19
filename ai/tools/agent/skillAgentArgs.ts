@@ -12,8 +12,8 @@ export interface CreateSkillAgentToolArgs {
   linkedSpaces?: string[];
 }
 
-const DEFAULT_PROVIDER = "openrouter";
-const DEFAULT_MODEL = "xiaomi/mimo-v2.5-pro";
+const DEFAULT_PROVIDER = "nolo";
+const DEFAULT_MODEL = "glm-5.2";
 
 const buildPreset = (mode: SkillAgentMode) => {
   const commonTools = [

@@ -32,6 +32,11 @@ type RunDesktopAgentRuntimeTurnArgs = {
   input: AgentRuntimeMessageContent;
   runtimeContext?: Record<string, any> | null;
   continueDialogId?: string;
+  /**
+   * Exact parent dialog dbKey known to the client. Lets the host read the
+   * dialog record without re-deriving `dialog-${userId}-` from its own env.
+   */
+  dialogKey?: string;
   cwd?: string;
   restrictShellToWorkspace?: boolean;
   workspaceToolsHint?: boolean;
@@ -92,6 +97,9 @@ export function buildDesktopAgentRuntimeTurnBody(args: RunDesktopAgentRuntimeTur
     input: args.input,
     ...(args.runtimeContext ? { runtimeContext: args.runtimeContext } : {}),
     ...(continueDialogId ? { continueDialogId } : {}),
+    ...(continueDialogId && asTrimmedString(args.dialogKey)
+      ? { dialogKey: asTrimmedString(args.dialogKey) }
+      : {}),
     ...(args.cwd ? { cwd: args.cwd } : {}),
     ...(args.restrictShellToWorkspace ? { restrictShellToWorkspace: true } : {}),
     ...(args.workspaceToolsHint ? { workspaceToolsHint: true } : {}),

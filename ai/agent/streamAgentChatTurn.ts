@@ -1526,6 +1526,7 @@ export const streamAgentChatTurnHandler = async (
                     agentRef: desktopAgentRef,
                     input: userInput,
                     continueDialogId: dialogId,
+                    dialogKey,
                     cwd: runtimeOptions?.cwd,
                     restrictShellToWorkspace: runtimeOptions?.restrictShellToWorkspace === true,
                     workspaceToolsHint: runtimeOptions?.workspaceToolsHint === true,

@@ -9,6 +9,9 @@ import { buildRuntimeGuidanceBlocks } from "../agent/runtimeGuidance";
 import { canonicalizeToolNames } from "../tools/toolNameAliases";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { wrapHistoricalSummaryWithReplayGuard } from "../context/staleReplayGuard";
+// 记忆使用指引下沉到 agent-runtime：桌面本地 runtime 注入 memory overlay 时
+// 必须带同一份指引，两处各存一份迟早漂移。
+import { MEMORY_USE_GUIDANCE } from "../../agent-runtime/memoryUseGuidance";
 import { PAGE_BUILDER_HANDOFF_INSTRUCTIONS } from "./pageBuilderHandoffRules";
 import { compileContextLayers, type CompiledContext } from "./contextCompiler";
 import { buildCurrentTimeBlock } from "./currentTimeContext";
@@ -38,36 +41,12 @@ const MENU_USAGE_INSTRUCTIONS = `--- 交互说明 ---
 // ============================================================================
 
 const WEBPAGE_ACCESS_INSTRUCTIONS = `--- 网页访问能力 (Web Access) ---
-在需要获取外部信息时，请遵循以下由简入繁的策略：
-
-0. **如果用户已经给了明确 URL，先直接抓这些 URL**
-   - 不要先搜索，不要先猜备用网址，不要忽略用户给的链接。
-   - 用户明确给出的 URL，默认就是本次任务的最高优先级网页真值来源。
-   - 如果任务是“根据这些网页更新代码 / 文档 / 配置”，先逐个 fetch，再基于抓到的内容提取字段。
-   - 只要这些 URL 能正常抓取，就不要再调用 exa_search 搜索“更权威”的来源，也不要自行切换到其他站点或镜像页。
-   - 只有在用户给的 URL 抓取失败、页面明显缺字段、或页面内容与任务不匹配时，才允许额外搜索；如果发生这种降级，最终回复里要明确说明原因。
-
-1. **优先使用 exa_search (Exa.ai)**
-   - 适用于：用户没有给明确 URL 时，搜索互联网信息、寻找教程、获取最新动态。
-   - 对陌生的文档站或你还不确定具体页面路径的 docs 站点，优先先用它发现权威入口，而不是直接猜 docs 子路径。
-   - 优点：它是专为 AI 设计的神经网络搜索引擎，能直接返回高质量、结构化的内容（包含正文），无需再去爬取。
-   - *Always try this FIRST for searches.*
-
-2. **其次使用 fetchWebpage (全渲染)**
-   - 适用于：你已经有了明确的 URL，需要获取该页面的完整内容（含 JS 渲染、动态内容、SPA）。
-   - 底层走 Cloudflare Browser Rendering，支持 JS 执行，返回渲染后的正文。
-   - 对于 \`docs.*\` 文档站，fetchWebpage 会自动检查 \`/llms.txt\` 和 \`/llms-full.txt\`，并把你推测的文档 URL 规范化为权威页面。
-   - 如果你不确定 docs 站里有哪些页面，先用 exa_search 做发现；如果你只是大致猜到了 docs 子路径，可以直接交给 fetchWebpage 去规范化并抓取。
-   - 优点：一次调用即可获取完整页面内容，无需手动操控浏览器。
-
-3. **仅当需要复杂交互时使用 browser_openSession**
-   - 仅当需要登录、填表、多步点击等复杂操作时使用。
-   - 适用于：需要登录的站点、需要填写表单、需要连续交互的场景。
-   - 流程：先 openSession -> 拿到 ID -> 再 typeText / click / readContent。
-
-
-3. **精准数据抓取 (Scrapers)**
-  - 如果用户明确需要 YouTube 视频信息、亚马逊商品数据、Google 搜索结果，请直接使用对应的专用 Scraper 工具 (youtubeScraper, amazonProductScraper 等)，效果比自己去爬网页更好。`;
+获取外部信息时由简入繁：
+0. 用户已给明确 URL → 先直接 fetch 这些 URL，不要先搜索或猜备用网址。它们是本次任务最高优先级的网页真值。仅当抓取失败、缺字段或内容不匹配时才额外搜索，并在回复中说明降级原因。
+1. 无明确 URL → 先用 exa_search 发现权威入口（尤其陌生 docs 站，不要直接猜子路径）。
+2. 已有明确 URL 且需完整渲染内容 → fetchWebpage（支持 JS/SPA；docs.* 会自动检查 /llms.txt 并规范化 URL）。
+3. 需登录/填表/多步交互 → browser_openSession（openSession 拿 ID → typeText/click/readContent）。
+4. YouTube/亚马逊/Google 等结构化数据 → 用对应专用 Scraper 工具（youtubeScraper、amazonProductScraper 等）。`;
 
 // ============================================================================
 // 本地文件整理（有 local desktop file tools 时注入）
@@ -108,62 +87,21 @@ const AGENT_ORCHESTRATION_INSTRUCTIONS = `--- Agent 编排与协作 ---
 // ============================================================================
 
 const KNOWLEDGE_MANAGEMENT_INSTRUCTIONS = `--- 知识管理 ---
-
-## 三层知识决策
-
-**1. references 挂载知识（每次对话自动加载）**
-- Agent 配置里的 references 会在每次对话开始时自动展开注入到 system prompt
-- type=instruction：高优先级，注入到 system prompt 顶部，适合行为规则、操作指南
-- type=knowledge：作为参考资料注入，适合领域知识、背景资料
-- 支持挂载：page / dialog / table（内容完整展开）
-- **page 里的 @mention 只展开元信息（标题+dbKey），不递归展开内容本身**
-
-**2. createDoc 创建文档（按需 read 加载）**
-- 总知识页（索引）：跨会话的决策规则、路由表，用 @[page:PAGE-xxx|标题] mention 指向细分页
-- 细分知识页（内容）：具体领域内容、任务结果，通过总知识索引
-- mention 只是指针，要获取细分页内容必须显式调用 read({ dbKey })
-
-## 读取路径
-1. prompt / references 有答案 → 直接用（自动加载，最快）
-2. 没有 → read({ dbKey: 总知识索引页 }) 找到细分页 dbKey
-3. 找到 dbKey → read({ dbKey: 细分页 }) 获取完整内容
-
-## 何时主动创建/更新知识
-- 用户提供了值得复用的信息 → createDoc 记录，再用 updateAgent 把该页加入 references
-- 完成有价值的调研/分析 → createDoc 保存结论
-- 总知识索引缺入口 → updateDoc 补充 @mention
-- **不要**把临时性、一次性的内容写成知识页`;
+三层知识：
+1. references（Agent 配置，每次对话自动注入）：type=instruction 进 prompt 顶部（行为规则）；type=knowledge 作参考资料。支持 page/dialog/table 完整展开；page 里的 @mention 只展开元信息（标题+dbKey），不递归展开内容。
+2. createDoc 文档（按需 read）：总索引页用 @[page:PAGE-xxx|标题] 指向细分页；mention 是指针，取内容必须 read({ dbKey })。
+读取路径：prompt/references 有 → 直接用；没有 → read 索引页找细分页 dbKey → read 细分页取完整内容。
+何时沉淀：用户给了可复用信息 / 完成有价值调研 → createDoc（并 updateAgent 加入 references）；索引缺入口 → updateDoc 补 @mention。不要把一次性内容写成知识页。`;
 
 // ============================================================================
 // 长期记忆（有 rememberMemory 工具时注入）
 // ============================================================================
 
 const MEMORY_CAPTURE_INSTRUCTIONS = `--- 长期记忆 ---
-你拥有 rememberMemory 能力，可以在必要时把值得长期保留的信息写成一条 episodic memory。
-
-## 何时记录
-- 当你识别到对未来协作明显有帮助、且相对稳定的用户偏好、判断标准、信息组织偏好或场景化抉择模式时，可以记录
-- 当对话里形成了后续还会反复用到的空间共识、协作约定或团队规则时，可以记录
-
-## 何时不要记录
-- 一次性的当前任务细节
-- 当前对话里显而易见、很快就会过期的事实
-- 只是为了“多记一点”而勉强抽出来的内容
-
-## 记录方式
-- 优先写成简短、可复用的抽象表达，例如“这个用户在什么场景下通常怎么选 / 怎么协作”
-- 不要复制整段对话，也不要把临时上下文原样塞进去
-- 只有当前 dialog 明确绑定了 space，且这条信息确实属于共享协作共识时，才传 scope=space；否则保持默认 auto
-- 默认静默执行；除非用户正在讨论记忆本身，或需要用户感知这件事，否则不要专门宣布“我正在记忆”
-- 如果这条信息对未来帮助不明显，就不要调用 rememberMemory`;
-
-const MEMORY_USE_GUIDANCE = `--- 记忆使用方式 ---
-- 记忆是个性化与连续性增强层；当前用户输入、当前对话、系统规则、Agent prompt、skill 和用户全局偏好都优先于记忆。
-- 如果记忆包含用户身份、名字、称呼、与你的关系、长期偏好或当前项目背景，相关时要自然体现，例如开场称呼、确认上下文、回答结构、取舍标准或下一步建议；不要每句话机械称呼用户。
-- 处理“上次/继续/跟之前一样/这个项目”这类指代时，优先使用当前 dialog、space、project、agent、sourceDialog 等 KV 路径和时间线来定位；不要只按语义相似度捞一条看起来像的记忆。
-- 当当前输入给出新的语言、技术栈、项目、数值、约束或明确覆盖旧偏好时，必须采用当前输入；不要把旧记忆当成更高优先级的真值。
-- 推断型理解记忆只能帮助你把握语气、状态和未完成事项；不要说成“你明确告诉过我”，也不要把它显示成用户已授权保存的事实。
-- 如果记忆互相冲突或适用场景不明，说明你的判断依据或简短确认，而不是硬套。`;
+你可用 rememberMemory 把值得长期保留的信息写成一条 episodic memory。
+- 记录：稳定且对未来协作有帮助的用户偏好/判断标准/信息组织习惯/场景化抉择；后续反复用到的空间共识、协作约定、团队规则。
+- 不记录：一次性任务细节、很快过期的事实、为凑数勉强抽出的内容。
+- 方式：写成简短可复用的抽象（“该用户在某场景通常怎么选/怎么协作”），不要复制整段对话。仅当当前 dialog 已绑定 space 且属于共享共识时才传 scope=space，否则保持默认 auto。默认静默执行，除非用户在讨论记忆本身。帮助不明显就不要调用。`;
 
 // ============================================================================
 // 自我更新能力（仅在 Agent 拥有 updateSelf 工具时注入）
@@ -295,8 +233,9 @@ const buildAppWorkingMemoryBlock = (contexts: Contexts): string => {
 const buildSpaceContextBlock = (contexts: Contexts): string => {
   if (!contexts.spaceContext) return "";
 
+  // spaceContext 来自共享 turnContext builder，自带「--- 当前空间（Space）---」
+  // 标题；这里不再重复包一层标题，只追加 web 端的工具使用指令。
   return [
-    "--- 当前空间环境 (Current Space Context) ---",
     contexts.spaceContext,
     "",
     "重要指令 (Space Awareness)：",

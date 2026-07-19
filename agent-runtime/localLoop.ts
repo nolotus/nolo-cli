@@ -22,6 +22,12 @@ export type LocalAgentTurnInput = {
   input: AgentRuntimeMessageContent;
   continueDialogId?: string;
   spaceId?: string;
+  /**
+   * Runtime-assembled context blocks (space/workspace layers from
+   * turnContext.ts). Appended after the agent prompt inside the same
+   * system message so every host surface shares identical semantics.
+   */
+  contextBlocks?: string[];
   category?: string;
   inheritedFromDialogKey?: string;
   parentDialogId?: string;
@@ -367,10 +373,16 @@ function prepareHistoryForNextTurn(history: AgentRuntimeChatMessage[]): AgentRun
 
 function buildMessages(args: {
   prompt?: string;
+  contextBlocks?: string[];
   history: AgentRuntimeChatMessage[];
   input: AgentRuntimeMessageContent;
 }): AgentRuntimeChatMessage[] {
-  const systemContent = args.prompt?.trim();
+  const blocks = (args.contextBlocks ?? [])
+    .map((block) => block.trim())
+    .filter(Boolean);
+  const systemContent = [args.prompt?.trim(), ...blocks]
+    .filter(Boolean)
+    .join("\n\n");
   return [
     ...(systemContent
       ? [{ role: "system" as const, content: systemContent }]
@@ -423,10 +435,15 @@ export async function runLocalAgentTurn(
   const history = input.continueDialogId
     ? await input.adapter.loadDialogHistory(input.continueDialogId)
     : [];
-  const promptMessageCount = agentConfig.prompt?.trim() ? 1 : 0;
+  const hasContextBlocks = (input.contextBlocks ?? []).some((block) =>
+    block.trim()
+  );
+  const promptMessageCount =
+    agentConfig.prompt?.trim() || hasContextBlocks ? 1 : 0;
   const turnStartIndex = promptMessageCount + history.length;
   const messages = buildMessages({
     prompt: agentConfig.prompt,
+    contextBlocks: input.contextBlocks,
     history,
     input: input.input,
   });

@@ -8,8 +8,12 @@ import {
     type PendingFile,
 } from "../../chat/dialog/dialogSlice";
 import { selectAllMsgs } from "../../chat/messages/messageSlice";
-import { selectCurrentSpace, selectViewMode } from "../../create/space/spaceSlice";
-import { createSpaceKey } from "../../create/space/spaceKeys";
+import { selectViewMode } from "../../create/space/spaceSlice";
+import {
+    buildLinkedSpacesSection,
+    buildSpaceContextLayer,
+    type TurnContextSource,
+} from "../../agent-runtime/turnContext";
 import {
     selectAiRecentContentLimit,
     selectGlobalPrompt,
@@ -21,7 +25,7 @@ import {
     getFullChatContextKeys,
     deduplicateContextKeys,
 } from "../agent/getFullChatContextKeys";
-import type { Agent, Category, SpaceContent, DialogConfig } from "../../app/types";
+import type { Agent, DialogConfig } from "../../app/types";
 import type { Contexts } from "../types";
 import { getModelContextWindow } from "../llm/getModelContextWindow";
 import {
@@ -267,6 +271,24 @@ export const readSafe = async <T>(
         return null;
     }
 };
+
+/**
+ * 渲染层 TurnContextSource 适配器：把共享 builder 的抽象读取接口接到
+ * dbSlice 的 `read` action 上。space 真值来自 dialog 记录的 spaceId，
+ * 这里只负责按 dbKey 取记录，不做任何 Redux currentSpace/viewMode 判断。
+ *
+ * 失败可见：`read` reject 时把错误抛给共享 builder，由 builder 决定是
+ * 输出显式失败 layer（spaceContext）还是 `[无法访问]` 标记（linkedSpaces），
+ * 绝不静默丢块。
+ */
+export const createDbSliceTurnContextSource = (
+    dispatch: any,
+): TurnContextSource => ({
+    readRecord: async (dbKey: string) => {
+        const result = await dispatch(read({ dbKey })).unwrap();
+        return (result as Record<string, unknown> | null) ?? null;
+    },
+});
 
 /** 将 Map 的所有 value 拼接为一个字符串 */
 export const joinMapValues = (map: Map<string, string>): string =>
@@ -538,7 +560,6 @@ export const buildStaticContexts = async (
     const userTonePreset = selectUserTonePreset(state);
     const knowledgeCaptureLevel = selectKnowledgeCaptureLevel(state);
     const spaceContextLevel = selectSpaceContextLevel(state);
-    const currentSpace = selectCurrentSpace(state);
     const userRecentLimit = selectAiRecentContentLimit(state);
     const contextWindow = getModelContextWindow(agentConfig.model) || 128000;
     const preloadPlan = resolveSpaceContextPreloadPlan(spaceContextLevel);
@@ -547,79 +568,31 @@ export const buildStaticContexts = async (
         ? Math.max(3, Math.min(userRecentLimit, Math.max(3, dynamicLimit)))
         : 0;
 
+    // space 真值统一为 dialog 记录的 spaceId（不再依赖 Redux currentSpace/viewMode）。
+    // 用户设置门控保留：spaceContextLevel > 1 才注入。
+    // recent contents 条数的 token 预算算法保留，算出的上限交给共享 builder。
+    // 失败可见：spaceId 存在但记录读不到时，共享 builder 输出显式失败 layer。
+    const turnContextSource = createDbSliceTurnContextSource(dispatch);
     let spaceContext: string | null = null;
 
-    if (currentSpace && spaceContextLevel > 1) {
-        const { categories, contents } = currentSpace;
-        const catEntries = Object.entries(categories || {}) as Array<
-            [string, Category | null]
-        >;
-        const validCatList = catEntries
-            .filter((entry) => entry[1] !== null)
-            .map((entry) => [entry[0], entry[1] as Category] as const)
-            .sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
-
-        const catMap = new Map<string, string>();
-        let struct = "Directory Structure (Categories):\n";
-        if (validCatList.length === 0) struct += "(No categories defined)\n";
-
-        validCatList.forEach(([id, cat]) => {
-            catMap.set(id, cat.name);
-            struct += `- ${cat.name} (ID: ${id})\n`;
+    if (spaceContextLevel > 1) {
+        const spaceLayer = await buildSpaceContextLayer({
+            source: turnContextSource,
+            spaceId: dialogConfig?.spaceId,
+            recentContentLimit: recentLimit,
         });
-
-        const contentEntries = Object.entries(contents || {}) as Array<
-            [string, SpaceContent | null]
-        >;
-        const contentList = recentLimit > 0
-            ? contentEntries
-                .filter((entry) => entry[1] !== null)
-                .map((entry) => entry[1] as SpaceContent)
-                .sort((a, b) => b.updatedAt - a.updatedAt)
-                .slice(0, recentLimit)
-            : [];
-
-        if (contentList.length > 0) {
-            struct += `\nRecent Contents (Top ${recentLimit}):\n`;
-            contentList.forEach((c) => {
-                const item = c as SpaceContent;
-                const catName = item.categoryId
-                    ? catMap.get(item.categoryId) || "Unknown"
-                    : "Uncategorized";
-                struct += `- [${item.type}] ${item.title} (Category: ${catName}, dbKey: ${item.contentKey})\n`;
-            });
-        }
-
-        spaceContext = `Space Title: ${currentSpace.name}\nSpace ID: ${currentSpace.id}\nDescription: ${currentSpace.description || "N/A"}\n\n${struct}`;
+        spaceContext = spaceLayer ? spaceLayer.content.trim() : null;
     }
 
-    // 处理 linkedSpaces
+    // 处理 linkedSpaces（保持现有输出语义：粗略上下文列表 + [无法访问] 标记）
     const linkedSpaceIds = agentConfig.linkedSpaces || [];
     if (linkedSpaceIds.length > 0 && spaceContextLevel > 1) {
-        const linkedSpacesInfo: string[] = [];
-
-        for (const spaceId of linkedSpaceIds) {
-            const spaceKey = createSpaceKey.space(spaceId);
-            const spaceData = await readSafe<any>(dispatch, spaceKey);
-            if (spaceData) {
-                const name = spaceData.name || spaceId;
-                const desc = spaceData.description || "";
-                linkedSpacesInfo.push(
-                    `- ${name} (ID: ${spaceId})${desc ? `: ${desc}` : ""}`,
-                );
-            } else {
-                linkedSpacesInfo.push(`- [无法访问] ${spaceId}`);
-            }
-        }
-
-        if (linkedSpacesInfo.length > 0) {
-            const linkedSection =
-                `\n\n--- 关联空间 (Linked Spaces) ---\n` +
-                `以下是 Agent 可访问的其他工作空间（粗略上下文）：\n` +
-                linkedSpacesInfo.join("\n") +
-                `\n\n提示：如需查询这些空间的详细内容，可使用 read 工具配合对应的 dbKey。`;
-
-            spaceContext = (spaceContext || "") + linkedSection;
+        const linkedSection = await buildLinkedSpacesSection({
+            source: turnContextSource,
+            linkedSpaceIds,
+        });
+        if (linkedSection) {
+            spaceContext = (spaceContext ?? "") + `\n\n${linkedSection}`;
         }
     }
 

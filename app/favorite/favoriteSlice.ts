@@ -5,7 +5,7 @@ import {
     asyncThunkCreator,
     type PayloadAction,
 } from "@reduxjs/toolkit";
-import { selectCurrentToken } from "../../auth/authSlice";
+import { selectIdentityToken } from "../identity/selectors";
 import {
     selectRemoteServers,
 } from "../settings/settingSlice";
@@ -418,7 +418,7 @@ export const favoriteSlice = createSliceWithThunks({
         initFavorites: create.asyncThunk(
             async (_: void, thunkAPI) => {
                 const state = thunkAPI.getState() as any;
-                const token = selectCurrentToken(state);
+                const token = selectIdentityToken(state);
                 const servers = getFavoriteServers(state);
 
                 if (!token) {
@@ -511,7 +511,7 @@ export const favoriteSlice = createSliceWithThunks({
         toggleFavorite: create.asyncThunk(
             async (agentKey: string, thunkAPI) => {
                 const state = thunkAPI.getState() as any;
-                const token = selectCurrentToken(state);
+                const token = selectIdentityToken(state);
                 const servers = getFavoriteServers(state);
                 const isCurrentlyFavorite =
                     state.favorite?.agentIds?.includes(agentKey) ?? false;
@@ -561,7 +561,7 @@ export const favoriteSlice = createSliceWithThunks({
         toggleContentFavorite: create.asyncThunk(
             async (contentKey: string, thunkAPI) => {
                 const state = thunkAPI.getState() as any;
-                const token = selectCurrentToken(state);
+                const token = selectIdentityToken(state);
                 const servers = getFavoriteServers(state);
                 const isCurrentlyFavorite =
                     state.favorite?.contentIds?.includes(contentKey) ?? false;

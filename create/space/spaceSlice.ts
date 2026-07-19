@@ -1,6 +1,6 @@
 import { asyncThunkCreator, buildCreateSlice, createSelector } from "@reduxjs/toolkit";
 import { toTimestampMs } from "../../core/timestamp";
-import { selectEntities } from "../../database/dbSlice";
+import { patch, selectEntities } from "../../database/dbSlice";
 
 import { MemberRole, type SpaceContent, type SpaceMemberWithSpaceInfo } from "../../app/types";
 
@@ -130,13 +130,45 @@ const spaceSlice = createSliceWithThunks({
     ),
 
     /** 进入某个对话后清除其未读提示。
-     * 当前阶段只做“网页端切换不停止”的第一层体验：
+     * 当前阶段只做"网页端切换不停止"的第一层体验：
      * - 侧边栏能看到后台对话 done/failed 后有未读点
+     * - 持久化未读写在 dialog 记录的 unreadAt（跨 space / 刷新后仍可见），这里一并 patch 为 null
      * - 真正的跨窗口/多 tab 已读同步，留到桌面端阶段再设计
      */
-    markDialogRead: create.reducer<{ dialogId: string }>((state, action) => {
-      delete state.unreadDialogIds[action.payload.dialogId];
-    }),
+    markDialogRead: create.asyncThunk(
+      async (
+        payload: { dialogId: string; dialogKey?: string },
+        thunkAPI
+      ) => {
+        // 清零持久化未读：patch dialog 记录 unreadAt 为 null。
+        // dialogKey 缺省时仅清内存态（兼容旧调用点与 markDialogRead 入口）。
+        if (payload.dialogKey) {
+          try {
+            await thunkAPI.dispatch(
+              patch({ dbKey: payload.dialogKey, changes: { unreadAt: null } })
+            ).unwrap();
+          } catch (error) {
+            console.warn(
+              "[space/markDialogRead] failed to clear unreadAt",
+              payload.dialogKey,
+              error
+            );
+            // patch 失败不阻塞内存态清除；侧边栏未读点仍有内存态兜底（本会话内）。
+          }
+        }
+        return { dialogId: payload.dialogId };
+      },
+      {
+        // 乐观清除：派发即同步删内存态未读，让点击进入瞬间未读点消失，
+        // 不等 patch 网络往返。patch 失败也不会把未读恢复（已在内存层清掉）。
+        pending: (state, action) => {
+          delete state.unreadDialogIds[action.meta.arg.dialogId];
+        },
+        fulfilled: (state, action) => {
+          delete state.unreadDialogIds[action.payload.dialogId];
+        },
+      }
+    ),
 
     /** 处理来自 SSE 的 space 实时事件，直接 patch Redux state，无需 re-fetch */
     applySpaceEvent: create.reducer<{
@@ -326,6 +358,25 @@ export const selectUnreadDialogIds = createSelector(
 
 export const selectIsDialogUnread = (dialogId: string) =>
   createSelector(selectUnreadDialogIds, (unreadMap) => unreadMap[dialogId] === true);
+
+/**
+ * 持久化未读/状态来源：dialog 记录实体本身。
+ *
+ * 与 selectIsDialogUnread / selectDialogStatus（来自当前 space 的 SSE 实时事件）互补：
+ * SSE 只覆盖当前打开的 space、刷新后丢失；实体读取覆盖跨 space 与刷新后场景。
+ * dialog 终态时服务端写 unreadAt + status，进入对话 markDialogRead 清零 unreadAt。
+ */
+export const selectDialogStatusFromEntity = (dialogKey: string) =>
+  createSelector(selectEntities, (entities) => {
+    const entity = entities[dialogKey];
+    return (entity as { status?: string } | undefined)?.status;
+  });
+
+export const selectIsDialogUnreadFromEntity = (dialogKey: string) =>
+  createSelector(selectEntities, (entities) => {
+    const entity = entities[dialogKey] as { unreadAt?: number | null } | undefined;
+    return typeof entity?.unreadAt === "number" && entity.unreadAt > 0;
+  });
 
 export const selectViewMode = createSelector(
   selectSpaceState,

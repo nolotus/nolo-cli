@@ -1,5 +1,5 @@
 // 文件路径: render/page/createPageAction.ts
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import {
   addContentToSpace,
   selectCurrentSpaceId,
@@ -71,7 +71,7 @@ export const createPageAction = async (
   { dispatch, getState }: { dispatch: AppDispatch; getState: () => RootState }
 ): Promise<string> => {
   const state = getState();
-  const userId = selectUserId(state);
+  const userId = selectIdentityUserId(state);
   if (!userId) throw new Error("User ID not found.");
 
   // Important:

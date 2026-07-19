@@ -126,6 +126,12 @@ export interface DialogConfig {
   runtimeBinding?: DialogRuntimeBinding;
   goal?: DialogGoalState;
   notificationPolicy?: DialogNotificationPolicy;
+  /**
+   * 对话完成/失败后写入的时间戳，驱动侧边栏未读点。进入对话即清零。
+   * 服务端在 dialog.done/failed 时写入；客户端 markDialogRead 时 patch 为 null。
+   * 不同于运行态 status（实时、易变），unreadAt 只在终态产生，进入即清除。
+   */
+  unreadAt?: number | null;
 }
 
 export interface ScheduledTaskConfig {

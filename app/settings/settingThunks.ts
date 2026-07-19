@@ -8,7 +8,7 @@
 
 import { createAsyncThunk } from "@reduxjs/toolkit";
 
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../identity/selectors";
 import { createUserKey, createUserPreferenceKey } from "../../database/keys";
 import {
   USER_PREFERENCE_NAMES,
@@ -52,7 +52,7 @@ export const getSettings = createAsyncThunk<
   void,
   { state: any }
 >("settings/getSettings", async (_, { dispatch, getState }) => {
-  const userId = selectUserId(getState() as any);
+  const userId = selectIdentityUserId(getState() as any);
   if (!userId) return null;
   const settingsKey = createUserKey.settings(userId);
   const authorityHomeKey = createUserPreferenceKey.authorityHome(userId);
@@ -106,7 +106,7 @@ export const setSettings = createAsyncThunk<
   const previousDefaultAgentId =
     normalizeDefaultAgentIdSetting(currentSettings.defaultAgentId) ??
     SYSTEM_DEFAULT_AGENT_ID;
-  const userId = selectUserId(getState() as any);
+  const userId = selectIdentityUserId(getState() as any);
   if (!userId) {
     const hasAppearanceChanges = Object.keys(normalizedChanges).length > 0;
     if (hasAppearanceChanges) {

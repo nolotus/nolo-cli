@@ -5,7 +5,7 @@ import { ulid } from "ulid";
 import i18n from "../../app/i18n/client";
 
 import type { RootState, AppDispatch } from "../../app/store";
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import {
   addContentToSpace,
   selectCurrentSpaceId,
@@ -191,7 +191,7 @@ export const createTableAction = async (
   { dispatch, getState }: { dispatch: AppDispatch; getState: () => RootState }
 ): Promise<string> => {
   const state = getState();
-  const userId = selectUserId(state);
+  const userId = selectIdentityUserId(state);
   if (!userId) throw new Error("User ID not found.");
 
   // Important:

@@ -6,7 +6,7 @@ import { resolveFileCategory } from "../../../app/utils/fileUtils";
 import { asOptionalFiniteNumber } from "../../../core/optionalNumber";
 import { ulid } from "../../../database/utils/ulid";
 import { fileKey } from "../../../database/keys";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { patch } from "../../../database/dbSlice";
 
 interface UploadAndAddFileToSpacePayload {
@@ -24,7 +24,7 @@ export const uploadAndAddFileToSpaceAction = async (
 
     // UserId retrieved from auth state
     const state = getState();
-    const userId = selectUserId(state);
+    const userId = selectIdentityUserId(state);
 
     if (!userId) {
         console.warn("[uploadAndAddFileToSpace] Warning: No userId found in state. Uploading as anonymous/unknown might cause issues.");

@@ -4,7 +4,7 @@ import type { AppDispatch, RootState } from "../../../app/store"; // 确认 stor
 import type { SpaceId } from "../../space/types"; // 确认类型路径
 import type { SpaceData } from "../../../app/types";
 import type { SpaceContent } from "../../../app/types";
-import { selectUserId } from "../../../auth/authSlice"; // 确认导入路径
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys"; // 确认导入路径
 // 假设 dbSlice 提供 read, patch
 import { read, patch } from "../../../database/dbSlice"; // 确认导入路径
@@ -57,7 +57,7 @@ export const moveContentAction = async (
   } = input;
   const { dispatch, getState } = thunkAPI;
   const state = getState();
-  const userId = selectUserId(state);
+  const userId = selectIdentityUserId(state);
   const now = Date.now(); // 用于更新时间戳
 
   logger.info({ ...input, userId }, "Initiating moveContentAction");

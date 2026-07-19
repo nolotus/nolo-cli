@@ -1,4 +1,4 @@
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import { createSpaceKey } from "../space/spaceKeys";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { asTrimmedNonEmptyStringArray } from "../../core/stringArray";
@@ -40,7 +40,7 @@ type DeleteSpaceArgs =
     };
 
 const getCurrentUserId = (state: any): string | null =>
-  asOptionalTrimmedString(selectUserId(state) as string | null | undefined) ??
+  asOptionalTrimmedString(selectIdentityUserId(state) as string | null | undefined) ??
   null;
 
 const fetchSpaceData = async (

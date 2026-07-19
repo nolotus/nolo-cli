@@ -2,7 +2,7 @@
 import { createSpaceKey, normalizeSpaceId } from "../../space/spaceKeys";
 import { patch, read, remove } from "../../../database/dbSlice";
 import { SpaceData, SpaceContent, Agent } from "../../../app/types";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { isAgentKey, isPageKey, splitKey } from "../../../database/keys";
 import { extractUserId } from "../../../core/prefix";
 import { isSystemAdmin } from "../../../core/init";
@@ -119,7 +119,7 @@ export const deleteContentFromSpaceAction = async (
   const { contentKey, sourceServerOrigin } = input;
   const spaceId = normalizeSpaceId(input.spaceId);
   const { dispatch, getState } = thunkAPI;
-  const accountUserId = selectUserId(getState()) as string | null | undefined;
+  const accountUserId = selectIdentityUserId(getState()) as string | null | undefined;
 
   // 1. 获取并验证 Space 数据
   const spaceKey = createSpaceKey.space(spaceId);

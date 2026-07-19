@@ -2,7 +2,7 @@
 
 import type { SpaceId } from "../../space/types";
 import type { SpaceData, SpaceContent, ContentType, FileCategory } from "../../../app/types";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { read, patch } from "../../../database/dbSlice";
 import {
@@ -47,7 +47,7 @@ export const addContentAction = async (
   } = input;
 
   const { dispatch, getState } = thunkAPI;
-  const userId = selectUserId(getState());
+  const userId = selectIdentityUserId(getState());
 
   // 基本输入验证（登录门控下放到权限：本地 Space 允许 guest）
   if (!contentKey || typeof contentKey !== "string" || contentKey.trim() === "")

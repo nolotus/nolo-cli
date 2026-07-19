@@ -1,7 +1,7 @@
 import type { ULID } from "../../../app/types";
 import { MemberRole } from "../../../app/types";
 import type { SpaceData } from "../../../app/types";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { DB_PREFIX } from "../../../database/keys";
 import { read, write } from "../../../database/dbSlice";
@@ -27,7 +27,7 @@ export const addMemberAction = async (
   const { spaceId, memberId, role = MemberRole.MEMBER } = input; // 默认角色为 MEMBER
   const { dispatch } = thunkAPI;
   const state = dbThunkState(thunkAPI);
-  const currentUserId = selectUserId(state);
+  const currentUserId = selectIdentityUserId(state);
 
   const { db } = dbThunkExtra(thunkAPI);
 

@@ -1,4 +1,4 @@
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read, remove } from "../../../database/dbSlice";
 import { SpaceData } from "../../../app/types";
@@ -30,7 +30,7 @@ export const deleteMultipleContentAction = async (
   }
   const { dispatch, getState } = thunkAPI;
   const state = getState();
-  const userId = selectUserId(state);
+  const userId = selectIdentityUserId(state);
 
   logger.info(
     { count: contentKeys.length, spaceId, userId },

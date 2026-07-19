@@ -1,4 +1,4 @@
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import { toErrorMessage } from "../../core/errorMessage";
 import { read, patch } from "../../database/dbSlice";
 import { createSpaceKey } from "../space/spaceKeys";
@@ -22,7 +22,7 @@ export const updateSpaceAction = async (
   const { spaceId, name, description, visibility, boundFolder } = input;
   const { dispatch, getState } = thunkAPI;
   const state = getState();
-  const userId = selectUserId(state);
+  const userId = selectIdentityUserId(state);
   const spaceKey = createSpaceKey.space(spaceId);
   let spaceData: SpaceData | null = null;
 

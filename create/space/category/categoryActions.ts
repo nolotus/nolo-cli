@@ -4,7 +4,7 @@ import { type PayloadAction } from "@reduxjs/toolkit";
 import { ulid } from "ulid";
 import type { AppDispatch, RootState } from "../../../app/store";
 import type { Category, Contents, SpaceContent, SpaceData, ULID } from "../../../app/types";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read } from "../../../database/dbSlice";
 import { UNCATEGORIZED_ID } from "../constants";
@@ -165,7 +165,7 @@ export const createCategoryActions = (create: Create) => ({
       if (!spaceId) {
         throw new Error("无法添加分类：未选择当前空间且未提供空间 ID。");
       }
-      const currentUserId = selectUserId(rootState);
+      const currentUserId = selectIdentityUserId(rootState);
       if (!currentUserId) throw new Error("User is not logged in.");
 
       if (!name.trim()) {
@@ -255,7 +255,7 @@ export const createCategoryActions = (create: Create) => ({
       const { categoryId, spaceId } = input;
       const { dispatch, getState } = thunkAPI;
       const rootState = getState();
-      const currentUserId = selectUserId(rootState);
+      const currentUserId = selectIdentityUserId(rootState);
 
       if (!currentUserId) throw new Error("User is not logged in.");
       if (!categoryId.trim()) throw new Error("无效的 categoryId。");
@@ -329,7 +329,7 @@ export const createCategoryActions = (create: Create) => ({
     ): Promise<{ spaceId: ULID; updatedSpaceData: SpaceData }> => {
       const { spaceId, categoryId, name } = input;
       const { dispatch, getState } = thunkAPI;
-      const currentUserId = selectUserId(getState());
+      const currentUserId = selectIdentityUserId(getState());
 
       if (!currentUserId) throw new Error("User is not logged in.");
       if (!categoryId.trim()) throw new Error("无效的 categoryId。");
@@ -386,7 +386,7 @@ export const createCategoryActions = (create: Create) => ({
       const { dispatch, getState } = thunkAPI;
       const stateRoot = getState();
 
-      const currentUserId = selectUserId(stateRoot);
+      const currentUserId = selectIdentityUserId(stateRoot);
       if (!currentUserId) {
         throw new Error("User is not logged in.");
       }

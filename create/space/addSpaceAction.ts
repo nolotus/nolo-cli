@@ -8,7 +8,7 @@ import {
   ContentType,
   type SpaceMemberWithSpaceInfo,
 } from "../../app/types";
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import { DataType } from "../types";
 import { fetchUserData } from "../../database/client/fetchUserData";
 import {
@@ -101,7 +101,7 @@ export const addSpaceAction = async (
   const visibility = (input.visibility ?? SpaceVisibility.PRIVATE) as SpaceVisibility;
   const { dispatch, getState, extra } = thunkAPI;
   const state = getState();
-  const accountUserId = selectUserId(state);
+  const accountUserId = selectIdentityUserId(state);
   // Guest / blank → "local"; active non-local account → that account id.
   // Does not mutate auth state.
   const userId = resolveEffectiveSpaceActorId(accountUserId);

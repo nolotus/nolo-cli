@@ -1,6 +1,6 @@
 import type { ULID } from "../../../app/types";
 import type { SpaceData } from "../../../app/types";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { read, write, remove } from "../../../database/dbSlice"; // 使用 remove
 
@@ -19,7 +19,7 @@ export const removeMemberAction = async (
   const { spaceId, memberId } = input;
   const { dispatch, getState } = thunkAPI;
   const state = getState();
-  const currentUserId = selectUserId(state);
+  const currentUserId = selectIdentityUserId(state);
 
   const spaceKey = createSpaceKey.space(spaceId);
   const spaceData: SpaceData | null = await dispatch(read({

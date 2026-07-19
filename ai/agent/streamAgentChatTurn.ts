@@ -79,7 +79,11 @@ import {
     messageStreaming,
     prepareAndPersistUserMessage,
 } from "../../chat/messages/messageSlice";
-import { selectCurrentToken, selectUserId, selectCurrentUser } from "../../auth/authSlice";
+import {
+  selectIdentityToken,
+  selectIdentityUser,
+  selectIdentityUserId,
+} from "../../app/identity/selectors";
 import { shouldBlockForGptPro } from "../../auth/gptProTier";
 import { persistMessageWithFixedId } from "./persistMessageWithFixedId";
 import { updateTotalUsage } from "../chat/updateTotalUsage";
@@ -251,7 +255,7 @@ const resolveWebAgentRuntimeToolSurface = (
         explicitToolNames: Array.isArray((agentConfig as any).tools)
             ? (agentConfig as any).tools
             : [],
-        currentUserId: selectUserId(state),
+        currentUserId: selectIdentityUserId(state),
         agentOwnerId: typeof (agentConfig as any).userId === "string"
             ? (agentConfig as any).userId
             : null,
@@ -971,7 +975,7 @@ export const streamAgentChatTurnHandler = async (
 
         const gptProCheck = shouldBlockForGptPro(
             agentConfig,
-            selectCurrentUser(getState() as RootState)?.gptProAccess?.status,
+            selectIdentityUser(getState() as RootState)?.gptProAccess?.status,
         );
         if (gptProCheck.blocked) {
             return rejectWithValue(gptProCheck.message);
@@ -1019,7 +1023,7 @@ export const streamAgentChatTurnHandler = async (
             const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
             const cliMessageMetadata = buildMessageMetadata(agentConfig);
             if (boundMachineId) {
-                const token = selectCurrentToken(currentState);
+                const token = selectIdentityToken(currentState);
                 const authHeader = token ? `Bearer ${token}` : "";
                 const rawMessages = selectAllMsgs(currentState, dialogId);
                 const visibleMessages = buildAgentViewMessages(
@@ -1037,7 +1041,7 @@ export const streamAgentChatTurnHandler = async (
                     role: "assistant" as const,
                     content: accumulated,
                     ...cliMessageMetadata,
-                    userId: selectUserId(getState() as RootState),
+                    userId: selectIdentityUserId(getState() as RootState),
                 });
 
                 dispatch(messageStreaming({
@@ -1301,7 +1305,7 @@ export const streamAgentChatTurnHandler = async (
                 role: "assistant" as const,
                 content: accumulated,
                 ...cliMessageMetadata,
-                userId: selectUserId(getState() as RootState),
+                userId: selectIdentityUserId(getState() as RootState),
             });
             const rejectCliStream = async (message: string) => {
                 if (accumulated.length > 0) {
@@ -1654,7 +1658,7 @@ export const streamAgentChatTurnHandler = async (
                             role: "assistant",
                             content: segment.content,
                             ...desktopMessageMetadata,
-                            userId: selectUserId(getState() as RootState),
+                            userId: selectIdentityUserId(getState() as RootState),
                         });
                     } else {
                         dispatch(removeTransientMessage(segment.messageId));
@@ -1849,7 +1853,7 @@ export const streamAgentChatTurnHandler = async (
                 // chat/tool loop and let /api/chat hydrate redacted provider
                 // credentials server-side when needed.
             } else {
-                const token = selectCurrentToken(state);
+                const token = selectIdentityToken(state);
                 const authHeader = token ? `Bearer ${token}` : "";
                 const rawMessages = selectAllMsgs(state, dialogId);
                 const visibleMessages = buildAgentViewMessages(
@@ -1868,7 +1872,7 @@ export const streamAgentChatTurnHandler = async (
                     role: "assistant" as const,
                     content: accumulated,
                     ...remoteMessageMetadata,
-                    userId: selectUserId(getState() as RootState),
+                    userId: selectIdentityUserId(getState() as RootState),
                 });
 
                 loopKey = `loop:${dialogId}`;

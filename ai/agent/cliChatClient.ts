@@ -1,6 +1,6 @@
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { getIsDesktopApp } from "../../app/utils/env";
-import { selectCurrentToken } from "../../auth/authSlice";
+import { selectIdentityToken } from "../../app/identity/selectors";
 import type { RootState } from "../../app/store";
 import type { CliProvider } from "./cliExecutor";
 import { isCliProvider } from "./cliProviders";
@@ -24,7 +24,7 @@ type CliChatRequestBase = {
 function getCliChatRequestConfig(thunkApi: any) {
   const state = thunkApi.getState() as RootState;
   const currentServer = selectCurrentServer(state);
-  const token = selectCurrentToken(state);
+  const token = selectIdentityToken(state);
   if (!currentServer) throw new Error("无法获取当前服务器地址。");
   return { currentServer, token };
 }
@@ -181,7 +181,7 @@ export async function scanInstalledClis(
   let token: string | undefined;
   try {
     if (thunkApi?.getState) {
-      token = selectCurrentToken(thunkApi.getState() as RootState) || undefined;
+      token = selectIdentityToken(thunkApi.getState() as RootState) || undefined;
     }
   } catch {
     // Logged-out desktop still scans via trusted same-origin.

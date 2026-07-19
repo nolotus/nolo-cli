@@ -19,7 +19,7 @@ import { DataType } from "../../create/types";
 import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import { remove, write, patch, selectById as selectDbRecordById } from "../../database/dbSlice";
 import type { Message } from "./types";
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import { fetchAndCacheMessages, fetchAndCacheMessagesLocalFirst } from "./fetchAndCacheMessages";
 import { createDialogMessageKeyAndId } from "../../database/keys";
 import { toErrorMessage } from "../../core/errorMessage";
@@ -177,7 +177,7 @@ export const captureUnderstandingFromCompletedUiTurn = async (input: {
   const { captureUnderstandingMemoryFromDialog } = await import("../../ai/memory/understanding");
   await captureUnderstandingMemoryFromDialog({
     db: input.db,
-    userId: selectUserId(input.state),
+    userId: selectIdentityUserId(input.state),
     spaceId:
       input.spaceId ??
       getDialogSpaceIdForUnderstanding(input.state, input.dialogKey),
@@ -561,7 +561,7 @@ export const messageSlice = createSliceWithThunks({
         const dialogKey = dialogConfig.dbKey || dialogConfig.id;
         const dialogId = extractCustomId(dialogKey);
         const currentAccountUserId =
-          (selectUserId(state) as string | null | undefined) ?? null;
+          (selectIdentityUserId(state) as string | null | undefined) ?? null;
         const dialogConfigUserId = (dialogConfig as { userId?: unknown })
           .userId;
         const userId = resolveMessageOwner({
@@ -972,7 +972,7 @@ export const messageSlice = createSliceWithThunks({
         const dialogConfigUserId = (dialogConfig as { userId?: unknown } | null)
           ?.userId;
         const currentAccountUserId =
-          (selectUserId(state) as string | null | undefined) ?? null;
+          (selectIdentityUserId(state) as string | null | undefined) ?? null;
         const userId = resolveMessageOwner({
           dialogConfigUserId:
             typeof dialogConfigUserId === "string" ? dialogConfigUserId : null,

@@ -9,7 +9,7 @@ import { mergeReferences } from "./referenceUtils";
 import { generateRequestBody } from "../llm/generateRequestBody";
 import { getApiEndpoint } from "../llm/providers";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
-import { selectCurrentToken } from "../../auth/authSlice";
+import { selectIdentityToken } from "../../app/identity/selectors";
 import { applyChatCompletionsStreamMode } from "../../integrations/openai/chatCompletionStreamMode";
 
 import { sendOpenAICompletionsRequest } from "../chat/sendOpenAICompletionsRequest";
@@ -99,7 +99,7 @@ export const _executeModel = async (
         api: getApiEndpoint(resolvedAgentConfig),
         bodyData,
         currentServer: selectCurrentServer(state),
-        token: selectCurrentToken(state) ?? "",
+        token: selectIdentityToken(state) ?? "",
         dialogId:
           extractCustomId(args.billingDialogKey ?? currentDialogKey) ||
           undefined,

@@ -4,7 +4,7 @@ import { updateAgent } from "../../agent/agentSlice";
 import {
   selectAutoApproveSelfUpdateFields,
 } from "../../../app/settings/settingSlice";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { selectCurrentDialogConfig } from "../../../chat/dialog/dialogSlice";
 import { resolveMessageAgentKey } from "../../../chat/messages/messageAgent";
 import { selectMsgById } from "../../../chat/messages/messageSlice";
@@ -55,7 +55,7 @@ export async function updateSelfToolFunc(
   runtime?: { parentMessageId?: string },
 ): Promise<{ rawData: Agent; displayData: string }> {
   const state = thunkApi.getState() as RootState;
-  const userId = selectUserId(state);
+  const userId = selectIdentityUserId(state);
   const db = (thunkApi.extra as any)?.db;
 
   validateUpdateArgs(userId);

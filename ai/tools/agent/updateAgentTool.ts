@@ -3,7 +3,7 @@
 import type { RootState } from "../../../app/store";
 import type { Agent } from "../../../app/types";
 import { updateAgent } from "../../agent/agentSlice";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import {
     type UpdateAgentToolArgs,
     agentUpdateFieldSchemaProperties,
@@ -42,7 +42,7 @@ export async function updateAgentToolFunc(
     thunkApi: any
 ): Promise<{ rawData: Agent; displayData: string }> {
     const state = thunkApi.getState() as RootState;
-    const userId = selectUserId(state);
+    const userId = selectIdentityUserId(state);
     const db = (thunkApi.extra as any)?.db;
 
     validateUpdateArgs(userId, { requireAgentId: true, agentId: args.agentId });

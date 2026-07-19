@@ -29,7 +29,7 @@ import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getApiEndpoint } from "../llm/providers";
 import { createDialogMessageKeyAndId, dialogMessageKey } from "../../database/keys";
-import { selectCurrentToken } from "../../auth/authSlice";
+import { selectIdentityToken } from "../../app/identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { toErrorMessage } from "../../core/errorMessage";
 import { asOptionalTrimmedString } from "../../core/optionalString";
@@ -952,7 +952,7 @@ export const sendOpenAICompletionsRequest = async ({
     }
 
     const api = getApiEndpoint(agentConfig);
-    const token = selectCurrentToken(getState() as RootState) ?? "";
+    const token = selectIdentityToken(getState() as RootState) ?? "";
     logQuickChatPerfStage(quickChatPerfStartedAt, "openai-completions-fetch-starting", {
       api,
       dialogKey,

@@ -15,7 +15,7 @@ import { createAsyncThunk } from "@reduxjs/toolkit";
 import type { RootState } from "../../app/store";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { resolveRetryAfterMs } from "../../app/utils/retryAfter";
-import { selectCurrentToken } from "../../auth/authSlice";
+import { selectIdentityToken } from "../../app/identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import { normalizeServerOrigin } from "../../core/serverOrigin";
@@ -210,7 +210,7 @@ export const runAgentBackground = createAsyncThunk<
 
     const state = getState();
     const currentServer = normalizeServerOrigin(serverBase) || selectCurrentServer(state);
-    const token = selectCurrentToken(state);
+    const token = selectIdentityToken(state);
     if (!currentServer) throw new Error("未配置服务器地址");
 
     const authHeader = token ? `Bearer ${token}` : "";

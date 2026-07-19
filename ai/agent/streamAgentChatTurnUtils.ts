@@ -28,10 +28,8 @@ import {
 import type { Agent, DialogConfig } from "../../app/types";
 import type { Contexts } from "../types";
 import { getModelContextWindow } from "../llm/getModelContextWindow";
-import {
-    selectCurrentUserBalance,
-    selectUserId,
-} from "../../auth/authSlice";
+import { selectCurrentUserBalance } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import {
     getModelPricing,
     getPrices,
@@ -380,7 +378,7 @@ export const validateAccessAndBalance = (
     state: RootState,
 ): string | null => {
     const userBalance = selectCurrentUserBalance(state);
-    const currentUserId = selectUserId(state);
+    const currentUserId = selectIdentityUserId(state);
 
     const isCustomApi = agentConfig.apiSource === "custom";
     const isCliApi = agentConfig.apiSource === "cli";
@@ -423,7 +421,7 @@ export const validateAccessAndBalance = (
     if (typeof userBalance !== "number") {
         // Platform path without balance: ask for login instead of a false "loading" state.
         // Prefer the session object over selectors alone so parallel test mocks of
-        // `selectUserId` cannot mis-classify a logged-out client as "balance loading".
+        // `selectIdentityUserId` cannot mis-classify a logged-out client as "balance loading".
         const hasSessionUser = Boolean(
             (state as { auth?: { currentUser?: { userId?: string } | null } })
                 ?.auth?.currentUser?.userId,

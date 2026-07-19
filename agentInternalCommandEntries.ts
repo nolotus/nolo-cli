@@ -8,6 +8,7 @@ import {
   runAgentEmailBindCommand,
   runAgentEmailCreateAndProvisionCommand,
   runAgentEmailProvisionCommand,
+  runAgentEmailTransferCommand,
 } from "./agentEmailCommands";
 
 export function getAgentInternalCommandEntries(): CommandEntry[] {
@@ -75,6 +76,9 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
     }),
     createEnvCommand(["agent", "email", "bind"], "Bind an existing email address to an agent", async (args, deps) => {
       return runAgentEmailBindCommand(args, deps);
+    }),
+    createEnvCommand(["agent", "email", "transfer"], "Transfer an email identity from one agent to another (cross-account)", async (args, deps) => {
+      return runAgentEmailTransferCommand(args, deps);
     }),
     createEnvCommand(
       ["agent", "email", "create-and-provision"],

@@ -1,4 +1,4 @@
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { addContentToSpace } from "../../../create/space/spaceSlice";
 import { DataType } from "../../../create/types";
 import { write } from "../../../database/dbSlice";
@@ -24,7 +24,7 @@ export const createAgentAutomationAction = async (
   thunkApi: any
 ) => {
   const { dispatch, getState } = thunkApi;
-  const userId = selectUserId(getState());
+  const userId = selectIdentityUserId(getState());
   if (!userId) {
     throw new Error("User is not logged in.");
   }

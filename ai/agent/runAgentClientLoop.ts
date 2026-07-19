@@ -13,7 +13,7 @@ import { generateRequestBody } from "../llm/generateRequestBody";
 import { mergeReferences } from "./referenceUtils";
 import { getApiEndpoint } from "../llm/providers";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
-import { selectCurrentToken } from "../../auth/authSlice";
+import { selectIdentityToken } from "../../app/identity/selectors";
 import { performFetchRequest } from "../chat/fetchUtils";
 import { executeToolCall } from "../agent/executeToolCall";
 import { extractCustomId } from "../../core/prefix";
@@ -74,7 +74,7 @@ export async function runAgentClientLoop(
 
   const api = getApiEndpoint(agentConfig);
   const currentServer = selectCurrentServer(state);
-  const token = selectCurrentToken(state) ?? "";
+  const token = selectIdentityToken(state) ?? "";
 
   let finalContent = "";
   let toolCallCount = 0;

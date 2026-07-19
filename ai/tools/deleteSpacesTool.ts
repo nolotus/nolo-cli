@@ -1,4 +1,4 @@
-import { selectUserId } from "../../auth/authSlice";
+import { selectIdentityUserId } from "../../app/identity/selectors";
 import { asTrimmedNonEmptyStringArray } from "../../core/stringArray";
 import { createSpaceKey } from "../../create/space/spaceKeys";
 import { deleteSpace, selectAllMemberSpaces } from "../../create/space/spaceSlice";
@@ -72,7 +72,7 @@ export const deleteSpacesFunctionSchema = {
 };
 
 const defaultDeps: DeleteSpacesToolDeps = {
-  selectCurrentUserId: selectUserId,
+  selectCurrentUserId: selectIdentityUserId,
   selectMemberSpaces: (state) => selectAllMemberSpaces(state) as SpaceMembershipLike[],
   readSpaceRecord: async (thunkApi, spaceId) => {
     try {

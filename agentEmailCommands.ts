@@ -17,6 +17,8 @@ const PROVISION_USAGE =
 
 const BIND_USAGE =
   "Usage: nolo agent email bind <agent> --email <address> [--provider <name>] [--cloudflare-oauth]\n";
+const TRANSFER_USAGE =
+  "Usage: nolo agent email transfer --from <source-agent> --to <target-agent> --email <address> [--no-move-history] [--cloudflare-oauth]\n";
 
 function wantsHelp(args: string[]) {
   return args.includes("--help") || args.includes("-h");
@@ -291,6 +293,123 @@ export async function runAgentEmailBindCommand(
   } catch (error) {
     output.write(
       `[nolo] agent email bind failed: ${toErrorMessage(error)}\n`
+    );
+    return 1;
+  }
+}
+
+export async function runAgentEmailTransferCommand(
+  args: string[],
+  deps: AgentCommandDeps = {}
+) {
+  const env = deps.env ?? process.env;
+  const output = deps.output ?? process.stdout;
+
+  if (wantsHelp(args) || args.length === 0) {
+    output.write(TRANSFER_USAGE);
+    return args.length === 0 ? 1 : 0;
+  }
+
+  const sourceInput = readFlagValue(args, "--from")?.trim();
+  const targetInput = readFlagValue(args, "--to")?.trim();
+  const emailAddress = readFlagValue(args, "--email")?.trim();
+  if (!sourceInput || !targetInput || !emailAddress) {
+    output.write(TRANSFER_USAGE);
+    return 1;
+  }
+
+  const authToken = resolveAuthToken(args, env);
+  if (!authToken) {
+    output.write(
+      "[nolo] agent email transfer requires an auth token. Run `nolo login` or set AUTH_TOKEN.\n"
+    );
+    return 1;
+  }
+
+  const userId = parseUserIdFromAuthToken(authToken);
+  if (!userId) {
+    output.write(
+      "[nolo] agent email transfer could not read userId from AUTH_TOKEN.\n"
+    );
+    return 1;
+  }
+
+  const moveHistoryEmails = !args.includes("--no-move-history");
+  const db = deps.db ?? (await getReadableCliDb(output));
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const fallbackFetchImpl = deps.fallbackFetchImpl;
+
+  try {
+    const tokenResult = await ensureCloudflareEmailRoutingToken(args, env, output);
+    if (tokenResult?.wasGenerated) {
+      env.CLOUDFLARE_EMAIL_ROUTING_API_TOKEN = tokenResult.token;
+    }
+
+    const [sourceAgentId, targetAgentId] = await Promise.all([
+      resolveAgentIdForEmailRpc({
+        agentInput: sourceInput,
+        cliArgs: args,
+        env,
+        db,
+        authToken,
+        fetchImpl,
+        fallbackFetchImpl,
+      }),
+      resolveAgentIdForEmailRpc({
+        agentInput: targetInput,
+        cliArgs: args,
+        env,
+        db,
+        authToken,
+        fetchImpl,
+        fallbackFetchImpl,
+      }),
+    ]);
+
+    const result = await postAgentEmailRpc({
+      method: "transferAgentEmailIdentity",
+      body: {
+        sourceAgentId,
+        targetAgentId,
+        emailAddress,
+        moveHistoryEmails,
+      },
+      cliArgs: args,
+      env,
+      authToken,
+      fetchImpl,
+      fallbackFetchImpl,
+    });
+
+    await db.put(targetAgentId, {
+      ...result.agent,
+      dbKey: targetAgentId,
+      key: targetAgentId,
+      serverOrigin: result.baseUrl,
+      cachedAt: Date.now(),
+    });
+
+    output.write(
+      JSON.stringify(
+        {
+          ok: true,
+          action: "transfer",
+          sourceAgentId: result.data.sourceAgentId,
+          targetAgentId: result.data.targetAgentId,
+          emailAddress: result.data.emailAddress,
+          movedEmails: result.data.movedEmails,
+          delegationResourcePrefix: result.data.delegationResourcePrefix,
+          baseUrl: result.baseUrl,
+        },
+        null,
+        2
+      )
+    );
+    output.write("\n");
+    return 0;
+  } catch (error) {
+    output.write(
+      `[nolo] agent email transfer failed: ${toErrorMessage(error)}\n`
     );
     return 1;
   }

@@ -16,7 +16,7 @@ import { selectRuntimeCurrentServer } from "../../app/stateViews/runtime";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getApiEndpoint } from "../llm/providers";
 import { createDialogMessageKeyAndId, dialogMessageKey } from "../../database/keys";
-import { selectCurrentToken } from "../../auth/authSlice";
+import { selectIdentityToken } from "../../app/identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { extractCustomId } from "../../core/prefix";
@@ -549,7 +549,7 @@ export const sendOpenAIResponseRequest = async ({
     };
 
     const api = getApiEndpoint(agentConfig);
-    const token = selectCurrentToken(getState() as RootState);
+    const token = selectIdentityToken(getState() as RootState);
     logQuickChatPerfStage(quickChatPerfStartedAt, "openai-response-fetch-starting", {
       api,
       dialogKey,

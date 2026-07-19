@@ -2,7 +2,7 @@
 
 import { runLlm } from "../../../ai/agent/agentSlice";
 import type { RootState } from "../../../app/store";
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import {
   updateContentTitle,
 } from "../../../create/space/spaceSlice";
@@ -82,7 +82,7 @@ type UpdateDialogTitleDeps = {
   selectDialogById?: typeof selectById;
   selectAllMessages?: typeof selectAllMsgs;
   updateSpaceContentTitle?: typeof updateContentTitle;
-  selectCurrentUserId?: typeof selectUserId;
+  selectCurrentUserId?: typeof selectIdentityUserId;
 };
 
 type UpdateDialogTitleArgs = {
@@ -136,7 +136,7 @@ export const updateDialogTitleActionWithDeps = async (
     selectDialogById = selectById,
     selectAllMessages = selectAllMsgs,
     updateSpaceContentTitle = updateContentTitle,
-    selectCurrentUserId = selectUserId,
+    selectCurrentUserId = selectIdentityUserId,
   } = deps;
   const { dialogKey, agentConfig } = args;
   const { dispatch, getState } = thunkApi;

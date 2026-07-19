@@ -1,6 +1,6 @@
 // 文件路径: packages/chat/dialog/actions/createDialogAction.ts
 
-import { selectUserId } from "../../../auth/authSlice";
+import { selectIdentityUserId } from "../../../app/identity/selectors";
 import { isRecord } from "../../../core/isRecord";
 import { asOptionalTrimmedString } from "../../../core/optionalString";
 import { extractCustomId } from "../../../core/prefix";
@@ -119,7 +119,7 @@ export const createDialogAction = async (
   const dispatch = dispatchRaw as any;
   const agentKey = cybots[0];
   const currentUserId =
-    (selectUserId(getState()) as string | null | undefined) ?? null;
+    (selectIdentityUserId(getState()) as string | null | undefined) ?? null;
   const isDeviceLocalDialog = isLocalOwnerDialogAgents(cybots);
   // Per M1-C owner rules:
   //   1. dialogs referencing agent-local- are always "local",

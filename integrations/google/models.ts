@@ -87,56 +87,6 @@ export const googleModels: Model[] = [
     },
   },
   {
-    name: "gemini-2.5-pro",
-    displayName: "Gemini 2.5 Pro",
-    provider: "google",
-    description: "The full version of Gemini 2.5 Pro with all features.",
-    hasVision: true,
-    hasAudio: true,
-    contextWindow: 1048576,
-    maxOutputTokens: 65536,
-    supportsTool: true,
-    supportsReasoningEffort: true,
-    price: {
-      input: 1.25 * 7,
-      output: 10 * 7,
-      cachingWrite: 0.2 * 7,
-      cachingRead: 0.2 * 7,
-    },
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 200001,
-          price: {
-            input: 2.5 * 7,
-            output: 15 * 7,
-            cachingWrite: 0.25 * 7,
-            cachingRead: 0.25 * 7,
-          },
-        },
-      ],
-    },
-  },
-  {
-    name: "gemini-2.5-flash-lite",
-    displayName: "Gemini 2.5 Flash Lite",
-    provider: "google",
-    description:
-      "Our smallest and most cost-effective model, built for at scale usage.",
-    hasVision: false,
-    hasAudio: true,
-    contextWindow: 1048576,
-    maxOutputTokens: 4096,
-    supportsTool: true,
-    price: {
-      input: 0.1 * 7,
-      output: 0.4 * 7,
-      cachingWrite: 0.2 * 7,
-      cachingRead: 0.2 * 7,
-    },
-  },
-  {
     name: "gemini-3.5-flash",
     displayName: "Gemini 3.5 Flash",
     provider: "google",

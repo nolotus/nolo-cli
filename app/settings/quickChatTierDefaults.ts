@@ -11,8 +11,12 @@
 // 与 desktopAgentRuntimeAdapter 的 BUILTIN_PLATFORM_AGENT_CONFIGS 保持一致
 // (见 packages/server/handlers/desktopAgentRuntimeAdapter.ts)。
 
-export const QUICK_CHAT_AUTO_FALLBACK_AGENT_KEY =
-  "agent-pub-deepseek-v4-flash";
+import {
+  PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
+  PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
+} from "../../core/builtinAgents";
+
+export const QUICK_CHAT_AUTO_FALLBACK_AGENT_KEY = PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY;
 export const QUICK_CHAT_IMAGE_AGENT_KEY =
   "agent-pub-01KIMIK26OLLAMA0000000001";
 
@@ -22,7 +26,7 @@ export const QUICK_CHAT_DEFAULT_TIER_AGENTS: Record<
   string
 > = {
   flash: QUICK_CHAT_AUTO_FALLBACK_AGENT_KEY,
-  balanced: "agent-pub-deepseek-v4-pro",
+  balanced: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
   quality: "agent-pub-01GLM52CHAT00000000001U721",
   image: QUICK_CHAT_IMAGE_AGENT_KEY,
 };

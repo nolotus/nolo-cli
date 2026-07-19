@@ -37,8 +37,18 @@ export const PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE = {
   output: 0.16,
 } as const;
 
+/**
+ * Platform hosted chat completions upstream.
+ *
+ * Open-source default: Ollama Cloud's OpenAI-compatible endpoint
+ * (https://ollama.com/v1/chat/completions), authenticated via OLLAMA_API_KEY.
+ *
+ * nolo 内部生产环境的上游路由（组合 ollama cloud + 自有机器 + 官方 DeepSeek 等）
+ * 不在开源仓库内——这部分由内部 provider 路由层接管，不暴露具体后端组合。
+ * 当前开源实现只做单一中转：nolo provider → ollama cloud。
+ */
 export const PLATFORM_HOSTED_CHAT_COMPLETIONS_URL =
-  "https://api.nolo.chat/v1/chat/completions";
+  "https://ollama.com/v1/chat/completions";
 
 /** Official DeepSeek OpenAI-compatible chat endpoint (Flash fallback / Pro primary). */
 export const DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_URL =

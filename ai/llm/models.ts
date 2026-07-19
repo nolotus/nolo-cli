@@ -39,6 +39,7 @@ const withProvider =
  * 这是整个应用中模型选择器的唯一数据源。
  */
 export const ALL_MODELS: ModelWithProvider[] = [
+  ...withProvider("nolo")(ollamaCloudModels),
   ...withProvider("google")(googleModels),
   ...withProvider("openai")(openAIModels),
   ...withProvider("openrouter")(openrouterModels),
@@ -46,7 +47,6 @@ export const ALL_MODELS: ModelWithProvider[] = [
   ...withProvider("deepseek")(deepSeekModels),
   ...withProvider("deepinfra")(deepinfraModels),
   ...withProvider("fireworks")(fireworksModels),
-  ...withProvider("nolo")(ollamaCloudModels),
   ...withProvider("mistral")(mistralModels),
   ...withProvider("mimo")(mimoModels),
   ...withProvider("cloudflare")(cloudflareModels),

@@ -327,14 +327,15 @@ export function runWhoamiCommand(
   }
 
   const effectiveServer = runtimeEnv.NOLO_SERVER ?? profile!.serverUrl;
+  const effectiveToken = runtimeEnv.AUTH_TOKEN ?? profileToken;
 
   output.log(`profile: ${config!.currentProfile}`);
   output.log(`profile server: ${profile!.serverUrl}`);
   output.log(`effective server: ${effectiveServer}`);
   output.log(`server source: ${explicitServer ? "env" : "profile"}`);
-  output.log(`token: ${formatTokenPreview(profileToken)} (source: profile)`);
+  output.log(`token: ${formatTokenPreview(effectiveToken)} (source: ${envToken && envToken !== profileToken ? "environment" : "profile"})`);
   if (envToken && envToken !== profileToken) {
-    output.log(`env token: ${formatTokenPreview(envToken)} (source: environment, unused while profile token is set)`);
+    output.log(`profile token: ${formatTokenPreview(profileToken)} (source: profile, overridden by environment)`);
   }
   return 0;
 }

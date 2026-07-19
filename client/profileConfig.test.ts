@@ -66,11 +66,29 @@ describe("cli profile config", () => {
     expect(normalizeProfileServerUrl("http://127.0.0.1:38123")).toBe("http://127.0.0.1:38123");
   });
 
-  test("runtime env prefers the saved profile token over ambient AUTH_TOKEN", () => {
+  test("runtime env prefers ambient AUTH_TOKEN over the saved profile token", () => {
     const runtimeEnv = buildCliRuntimeEnv(
       {
         AUTH_TOKEN: "ambient-token",
       } as NodeJS.ProcessEnv,
+      {
+        currentProfile: "default",
+        profiles: {
+          default: {
+            serverUrl: "https://nolo.chat",
+            authToken: "profile-token",
+          },
+        },
+      }
+    );
+
+    expect(runtimeEnv.AUTH_TOKEN).toBe("ambient-token");
+    expect(runtimeEnv.NOLO_SERVER).toBe("https://nolo.chat");
+  });
+
+  test("runtime env falls back to the saved profile token when ambient AUTH_TOKEN is unset", () => {
+    const runtimeEnv = buildCliRuntimeEnv(
+      {} as NodeJS.ProcessEnv,
       {
         currentProfile: "default",
         profiles: {

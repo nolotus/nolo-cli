@@ -90,11 +90,19 @@ export function buildCliRuntimeEnv(
   config: NoloProfileConfig | null
 ): Record<string, string | undefined> {
   const profileEnv = buildEnvFromProfile(config);
+  // Ambient env wins over profile, mirroring NOLO_SERVER handling below.
+  // Explicit AUTH_TOKEN/AUTH set in the shell overrides the saved profile
+  // token; `--token`/`--machine-key` flags still win at the command layer.
+  const explicitAuthToken =
+    processEnv.AUTH_TOKEN || processEnv.AUTH;
   const explicitServerUrl =
     processEnv.NOLO_SERVER || processEnv.NOLO_SERVER_URL || processEnv.BASE_URL;
   return {
     ...processEnv,
     ...profileEnv,
+    ...(explicitAuthToken
+      ? { AUTH_TOKEN: explicitAuthToken }
+      : {}),
     ...(explicitServerUrl
       ? {
           NOLO_SERVER: explicitServerUrl,

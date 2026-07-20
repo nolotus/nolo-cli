@@ -12,7 +12,13 @@ import {
   stripImageTokens,
 } from "./session";
 import { detectImagePaths } from "./pasteImage";
-import { getActiveThemeName, getActiveDensity } from "./theme";
+import {
+  getActiveThemeName,
+  getActiveDensity,
+  setActiveThemeName,
+  setActiveDensity,
+  type TuiDensity,
+} from "./theme";
 
 // 1x1 transparent PNG
 const TINY_PNG_BASE64 =
@@ -377,6 +383,19 @@ describe("handleTuiInput - path-vs-slash disambiguation", () => {
       type: "shell-command",
       command: "git status",
     });
+  });
+
+  // /theme 与 /density 会改写 theme.ts 的模块级全局状态，该状态跨测试文件存活，
+  // 会污染后跑的 tui/theme.test.ts。这里捕获原值并在 afterEach 还原——用 afterEach
+  // 而非在用例末尾还原，是为了让用例中途失败时也能还原。
+  const themeStateBeforeEach = { theme: "", density: "spacious" as TuiDensity };
+  beforeEach(() => {
+    themeStateBeforeEach.theme = getActiveThemeName();
+    themeStateBeforeEach.density = getActiveDensity();
+  });
+  afterEach(() => {
+    setActiveThemeName(themeStateBeforeEach.theme);
+    setActiveDensity(themeStateBeforeEach.density);
   });
 
   test("handles /theme command to list or switch themes", () => {

@@ -37,7 +37,6 @@ export const isNoloHostedProvider = (provider?: string | null): boolean => {
   const normalized = asTrimmedLowercaseString(provider);
   return (
     normalized === PLATFORM_HOSTED_KIMI_PROVIDER ||
-    normalized === "nolo-hosted" ||
     normalized === LEGACY_OLLAMA_CLOUD_PROVIDER
   );
 };
@@ -94,7 +93,7 @@ export const isDeepInfraKimiModel = (model?: string | null): boolean =>
 export const isVultrKimiModel = (model?: string | null): boolean =>
   model === VULTR_KIMI_MODEL;
 
-/** Platform catalog + proxy: only nolo-hosted Kimi (legacy ollama-cloud id accepted). */
+/** Platform catalog + proxy: only ollama-cloud Kimi (legacy id still accepted). */
 export const isPlatformKimiProviderModel = (
   provider?: string | null,
   model?: string | null

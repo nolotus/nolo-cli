@@ -15,11 +15,7 @@ import {
   normalizeThinkingDisplayMode,
   type ThinkingDisplayMode,
 } from "../client/thinkingOutput";
-import {
-  dimCliText,
-  resolveCliColorEnabled,
-  styleCliText,
-} from "../client/terminalStyles";
+import { resolveCliColorEnabled } from "../client/terminalStyles";
 import {
   formatTokenCount,
   renderTokenStatus,
@@ -230,30 +226,34 @@ function renderComposerTokenChip(tokens?: TurnTokenUsage) {
 
 export function renderStatusLine(state: TuiState) {
   const colorEnabled = resolveCliColorEnabled();
-  // OMP-style chips: soft fg colors + " > " separators. No solid powerline
+  // OMP-style chips: soft fg colors + " · " separators. No solid powerline
   // backgrounds — those break box layout when the line is long.
   //
-  // Status line uses ANSI-16 colors: they are saturated and read well on both
-  // light and dark terminals without needing truecolor detection. The theme
-  // accent token is kept for the agent segment to tie it to the app brand.
-  const sep = dimCliText(" · ", colorEnabled);
+  // Segments use semantic theme tokens rather than raw ANSI color names. The
+  // status line is the most visible chrome in the TUI, and hardcoding colors
+  // here meant `/theme` visibly changed everything except it. Each token
+  // carries an ANSI-16 fallback, so terminals without truecolor still get the
+  // saturated, light/dark-safe colors the raw names used to provide.
+  const sep = themeText(" · ", "chrome", colorEnabled);
 
   const agentLabel = `🏔 ${state.agentName}${state.modeLabel ? ` · ${state.modeLabel}` : ""}`;
-  const agentSegment = styleCliText(agentLabel, "cyan", colorEnabled);
+  const agentSegment = themeText(agentLabel, "accent", colorEnabled);
 
-  const cwdSegment = styleCliText(`📁 ${formatCwd(state.cwd)}`, "blue", colorEnabled);
+  const cwdSegment = themeText(`📁 ${formatCwd(state.cwd)}`, "info", colorEnabled);
 
   const parts: string[] = [agentSegment, cwdSegment];
 
   if (state.gitStatus) {
     const { branch, modified, untracked } = state.gitStatus;
-    const branchText = styleCliText(`⑂ ${branch}`, "yellow", colorEnabled);
-    const modifiedText = modified > 0 ? ` ${styleCliText(`*${modified}`, "red", colorEnabled)}` : "";
-    const untrackedText = untracked > 0 ? ` ${styleCliText(`?${untracked}`, "dim", colorEnabled)}` : "";
+    const branchText = themeText(`⑂ ${branch}`, "warning", colorEnabled);
+    // Modified files are the actionable signal (danger); untracked is noise
+    // (muted). Keeping them different tokens preserves that hierarchy.
+    const modifiedText = modified > 0 ? ` ${themeText(`*${modified}`, "danger", colorEnabled)}` : "";
+    const untrackedText = untracked > 0 ? ` ${themeText(`?${untracked}`, "muted", colorEnabled)}` : "";
     parts.push(`${branchText}${modifiedText}${untrackedText}`);
   }
 
-  const tokenSegment = dimCliText(renderComposerTokenChip(state.turnTokens), colorEnabled);
+  const tokenSegment = themeText(renderComposerTokenChip(state.turnTokens), "muted", colorEnabled);
   parts.push(tokenSegment);
 
   return parts.join(sep);

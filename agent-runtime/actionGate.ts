@@ -9,6 +9,14 @@ export type PermissionRequest = {
   action: string;
   title: string;
   body?: string;
+  /**
+   * The exact command (or other action target) the user is being asked to
+   * approve, surfaced verbatim so the confirm dialog can render it — instead
+   * of a generic "this may delete things" warning the user signs blind.
+   * Optional for backward compatibility: existing construction sites that
+   * don't carry a concrete command omit it and still compile.
+   */
+  command?: string;
   suggestedRule?: {
     scope: "once" | "session" | "policy";
     pattern: unknown;

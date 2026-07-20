@@ -2434,65 +2434,23 @@ export function createCliLocalRuntimeAdapter(
         budgets: localToolBudgets,
         usage: localToolUsage,
       });
-      try {
-        const result = await executeLocalToolWithPolicy({
-          env: deps.env,
-          agentToolNames: activeAgentToolNames,
-          call,
-          executors: localToolExecutors,
-        });
-        return {
-          ...result,
-          metadata: {
-            ...(result.metadata ?? {}),
-            workspaceRoot,
-            workspaceKind: "current",
-          },
-        };
-      } catch (error) {
-        const code =
-          error &&
-          typeof error === "object" &&
-          typeof (error as { code?: unknown }).code === "string"
-            ? (error as { code: string }).code
-            : undefined;
-        const request =
-          error &&
-          typeof error === "object" &&
-          (error as { permissionRequest?: unknown }).permissionRequest;
-        if (
-          code === "destructive_action_requires_confirmation" &&
-          request &&
-          typeof request === "object"
-        ) {
-          if (!deps.confirmDestructiveAction) {
-            throw new Error(
-              "destructive shell command blocked: no confirmation callback is wired in this runtime mode; run in an interactive TTY to get a confirm prompt",
-            );
-          }
-          const confirmed = await deps.confirmDestructiveAction(
-            request as PermissionRequest,
-          );
-          if (confirmed) {
-            const result = await executeLocalToolWithPolicy({
-              env: deps.env,
-              agentToolNames: activeAgentToolNames,
-              call,
-              executors: localToolExecutors,
-              confirmed: true,
-            });
-            return {
-              ...result,
-              metadata: {
-                ...(result.metadata ?? {}),
-                workspaceRoot,
-                workspaceKind: "current",
-              },
-            };
-          }
-        }
-        throw error;
-      }
+      const result = await executeLocalToolWithPolicy({
+        env: deps.env,
+        agentToolNames: activeAgentToolNames,
+        call,
+        executors: localToolExecutors,
+        ...(deps.confirmDestructiveAction
+          ? { confirmDestructiveAction: deps.confirmDestructiveAction }
+          : {}),
+      });
+      return {
+        ...result,
+        metadata: {
+          ...(result.metadata ?? {}),
+          workspaceRoot,
+          workspaceKind: "current",
+        },
+      };
     },
   };
 }

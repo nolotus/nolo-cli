@@ -20,15 +20,11 @@ export const PLATFORM_CHAT_COMPLETIONS_ENDPOINTS: Readonly<
   fireworks: "https://api.fireworks.ai/inference/v1/chat/completions",
   google:
     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-  mistral: "https://api.mistral.ai/v1/chat/completions",
-  mimo: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   // Open-source default: nolo provider 中转 ollama cloud。
   // 内部多后端组合路由不开源，由内部 provider 路由层接管。
   nolo: "https://ollama.com/v1/chat/completions",
-  "nolo-hosted": "https://ollama.com/v1/chat/completions",
-  vultr: "https://api.vultrinference.com/v1/chat/completions",
 };
 
 /**

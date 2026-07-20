@@ -25,6 +25,55 @@ export const createKey = (...parts: (string | number)[]) =>
 
 export const splitKey = (key: string) => key.split(SEPARATOR);
 
+/* --------------------------------------------------------------------------
+ * Type → Storage Prefix 映射（唯一权威数据源）
+ *
+ * 每种 DataType 在 LevelDB 里的物理 key prefix。大多数 type 的 prefix 就是
+ * type 名本身（如 dialog-{userId}-...），但 table 的定义存在 meta- 下
+ * （metaKey: meta-{userId}-{tableId}），而非 table- 下。
+ *
+ * 部分类型可能有多个合法 prefix（如 table 同时存在 meta- 和 table- 格式，
+ * 后者来自远端返回或旧数据迁移）。getUserDataPrefixes 会扫描所有列出的 prefix。
+ *
+ * 这个映射是 query 层（getUserDataPrefixes）和缓存层共享的唯一数据源——
+ * 添加新类型或修改 key 布局时，只需改这里，查询和缓存都会自动覆盖。
+ * ------------------------------------------------------------------------*/
+export const TYPE_STORAGE_PREFIXES: Record<string, string[]> = {
+  [DataType.APP]: ["app"],
+  [DataType.DOC]: ["page"],
+  [DataType.DIALOG]: ["dialog"],
+  [DataType.IMAGE]: ["image"],
+  [DataType.FILE]: ["file"],
+  [DataType.TABLE]: ["meta", "table"],
+  [DataType.AGENT]: ["agent"],
+};
+
+/**
+ * 反向映射：从 dbKey 的物理 prefix 推断逻辑 DataType。
+ * 用于缓存写入时验证 key 格式，以及调试不匹配的 key。
+ *
+ * 返回 null 表示 key 的 prefix 不属于任何已知 type（可能是基础设施 key
+ * 如 row-/idx-/meta- 等，或是未注册的新 type）。
+ */
+const _PREFIX_TO_TYPE: Map<string, string> = (() => {
+  const map = new Map<string, string>();
+  for (const [type, prefixes] of Object.entries(TYPE_STORAGE_PREFIXES)) {
+    for (const prefix of prefixes) {
+      // 第一个注册的 type 赢（meta→table，不会 meta→其他）
+      if (!map.has(prefix)) map.set(prefix, type);
+    }
+  }
+  return map;
+})();
+
+export function inferTypeFromDbKey(dbKey: string): string | null {
+  if (!dbKey) return null;
+  const firstSep = dbKey.indexOf(SEPARATOR);
+  if (firstSep < 0) return null;
+  const prefix = dbKey.slice(0, firstSep);
+  return _PREFIX_TO_TYPE.get(prefix) ?? null;
+}
+
 /**
  * 判断一个 dbKey 是否是「表定义（TableMeta）」的 key
  * 形如：meta-{tenantId}-{tableId}

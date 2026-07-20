@@ -175,9 +175,20 @@ const createEmptyDialogRuntimeState = (): DialogRuntimeState => ({
   pendingUserInputQueue: [],
 });
 
-const resetDialogRuntimeSessionState = (runtime: DialogRuntimeState) => {
-  runtime.tokens = createEmptyTokenStats();
-  runtime.loopStopReason = null;
+interface DialogState {
+  currentDialogKey: string | null;
+  configError: string | null;
+  dialogRuntimeByKey: Record<string, DialogRuntimeState>;
+  isUpdatingMode: boolean;
+}
+
+const initialState: DialogState = {
+  currentDialogKey: null,
+  configError: null,
+  dialogRuntimeByKey: {
+    [GLOBAL_DIALOG_RUNTIME_KEY]: createEmptyDialogRuntimeState(),
+  },
+  isUpdatingMode: false,
 };
 
 const resolveDialogRuntimeKey = (
@@ -203,13 +214,6 @@ const getDialogRuntimeState = (
   state.dialogRuntimeByKey[resolveDialogRuntimeKey(state, dialogKey)] ??
   createEmptyDialogRuntimeState();
 
-const initialState: DialogState = {
-  currentDialogKey: null,
-  dialogRuntimeByKey: {
-    [GLOBAL_DIALOG_RUNTIME_KEY]: createEmptyDialogRuntimeState(),
-  },
-  isUpdatingMode: false,
-};
 
 // --- Slice Definition ---
 
@@ -285,6 +289,7 @@ const dialogSlice = createSliceWithThunks({
       {
         pending: (state, action) => {
           state.currentDialogKey = action.meta.arg;
+          state.configError = null;
           const runtime = ensureDialogRuntimeState(state, action.meta.arg);
           resetDialogRuntimeSessionState(runtime);
         },
@@ -300,11 +305,7 @@ const dialogSlice = createSliceWithThunks({
           const isCurrentDialog = state.currentDialogKey === action.meta.arg;
 
           if (!isAborted && isCurrentDialog) {
-            // Log the error but keep currentDialogKey set — the dialog key is
-            // valid (it came from the space content list), we just couldn't load
-            // the config doc (e.g. not synced to server yet or network error).
-            // Keeping the key allows MessageInput to send and MessageList to
-            // display messages independently.
+            state.configError = action.error.message || "Failed to load dialog";
             console.info("Failed to load dialog config:", action.error.message);
           }
         },
@@ -541,7 +542,7 @@ const dialogSlice = createSliceWithThunks({
   }),
   selectors: {
     selectCurrentDialogKey: (state) => state.currentDialogKey,
-    selectIsUpdatingMode: (state) => state.isUpdatingMode,
+    selectConfigError: (state) => state.configError,
     selectDialogRuntimeByKey: (state, dialogKey?: string) =>
       getDialogRuntimeState(state, dialogKey),
     selectPendingFiles: (state, dialogKey?: string) =>
@@ -599,7 +600,7 @@ export default dialogSlice.reducer;
 // --- Selectors Exports ---
 export const {
   selectCurrentDialogKey,
-  selectIsUpdatingMode,
+  selectConfigError,
   selectPendingFiles,
   selectActiveControllers,
   selectDialogRuntimeByKey,

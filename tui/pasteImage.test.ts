@@ -239,15 +239,18 @@ describe("pasteImage", () => {
     expect(formatBytes(2048)).toBe("2.0 KB");
     expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MB");
 
-    expect(
-      summarizeAttachment({
-        dataUrl: "data:image/png;base64,xxx",
-        mime: "image/png",
-        filename: "shot.png",
-        sizeBytes: 2345,
-        sourcePath: "/tmp/shot.png",
-      })
-    ).toBe("📎 shot.png (2.3 KB)");
+    // summarizeAttachment 现在渲染成带边框的多行卡片，不再是单行文本。
+    // 这里断言承载信息的两项——文件名与 formatBytes 的输出——而不绑定边框样式，
+    // 既保住 formatBytes 在本用例中的覆盖，又不会因外框调整而误报。
+    const summary = summarizeAttachment({
+      dataUrl: "data:image/png;base64,xxx",
+      mime: "image/png",
+      filename: "shot.png",
+      sizeBytes: 2345,
+      sourcePath: "/tmp/shot.png",
+    });
+    expect(summary).toContain("shot.png");
+    expect(summary).toContain("2.3 KB");
   });
 
   test("DEFAULT_MAX_IMAGE_BYTES is 8 MB", () => {

@@ -1,22 +1,21 @@
 import { toTrimmedString } from "../core/toTrimmedString";
+import { TYPE_STORAGE_PREFIXES } from "./keys";
 
-// 用户内容查询不能简单假设所有 key 都是 `${type}-${userId}-...`。
-// 例如 table 的真实 meta key 是 `meta-${userId}-${tableId}`，所以 query 层必须维护 type -> key prefix 的映射。
+// Type → Storage Prefix 映射的唯一定义在 keys.ts 的 TYPE_STORAGE_PREFIXES。
+// queryPrefixes 只负责把它展开成 user-scoped 的 LevelDB range prefix。
 //
 // 返回值一律带尾部分隔符 `-`，供 gte/lte 组成 user-scoped range：
 //   gte: `${prefix}`  (= `meta-u1-`)
 //   lte: `${prefix}\uffff`
 // 这样不会把 `meta-u10-...` 等「userId 字符串前缀邻居」扫进来（见 keys.metaKey.rangeOfTenant）。
-const TYPE_PREFIX_ALIASES: Record<string, string[]> = {
-  // table 定义存在 meta- 下，而不是 table- 下；不要同时扫 table-（空扫 / 错误布局）
-  table: ["meta"],
-};
 
 /**
  * Resolve iterator prefixes for a user-scoped content type query.
  *
  * - Empty type / userId → []
- * - Aliases are deduped and empty alias segments skipped
+ * - Prefixes come from TYPE_STORAGE_PREFIXES (keys.ts), falling back to [type]
+ *   for unregistered types
+ * - Aliases are deduped and empty segments skipped
  * - Each prefix ends with `-` (user boundary) so range scans stay user-scoped
  */
 export function getUserDataPrefixes(type: string, userId: string): string[] {
@@ -24,7 +23,7 @@ export function getUserDataPrefixes(type: string, userId: string): string[] {
   const normalizedUserId = toTrimmedString(userId);
   if (!normalizedType || !normalizedUserId) return [];
 
-  const aliases = TYPE_PREFIX_ALIASES[normalizedType] ?? [normalizedType];
+  const aliases = TYPE_STORAGE_PREFIXES[normalizedType] ?? [normalizedType];
   const seen = new Set<string>();
   const prefixes: string[] = [];
 

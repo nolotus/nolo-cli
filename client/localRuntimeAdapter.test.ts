@@ -2894,7 +2894,12 @@ describe("CLI local runtime adapter", () => {
     });
   });
 
-  test("blocks destructive local execShell calls unless the user explicitly asked to delete", async () => {
+  test("destructive local execShell calls run without a confirm callback (no stall path)", async () => {
+    // Regression: when no confirmDestructiveAction is wired (non-interactive
+    // CLI / machine WS dispatch), the destructive-shell guard must NOT block.
+    // Blocking with no confirmation channel only made the model retry the same
+    // `rm` until the turn timed out (multi-minute stall). The guard now runs
+    // only when a confirmDestructiveAction callback is present (TUI path).
     let executorCalls = 0;
     const adapter = createAdapter({
       env: {
@@ -2916,18 +2921,82 @@ describe("CLI local runtime adapter", () => {
         execShell: async () => {
           executorCalls += 1;
           return {
-            content: "should not run",
+            content: "deleted",
           };
         },
       },
       fetchImpl: async (_url, init) => {
         const body = JSON.parse(String(init?.body));
-        const lastToolMessage = [...body.messages]
+        const lastToolMessage = [...(body.messages as Array<{ role?: unknown; content?: unknown }>)]
           .reverse()
-          .find((message: any) => message.role === "tool");
+          .find((message) => message.role === "tool");
+        if (lastToolMessage) {
+          expect(String(lastToolMessage.content)).toContain("deleted");
+          return Response.json({
+            choices: [{ message: { content: "guard ok" } }],
+          });
+        }
+        return Response.json({
+          choices: [{
+            message: {
+              content: "",
+              tool_calls: [{
+                id: "call-1",
+                type: "function",
+                function: {
+                  name: "execShell",
+                  arguments: "{\"cmd\":\"rm -rf ./tmp\"}",
+                },
+              }],
+            },
+          }],
+        });
+      },
+    });
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "shell",
+      input: "inspect cwd but don't delete files",
+    });
+
+    expect(result.content).toBe("guard ok");
+    expect(executorCalls).toBe(1);
+  });
+
+  test("destructive local execShell calls are blocked when a confirm callback returns false", async () => {
+    let executorCalls = 0;
+    const adapter = createAdapter({
+      env: {
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+      },
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-shell-guard",
+          prompt: "Use shell when useful.",
+          model: "qwen-coder",
+          toolNames: ["execShell"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      cwd: import.meta.dir,
+      confirmDestructiveAction: async () => false,
+      localToolExecutors: {
+        execShell: async () => {
+          executorCalls += 1;
+          return { content: "should not run" };
+        },
+      },
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        const lastToolMessage = [...(body.messages as Array<{ role?: unknown; content?: unknown }>)]
+          .reverse()
+          .find((message) => message.role === "tool");
         if (lastToolMessage) {
           expect(String(lastToolMessage.content)).toContain(
-            "destructive shell command blocked",
+            "destructive_action_requires_confirmation",
           );
           return Response.json({
             choices: [{ message: { content: "guard ok" } }],

@@ -76,7 +76,6 @@ export const isPlatformDeepseekFlashHosted = (
   const p = asTrimmedLowercaseString(provider);
   return (
     p === "nolo" ||
-    p === "nolo-hosted" ||
     p === "ollama-cloud" || // Backward compatibility
     p === "deepseek"
   );

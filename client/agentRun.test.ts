@@ -180,7 +180,7 @@ describe("cli agent run client", () => {
       output,
       runtimeMode: "server",
       taskEvidence: {
-        rowDbKey: "row-b2e06f801f-01TASK",
+        rowDbKey: "row-user-1-01TASK",
         artifactIds: ["artifact-1"],
       },
       fetchImpl: async (_url, init) => {
@@ -193,7 +193,7 @@ describe("cli agent run client", () => {
     expectNoRetiredTaskOrchestrationTerms(JSON.stringify(requests[0]?.body.runtimeContext));
     expect(requests[0]?.body.runtimeContext.subjectRefs).toContainEqual({
       kind: "table-row",
-      id: "row-b2e06f801f-01TASK",
+      id: "row-user-1-01TASK",
       role: "task",
     });
     expect(requests[0]?.body.runtimeContext.subjectRefs).toContainEqual({
@@ -216,7 +216,7 @@ describe("cli agent run client", () => {
       output,
       runtimeMode: "server",
       taskEvidence: {
-        rowDbKey: "row-b2e06f801f-01TASK",
+        rowDbKey: "row-user-1-01TASK",
       },
       fetchImpl: async () => {
         return Response.json({ content: "patched", dialogId: "dialog-1" });
@@ -391,7 +391,7 @@ describe("cli agent run client", () => {
       background: true,
       noStream: true,
       taskEvidence: {
-        rowDbKey: "row-b2e06f801f-01TASK",
+        rowDbKey: "row-user-1-01TASK",
       },
       output,
       fetchImpl: async () => {
@@ -460,7 +460,7 @@ describe("cli agent run client", () => {
       output,
       runtimeMode: "local",
       taskEvidence: {
-        rowDbKey: "row-b2e06f801f-01TASK",
+        rowDbKey: "row-user-1-01TASK",
       },
       subjectRefs: [
         { kind: "dialog", id: "dialog-impl", role: "subject" },
@@ -495,7 +495,7 @@ describe("cli agent run client", () => {
     expect(result).toEqual({ exitCode: 0, dialogId: "dialog-local" });
     expect(savedTurns[0]?.runtimeContext?.subjectRefs).toEqual([
       { kind: "dialog", id: "dialog-impl", role: "subject" },
-      { kind: "table-row", id: "row-b2e06f801f-01TASK", role: "task" },
+      { kind: "table-row", id: "row-user-1-01TASK", role: "task" },
     ]);
   });
 
@@ -946,7 +946,7 @@ describe("cli agent run client", () => {
       output,
       runtimeMode: "local",
       taskEvidence: {
-        rowDbKey: "row-b2e06f801f-01TASK",
+        rowDbKey: "row-user-1-01TASK",
       },
       localRuntimeAdapter: {
         host: "cli",
@@ -999,7 +999,7 @@ describe("cli agent run client", () => {
       runtimeMode: "local",
       background: true,
       taskEvidence: {
-        rowDbKey: "row-b2e06f801f-01TASK",
+        rowDbKey: "row-user-1-01TASK",
       },
       localRuntimeAdapter: {
         host: "cli",

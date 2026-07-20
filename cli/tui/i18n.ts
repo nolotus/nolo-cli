@@ -166,6 +166,68 @@ const STRINGS = {
     en: "Language switched to English.",
     zh: "已切换为中文。",
   },
+  // --- Dialog (picker / confirm) copy --------------------------------------
+  // Key-hint wording is unified across select / multi-select / confirm so the
+  // three dialogs read as one family: "<Label>  <↑↓ move · Enter choose ·
+  // Esc cancel>  <count>". Connectors are "·" between keys, two spaces between
+  // the label, hint, and count. zh uses full-width parentheses to match the
+  // existing historyPickerTitle; en uses ASCII parentheses.
+  dialogSelectLabel: {
+    en: "Select",
+    zh: "选择",
+  },
+  dialogSelectHint: {
+    en: "(↑↓ move · Enter choose · Esc cancel)",
+    zh: "（↑↓ 移动 · Enter 选择 · Esc 取消）",
+  },
+  dialogMultiSelectLabel: {
+    en: "Select",
+    zh: "选择",
+  },
+  dialogMultiSelectHint: {
+    en: "(↑↓ move · Space toggle · Enter submit · Esc cancel)",
+    zh: "（↑↓ 移动 · Space 切换 · Enter 提交 · Esc 取消）",
+  },
+  dialogMultiSelectSelected: {
+    en: "selected",
+    zh: "已选",
+  },
+  dialogConfirmHint: {
+    en: "(↑↓ move · Enter choose · Esc cancel)",
+    zh: "（↑↓ 移动 · Enter 选择 · Esc 取消）",
+  },
+  dialogConfirmTitle: {
+    en: "Confirm destructive shell command",
+    zh: "确认执行破坏性 shell 命令",
+  },
+  dialogConfirmBody: {
+    en: "This command may delete or reset user content and needs explicit confirmation before it runs.",
+    zh: "该命令可能删除或重置用户内容，需要用户明确确认后才能执行。",
+  },
+  dialogConfirmCommandLabel: {
+    en: "Command",
+    zh: "命令",
+  },
+  dialogConfirmCommandTruncated: {
+    en: "(truncated)",
+    zh: "（已截断）",
+  },
+  dialogConfirmAllowLabel: {
+    en: "Allow",
+    zh: "允许",
+  },
+  dialogConfirmAllowDetail: {
+    en: "execute this time",
+    zh: "本次执行",
+  },
+  dialogConfirmCancelLabel: {
+    en: "Cancel",
+    zh: "取消",
+  },
+  dialogConfirmCancelDetail: {
+    en: "abort the operation",
+    zh: "中止操作",
+  },
   helpText: {
     en: [
       "Commands:",

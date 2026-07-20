@@ -1,5 +1,5 @@
 import type { DbThunkApi } from "../database/thunkApiTypes";
-import { selectCurrentUser, selectUserId } from "../auth/authSlice";
+import { selectIdentityUser, selectIdentityUserId } from "../app/identity/selectors";
 import {
   selectCurrentServer,
   selectRemoteServers,
@@ -91,8 +91,8 @@ export const shareResourceAction = async (
   thunkApi: DbThunkApi
 ): Promise<{ token: string; key: string }> => {
   const state = thunkApi.getState() as import("../app/store").RootState;
-  const userId = selectUserId(state);
-  const currentUser = selectCurrentUser(state);
+  const userId = selectIdentityUserId(state);
+  const currentUser = selectIdentityUser(state);
 
   if (!userId) {
     throw new Error("User must be logged in to share resources.");

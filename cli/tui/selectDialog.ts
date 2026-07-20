@@ -1,3 +1,10 @@
+import {
+  renderDialogOverflow,
+  renderDialogRow,
+  renderDialogTitle,
+} from "./dialogFrame";
+import { t } from "./i18n";
+
 export type SelectDialogItem = {
   label: string;
   detail?: string;
@@ -38,6 +45,15 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
   items: T[];
   selectedIndex: number;
   title?: string;
+  /**
+   * Pre-rendered title lines (already styled via dialogFrame primitives).
+   * When provided, they replace the single `title` line verbatim — used by
+   * confirmDialog to embed a separately-colored command line that
+   * `renderDialogTitle` (which wraps the whole string in one color) cannot
+   * produce. Plain when color is disabled, so non-TTY/NO_COLOR output stays
+   * ANSI-free.
+   */
+  titleLines?: string[];
   maxVisible?: number;
 }) {
   const total = args.items.length;
@@ -46,24 +62,33 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
     total,
     maxVisible: args.maxVisible,
   });
-  const lines = [
-    args.title ??
-      `Select agent (↑↓ Enter Esc)  ${args.selectedIndex + 1}/${total}`,
-  ];
+  const titleLines =
+    args.titleLines ??
+    [
+      renderDialogTitle(
+        args.title ??
+          `${t("dialogSelectLabel")}  ${t("dialogSelectHint")}  ${args.selectedIndex + 1}/${total}`,
+      ),
+    ];
+  const lines = [...titleLines];
 
   if (window.start > 0) {
-    lines.push(`  ... ${window.start} more above`);
+    lines.push(renderDialogOverflow(`... ${window.start} more above`));
   }
 
   for (let index = window.start; index < window.end; index += 1) {
     const item = args.items[index];
-    const marker = index === args.selectedIndex ? ">" : " ";
-    const detail = item.detail ? `  ${item.detail}` : "";
-    lines.push(`${marker} ${item.label}${detail}`);
+    lines.push(
+      renderDialogRow({
+        label: item.label,
+        ...(item.detail ? { detail: item.detail } : {}),
+        focused: index === args.selectedIndex,
+      }),
+    );
   }
 
   if (window.end < total) {
-    lines.push(`  ... ${total - window.end} more below`);
+    lines.push(renderDialogOverflow(`... ${total - window.end} more below`));
   }
 
   return lines.join("\n");
@@ -193,6 +218,8 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   items: T[];
   initialIndex?: number;
   title?: string;
+  /** See renderSelectDialog.titleLines. */
+  titleLines?: string[];
   maxVisible?: number;
   input?: NodeJS.ReadStream;
   output?: NodeJS.WritableStream;
@@ -228,6 +255,7 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       items,
       selectedIndex,
       title: args.title,
+      ...(args.titleLines ? { titleLines: args.titleLines } : {}),
       maxVisible: args.maxVisible,
     });
     const lines = frame.split("\n");

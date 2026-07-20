@@ -2,9 +2,10 @@ import type {
   AgentRuntimeToolCallInput,
   AgentRuntimeToolResult,
 } from "./hostAdapter";
+import type { PermissionRequest } from "./actionGate";
 import { canonicalizeToolName } from "../ai/tools/toolNameAliases";
 import { parseToolArgumentsJson } from "./parseToolArguments";
-import { evaluateShellCommandPolicy } from "./shellCommandPolicy";
+import { isDestructiveShellCommand } from "./shellCommandPolicy";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -59,6 +60,28 @@ function parseShellCommandPayload(rawArguments: string) {
     cmd?: unknown;
     input?: unknown;
   };
+}
+
+/**
+ * Reduce the parsed `command`/`cmd` payload into a single display string for
+ * the confirm dialog. `execShell` calls arrive as either a string
+ * (`{"cmd":"rm -rf ./tmp"}`) or an argv array (`{"command":["rm","-rf","./tmp"]}`);
+ * both flatten to the shell line the user is about to approve.
+ */
+function toDisplayCommand(command: unknown): string | undefined {
+  if (typeof command === "string") {
+    const trimmed = command.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  if (Array.isArray(command)) {
+    const joined = command
+      .map((item) => (typeof item === "string" ? item : String(item)))
+      .filter((item) => item.length > 0)
+      .join(" ")
+      .trim();
+    return joined ? joined : undefined;
+  }
+  return undefined;
 }
 
 function isRestrictedLocalToolMode(env: EnvLike) {
@@ -139,6 +162,23 @@ export async function executeLocalToolWithPolicy(args: {
   call: AgentRuntimeToolCallInput;
   executors?: Record<string, (call: AgentRuntimeToolCallInput) => Promise<AgentRuntimeToolResult>>;
   confirmed?: boolean;
+  /**
+   * Optional confirmation callback for destructive shell commands. When
+   * provided, a destructive `rm`/`git reset --hard`/etc. triggers this
+   * callback BEFORE execution; the command runs only if it returns true.
+   * When absent (non-interactive CLI / machine WS dispatch), destructive
+   * commands run without a prompt — blocking them with no confirmation
+   * channel only stalled the agent turn for minutes while the model
+   * retried the same `rm`.
+   */
+  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  /**
+   * Whether to enforce the destructive-shell-command guard. Defaults to true.
+   * Kept for callers that still gate the guard via a separate flag; when false,
+   * destructive commands always run. Prefer passing `confirmDestructiveAction`
+   * instead so the guard runs pre-execution with a real prompt.
+   */
+  enableDestructiveShellGuard?: boolean;
 }): Promise<AgentRuntimeToolResult> {
   const decision = resolveLocalToolPolicy({
     env: args.env,
@@ -151,23 +191,35 @@ export async function executeLocalToolWithPolicy(args: {
   if (!executor) {
     throw new Error(`${decision.toolName} is allowed by policy but no local executor is registered.`);
   }
-  if (decision.toolName === "execShell" && !args.confirmed) {
+  const guardEnabled = args.enableDestructiveShellGuard !== false;
+  if (decision.toolName === "execShell" && !args.confirmed && guardEnabled) {
     const parsed = parseShellCommandPayload(args.call.arguments);
-    const shellPolicy = evaluateShellCommandPolicy({
-      command: parsed.command ?? parsed.cmd,
-      input: parsed.input,
-      userInput: args.call.userInput,
-    });
-    if (shellPolicy.verdict === "forbidden") {
-      const error = new Error(shellPolicy.reason) as Error & {
-        code?: string;
-        policy?: Record<string, unknown>;
-        permissionRequest?: Record<string, unknown>;
-      };
-      error.code = shellPolicy.code;
-      error.policy = shellPolicy.policy;
-      error.permissionRequest = shellPolicy.permissionRequest;
-      throw error;
+    if (isDestructiveShellCommand({ command: parsed.command ?? parsed.cmd, input: parsed.input })) {
+      if (args.confirmDestructiveAction) {
+        const command = toDisplayCommand(parsed.command ?? parsed.cmd);
+        const request: PermissionRequest = {
+          id: "permission-shell-destructive-action",
+          tool: "execShell",
+          action: "destructive_shell_command",
+          title: "确认执行破坏性 shell 命令",
+          body: "该命令可能删除或重置用户内容，需要用户明确确认后才能执行。",
+          ...(command ? { command } : {}),
+          suggestedRule: {
+            scope: "once",
+            pattern: { capability: "destructive_action", target: "shell_command" },
+          },
+        };
+        const confirmed = await args.confirmDestructiveAction(request);
+        if (!confirmed) {
+          const error = new Error(
+            "destructive shell command blocked: user declined confirmation",
+          ) as Error & { code?: string; policy?: Record<string, unknown>; permissionRequest?: Record<string, unknown> };
+          error.code = "destructive_action_requires_confirmation";
+          error.policy = { capability: "destructive_action", target: "shell_command", detail: "execShell destructive command" };
+          error.permissionRequest = request;
+          throw error;
+        }
+      }
     }
   }
   return executor({

@@ -18,7 +18,8 @@ const PROVISION_USAGE =
 const BIND_USAGE =
   "Usage: nolo agent email bind <agent> --email <address> [--provider <name>] [--cloudflare-oauth]\n";
 const TRANSFER_USAGE =
-  "Usage: nolo agent email transfer --from <source-agent> --to <target-agent> --email <address> [--no-move-history] [--cloudflare-oauth]\n";
+  "Usage: nolo agent email transfer --from <source-agent> --to <target-agent> --email <address> [--no-move-history] [--primary|--no-primary] [--cloudflare-oauth]\n" +
+  "  注意：transfer 不是事务操作，中途失败可能留下部分迁移状态，需人工核查。\n";
 
 function wantsHelp(args: string[]) {
   return args.includes("--help") || args.includes("-h");
@@ -335,6 +336,13 @@ export async function runAgentEmailTransferCommand(
   }
 
   const moveHistoryEmails = !args.includes("--no-move-history");
+  // 不传时由服务端决定：目标没有主邮箱才设为主，避免静默降级目标已有的主邮箱。
+  // --primary / --no-primary 用于显式覆盖。
+  const makePrimary = args.includes("--primary")
+    ? true
+    : args.includes("--no-primary")
+      ? false
+      : undefined;
   const db = deps.db ?? (await getReadableCliDb(output));
   const fetchImpl = deps.fetchImpl ?? fetch;
   const fallbackFetchImpl = deps.fallbackFetchImpl;
@@ -373,6 +381,7 @@ export async function runAgentEmailTransferCommand(
         targetAgentId,
         emailAddress,
         moveHistoryEmails,
+        ...(makePrimary === undefined ? {} : { makePrimary }),
       },
       cliArgs: args,
       env,

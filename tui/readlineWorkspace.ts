@@ -12,6 +12,7 @@ import { saveProfileAgentSelection } from "../client/profileConfig";
 import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
+import { createDialogHost } from "./dialogHost";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
 import { loadDialogHistory, runDialogPicker } from "./dialogPicker";
 import { mergeAttachedImages, readImagePaths, resolveImageSource, summarizeAttachment } from "./pasteImage";
@@ -1356,7 +1357,23 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   let activeTurnAbort: AbortController | null = null;
   let copyViewExitResolver: (() => void) | null = null;
   const history = createTurnHistory();
+  // `fixedInput` is reassigned once the interactive composer is installed, so
+  // the host delegates through the binding rather than capturing the noop.
+  const dialogHost = createDialogHost({
+    composer: {
+      pause: () => fixedInput.pause(),
+      resumeFromDialog: () => fixedInput.resumeFromDialog(),
+      getInputLines: () => fixedInput.getInputLines(),
+      isPaused: () => fixedInput.isPaused(),
+    },
+    output: output as NodeJS.WritableStream,
+  });
   const renderHistoryToOutput = () => {
+    // A dialog (picker / confirm) owns the screen while paused. Repainting the
+    // transcript underneath it erases the frame — mid-turn confirms streamed
+    // tokens over the prompt, so it flashed and vanished while still holding
+    // the keyboard, and the turn looked hung.
+    if (fixedInput.isPaused()) return;
     renderHistory(output, history, fixedInput.getInputLines());
   };
   const readLatestAssistantReply = () => {
@@ -1496,25 +1513,16 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }
 
     if (result.action?.type === "pick-agent") {
-      const pickerInputLines = fixedInput.getInputLines();
-      const ttyRows =
-        typeof output === "object" &&
-        output !== null &&
-        "rows" in output &&
-        typeof output.rows === "number"
-          ? output.rows
-          : 24;
-      const bottomRow = Math.max(1, ttyRows - pickerInputLines);
-      fixedInput.pause();
       try {
-        const pickResult = await runAgentPicker({
-          currentKey: state.agentKey,
-          env: options.env ?? process.env,
-          input: input as NodeJS.ReadStream,
-          output: output as NodeJS.WritableStream,
-          bottomAnchored: true,
-          bottomRow,
-        });
+        const pickResult = await dialogHost.run((anchor) =>
+          runAgentPicker({
+            currentKey: state.agentKey,
+            env: options.env ?? process.env,
+            input: input as NodeJS.ReadStream,
+            output: output as NodeJS.WritableStream,
+            ...anchor,
+          }),
+        );
         if (pickResult.kind === "list") {
           output.write(`${pickResult.output}\n`);
         } else if (pickResult.kind === "selected") {
@@ -1537,8 +1545,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         output.write(
           `[nolo] Agent picker failed: ${toErrorMessage(error)}\n`
         );
-      } finally {
-        fixedInput.resumeFromDialog();
       }
     }
 
@@ -1587,27 +1593,18 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }
 
     if (result.action?.type === "pick-dialog") {
-      const pickerInputLines = fixedInput.getInputLines();
-      const ttyRows =
-        typeof output === "object" &&
-        output !== null &&
-        "rows" in output &&
-        typeof output.rows === "number"
-          ? output.rows
-          : 24;
-      const bottomRow = Math.max(1, ttyRows - pickerInputLines);
       const interactivePicker = isInteractiveInput(input);
-      if (interactivePicker) fixedInput.pause();
       try {
-        const pickResult = await (options.dialogPickerRunner ?? runDialogPicker)({
-          env: options.env ?? process.env,
-          input: input as NodeJS.ReadStream,
-          output: output as NodeJS.WritableStream,
-          interactive: interactivePicker,
-          bottomAnchored: interactivePicker,
-          bottomRow,
-        });
-        if (interactivePicker) fixedInput.resumeFromDialog();
+        const pickResult = await dialogHost.run((anchor) =>
+          (options.dialogPickerRunner ?? runDialogPicker)({
+            env: options.env ?? process.env,
+            input: input as NodeJS.ReadStream,
+            output: output as NodeJS.WritableStream,
+            interactive: interactivePicker,
+            ...anchor,
+            bottomAnchored: interactivePicker,
+          }),
+        );
         if (pickResult.kind === "selected") {
           const loadedTurns = await (
             options.dialogHistoryLoader ?? loadDialogHistory
@@ -1639,7 +1636,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           emitCommandOutput(t("dialogResumeCancelled"));
         }
       } catch (error) {
-        if (interactivePicker) fixedInput.resumeFromDialog();
         emitCommandOutput(
           `[nolo] History failed: ${toErrorMessage(error)}`,
         );
@@ -1755,8 +1751,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         ? createHistoryOutputStream(history, () => {
             renderHistoryToOutput();
             // Repaint the user's live draft (not "") so typing during the
-            // agent turn is preserved on every streaming update.
-            if (fixedInput.active) fixedInput.repaint(buffer);
+            // agent turn is preserved on every streaming update. Skipped while
+            // a dialog owns the screen, for the same reason the transcript
+            // repaint is: it would paint the composer over the open frame.
+            if (fixedInput.active && !fixedInput.isPaused()) {
+              fixedInput.repaint(buffer);
+            }
           })
         : output;
       activeTurnAbort = new AbortController();
@@ -1832,6 +1832,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     input.setRawMode(true);
     let busy = false;
     let done = false;
+    // True while a raw action gate is waiting for the user to press Enter.
+    // The gate owns the keyboard during this modal phase (its own `data`
+    // listener handles Enter/Ctrl+C), so the main loop must not let stray
+    // keys leak into the composer draft buffer — otherwise a key typed while
+    // the gate is open gets prepended to the next submitted line (e.g. `x`
+    // before `/exit` yields `x/exit`, which is not recognized as /exit and
+    // the process never exits). Mirrors how the non-raw gate path uses
+    // rl.pause() to give the gate exclusive keyboard access.
+    let actionGateWaiting = false;
     fixedInput = createFixedInput(output, {
       getStatusLine: () => {
         let base = busy
@@ -1884,6 +1893,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
         return;
       }
+      // While a raw action gate is waiting for Enter, the gate's own `data`
+      // listener owns the keyboard. Drop everything else so random keys do
+      // not accumulate in the composer draft buffer and corrupt the next
+      // submitted line once the gate resolves.
+      if (actionGateWaiting) return;
       // While an agent turn is running we let the user keep typing into the
       // docked composer (draft buffer) but ignore submit so a second turn
       // cannot race the in-flight one. The draft is preserved and shown
@@ -1942,23 +1956,26 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         fixedInput.enterOutputMode(submittedText);
         const shouldExit = await runSubmittedLine(
           submittedText,
-          (gate) =>
-            waitForRawActionGate(input, output, gate, spawnRunner, {
-              beforeSubprocess: () => fixedInput.pause(),
-              afterSubprocess: () => fixedInput.resumeFromSubprocess(),
-            }),
-          async (request) => {
-            fixedInput.pause();
+          async (gate) => {
+            actionGateWaiting = true;
             try {
-              return await runConfirmDialog({
+              return await waitForRawActionGate(input, output, gate, spawnRunner, {
+                beforeSubprocess: () => fixedInput.pause(),
+                afterSubprocess: () => fixedInput.resumeFromSubprocess(),
+              });
+            } finally {
+              actionGateWaiting = false;
+            }
+          },
+          async (request) =>
+            dialogHost.run((anchor) =>
+              runConfirmDialog({
                 request,
                 input: input as any,
                 output: output as any,
-              });
-            } finally {
-              fixedInput.resumeFromDialog();
-            }
-          },
+                ...anchor,
+              }),
+            ),
         );
         if (shouldExit) {
           fixedInput.disable();
@@ -2002,11 +2019,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         async (request) => {
           rl.pause();
           try {
-            return await runConfirmDialog({
-              request,
-              input: input as any,
-              output: output as any,
-            });
+            return await dialogHost.run((anchor) =>
+              runConfirmDialog({
+                request,
+                input: input as any,
+                output: output as any,
+                ...anchor,
+              }),
+            );
           } finally {
             rl.resume();
           }

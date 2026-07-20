@@ -1,5 +1,14 @@
 import { MultiSelectPrompt, isCancel } from "@clack/core";
 import { computeVisibleWindow } from "./selectDialog";
+import {
+  DIALOG_CHECKED,
+  DIALOG_UNCHECKED,
+  renderDialogError,
+  renderDialogOverflow,
+  renderDialogRow,
+  renderDialogTitle,
+} from "./dialogFrame";
+import { t } from "./i18n";
 
 /**
  * Multi-select picker built on @clack/core's MultiSelectPrompt state machine.
@@ -37,24 +46,32 @@ export function renderMultiSelectFrame<TValue>(args: {
     maxVisible: args.maxVisible,
   });
   const lines = [
-    args.title ??
-      `Select (↑↓ Space toggle · Enter submit · Esc cancel)  ${args.selectedValues.length}/${total} selected`,
+    renderDialogTitle(
+      args.title ??
+        `${t("dialogMultiSelectLabel")}  ${t("dialogMultiSelectHint")}  ${args.selectedValues.length}/${total} ${t("dialogMultiSelectSelected")}`,
+    ),
   ];
   if (window.start > 0) {
-    lines.push(`  ... ${window.start} more above`);
+    lines.push(renderDialogOverflow(`... ${window.start} more above`));
   }
   for (let index = window.start; index < window.end; index += 1) {
     const item = args.items[index];
-    const cursorMarker = index === args.cursor ? ">" : " ";
-    const checked = args.selectedValues.includes(item.value) ? "◉" : "○";
-    const detail = item.detail ? `  ${item.detail}` : "";
-    lines.push(`${cursorMarker} ${checked} ${item.label}${detail}`);
+    lines.push(
+      renderDialogRow({
+        label: item.label,
+        ...(item.detail ? { detail: item.detail } : {}),
+        focused: index === args.cursor,
+        checkbox: args.selectedValues.includes(item.value)
+          ? DIALOG_CHECKED
+          : DIALOG_UNCHECKED,
+      }),
+    );
   }
   if (window.end < total) {
-    lines.push(`  ... ${total - window.end} more below`);
+    lines.push(renderDialogOverflow(`... ${total - window.end} more below`));
   }
   if (args.error) {
-    lines.push(`  ! ${args.error}`);
+    lines.push(renderDialogError(args.error));
   }
   return lines.join("\n");
 }

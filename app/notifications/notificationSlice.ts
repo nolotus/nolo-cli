@@ -21,12 +21,16 @@ export type AppNotification = {
 
 type NotificationState = {
   items: AppNotification[];
+  /** true after the first successful hydrate; prevents duplicate remote fetches
+   *  when multiple components mount useUserNotifications. */
+  hydrated: boolean;
 };
 
 const MAX_NOTIFICATION_ITEMS = 100;
 
 const initialState: NotificationState = {
   items: [],
+  hydrated: false,
 };
 
 const sortItems = (items: AppNotification[]): AppNotification[] =>
@@ -60,6 +64,7 @@ const notificationSlice = createSlice({
         0,
         MAX_NOTIFICATION_ITEMS
       );
+      state.hydrated = true;
     },
     addNotification: (state, action: PayloadAction<AppNotification>) => {
       const next = action.payload;
@@ -136,6 +141,11 @@ export const selectUnreadNotifications = createSelector(
 export const selectUnreadNotificationCount = createSelector(
   selectUnreadNotifications,
   (items) => items.length
+);
+
+export const selectNotificationsHydrated = createSelector(
+  selectNotificationState,
+  (notifications) => notifications.hydrated
 );
 
 export default notificationSlice.reducer;

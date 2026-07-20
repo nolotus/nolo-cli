@@ -12,7 +12,8 @@ import type { CliFetchImpl } from "./cliFetch";
 
 export type AgentEmailRpcMethod =
   | "bindAgentEmailIdentity"
-  | "provisionAgentEmailIdentity";
+  | "provisionAgentEmailIdentity"
+  | "transferAgentEmailIdentity";
 
 export type AgentEmailIdentityRpcData = {
   agentId: string;
@@ -26,6 +27,10 @@ export type AgentEmailIdentityRpcData = {
   provider?: string;
   purpose?: string | null;
   delegationResourcePrefix?: string;
+  // Only present on transferAgentEmailIdentity responses.
+  sourceAgentId?: string;
+  targetAgentId?: string;
+  movedEmails?: number;
 };
 
 

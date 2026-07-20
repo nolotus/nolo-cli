@@ -3,6 +3,7 @@ import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../agent-runtime/actionGate";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
+import { t, toolLabel } from "../tui/i18n";
 
 
 export type ToolDisplayMode = "hide" | "compact" | "verbose";
@@ -53,33 +54,31 @@ export function formatActiveToolLabel(
 ) {
   const toolName = event.toolName || "tool";
   const args = clip(event.argumentsPreview ?? "");
-  return args ? `${toolName} ${args}` : toolName;
+  const label = toolLabel(toolName);
+  return args ? `${label} ${args}` : label;
 }
 
-function compactResultHint(event: LocalAgentToolEvent, toolName: string) {
+/**
+ * Trailing status for a finished tool.
+ *
+ * Only states the user can act on survive here — a pending confirmation, a
+ * timeout, a non-zero exit. Output size (line counts) is deliberately dropped:
+ * it padded every successful line without telling the user anything.
+ */
+function compactResultHint(event: LocalAgentToolEvent) {
   const gate = readActionGate(event.metadata?.actionGate);
   if (gate) {
     const commandPayload = gate.kind === "handoff" ? readCommandActionGatePayload(gate.payload) : null;
     const command = commandPayload?.displayCommand ?? commandPayload?.command.join(" ") ?? "";
-    return command.trim()
-      ? `needs action: ${clip(command, 120)}`
-      : `needs action: ${clip(gate.title, 120)}`;
+    const detail = command.trim() ? command : gate.title;
+    return `${t("toolNeedsAction")}: ${clip(detail, 120)}`;
   }
-  if (event.metadata?.timedOut) return "timed out";
+  if (event.metadata?.timedOut) return t("toolTimedOut");
 
   const summary = event.summary;
   if (!summary) return "";
   const exitMatch = summary.match(/exit=(\d+)/);
-  if (exitMatch && exitMatch[1] !== "0") return `exit ${exitMatch[1]}`;
-  const linesMatch = summary.match(/(\d+)\s+lines?/);
-  if (linesMatch) {
-    if (toolName === "readFile" || toolName === "listFiles" || toolName === "globFiles") {
-      return `${linesMatch[1]} lines`;
-    }
-    if (toolName === "execShell" || toolName === "runCommand") {
-      return `${linesMatch[1]} lines`;
-    }
-  }
+  if (exitMatch && exitMatch[1] !== "0") return `${t("toolExitCode")} ${exitMatch[1]}`;
   return "";
 }
 
@@ -134,21 +133,20 @@ function formatCompactToolLine(
     toolName,
     argumentsPreview: event.argumentsPreview || pending?.argumentsPreview,
   });
-  const ms = typeof event.elapsedMs === "number" ? `${event.elapsedMs}ms` : "";
 
   if (event.type === "tool-error") {
-    const message = clip(event.message ?? "failed", 96);
-    const timing = ms ? ` · ${ms}` : "";
-    return formatToolTraceLine(`  ▸ ${label}  ✗ ${message}${timing}`, colorEnabled, "error");
+    const message = clip(event.message ?? t("toolFailed"), 96);
+    return formatToolTraceLine(`  ▸ ${label}  ✗ ${message}`, colorEnabled, "error");
   }
 
-  const hint = compactResultHint(event, toolName);
-  const timing = ms ? ` ${ms}` : "";
-  const suffix = hint ? ` · ${hint}` : "";
+  const hint = compactResultHint(event);
+  // Plain space, not " · ": the dot existed to separate the elapsed time from
+  // the hint, and with timing gone it would dangle off the status marker.
+  const suffix = hint ? ` ${hint}` : "";
   const failed = isFailedToolResult(event);
   const marker = failed ? "✗" : isNeedsActionToolResult(event) ? "!" : "✓";
   const accent = failed ? "error" : "none";
-  return formatToolTraceLine(`  ▸ ${label}  ${marker}${timing}${suffix}`, colorEnabled, accent);
+  return formatToolTraceLine(`  ▸ ${label}  ${marker}${suffix}`, colorEnabled, accent);
 }
 
 export function formatToolEventForCli(

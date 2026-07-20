@@ -751,7 +751,21 @@ export async function runTableQueryCommand(args: string[], deps: TableCommandDep
       }
     : {};
 
-  const singleRawData = !isMultiServer ? getTableQueryRawData(results[0].payload) : null;
+  // `deletedItems` are requested (includeDeleted: true above) only so the
+  // multi-server merge can use tombstones for dedup — they are internal
+  // machinery, not results. Leaving them in the payload put 70 deleted rows
+  // next to 3 live ones in `nolo table query --json`, and any text scan of
+  // that output reads tombstones as current data (2026-07-20: a stale row's
+  // rank was reported to the owner as a live conflict). Strip before output;
+  // `items` is already the merged, tombstone-filtered set.
+  const singleRawData = !isMultiServer
+    ? (() => {
+        const raw = getTableQueryRawData(results[0].payload);
+        if (!raw || typeof raw !== "object") return raw;
+        const { deletedItems: _deletedItems, ...rest } = raw as Record<string, unknown>;
+        return rest;
+      })()
+    : null;
   const rawData = isMultiServer
     ? {
         items: mergedItems,

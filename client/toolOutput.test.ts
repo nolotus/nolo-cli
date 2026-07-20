@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
+import { getCliLocale, setCliLocale } from "../tui/i18n";
 import {
   createToolEventFormatter,
   formatActiveToolLabel,
@@ -20,6 +21,13 @@ function toolEvent(
 }
 
 describe("toolOutput", () => {
+  // Tool labels and status hints are localized, so the trace assertions below
+  // would otherwise depend on the machine's LANG. Pin to en for the shared
+  // cases; the locale-specific test flips it explicitly.
+  beforeEach(() => {
+    setCliLocale("en");
+  });
+
   test("defaults to compact and respects legacy NOLO_TRACE_TOOLS hide", () => {
     expect(normalizeToolDisplayMode(undefined)).toBe("compact");
     expect(resolveToolDisplayMode({ NOLO_TRACE_TOOLS: "0" })).toBe("hide");
@@ -49,7 +57,7 @@ describe("toolOutput", () => {
           summary: "64 lines 1630 chars tail=\"...\"",
         })
       )
-    ).toContain("readFile README.md");
+    ).toContain("Read README.md");
     expect(
       format(
         toolEvent({
@@ -63,19 +71,59 @@ describe("toolOutput", () => {
     ).toContain("✓");
   });
 
+  test("compact mode drops elapsed time and output size from successful lines", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "readFile",
+        argumentsPreview: "README.md",
+        elapsedMs: 3,
+        summary: "64 lines 1630 chars tail=\"...\"",
+      }),
+      "compact",
+      false
+    );
+    expect(line).toBe("  ▸ Read README.md  ✓\n");
+    expect(line).not.toContain("ms");
+    expect(line).not.toContain("lines");
+  });
+
+  test("compact labels follow the active locale, unknown tools keep their raw name", () => {
+    const previous = getCliLocale();
+    try {
+      setCliLocale("zh");
+      expect(
+        formatToolEventForCli(
+          toolEvent({
+            type: "tool-result",
+            toolName: "searchFiles",
+            argumentsPreview: "packages/cli",
+            elapsedMs: 27,
+          }),
+          "compact",
+          false
+        )
+      ).toBe("  ▸ 搜索 packages/cli  ✓\n");
+      // Not in the label table (platform tool registry) — fall back verbatim.
+      expect(formatActiveToolLabel({ toolName: "ziweiChart" })).toBe("ziweiChart");
+    } finally {
+      setCliLocale(previous);
+    }
+  });
+
   test("formats a clipped label for an in-flight compact tool", () => {
     expect(
       formatActiveToolLabel({
         toolName: "execShell",
         argumentsPreview: "bun test tui/session.test.ts",
       })
-    ).toBe("execShell bun test tui/session.test.ts");
+    ).toBe("Run bun test tui/session.test.ts");
     expect(
       formatActiveToolLabel({
         toolName: "execShell",
         argumentsPreview: "x".repeat(100),
       })
-    ).toBe(`execShell ${"x".repeat(71)}…`);
+    ).toBe(`Run ${"x".repeat(71)}…`);
   });
 
   test("compact mode marks shell result with non-zero exit code as failed", () => {
@@ -92,7 +140,7 @@ describe("toolOutput", () => {
         "compact",
         false
       )
-    ).toContain("✗ 30000ms · timed out");
+    ).toContain("✗ timed out");
   });
 
   test("compact mode shows interactive command recovery hint", () => {
@@ -120,7 +168,7 @@ describe("toolOutput", () => {
         "compact",
         false
       )
-    ).toContain("! 2ms · needs action: gh auth refresh -h github.com -s delete_repo");
+    ).toContain("! needs action: gh auth refresh -h github.com -s delete_repo");
   });
 
   test("verbose mode keeps legacy trace format", () => {

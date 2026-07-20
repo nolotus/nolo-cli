@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { Writable } from "node:stream";
 
 import { expectNoRetiredTaskOrchestrationTerms } from "../../../scripts/helpers/retiredTaskOrchestrationTerms";
@@ -7,6 +7,7 @@ import {
   findServerPlatformTools,
   runAgentTurn,
 } from "./agentRun";
+import { setCliLocale } from "../tui/i18n";
 import { BUILTIN_NOLO_AGENT_KEY } from "./localRuntimeAdapter";
 import { NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
 
@@ -24,6 +25,12 @@ class CaptureOutput extends Writable {
 }
 
 describe("cli agent run client", () => {
+  // The compact tool trace renders localized action labels, so pin the locale
+  // instead of inheriting the machine's LANG.
+  beforeEach(() => {
+    setCliLocale("en");
+  });
+
   test("classifies only clear reviewer outcomes", () => {
     expect(classifyReviewDecisionStatus("Review decision: passed")).toBe("passed");
     expect(classifyReviewDecisionStatus("Review decision: needs_changes")).toBe("needs_changes");
@@ -603,7 +610,7 @@ describe("cli agent run client", () => {
     });
 
     expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local" });
-    expect(output.text()).toContain("▸ readFile README.md");
+    expect(output.text()).toContain("▸ Read README.md");
     expect(output.text()).toContain("✓");
     expect(output.text()).not.toContain("[nolo:tool]");
   });
@@ -672,7 +679,7 @@ describe("cli agent run client", () => {
     });
 
     await toolStarted;
-    expect(output.text()).toContain("execShell bun test tui/session.test.ts");
+    expect(output.text()).toContain("Run bun test tui/session.test.ts");
 
     releaseTool();
     expect(await run).toMatchObject({ exitCode: 0, dialogId: "dialog-live-shell" });

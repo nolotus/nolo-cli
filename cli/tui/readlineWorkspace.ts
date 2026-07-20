@@ -27,7 +27,14 @@ import {
   type TuiState,
 } from "./session";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "../client/terminalStyles";
-import { themeColorSequence, themeText, highlightMarkdown, getActiveDensity } from "./theme";
+import {
+  themeColorSequence,
+  themeText,
+  highlightMarkdown,
+  getActiveDensity,
+  setActiveBrightness,
+} from "./theme";
+import { detectTerminalBrightness } from "./detectBackground";
 import { toErrorMessage } from "../../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
@@ -774,13 +781,14 @@ function buildHistoryLines(history: TurnHistory, contentWidth: number): string[]
   // (muted gray) for system notices.
   const styleTurn = (role: TurnRole, content: string): string => {
     if (role === "user") {
-      // Color the ❯ marker and the user's text in accent so user turns
-      // visually stand apart from assistant replies (default fg). If the
-      // content already carries ANSI codes the reset after ❯ lets it pass
-      // through faithfully; plain content inherits the accent color.
+      // Only the ❯ marker carries accent; the text itself stays on the
+      // terminal's default foreground. Coloring whole user turns made every
+      // question a solid block of accent, which fought the assistant's own
+      // markdown highlighting — the marker alone is enough to tell turns apart.
+      if (!colorEnabled) return `❯ ${content}`;
       const accent = themeColorSequence("accent");
       const reset = "\x1b[39m";
-      return `${accent}❯ ${content}${reset}`;
+      return `${accent}❯${reset} ${content}`;
     }
     const highlighted = highlightMarkdown(content, colorEnabled);
     if (!colorEnabled) return highlighted;
@@ -1045,8 +1053,11 @@ export function createFixedInput(
       sections.push(fitAnsiLine(dimCliText(completions.join("  "), colorEnabled), cols));
     }
 
+    // The composer rules follow the theme's chrome token rather than a
+    // hardcoded bright-black, so /theme actually reaches the input area
+    // instead of leaving it stuck on the terminal's default gray.
     const rule = colorEnabled
-      ? `\x1b[2m\x1b[90m${"─".repeat(cols)}\x1b[0m`
+      ? `\x1b[2m${themeColorSequence("chrome")}${"─".repeat(cols)}\x1b[0m`
       : "─".repeat(cols);
     sections.push(rule);
     sections.push(fitAnsiLine(config.getStatusLine(), cols));
@@ -1346,6 +1357,16 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // stacking below whatever the shell printed before launch.
     output.write("\x1b[2J\x1b[3J\x1b[H");
   }
+
+  // Ask the terminal for its background before the first frame is painted, so
+  // the welcome banner and status line already use the right palette. Silent
+  // terminals resolve null within the timeout and keep the existing default.
+  const detected = await detectTerminalBrightness({
+    stdin: input as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void },
+    stdout: output as NodeJS.WritableStream & { isTTY?: boolean },
+  });
+  if (detected) setActiveBrightness(detected);
+
   output.write(renderWelcome(state));
 
   let fixedInput: FixedInputController = createNoopFixedInput();

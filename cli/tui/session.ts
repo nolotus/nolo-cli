@@ -34,6 +34,10 @@ import {
   themeText,
   getActiveThemeName,
   setActiveThemeName,
+  getActiveBrightness,
+  setActiveBrightness,
+  resolveTuiBrightness,
+  surfaceBackgroundSequence,
   getActiveDensity,
   setActiveDensity,
   THEME_PALETTES,
@@ -256,7 +260,25 @@ export function renderStatusLine(state: TuiState) {
   const tokenSegment = themeText(renderComposerTokenChip(state.turnTokens), "muted", colorEnabled);
   parts.push(tokenSegment);
 
-  return parts.join(sep);
+  const body = parts.join(sep);
+  const surface = colorEnabled ? surfaceBackgroundSequence() : "";
+  if (!surface) return body;
+
+  // A surface wash plus one space of padding turns the run of segments into a
+  // single chip instead of loose text floating on the composer.
+  //
+  // Deliberately no bracket glyphs: the rounded caps this imitates are
+  // powerline codepoints (U+E0B4/U+E0B6) that only exist in patched Nerd
+  // Fonts, and box-drawing corners are the wrong semantic mid-line. There is
+  // no way to detect the font, and a chip that renders as tofu is worse than
+  // one defined by its fill alone.
+  //
+  // The fill itself is truecolor-only (see surfaceBackgroundSequence) — ANSI-16
+  // has no subtle background, only solid blocks that would bury the text.
+  //
+  // \x1b[49m resets background only, so callers can keep appending
+  // foreground-colored text (the "· Esc to stop" hint) after the chip closes.
+  return `${surface} ${body} \x1b[49m`;
 }
 
 export function renderWelcome(state: TuiState) {
@@ -580,9 +602,29 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       const sub = parts[0]?.trim();
       const available = Object.keys(THEME_PALETTES).join(", ");
       if (!sub) {
+        const brightness = getActiveBrightness() ?? `${resolveTuiBrightness()} (auto)`;
         return {
           nextState: state,
-          output: `Current theme: ${getActiveThemeName()}\nUsage: /theme <name>\nAvailable themes: ${available}`,
+          output: [
+            `Current theme: ${getActiveThemeName()} · ${brightness}`,
+            `Usage: /theme <name> | /theme light | /theme dark`,
+            `Available themes: ${available}`,
+          ].join("\n"),
+        };
+      }
+      // Brightness is a separate axis from the palette family: the same theme
+      // has a light and a dark variant, and picking the wrong one is what makes
+      // colors look washed out. It was previously reachable only through the
+      // NOLO_TUI_THEME env var, which nobody discovers.
+      if (sub === "light" || sub === "dark") {
+        setActiveBrightness(sub);
+        return { nextState: state, output: `Switched to ${sub} background colors.` };
+      }
+      if (sub === "auto") {
+        setActiveBrightness(null);
+        return {
+          nextState: state,
+          output: `Background colors follow terminal detection (now: ${resolveTuiBrightness()}).`,
         };
       }
       if (setActiveThemeName(sub)) {

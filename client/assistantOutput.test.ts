@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolveTuiBrightness, themeColorSequence } from "../tui/theme";
 import {
   convertMarkdownTablesForTerminal,
   createRenderAwareStreamWriter,
@@ -8,9 +9,14 @@ import {
 } from "./assistantOutput";
 
 describe("assistantOutput", () => {
-  test("adds spacing before markdown headings", () => {
+  test("adds spacing around markdown headings", () => {
+    // Both sides: a heading flush against its own body read as one block.
     expect(polishAssistantStructure("intro\n## Title\nbody")).toBe(
-      "intro\n\n## Title\nbody"
+      "intro\n\n## Title\n\nbody"
+    );
+    // Existing spacing is preserved, not doubled.
+    expect(polishAssistantStructure("intro\n\n## Title\n\nbody")).toBe(
+      "intro\n\n## Title\n\nbody"
     );
   });
 
@@ -33,10 +39,14 @@ describe("assistantOutput", () => {
   test("rich mode styles headings and bold text", () => {
     expect(normalizeRenderDisplayMode(undefined)).toBe("rich");
     const rich = formatAssistantDisplay("## Title\n这是 **Nolo** 工作区", "rich");
-    expect(rich).toContain("\x1b[1mTitle\x1b[0m");
+    const brightness = resolveTuiBrightness();
+    // Headings are bold + warning at every level; bold-only is inline **bold**.
+    expect(rich).toContain(
+      `\x1b[1m${themeColorSequence("warning", process.env, brightness)}Title\x1b[0m`
+    );
     expect(rich).toContain("\x1b[1mNolo\x1b[0m");
     expect(formatAssistantDisplay("## Title\nplain body", "plain")).toBe(
-      "## Title\nplain body"
+      "## Title\n\nplain body"
     );
   });
 
@@ -113,12 +123,17 @@ describe("assistantOutput", () => {
     expect(rich).toContain("\x1b[2m```ts\x1b[0m");
   });
 
-  test("rich mode styles inline code spans", () => {
+  test("rich mode styles inline code spans with the muted token, not info", () => {
     const rich = formatAssistantDisplay("run `nolo update` now", "rich");
-    // Info token wraps inline code with the theme color (truecolor in
-    // environments that support it, ANSI-16 fallback otherwise).
-    expect(rich).toMatch(/nolo update/);
-    expect(rich).toContain("\x1b[0m");
+    const brightness = resolveTuiBrightness();
+    // Pin the actual token. The previous version of this test only checked
+    // that the text survived and that some reset was emitted, so it stayed
+    // green while inline code was rendered in the same bright info hue as
+    // code blocks — the regression this assertion exists to catch.
+    expect(rich).toContain(
+      `${themeColorSequence("muted", process.env, brightness)}nolo update\x1b[0m`
+    );
+    expect(rich).not.toContain(themeColorSequence("info", process.env, brightness));
     expect(formatAssistantDisplay("run `nolo update` now", "plain")).toBe(
       "run `nolo update` now"
     );
@@ -184,7 +199,9 @@ describe("assistantOutput", () => {
     writer.flush();
 
     const output = chunks.join("");
-    expect(output).toContain("\x1b[1mTitle\x1b[0m");
+    expect(output).toContain(
+      `\x1b[1m${themeColorSequence("warning", process.env, resolveTuiBrightness())}Title\x1b[0m`
+    );
     expect(output).toContain("\x1b[1mNolo\x1b[0m");
   });
 });

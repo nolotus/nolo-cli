@@ -166,6 +166,25 @@ const STRINGS = {
     en: "Language switched to English.",
     zh: "已切换为中文。",
   },
+  // --- Tool trace copy ------------------------------------------------------
+  // The compact trace shows only status, never timing or output size: a line
+  // count told the user nothing actionable and the ms figure read as noise.
+  toolNeedsAction: {
+    en: "needs action",
+    zh: "待确认",
+  },
+  toolTimedOut: {
+    en: "timed out",
+    zh: "已超时",
+  },
+  toolExitCode: {
+    en: "exit",
+    zh: "退出码",
+  },
+  toolFailed: {
+    en: "failed",
+    zh: "失败",
+  },
   // --- Dialog (picker / confirm) copy --------------------------------------
   // Key-hint wording is unified across select / multi-select / confirm so the
   // three dialogs read as one family: "<Label>  <↑↓ move · Enter choose ·
@@ -300,4 +319,59 @@ export type CliStringKey = keyof typeof STRINGS;
 
 export function t(key: CliStringKey): string {
   return STRINGS[key][currentLocale];
+}
+
+/**
+ * Human-readable tool labels for the compact tool trace.
+ *
+ * The trace reads as a running narration of what nolo is doing ("读取
+ * packages/cli/x.ts"), so labels are action verbs rather than the raw tool
+ * identifier. Only the tools a workspace user actually sees are listed —
+ * anything else falls back to the raw name, which keeps the platform tool
+ * registry (packages/ai/tools/index.ts, 100+ entries) out of this file.
+ */
+const TOOL_LABELS: Record<string, { en: string; zh: string }> = {
+  // Local workspace tools (packages/agent-runtime/localWorkspaceTools.ts)
+  readFile: { en: "Read", zh: "读取" },
+  writeFile: { en: "Write", zh: "写入" },
+  editFile: { en: "Edit", zh: "编辑" },
+  listFiles: { en: "List", zh: "列出" },
+  searchFiles: { en: "Search", zh: "搜索" },
+  globFiles: { en: "Glob", zh: "匹配" },
+  execShell: { en: "Run", zh: "执行" },
+  runCommand: { en: "Run", zh: "执行" },
+  captureVisualState: { en: "Capture", zh: "截屏" },
+  // Workspace / diagnostics
+  searchWorkspace: { en: "Search workspace", zh: "搜索工作区" },
+  cliDoctor: { en: "Doctor", zh: "自检" },
+  cliWhoami: { en: "Whoami", zh: "查看身份" },
+  checkEnv: { en: "Check env", zh: "检查环境" },
+  configure: { en: "Configure", zh: "配置" },
+  notifyUser: { en: "Notify", zh: "通知" },
+  // Docs / dialogs / spaces
+  readDoc: { en: "Read doc", zh: "读取文档" },
+  createDoc: { en: "Create doc", zh: "新建文档" },
+  updateDoc: { en: "Update doc", zh: "更新文档" },
+  readDialog: { en: "Read dialog", zh: "读取对话" },
+  listDialogs: { en: "List dialogs", zh: "列出对话" },
+  queryDialogsBySubjectRef: { en: "Query dialogs", zh: "查询对话" },
+  searchDialogMessages: { en: "Search messages", zh: "搜索消息" },
+  listSpaces: { en: "List spaces", zh: "列出空间" },
+  readSpace: { en: "Read space", zh: "读取空间" },
+  // Tables
+  createTable: { en: "Create table", zh: "创建表" },
+  queryTableRows: { en: "Query rows", zh: "查询表行" },
+  addTableRow: { en: "Add row", zh: "新增表行" },
+  addTableRows: { en: "Add rows", zh: "新增表行" },
+  updateTableRow: { en: "Update row", zh: "更新表行" },
+  deleteTableRow: { en: "Delete row", zh: "删除表行" },
+  // Web
+  fetchWebpage: { en: "Fetch page", zh: "抓取网页" },
+  readPage: { en: "Read page", zh: "读取网页" },
+  exaSearch: { en: "Web search", zh: "联网搜索" },
+};
+
+/** Localized action label for a tool, falling back to the raw tool name. */
+export function toolLabel(name: string): string {
+  return TOOL_LABELS[name]?.[currentLocale] ?? name;
 }

@@ -16,7 +16,10 @@ const STYLE = {
  * (where we fall back to default brightness). The brightness is resolved once
  * per call chain so a single assistant reply stays internally consistent.
  */
-function colorSeq(token: "accent" | "chrome" | "info" | "muted", brightness: TuiBrightness) {
+function colorSeq(
+  token: "accent" | "chrome" | "info" | "muted" | "warning",
+  brightness: TuiBrightness
+) {
   return themeColorSequence(token, process.env, brightness);
 }
 
@@ -156,7 +159,12 @@ export function polishAssistantStructure(
 ) {
   const polished = convertMarkdownTablesForTerminal(text)
     .replace(/\r\n/g, "\n")
+    // Blank line before a heading, and one after it. Only the "before" half
+    // existed, so a heading sat flush against its own body text and sections
+    // ran together — the breathing room is what makes the structure scannable
+    // once the heading itself is just colored text with no "###" marker left.
     .replace(/([^\n])\n(#{1,3} )/g, "$1\n\n$2")
+    .replace(/^(#{1,3} .+)\n(?!\n)/gm, "$1\n\n")
     .replace(/\n{4,}/g, "\n\n\n");
   // Streamed per-line blocks must keep their indentation (bullets, list items);
   // only whole-message formatting trims outer whitespace.
@@ -184,22 +192,28 @@ const MARKDOWN_LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)/g;
 
 function styleInlineMarkdown(line: string, mode: RenderDisplayMode, brightness: TuiBrightness) {
   if (mode === "plain") return line;
-  const info = colorSeq("info", brightness);
+  // Inline code is muted, matching highlightMarkdown (tui/theme.ts). Both
+  // renderers must agree: this one styles the streamed reply, the other styles
+  // the same text once it is repainted from history — a mismatch makes the
+  // colors visibly shift under the user mid-scroll.
+  const inlineCode = colorSeq("muted", brightness);
   const reset = STYLE.reset;
   const bold = STYLE.bold;
   return line
     .replace(MARKDOWN_LINK_RE, (m, t, u) => renderMarkdownLink(m, t, u))
-    .replace(/`([^`]+)`/g, `${info}$1${reset}`)
+    .replace(/`([^`]+)`/g, `${inlineCode}$1${reset}`)
     .replace(/\*\*(.+?)\*\*/g, `${bold}$1${reset}`);
 }
 
 function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
   const heading = line.match(/^(#{1,3})\s+(.+)$/);
   if (heading) {
-    const level = heading[1].length;
     const title = heading[2];
-    if (level <= 2) return `${STYLE.bold}${title}${STYLE.reset}`;
-    return `${colorSeq("info", brightness)}${title}${STYLE.reset}`;
+    // All three levels share warning + bold. Splitting them across bold-only
+    // (h1/h2) and info (h3) gave the deepest heading the *most* color, which
+    // inverted the hierarchy; a single amber treatment plus the blank lines
+    // added in polishAssistantStructure is what actually separates sections.
+    return `${STYLE.bold}${colorSeq("warning", brightness)}${title}${STYLE.reset}`;
   }
   if (/^---+$/.test(line.trim())) {
     return `${STYLE.dim}${line}${STYLE.reset}`;

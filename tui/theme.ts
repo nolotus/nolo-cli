@@ -166,6 +166,21 @@ export function setActiveThemeName(name: string): boolean {
   return false;
 }
 
+/**
+ * Brightness chosen at runtime — by the OSC 11 background probe at startup or
+ * by `/theme light|dark`. Null means "nothing decided yet", so resolution falls
+ * through to the COLORFGBG heuristic and finally the "dark" default.
+ */
+let activeBrightness: TuiBrightness | null = null;
+
+export function getActiveBrightness(): TuiBrightness | null {
+  return activeBrightness;
+}
+
+export function setActiveBrightness(brightness: TuiBrightness | null) {
+  activeBrightness = brightness;
+}
+
 export type TuiDensity = "cozy" | "spacious";
 
 let activeDensity: TuiDensity = "spacious";
@@ -196,6 +211,13 @@ export function resolveTuiBrightness(env: Record<string, string | undefined> = p
   if (explicit === "light") return "light";
   if (explicit === "dark") return "dark";
 
+  // A value set by /theme light|dark or by the startup OSC 11 probe. It sits
+  // below the env override (an explicit export still wins) but above the
+  // COLORFGBG guess, which almost no terminal actually emits — the empty
+  // COLORFGBG fallthrough to "dark" is what painted the dark palette's pastels
+  // onto light backgrounds and made the whole UI look washed out.
+  if (activeBrightness) return activeBrightness;
+
   const colorfgbg = env.COLORFGBG ?? "";
   if (colorfgbg) {
     const parts = colorfgbg.split(";");
@@ -214,6 +236,41 @@ function hexToSgr(hex: string): string {
   const g = Number.parseInt(hex.slice(2, 4), 16);
   const b = Number.parseInt(hex.slice(4, 6), 16);
   return `\x1b[38;2;${r};${g};${b}m`;
+}
+
+/**
+ * Chip background per theme. Kept out of TuiThemeToken on purpose: those tokens
+ * are foreground colors consumed by themeText, and a "surface" entry there
+ * would be a token whose ANSI-16 fallback cannot express what it means.
+ *
+ * Each value is a low-contrast wash against that brightness's terminal
+ * background — enough to read as a chip, not enough to fight the text.
+ */
+const SURFACE_HEX: Record<string, Record<TuiBrightness, string>> = {
+  trail: { light: "E4E8EC", dark: "313244" },
+  catppuccin: { light: "E6E9EF", dark: "313244" },
+  wave: { light: "E5E1D6", dark: "2A2A37" },
+  iris: { light: "E9E8F2", dark: "2A2740" },
+  rose: { light: "F2EAE4", dark: "26233A" },
+  mono: { light: "E8EAED", dark: "2A2A2A" },
+};
+
+/**
+ * Background SGR for the status chip, or "" when the terminal cannot render it
+ * faithfully. ANSI-16 has no safe subtle background — the nearest options are
+ * solid blocks that invert readability — so non-truecolor terminals get no
+ * chip fill and fall back to plain separated segments.
+ */
+export function surfaceBackgroundSequence(
+  env: Record<string, string | undefined> = process.env,
+  brightness: TuiBrightness = resolveTuiBrightness(env),
+): string {
+  if (!supportsTruecolor(env)) return "";
+  const hex = (SURFACE_HEX[activeThemeName] ?? SURFACE_HEX.trail)[brightness];
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return `\x1b[48;2;${r};${g};${b}m`;
 }
 
 export function themeColorSequence(
@@ -262,10 +319,12 @@ export function highlightMarkdown(
   // 2. Bold text: **bold** -> \x1b[1mbold\x1b[22m
   result = result.replace(/\*\*([\s\S]*?)\*\*/g, "\x1b[1m$1\x1b[22m");
 
-  // 3. Inline code: `code` -> wrapped in info color
-  const infoColor = themeColorSequence("info", env);
+  // 3. Inline code: `code` -> muted, not info. Sharing the info hue with code
+  // blocks made prose read as a wall of bright cyan; muted keeps identifiers
+  // distinguishable while the block border carries the stronger accent.
+  const mutedColor = themeColorSequence("muted", env);
   const reset = "\x1b[39m";
-  result = result.replace(/`([^`\n]+)`/g, `${infoColor}$1${reset}`);
+  result = result.replace(/`([^`\n]+)`/g, `${mutedColor}$1${reset}`);
 
   return result;
 }

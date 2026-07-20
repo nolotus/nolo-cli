@@ -93,6 +93,15 @@ export interface ToolErrorPayload {
   retryable?: boolean;
 }
 
+export interface ProcessLaunchInfo {
+  pid: number;
+  label: string;
+  command: string;
+  status: "running" | "stopped" | "exited" | "failed";
+  startedAt?: number;
+  exitCode?: number;
+}
+
 export interface ToolPayload {
   toolName: string;
   status: "pending" | "running" | "succeeded" | "failed";
@@ -138,6 +147,10 @@ export interface ToolPayload {
    * 可选（未来建议）：toolVersion / executorVersion，用于严格复现
    * toolVersion?: string;
    */
+
+  /** launchProcess 启动的后台进程信息。独立于 toolRun 状态机：
+   *  工具调用本身是 succeeded（立即返回），但进程后续可 running→stopped→exited 流转。 */
+  processLaunch?: ProcessLaunchInfo;
 }
 
 // ========== Message 主类型 ==========

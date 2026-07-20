@@ -2,7 +2,7 @@
 
 import { runLlm } from "../../../ai/agent/agentSlice";
 import type { RootState } from "../../../app/store";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import {
   updateContentTitle,
 } from "../../../create/space/spaceSlice";

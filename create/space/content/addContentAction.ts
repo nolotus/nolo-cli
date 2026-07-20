@@ -2,7 +2,7 @@
 
 import type { SpaceId } from "../../space/types";
 import type { SpaceData, SpaceContent, ContentType, FileCategory } from "../../../app/types";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { read, patch } from "../../../database/dbSlice";
 import {

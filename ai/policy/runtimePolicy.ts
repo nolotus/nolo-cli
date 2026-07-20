@@ -397,7 +397,7 @@ const knowledgeCaptureLevelLabel = (level: KnowledgeCaptureLevel): string =>
     2: "先问再创建",
     3: "回答后建议创建",
     4: "高价值结果可自动创建",
-  })[level];
+  })[level] ?? "未知级别";
 
 const spaceContextLevelLabel = (level: SpaceContextLevel): string =>
   ({
@@ -405,7 +405,7 @@ const spaceContextLevelLabel = (level: SpaceContextLevel): string =>
     2: "只看结构和标题",
     3: "轻量读取",
     4: "自适应读取",
-  })[level];
+  })[level] ?? "未知级别";
 
 export const resolveRuntimePolicy = (params: {
   agentConfig?: Agent | any;

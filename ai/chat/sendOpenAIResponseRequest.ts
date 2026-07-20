@@ -16,7 +16,7 @@ import { selectRuntimeCurrentServer } from "../../app/stateViews/runtime";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getApiEndpoint } from "../llm/providers";
 import { createDialogMessageKeyAndId, dialogMessageKey } from "../../database/keys";
-import { selectIdentityToken } from "../../app/identity/selectors";
+import { selectIdentityToken } from "identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { extractCustomId } from "../../core/prefix";

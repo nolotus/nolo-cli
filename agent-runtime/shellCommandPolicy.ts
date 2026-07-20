@@ -7,6 +7,7 @@ export type ShellCommandPolicyResult =
   | {
       verdict: "allowed";
       permissionDecision: Extract<PermissionDecision, "allow">;
+      longRunningHint?: boolean;
     }
   | {
       verdict: "forbidden";
@@ -150,6 +151,36 @@ export function isDestructiveShellCommand(args: {
   return SHELL_DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(scannable));
 }
 
+// Patterns that indicate a long-running process (dev server / watcher / service).
+// Detect to hint the agent toward launchProcess; do NOT block — heuristics can
+// false-positive (e.g. grep "dev"), and a blocked command is worse than a hint.
+const LONG_RUNNING_COMMAND_PATTERNS: RegExp[] = [
+  /\b(run|npm|yarn|pnpm|bun|npx)\s+(run\s+)?(dev|serve|start|watch)\b/i,
+  /(^|[\s=&|;])--watch\b/i,
+  /\bvite\b.*\b(dev|serve)\b/i,
+  /\bwebpack\b.*(?:--watch|serve)\b/i,
+  /\bnodemon\b/i,
+  /\bgatsby\b.*\b(develop|serve)\b/i,
+  /\bnext\b.*\b(dev|start)\b/i,
+  /\belectron\b.*\bdev\b/i,
+  /\bforever\b/i,
+  /\bpm2\b.*\bstart\b/i,
+];
+
+export function isLongRunningShellCommand(args: {
+  command?: unknown;
+  input?: unknown;
+}): boolean {
+  const combined = buildCombinedShellInput(args);
+  if (!combined.trim()) return false;
+  const scannable = SHELL_STRING_EXECUTION_PATTERNS.some((pattern) =>
+    pattern.test(combined),
+  )
+    ? combined
+    : stripQuotedSegments(combined);
+  return LONG_RUNNING_COMMAND_PATTERNS.some((pattern) => pattern.test(scannable));
+}
+
 export function evaluateShellCommandPolicy(args: {
   command?: unknown;
   input?: unknown;
@@ -184,5 +215,10 @@ export function evaluateShellCommandPolicy(args: {
     };
   }
 
-  return { verdict: "allowed", permissionDecision: "allow" };
+  const longRunningHint = isLongRunningShellCommand(args);
+  return {
+    verdict: "allowed",
+    permissionDecision: "allow",
+    ...(longRunningHint ? { longRunningHint: true } : {}),
+  };
 }

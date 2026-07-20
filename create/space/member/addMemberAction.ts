@@ -1,7 +1,7 @@
 import type { ULID } from "../../../app/types";
 import { MemberRole } from "../../../app/types";
 import type { SpaceData } from "../../../app/types";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { DB_PREFIX } from "../../../database/keys";
 import { read, write } from "../../../database/dbSlice";

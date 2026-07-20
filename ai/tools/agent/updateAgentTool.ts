@@ -3,7 +3,7 @@
 import type { RootState } from "../../../app/store";
 import type { Agent } from "../../../app/types";
 import { updateAgent } from "../../agent/agentSlice";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import {
     type UpdateAgentToolArgs,
     agentUpdateFieldSchemaProperties,

@@ -13,7 +13,7 @@ import { generateRequestBody } from "../llm/generateRequestBody";
 import { mergeReferences } from "./referenceUtils";
 import { getApiEndpoint } from "../llm/providers";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
-import { selectIdentityToken } from "../../app/identity/selectors";
+import { selectIdentityToken } from "identity/selectors";
 import { performFetchRequest } from "../chat/fetchUtils";
 import { executeToolCall } from "../agent/executeToolCall";
 import { extractCustomId } from "../../core/prefix";

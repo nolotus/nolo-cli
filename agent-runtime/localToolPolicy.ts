@@ -37,6 +37,8 @@ const DEFAULT_LOCAL_TOOLS = new Set([
   "globFiles",
   "searchFiles",
   "execShell",
+  "launchProcess",
+  "listProcesses",
 ]);
 
 function parseToolAllowlist(value: string | undefined) {

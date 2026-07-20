@@ -1,4 +1,4 @@
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { addContentToSpace } from "../../../create/space/spaceSlice";
 import { DataType } from "../../../create/types";
 import { write } from "../../../database/dbSlice";

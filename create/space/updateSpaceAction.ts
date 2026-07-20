@@ -1,4 +1,4 @@
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { toErrorMessage } from "../../core/errorMessage";
 import { read, patch } from "../../database/dbSlice";
 import { createSpaceKey } from "../space/spaceKeys";

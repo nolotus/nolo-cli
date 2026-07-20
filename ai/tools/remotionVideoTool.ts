@@ -4,7 +4,7 @@ import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { buildDatabaseFileContentUrl } from "../../database/fileUrl";
 import { fileKey } from "../../database/keys";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { callToolApi } from "./toolApiClient";
 
 type RemotionRenderVideoArgs = {

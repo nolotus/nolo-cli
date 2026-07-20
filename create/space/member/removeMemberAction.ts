@@ -1,6 +1,6 @@
 import type { ULID } from "../../../app/types";
 import type { SpaceData } from "../../../app/types";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { read, write, remove } from "../../../database/dbSlice"; // 使用 remove
 

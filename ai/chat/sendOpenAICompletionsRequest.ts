@@ -29,7 +29,7 @@ import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getApiEndpoint } from "../llm/providers";
 import { createDialogMessageKeyAndId, dialogMessageKey } from "../../database/keys";
-import { selectIdentityToken } from "../../app/identity/selectors";
+import { selectIdentityToken } from "identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { toErrorMessage } from "../../core/errorMessage";
 import { asOptionalTrimmedString } from "../../core/optionalString";

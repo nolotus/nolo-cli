@@ -5,7 +5,7 @@ import {
     asyncThunkCreator,
     type PayloadAction,
 } from "@reduxjs/toolkit";
-import { selectIdentityToken } from "../identity/selectors";
+import { selectIdentityToken } from "identity/selectors";
 import {
     selectRemoteServers,
 } from "../settings/settingSlice";

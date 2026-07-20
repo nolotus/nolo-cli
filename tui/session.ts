@@ -43,6 +43,7 @@ import {
   THEME_PALETTES,
 } from "./theme";
 import { detectGitStatus, type GitStatus } from "./gitStatus";
+import { getProcessRegistry } from "../agent-runtime/processRegistry";
 
 export { DEFAULT_TUI_AGENT_KEY };
 export const DEFAULT_TUI_SERVER_URL = DEFAULT_NOLO_SERVER_URL;
@@ -217,6 +218,16 @@ function formatCwd(cwd: string) {
   return parts.pop() || cwd;
 }
 
+function formatElapsedSeconds(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins}m`;
+}
+
 /** Soft token chip for the composer status line (no powerline background). */
 function renderComposerTokenChip(tokens?: TurnTokenUsage) {
   if (!tokens || !tokens.contextWindow) {
@@ -259,6 +270,11 @@ export function renderStatusLine(state: TuiState) {
 
   const tokenSegment = themeText(renderComposerTokenChip(state.turnTokens), "muted", colorEnabled);
   parts.push(tokenSegment);
+
+  const runningCount = getProcessRegistry().list().filter(p => p.status === "running").length;
+  if (runningCount > 0) {
+    parts.push(themeText(`⚙ ${runningCount} running`, "info", colorEnabled));
+  }
 
   const body = parts.join(sep);
   const surface = colorEnabled ? surfaceBackgroundSequence() : "";
@@ -437,6 +453,8 @@ export const SLASH_COMMANDS = [
   "/profile",
   "/update",
   "/version",
+  "/procs",
+  "/stop",
   "/exit",
   "/quit",
 ] as const;
@@ -735,6 +753,62 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         nextState: { ...state, renderDisplay: nextMode },
         output: `Render display: ${nextMode}`,
       };
+    }
+    case "/procs": {
+      const registry = getProcessRegistry();
+      const all = registry.list();
+      const running = all.filter(p => p.status === "running");
+      const stopped = all.filter(p => p.status !== "running");
+      const lines: string[] = [];
+      if (running.length > 0) {
+        lines.push(`Running processes (${running.length}):`);
+        for (const p of running) {
+          const elapsed = formatElapsedSeconds(Math.floor((Date.now() - p.startedAt) / 1000));
+          lines.push(`  pid ${p.pid}  ${p.label}    running  ${elapsed}`);
+        }
+      }
+      if (stopped.length > 0) {
+        lines.push(`Stopped/exited (${stopped.length}):`);
+        for (const p of stopped) {
+          const elapsed = formatElapsedSeconds(Math.floor((Date.now() - p.startedAt) / 1000));
+          const exitInfo = p.exitCode !== undefined ? `  exit ${p.exitCode}` : "";
+          lines.push(`  pid ${p.pid}  ${p.label}    ${p.status}${exitInfo ? ` ${exitInfo}` : ""}  ${elapsed}`);
+        }
+      }
+      if (all.length === 0) {
+        lines.push("No processes.");
+      }
+      return { nextState: state, output: lines.join("\n") };
+    }
+    case "/stop": {
+      const registry = getProcessRegistry();
+      if (!argText) {
+        return { nextState: state, output: "Usage: /stop <pid|label|all>" };
+      }
+      if (argText === "all") {
+        const before = registry.list().filter(p => p.status === "running").length;
+        registry.stopAll();
+        return { nextState: state, output: `Stopped ${before} processes` };
+      }
+      if (/^\d+$/.test(argText)) {
+        const pid = parseInt(argText, 10);
+        const proc = registry.get(pid);
+        if (!proc || proc.status !== "running") {
+          return { nextState: state, output: `No running process with pid ${pid}` };
+        }
+        registry.kill(pid);
+        return { nextState: state, output: `Stopped pid ${pid} (${proc.label})` };
+      }
+      // Match by label
+      const matches = registry.list().filter(p => p.status === "running" && p.label === argText);
+      if (matches.length === 0) {
+        return { nextState: state, output: `No running process labeled '${argText}'` };
+      }
+      for (const p of matches) {
+        registry.kill(p.pid);
+      }
+      const stoppedNames = matches.map(p => `pid ${p.pid} (${p.label})`).join(", ");
+      return { nextState: state, output: `Stopped ${stoppedNames}` };
     }
     case "/exit":
     case "/quit":

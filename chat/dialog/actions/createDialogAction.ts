@@ -1,6 +1,6 @@
 // 文件路径: packages/chat/dialog/actions/createDialogAction.ts
 
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { isRecord } from "../../../core/isRecord";
 import { asOptionalTrimmedString } from "../../../core/optionalString";
 import { extractCustomId } from "../../../core/prefix";

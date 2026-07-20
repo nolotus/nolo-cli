@@ -1,5 +1,5 @@
 // 文件路径: render/page/createPageAction.ts
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import {
   addContentToSpace,
   selectCurrentSpaceId,

@@ -1,4 +1,4 @@
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { asTrimmedNonEmptyStringArray } from "../../core/stringArray";
 import { createSpaceKey } from "../../create/space/spaceKeys";
 import { deleteSpace, selectAllMemberSpaces } from "../../create/space/spaceSlice";

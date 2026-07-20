@@ -2,7 +2,7 @@
 
 import type { SpaceId } from "../../space/types"; // 确认类型路径
 import type { Contents, SpaceData } from "../../../app/types";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys"; // 确认导入路径
 import { read, patch } from "../../../database/dbSlice"; // 确认导入路径
 import type { AppDispatch, RootState } from "../../../app/store"; // 假设 store 类型路径

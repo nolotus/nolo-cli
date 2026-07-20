@@ -10,6 +10,7 @@ import {
 import { toErrorMessage } from "../../core/errorMessage";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 
+import type { ProcessLaunchInfo } from "../../chat/messages/types";
 import type { ToolBehavior, ToolInteraction } from ".";
 import { getToolResultErrorData } from "./toolResultError";
 
@@ -41,6 +42,10 @@ export interface ToolRun {
 
   // 保存本次调用的完整参数，后续确认或重放时会用到
   input?: any;
+
+  /** launchProcess 启动的后台进程信息。独立于 toolRun 状态机：
+   *  工具调用本身是 succeeded（立即返回），但进程后续可 running→stopped→exited 流转。 */
+  processLaunch?: ProcessLaunchInfo;
 }
 
 const toolRunAdapter = createEntityAdapter<ToolRun, string>({
@@ -197,6 +202,35 @@ const toolRunSlice = createSlice({
     resetAllToolRuns: (state) => {
       toolRunAdapter.removeAll(state.runs);
     },
+    updateProcessLaunchStatus: (
+      state,
+      action: PayloadAction<{
+        toolRunId: string;
+        status: ProcessLaunchInfo["status"];
+        exitCode?: number;
+      }>
+    ) => {
+      const run = state.runs.entities[action.payload.toolRunId];
+      if (run?.processLaunch) {
+        run.processLaunch.status = action.payload.status;
+        if (action.payload.exitCode !== undefined) {
+          run.processLaunch.exitCode = action.payload.exitCode;
+        }
+      }
+    },
+    /** 将 processLaunch 信息写入 toolRun（launchProcess 工具返回后调用）。 */
+    setProcessLaunch: (
+      state,
+      action: PayloadAction<{
+        toolRunId: string;
+        processLaunch: ProcessLaunchInfo;
+      }>
+    ) => {
+      const run = state.runs.entities[action.payload.toolRunId];
+      if (run) {
+        run.processLaunch = action.payload.processLaunch;
+      }
+    },
   },
 });
 
@@ -208,6 +242,8 @@ export const {
   toolRunFailed,
   resetToolRunsForMessage,
   resetAllToolRuns,
+  updateProcessLaunchStatus,
+  setProcessLaunch,
 } = toolRunSlice.actions;
 
 export default toolRunSlice.reducer;

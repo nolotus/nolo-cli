@@ -4,7 +4,7 @@ import type { AppDispatch, RootState } from "../../../app/store"; // 确认 stor
 import type { SpaceId } from "../../space/types"; // 确认类型路径
 import type { SpaceData } from "../../../app/types";
 import type { SpaceContent } from "../../../app/types";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys"; // 确认导入路径
 // 假设 dbSlice 提供 read, patch
 import { read, patch } from "../../../database/dbSlice"; // 确认导入路径

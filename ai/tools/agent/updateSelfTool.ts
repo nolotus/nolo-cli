@@ -4,7 +4,7 @@ import { updateAgent } from "../../agent/agentSlice";
 import {
   selectAutoApproveSelfUpdateFields,
 } from "../../../app/settings/settingSlice";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { selectCurrentDialogConfig } from "../../../chat/dialog/dialogSlice";
 import { resolveMessageAgentKey } from "../../../chat/messages/messageAgent";
 import { selectMsgById } from "../../../chat/messages/messageSlice";

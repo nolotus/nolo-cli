@@ -8,7 +8,7 @@
 
 import { createAsyncThunk } from "@reduxjs/toolkit";
 
-import { selectIdentityUserId } from "../identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createUserKey, createUserPreferenceKey } from "../../database/keys";
 import {
   USER_PREFERENCE_NAMES,

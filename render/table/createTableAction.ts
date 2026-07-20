@@ -5,7 +5,7 @@ import { ulid } from "ulid";
 import i18n from "../../app/i18n/client";
 
 import type { RootState, AppDispatch } from "../../app/store";
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import {
   addContentToSpace,
   selectCurrentSpaceId,

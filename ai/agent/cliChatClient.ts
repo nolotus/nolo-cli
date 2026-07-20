@@ -1,6 +1,6 @@
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { getIsDesktopApp } from "../../app/utils/env";
-import { selectIdentityToken } from "../../app/identity/selectors";
+import { selectIdentityToken } from "identity/selectors";
 import type { RootState } from "../../app/store";
 import type { CliProvider } from "./cliExecutor";
 import { isCliProvider } from "./cliProviders";

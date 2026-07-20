@@ -6,7 +6,7 @@ import { resolveFileCategory } from "../../../app/utils/fileUtils";
 import { asOptionalFiniteNumber } from "../../../core/optionalNumber";
 import { ulid } from "../../../database/utils/ulid";
 import { fileKey } from "../../../database/keys";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { patch } from "../../../database/dbSlice";
 
 interface UploadAndAddFileToSpacePayload {

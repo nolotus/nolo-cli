@@ -19,6 +19,7 @@ import {
   setActiveDensity,
   type TuiDensity,
 } from "./theme";
+import { getProcessRegistry } from "../agent-runtime/processRegistry";
 
 // 1x1 transparent PNG
 const TINY_PNG_BASE64 =
@@ -423,5 +424,120 @@ describe("handleTuiInput - path-vs-slash disambiguation", () => {
 
     const invalidResult = handleTuiInput("/density unknown-density", state);
     expect(invalidResult.output).toContain("Unknown density: unknown-density");
+  });
+});
+
+describe("handleTuiInput - /procs and /stop", () => {
+  beforeEach(() => {
+    getProcessRegistry().clear();
+  });
+
+  test("/procs shows empty list when no processes", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/procs", state);
+    expect(result.output).toBe("No processes.");
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/procs lists running processes", () => {
+    const registry = getProcessRegistry();
+    registry.add({ pid: 1001, pgid: 1001, command: "sleep 30", label: "test:sleep" });
+    registry.add({ pid: 1002, pgid: 1002, command: "echo hi", label: "test:echo" });
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/procs", state);
+    expect(result.output).toContain("Running processes (2)");
+    expect(result.output).toContain("pid 1001");
+    expect(result.output).toContain("pid 1002");
+    expect(result.output).toContain("test:sleep");
+    expect(result.output).toContain("test:echo");
+    expect(result.output).toContain("running");
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/procs shows stopped processes separately", () => {
+    const registry = getProcessRegistry();
+    registry.add({ pid: 1001, pgid: 1001, command: "sleep 30", label: "test:sleep" });
+    registry.kill(1001);
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/procs", state);
+    expect(result.output).toContain("Stopped/exited (1)");
+    expect(result.output).toContain("stopped");
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/stop without argument shows usage", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/stop", state);
+    expect(result.output).toContain("Usage: /stop <pid|label|all>");
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/stop all stops all running processes", () => {
+    const registry = getProcessRegistry();
+    registry.add({ pid: 1001, pgid: 1001, command: "sleep 30", label: "test:sleep" });
+    registry.add({ pid: 1002, pgid: 1002, command: "echo hi", label: "test:echo" });
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/stop all", state);
+    expect(result.output).toContain("Stopped 2 processes");
+    expect(registry.list().every(p => p.status !== "running")).toBe(true);
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/stop <pid> stops a specific process", () => {
+    const registry = getProcessRegistry();
+    registry.add({ pid: 1001, pgid: 1001, command: "sleep 30", label: "test:sleep" });
+    registry.add({ pid: 1002, pgid: 1002, command: "echo hi", label: "test:echo" });
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/stop 1001", state);
+    expect(result.output).toContain("Stopped pid 1001");
+    expect(result.output).toContain("test:sleep");
+    expect(registry.get(1001)?.status).toBe("stopped");
+    expect(registry.get(1002)?.status).toBe("running");
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/stop <pid> for non-running pid shows error", () => {
+    const registry = getProcessRegistry();
+    registry.add({ pid: 1001, pgid: 1001, command: "sleep 30", label: "test:sleep" });
+    registry.kill(1001);
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/stop 1001", state);
+    expect(result.output).toContain("No running process with pid 1001");
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/stop <label> stops processes by label", () => {
+    const registry = getProcessRegistry();
+    registry.add({ pid: 1001, pgid: 1001, command: "sleep 30", label: "test:sleep" });
+    registry.add({ pid: 1002, pgid: 1002, command: "sleep 60", label: "test:sleep" });
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/stop test:sleep", state);
+    expect(result.output).toContain("Stopped pid 1001");
+    expect(result.output).toContain("pid 1002");
+    expect(registry.get(1001)?.status).toBe("stopped");
+    expect(registry.get(1002)?.status).toBe("stopped");
+    expect(result.action).toBeUndefined();
+  });
+
+  test("/stop <label> for non-matching label shows error", () => {
+    const registry = getProcessRegistry();
+    registry.add({ pid: 1001, pgid: 1001, command: "sleep 30", label: "test:sleep" });
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/stop nonexistent", state);
+    expect(result.output).toContain("No running process labeled 'nonexistent'");
+    expect(result.action).toBeUndefined();
+  });
+  test("/stop <label> with spaces in label stops processes", () => {
+    // argText = rest.join(" ").trim() preserves the full spaced label; the
+    // registry matches by exact label equality, so "my dev server" must
+    // resolve correctly and not be split into tokens.
+    const registry = getProcessRegistry();
+    registry.add({ pid: 2001, pgid: 2001, command: "bun run dev", label: "my dev server" });
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/stop my dev server", state);
+    expect(result.output).toContain("Stopped pid 2001");
+    expect(result.output).toContain("my dev server");
+    expect(registry.get(2001)?.status).toBe("stopped");
+    expect(result.action).toBeUndefined();
   });
 });

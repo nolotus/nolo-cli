@@ -1,5 +1,5 @@
 import type { DbThunkApi } from "../database/thunkApiTypes";
-import { selectIdentityUser, selectIdentityUserId } from "../app/identity/selectors";
+import { selectIdentityUser, selectIdentityUserId } from "identity/selectors";
 import {
   selectCurrentServer,
   selectRemoteServers,

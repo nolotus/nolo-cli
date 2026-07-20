@@ -84,7 +84,7 @@ import {
   selectIdentityToken,
   selectIdentityUser,
   selectIdentityUserId,
-} from "../../app/identity/selectors";
+} from "identity/selectors";
 import { shouldBlockForGptPro } from "../../auth/gptProTier";
 import { persistMessageWithFixedId } from "./persistMessageWithFixedId";
 import { updateTotalUsage } from "../chat/updateTotalUsage";

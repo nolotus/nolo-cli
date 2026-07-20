@@ -4,7 +4,7 @@ import { type PayloadAction } from "@reduxjs/toolkit";
 import { ulid } from "ulid";
 import type { AppDispatch, RootState } from "../../../app/store";
 import type { Category, Contents, SpaceContent, SpaceData, ULID } from "../../../app/types";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read } from "../../../database/dbSlice";
 import { UNCATEGORIZED_ID } from "../constants";

@@ -8,7 +8,7 @@ import {
   ContentType,
   type SpaceMemberWithSpaceInfo,
 } from "../../app/types";
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { DataType } from "../types";
 import { fetchUserData } from "../../database/client/fetchUserData";
 import {

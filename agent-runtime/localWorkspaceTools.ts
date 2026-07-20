@@ -16,6 +16,7 @@ import type {
   AgentRuntimeToolResult,
 } from "./hostAdapter";
 import { createGlob, resolveExecutableOnPath } from "./runtimeCompat";
+import { getProcessRegistry } from "./processRegistry";
 
 type LocalWorkspaceToolArgs = {
   workspaceRoot: string;
@@ -129,6 +130,8 @@ const WORKSPACE_TOOL_NAMES = [
   "searchFiles",
   "captureVisualState",
   "execShell",
+  "launchProcess",
+  "listProcesses",
 ] as const;
 
 const DEFAULT_LOCAL_CODING_TOOL_NAMES = [
@@ -140,7 +143,7 @@ const DEFAULT_LOCAL_CODING_TOOL_NAMES = [
   "searchFiles",
 ] as const;
 
-const SHELL_TOOL_NAMES = ["execShell"] as const;
+const SHELL_TOOL_NAMES = ["execShell", "launchProcess", "listProcesses"] as const;
 const WORKSPACE_TOOL_NAME_SET = new Set<string>(WORKSPACE_TOOL_NAMES);
 const REMOVED_WORKSPACE_TOOL_NAMES = new Set([
   "gitStatus",
@@ -771,7 +774,7 @@ function buildExecShellTool(toolName: string): OpenAiCompatibleTool {
     function: {
       name: toolName,
       description:
-        "Run a shell command in the local workspace. Commands already execute from the workspace root; do not cd into guessed paths such as /workspace, /repo, /home/user, or /home/user/workspace. Prefer one command that performs a complete verification or related git operation instead of many tiny commands. For branch setup, prefer idempotent commands such as git switch -C <branch> when replacing or recreating a benchmark branch is acceptable. Use portable POSIX commands for macOS/BSD shells; avoid GNU-only flags such as cat -A. Do not use cat -A. Do not use brittle byte-offset commands such as xxd -s -32. For separator lines, use echo or printf '%s\\n'. For text-file content or trailing-newline checks, prefer readFile over shell byte inspection when that tool is available. Do not run repeated git status, git log, git rev-parse, or branch checks after a successful command already returned the needed clean status and commit information; use one final verification command. If a command fails, use the error output to adjust the next command rather than repeating the same shape.",
+        "Run a shell command in the local workspace. Commands already execute from the workspace root; do not cd into guessed paths such as /workspace, /repo, /home/user, or /home/user/workspace. Prefer one command that performs a complete verification or related git operation instead of many tiny commands. For branch setup, prefer idempotent commands such as git switch -C <branch> when replacing or recreating a benchmark branch is acceptable. Use portable POSIX commands for macOS/BSD shells; avoid GNU-only flags such as cat -A. Do not use cat -A. Do not use brittle byte-offset commands such as xxd -s -32. For separator lines, use echo or printf '%s\\n'. For text-file content or trailing-newline checks, prefer readFile over shell byte inspection when that tool is available. Do not run repeated git status, git log, git rev-parse, or branch checks after a successful command already returned the needed clean status and commit information; use one final verification command. If a command fails, use the error output to adjust the next command rather than repeating the same shape. For long-running commands that should keep running in the background (dev servers, watchers, REPLs, \`--watch\`/\`serve\`/\`dev\` scripts), use launchProcess instead — execShell blocks until the command exits and will freeze the conversation.",
       parameters: {
         type: "object",
         properties: {
@@ -784,6 +787,46 @@ function buildExecShellTool(toolName: string): OpenAiCompatibleTool {
             description: "Shell command to run.",
           },
         },
+      },
+    },
+  };
+}
+
+function buildLaunchProcessTool(): OpenAiCompatibleTool {
+  return {
+    type: "function",
+    function: {
+      name: "launchProcess",
+      description:
+        "Launch a long-running process (dev server, watcher, REPL) in the background and return immediately without blocking the conversation. Use this instead of execShell for commands that do not exit on their own. Returns {pid, label, status:'running'}. The process keeps running after the tool returns; use listProcesses to check status or the host UI (/procs, /stop) to stop it.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "Shell command to run in background.",
+          },
+          label: {
+            type: "string",
+            description: "Optional friendly label for the process.",
+          },
+        },
+        required: ["command"],
+      },
+    },
+  };
+}
+
+function buildListProcessesTool(): OpenAiCompatibleTool {
+  return {
+    type: "function",
+    function: {
+      name: "listProcesses",
+      description:
+        "List currently registered background processes launched via launchProcess. Returns array of {pid, label, command, status, startedAt}.",
+      parameters: {
+        type: "object",
+        properties: {},
       },
     },
   };
@@ -925,6 +968,8 @@ function buildWorkspaceToolDefinition(toolName: string, args?: {
   }
   if (toolName === "captureVisualState") return buildCaptureVisualStateTool();
   if (toolName === "execShell") return buildExecShellTool(toolName);
+  if (toolName === "launchProcess") return buildLaunchProcessTool();
+  if (toolName === "listProcesses") return buildListProcessesTool();
   return null;
 }
 
@@ -1007,7 +1052,7 @@ export function buildLocalWorkspaceOpenAiTools(args: {
   return WORKSPACE_TOOL_NAMES
     .filter((toolName) => {
       if (!declaredTools.has(toolName)) return false;
-      if (!args.exposeShellTools && toolName === "execShell") {
+      if (!args.exposeShellTools && SHELL_TOOL_NAMES.includes(toolName as any)) {
         return false;
       }
       return true;
@@ -1458,6 +1503,33 @@ async function runWorkspaceCommand(args: {
     proc.stdin.end();
   }
   const exitPromise = waitForNodeProcessExit(proc);
+  // detached spawns a new process group so timeout cleanup can kill the whole
+  // tree (parent shell + its children). The cost is that a SIGHUP/SIGTERM sent
+  // only to this process no longer reaches the child — so if the TUI/CLI host
+  // is killed mid-execShell, the child keeps running. Re-bridge that gap: while
+  // a detached child is live, forward the host's SIGHUP/SIGTERM/SIGINT to its
+  // process group, and detach the handlers once the child settles (exits,
+  // errors, or is killed). SIGHUP is the main target (terminal close, no
+  // competing host handler); SIGINT may also fire alongside a TUI/readline
+  // SIGINT handler on Ctrl-C — that is benign, the ESRCH guard handles a
+  // double-kill of an already-dead child.
+  const cleanupChildOnHostSignal = (signal: NodeJS.Signals) => {
+    if (typeof proc.pid === "number") {
+      try { process.kill(-proc.pid, signal); } catch { /* already exited */ }
+    }
+  };
+  if (detached) {
+    process.once("SIGHUP", cleanupChildOnHostSignal);
+    process.once("SIGTERM", cleanupChildOnHostSignal);
+    process.once("SIGINT", cleanupChildOnHostSignal);
+  }
+  const detachSignalCleanup = () => {
+    if (!detached) return;
+    process.removeListener("SIGHUP", cleanupChildOnHostSignal);
+    process.removeListener("SIGTERM", cleanupChildOnHostSignal);
+    process.removeListener("SIGINT", cleanupChildOnHostSignal);
+  };
+  exitPromise.then(detachSignalCleanup, detachSignalCleanup);
   const stdoutPromise = readNodeStream(proc.stdout);
   const stderrPromise = readNodeStream(proc.stderr);
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -2322,6 +2394,120 @@ async function execShellTool(args: {
   };
 }
 
+function deriveLabel(command: string): string {
+  const trimmed = command.trim();
+  if (!trimmed) return "process";
+  const tokens = trimmed.split(/\s+/);
+  const lastToken = tokens[tokens.length - 1] ?? trimmed;
+  // If lastToken is something like "desktop:dev" or "dev", use it; remove path prefix if any
+  const labelCandidate = lastToken.split(/[/\\]/).pop() || lastToken;
+  return labelCandidate || trimmed;
+}
+
+async function launchProcessTool(args: {
+  call: AgentRuntimeToolCallInput;
+  workspaceRoot: string;
+  commandPrefix?: string[];
+  restrictToWorkspace?: boolean;
+}): Promise<AgentRuntimeToolResult> {
+  const parsed = parseWorkspaceToolArguments(args.call.arguments);
+  const command = requireShellCommand(parsed, args.call.name);
+  if (args.restrictToWorkspace) {
+    const escapeToken = findWorkspaceShellEscapeToken(command);
+    if (escapeToken) {
+      return buildWorkspaceShellEscapeBlockedResult({ command, token: escapeToken });
+    }
+  }
+
+  const labelArg = readTrimmedString((parsed as Record<string, unknown>).label);
+  const label = labelArg || deriveLabel(command);
+
+  const fullCommand = buildWorkspaceShellCommand({
+    toolName: args.call.name,
+    command,
+    shell: parsed.shell,
+  });
+
+  const cmdArgs = [
+    ...(args.commandPrefix ?? []),
+    ...fullCommand,
+  ];
+
+  const detached = process.platform !== "win32";
+  const proc = spawnChildProcess(cmdArgs[0] ?? "", cmdArgs.slice(1), {
+    cwd: resolve(args.workspaceRoot),
+    stdio: ["ignore", "pipe", "pipe"],
+    detached,
+  });
+
+  const pid = proc.pid;
+  if (typeof pid !== "number") {
+    return {
+      content: JSON.stringify({ error: "Failed to spawn child process" }),
+      metadata: { command, status: "failed" },
+    };
+  }
+
+  const pgid = detached ? pid : pid;
+  const registry = getProcessRegistry();
+  registry.add({ pid, pgid, command, label });
+
+  const cleanupChildOnHostSignal = (signal: NodeJS.Signals) => {
+    try {
+      if (detached) {
+        process.kill(-pid, signal);
+      } else {
+        process.kill(pid, signal);
+      }
+    } catch {
+      // already exited
+    }
+  };
+
+  if (detached) {
+    process.once("SIGHUP", cleanupChildOnHostSignal);
+    process.once("SIGTERM", cleanupChildOnHostSignal);
+    process.once("SIGINT", cleanupChildOnHostSignal);
+  }
+
+  proc.on("close", (code) => {
+    if (detached) {
+      process.removeListener("SIGHUP", cleanupChildOnHostSignal);
+      process.removeListener("SIGTERM", cleanupChildOnHostSignal);
+      process.removeListener("SIGINT", cleanupChildOnHostSignal);
+    }
+    registry.markExited(pid, code ?? 1);
+  });
+
+  const activity = extractActivity(parsed);
+  const resultData = { pid, label, status: "running" as const };
+
+  return {
+    content: JSON.stringify(resultData),
+    metadata: {
+      command,
+      pid,
+      label,
+      status: "running",
+      processLaunch: resultData,
+      ...(activity ? { activity } : {}),
+    },
+  };
+}
+
+async function listProcessesTool(args: {
+  call: AgentRuntimeToolCallInput;
+}): Promise<AgentRuntimeToolResult> {
+  const list = getProcessRegistry().list();
+  return {
+    content: JSON.stringify(list),
+    metadata: {
+      count: list.length,
+      processes: list,
+    },
+  };
+}
+
 export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) {
   return {
     editFile: (call: AgentRuntimeToolCallInput) => editFileTool({
@@ -2360,6 +2546,15 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       commandOutputLimit: args.commandOutputLimit,
       commandPrefix: args.commandPrefix,
       restrictToWorkspace: args.restrictShellToWorkspace,
+    }),
+    launchProcess: (call: AgentRuntimeToolCallInput) => launchProcessTool({
+      call,
+      workspaceRoot: args.workspaceRoot,
+      commandPrefix: args.commandPrefix,
+      restrictToWorkspace: args.restrictShellToWorkspace,
+    }),
+    listProcesses: (call: AgentRuntimeToolCallInput) => listProcessesTool({
+      call,
     }),
   };
 }

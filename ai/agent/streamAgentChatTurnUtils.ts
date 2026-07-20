@@ -29,7 +29,7 @@ import type { Agent, DialogConfig } from "../../app/types";
 import type { Contexts } from "../types";
 import { getModelContextWindow } from "../llm/getModelContextWindow";
 import { selectCurrentUserBalance } from "../../auth/authSlice";
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import {
     getModelPricing,
     getPrices,

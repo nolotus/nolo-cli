@@ -15,7 +15,7 @@ import { createAsyncThunk } from "@reduxjs/toolkit";
 import type { RootState } from "../../app/store";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { resolveRetryAfterMs } from "../../app/utils/retryAfter";
-import { selectIdentityToken } from "../../app/identity/selectors";
+import { selectIdentityToken } from "identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import { normalizeServerOrigin } from "../../core/serverOrigin";

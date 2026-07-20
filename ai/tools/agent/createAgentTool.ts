@@ -8,7 +8,7 @@ import { ContentType } from "../../../app/types";
 import { createAgentKey, } from "../../../database/keys";
 import type { FormData as AgentFormData } from "../../agent/createAgentSchema";
 import { selectCurrentUserBalance } from "../../../auth/authSlice";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import type { ModelWithProvider } from "../../llm/models";
 import i18n from "../../../app/i18n";
 import { toTrimmedString } from "../../../core/toTrimmedString";

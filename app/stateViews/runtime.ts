@@ -3,7 +3,7 @@ import type { RootState } from "../store";
 import {
   selectIdentityToken,
   selectIdentityUserId,
-} from "../identity/selectors";
+} from "identity/selectors";
 import { getIsDesktopApp } from "../utils/env";
 import { isLocalServerUrl } from "../../core/localOrigins";
 import { getAllServers } from "../../database/actions/common";

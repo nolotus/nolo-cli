@@ -19,7 +19,7 @@ import { DataType } from "../../create/types";
 import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import { remove, write, patch, selectById as selectDbRecordById } from "../../database/dbSlice";
 import type { Message } from "./types";
-import { selectIdentityUserId } from "../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { fetchAndCacheMessages, fetchAndCacheMessagesLocalFirst } from "./fetchAndCacheMessages";
 import { createDialogMessageKeyAndId } from "../../database/keys";
 import { toErrorMessage } from "../../core/errorMessage";

@@ -9,7 +9,7 @@ import { mergeReferences } from "./referenceUtils";
 import { generateRequestBody } from "../llm/generateRequestBody";
 import { getApiEndpoint } from "../llm/providers";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
-import { selectIdentityToken } from "../../app/identity/selectors";
+import { selectIdentityToken } from "identity/selectors";
 import { applyChatCompletionsStreamMode } from "../../integrations/openai/chatCompletionStreamMode";
 
 import { sendOpenAICompletionsRequest } from "../chat/sendOpenAICompletionsRequest";

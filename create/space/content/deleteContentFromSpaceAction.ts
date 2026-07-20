@@ -2,7 +2,7 @@
 import { createSpaceKey, normalizeSpaceId } from "../../space/spaceKeys";
 import { patch, read, remove } from "../../../database/dbSlice";
 import { SpaceData, SpaceContent, Agent } from "../../../app/types";
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { isAgentKey, isPageKey, splitKey } from "../../../database/keys";
 import { extractUserId } from "../../../core/prefix";
 import { isSystemAdmin } from "../../../core/init";

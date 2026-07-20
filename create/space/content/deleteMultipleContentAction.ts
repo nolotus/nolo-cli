@@ -1,4 +1,4 @@
-import { selectIdentityUserId } from "../../../app/identity/selectors";
+import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read, remove } from "../../../database/dbSlice";
 import { SpaceData } from "../../../app/types";

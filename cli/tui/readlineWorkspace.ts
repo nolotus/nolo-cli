@@ -16,6 +16,7 @@ import { createDialogHost } from "./dialogHost";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
 import { loadDialogHistory, runDialogPicker } from "./dialogPicker";
 import { mergeAttachedImages, readImagePaths, resolveImageSource, summarizeAttachment } from "./pasteImage";
+import { getProcessRegistry } from "../../agent-runtime/processRegistry";
 import {
   applyTuiInputKey,
   completeSlashCommand,
@@ -2149,6 +2150,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       rl.prompt();
     }
   } finally {
+    getProcessRegistry().stopAll();
     rl.close();
   }
 }

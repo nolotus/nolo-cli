@@ -20,6 +20,7 @@ import {
 } from "./cloudflare";
 import { gmiModels, GMI_CHAT_COMPLETIONS_URL } from "./gmi";
 import { zaiModels } from "./zai";
+import { qwenModels } from "../../integrations/qwen/models";
 import type { ModelPrice } from "./types";
 import {
   PLATFORM_HOSTED_KIMI_K26_MODEL,
@@ -47,6 +48,7 @@ const MODEL_MAP = {
   cloudflare: cloudflareModels,
   gmi: gmiModels,
   zai: zaiModels,
+  qwen: qwenModels,
 } as const;
 
 const MODEL_LOOKUP_MAP = {
@@ -233,6 +235,10 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   },
   gmi: {
     default: GMI_CHAT_COMPLETIONS_URL,
+  },
+  qwen: {
+    // 千问 AI 平台 OpenAI 兼容模式
+    default: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
   },
 } as const;
 

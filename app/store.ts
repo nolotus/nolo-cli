@@ -29,6 +29,14 @@ export interface RootState {
 export type AppExtra = {
   db: Level<string, any> | null;
   tokenManager: TokenManager | null;
+  /**
+   * Chat queue adapter (cross-platform queue core → Redux bridge). Populated
+   * after the store is created in `createAppStore`. Lifecycle thunks
+   * (`runChatQueueTurnEnd` / `runChatQueueTurnStart`) read this to forward
+   * agent-turn events to the queue runtime. Absent in tests that don't wire
+   * the adapter, in which case the thunks are no-ops.
+   */
+  chatQueueAdapter?: unknown;
 };
 
 // AppDispatch: loose on purpose for full-repo typecheck.
@@ -94,20 +102,38 @@ export const createAppStore = (options: CreateStoreOptions = {}): any => {
       });
   }
 
-  return configureStore({
+  // Mutable thunk-extra container. The chat queue adapter is populated after
+  // the store exists (it needs the store reference to dispatch continuation
+  // sends on drain), but the thunks already capture `extra` by reference at
+  // dispatch time, so a late fill-in is visible to them.
+  const extra: AppExtra = {
+    db: dbInstance || null,
+    tokenManager: tokenManager || null,
+  };
+
+  const store = configureStore({
     reducer,
     middleware: (getDefaultMiddleware) =>
       getDefaultMiddleware({
         serializableCheck: false,
-        thunk: {
-          extraArgument: {
-            db: dbInstance || null,
-            tokenManager: tokenManager || null,
-          },
-        },
+        thunk: { extraArgument: extra },
       }),
     preloadedState,
   });
+
+  // Wire the chat queue adapter now that the store exists. Dynamic import to
+  // avoid pulling the chat package into SSR/test bundles that never dispatch
+  // agent turns; if it fails (e.g. missing dep in a partial bundle), the
+  // lifecycle thunks simply stay no-ops.
+  void import("../chat/queue/chatQueueReduxAdapter")
+    .then(({ ChatQueueReduxAdapter }) => {
+      extra.chatQueueAdapter = new ChatQueueReduxAdapter(store);
+    })
+    .catch(() => {
+      /* chat queue adapter optional in non-chat bundles */
+    });
+
+  return store;
 };
 
 export type AppStore = any;

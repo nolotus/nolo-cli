@@ -24,6 +24,7 @@ import {
     clearPendingUserInputQueue,
     selectActiveControllers,
 } from "../../chat/dialog/dialogSlice";
+import { runChatQueueTurnEnd } from "../../chat/queue/chatQueueLifecycleActions";
 import {
     finalizeTransientMessageOnError,
     removeTransientMessage,
@@ -909,6 +910,10 @@ export const streamAgentChatTurnHandler = async (
     let remoteTransientMessageId: string | null = null;
     let remoteTransientMessageFinalized = false;
     let modelRequestStarted = false;
+    // Carries the abort outcome across the try/catch boundary into finally so
+    // the queue-drain decision can distinguish "user stopped" (clear queue)
+    // from "turn ended normally" (let the queue adapter drain follow-ups).
+    let turnAborted = false;
 
     // 防止同一 dialog 的并发 streamAgentChatTurn：检查是否已有活跃 loop
     if (explicitDialogKey) {
@@ -2720,6 +2725,7 @@ export const streamAgentChatTurnHandler = async (
         };
     } catch (error: any) {
         if (isTurnAborted(error)) {
+            turnAborted = true;
             if (remoteTransientMessageId && !remoteTransientMessageFinalized) {
                 dispatch(removeTransientMessage(remoteTransientMessageId));
                 remoteTransientMessageFinalized = true;
@@ -2771,8 +2777,29 @@ export const streamAgentChatTurnHandler = async (
         } else if (loopKey) {
             dispatch(removeActiveController(loopKey));
         }
-        // 清空排队的用户消息（loop 结束或异常时，未消费的消息不应继续保留）
-        dispatch(clearPendingUserInputQueue(runtimeDialogKey ? { dialogKey: runtimeDialogKey } : undefined));
+        // Queue lifecycle on turn end:
+        //   - aborted: the user stopped the turn → abandon queued follow-ups.
+        //   - otherwise: do NOT clear the queue here. The chat queue adapter
+        //     (chatQueueReduxAdapter) is responsible for draining queued
+        //     follow-ups after a clean turn end, or preserving them on
+        //     failure. Clearing here used to drop every message the user
+        //     queued while the agent was replying the moment the reply
+        //     finished — which defeated the whole "queue while busy" feature.
+        if (turnAborted) {
+            dispatch(clearPendingUserInputQueue(runtimeDialogKey ? { dialogKey: runtimeDialogKey } : undefined));
+        }
+        // Notify the cross-platform queue core that this turn ended. The
+        // adapter (if registered in the store's thunk extra) will emit a
+        // drain-ready event when the queue is non-empty and the turn ended
+        // cleanly, and dispatch a continuation send. Stores without an adapter
+        // (e.g. tests) simply ignore this no-op thunk.
+        if (runtimeDialogKey) {
+            dispatch(runChatQueueTurnEnd({
+                dialogKey: runtimeDialogKey,
+                ok: !turnAborted,
+                aborted: turnAborted,
+            }) as any);
+        }
         thunkApi.signal.removeEventListener("abort", onAbort);
     }
 };

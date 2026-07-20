@@ -22,6 +22,8 @@ export const PLATFORM_CHAT_COMPLETIONS_ENDPOINTS: Readonly<
     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  // 千问 AI 平台 OpenAI 兼容模式
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
   // Open-source default: nolo provider 中转 ollama cloud。
   // 内部多后端组合路由不开源，由内部 provider 路由层接管。
   nolo: "https://ollama.com/v1/chat/completions",

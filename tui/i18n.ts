@@ -110,6 +110,10 @@ const STRINGS = {
     en: "Esc to stop",
     zh: "Esc 停止回复",
   },
+  queuedHint: {
+    en: "queued",
+    zh: "排队",
+  },
   turnStopped: {
     en: "Stopped this reply.",
     zh: "已停止本次回复。",

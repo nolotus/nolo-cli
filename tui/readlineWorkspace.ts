@@ -38,6 +38,7 @@ import { detectTerminalBrightness } from "./detectBackground";
 import { toErrorMessage } from "../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
+import { createChatQueueTuiBinding, type ChatQueueTuiBinding } from "./chatQueueTuiBinding";
 
 export type SelfUpdater = (
   output: NodeJS.WritableStream
@@ -1428,6 +1429,99 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }
     return true;
   };
+
+  // --- Chat queue (TUI binding, no Redux) ---
+  //
+  // runOneAgentTurn executes a single agent turn end-to-end: records the user
+  // message into the transcript, runs runAgentChat, finalizes the assistant
+  // turn, and folds dialog/token state back. Extracted from runSubmittedLine's
+  // chat branch so the queue drain path can reuse the exact same rendering +
+  // execution + state-update logic as a direct send.
+  const runOneAgentTurn = async (
+    message: string,
+    imageUrls: string[],
+    actionGateHandler: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>,
+    confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>,
+  ): Promise<{ ok: boolean; aborted: boolean }> => {
+    history.followBottom = true;
+    startTurn(history, "user");
+    appendToCurrentTurn(history, message);
+    finalizeCurrentTurn(history);
+    renderHistoryToOutput();
+    if (fixedInput.active) fixedInput.repaint(buffer);
+
+    startTurn(history, "assistant");
+    const agentOutput = isInteractiveInput(input)
+      ? createHistoryOutputStream(history, () => {
+          renderHistoryToOutput();
+          if (fixedInput.active && !fixedInput.isPaused()) {
+            fixedInput.repaint(buffer);
+          }
+        })
+      : output;
+    activeTurnAbort = new AbortController();
+    const runResult = await runAgentChat(
+      options.scriptDir,
+      state,
+      message,
+      options.env ?? process.env,
+      agentOutput,
+      options.agentRunner,
+      {
+        ...(imageUrls.length > 0 ? { imageUrls } : {}),
+        actionGateHandler,
+        ...(confirmDestructiveAction ? { confirmDestructiveAction } : {}),
+        abortSignal: activeTurnAbort.signal,
+      }
+    );
+    const wasAborted = activeTurnAbort.signal.aborted;
+    activeTurnAbort = null;
+    if (isInteractiveInput(input)) {
+      finalizeCurrentTurn(history);
+      renderHistoryToOutput();
+      if (fixedInput.active) fixedInput.repaint(buffer);
+    }
+    if (wasAborted) {
+      emitCommandOutput(t("turnStopped"));
+    }
+    if (runResult.dialogId || runResult.turnTokens) {
+      const nextDialogKey = runResult.dialogId
+        ? runResult.dialogId === state.dialogId && state.dialogKey
+          ? state.dialogKey
+          : state.dialogOwnerId
+            ? `dialog-${state.dialogOwnerId}-${runResult.dialogId}`
+            : undefined
+        : state.dialogKey;
+      state = {
+        ...state,
+        ...(runResult.dialogId
+          ? {
+              dialogId: runResult.dialogId,
+              dialogKey: nextDialogKey,
+              dialogLabel: runResult.dialogId,
+            }
+          : {}),
+        ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
+      };
+    }
+    return { ok: !wasAborted, aborted: wasAborted };
+  };
+
+  // The TUI chat queue binding drives drain via runOneAgentTurn. It is created
+  // here (inside the workspace closure) so the drain callback can capture
+  // history/state/fixedInput/runAgentChat just like a direct send does.
+  let chatQueueBinding: ChatQueueTuiBinding | null = null;
+  const ensureChatQueueBinding = (
+    actionGateHandler: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>,
+    confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>
+  ): ChatQueueTuiBinding => {
+    if (chatQueueBinding) return chatQueueBinding;
+    chatQueueBinding = createChatQueueTuiBinding(async (text) => {
+      return runOneAgentTurn(text, [], actionGateHandler, confirmDestructiveAction);
+    });
+    return chatQueueBinding;
+  };
+
   const runSubmittedLine = async (
     line: string,
     actionGateHandler: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>,
@@ -1760,75 +1854,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
 
       history.followBottom = true;
-      startTurn(history, "user");
-      appendToCurrentTurn(history, result.action.message);
-      finalizeCurrentTurn(history);
-      // Keep the docked composer painted under the transcript for the whole turn.
-      renderHistoryToOutput();
-      if (fixedInput.active) fixedInput.repaint(buffer);
-
-      startTurn(history, "assistant");
-      const agentOutput = isInteractiveInput(input)
-        ? createHistoryOutputStream(history, () => {
-            renderHistoryToOutput();
-            // Repaint the user's live draft (not "") so typing during the
-            // agent turn is preserved on every streaming update. Skipped while
-            // a dialog owns the screen, for the same reason the transcript
-            // repaint is: it would paint the composer over the open frame.
-            if (fixedInput.active && !fixedInput.isPaused()) {
-              fixedInput.repaint(buffer);
-            }
-          })
-        : output;
-      activeTurnAbort = new AbortController();
-      const runResult = await runAgentChat(
-        options.scriptDir,
-        state,
+      // Notify the queue core that a direct (non-drained) turn is starting,
+      // then execute it via the shared runOneAgentTurn helper. After it ends,
+      // notifyTurnEnd drives the drain cascade for any messages the user
+      // queued while this turn was running.
+      const binding = ensureChatQueueBinding(actionGateHandler, confirmDestructiveAction);
+      binding.notifyTurnStart();
+      const outcome = await runOneAgentTurn(
         result.action.message,
-        options.env ?? process.env,
-        agentOutput,
-        options.agentRunner,
-        {
-          ...(imageUrls.length > 0 ? { imageUrls } : {}),
-          actionGateHandler,
-          ...(confirmDestructiveAction
-            ? { confirmDestructiveAction }
-            : {}),
-          abortSignal: activeTurnAbort.signal,
-        }
+        imageUrls,
+        actionGateHandler,
+        confirmDestructiveAction,
       );
-      const wasAborted = activeTurnAbort.signal.aborted;
-      activeTurnAbort = null;
-      if (isInteractiveInput(input)) {
-        finalizeCurrentTurn(history);
-        renderHistoryToOutput();
-        // Show the user's accumulated draft (typed while busy) now that the
-        // turn has finished.
-        if (fixedInput.active) fixedInput.repaint(buffer);
-      }
-      if (wasAborted) {
-        emitCommandOutput(t("turnStopped"));
-      }
-      if (runResult.dialogId || runResult.turnTokens) {
-        const nextDialogKey = runResult.dialogId
-          ? runResult.dialogId === state.dialogId && state.dialogKey
-            ? state.dialogKey
-            : state.dialogOwnerId
-              ? `dialog-${state.dialogOwnerId}-${runResult.dialogId}`
-              : undefined
-          : state.dialogKey;
-        state = {
-          ...state,
-          ...(runResult.dialogId
-            ? {
-                dialogId: runResult.dialogId,
-                dialogKey: nextDialogKey,
-                dialogLabel: runResult.dialogId,
-              }
-            : {}),
-          ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
-        };
-      }
+      await binding.notifyTurnEnd(outcome);
+      if (fixedInput.active) fixedInput.repaint(buffer);
     }
 
     if (result.action?.type === "attach-images") {
@@ -1867,6 +1906,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         let base = busy
           ? `${renderStatusLine(state)}${dimCliText(` · ${t("stopHint")}`, resolveCliColorEnabled())}`
           : renderStatusLine(state);
+        // Show the queued-input count while a turn is running so the user can
+        // see their follow-ups are staged, not lost. Mirrors the Web/RN
+        // queue badge via the shared projectChatQueueStatus contract.
+        if (chatQueueBinding && chatQueueBinding.queueLength() > 0) {
+          base += dimCliText(
+            ` · ${chatQueueBinding.queueLength()} ${t("queuedHint")}`,
+            resolveCliColorEnabled(),
+          );
+        }
         if (history.hasMoreAbove || history.hasMoreBelow) {
           const scrollHints: string[] = [];
           if (history.hasMoreAbove) scrollHints.push("▲ PgUp");
@@ -1963,8 +2011,50 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
       if (result.submit !== undefined) {
         if (busyLock) {
-          // Ignore Enter while the agent is replying; the draft stays intact
-          // and the user can send it after the turn completes.
+          // While an agent turn is running, Enter does not start a new turn.
+          // Instead, route the draft through the shared queue resolver: pure
+          // text is enqueued for auto-send after the turn; slash commands and
+          // attachments are surfaced as a brief notice (the user can retry
+          // once the turn ends). The draft is cleared only on a successful
+          // enqueue.
+          const submittedText = result.submit;
+          const binding = ensureChatQueueBinding(
+            async (gate) => {
+              actionGateWaiting = true;
+              try {
+                return await waitForRawActionGate(input, output, gate, spawnRunner, {
+                  beforeSubprocess: () => fixedInput.pause(),
+                  afterSubprocess: () => fixedInput.resumeFromSubprocess(),
+                });
+              } finally {
+                actionGateWaiting = false;
+              }
+            },
+            async (request) =>
+              dialogHost.run((anchor) =>
+                runConfirmDialog({
+                  request,
+                  input: input as any,
+                  output: output as any,
+                  ...anchor,
+                }),
+              ),
+          );
+          const decision = binding.resolveSubmit({
+            text: submittedText,
+            isRunning: true,
+          });
+          if (decision.kind === "queue-text") {
+            binding.enqueue(decision.text);
+            buffer = "";
+            fixedInput.repaint(buffer);
+          } else if (decision.kind === "queue-blocked") {
+            // Attachments / mentions can't be queued yet; keep the draft so
+            // the user can resend after the turn. No destructive action.
+          }
+          // arm-fresh-dialog / compact-blocked / noop / multi-image-blocked
+          // are all intentionally no-ops while busy: the draft is preserved
+          // and the user can act on it once the turn completes.
           return;
         }
         busy = true;

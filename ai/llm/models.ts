@@ -11,8 +11,6 @@ import { xaiModels } from "../../integrations/xai/models";
 import { openrouterModels } from "./openrouterModels";
 import { fireworksModels } from "./fireworks";
 import { ollamaCloudModels } from "./ollamaCloud";
-import { mistralModels } from "./mistral";
-import { mimoModels } from "./mimo";
 import { cloudflareModels } from "./cloudflare";
 import { gmiModels } from "./gmi";
 import { zaiModels } from "./zai";
@@ -47,8 +45,6 @@ export const ALL_MODELS: ModelWithProvider[] = [
   ...withProvider("deepseek")(deepSeekModels),
   ...withProvider("deepinfra")(deepinfraModels),
   ...withProvider("fireworks")(fireworksModels),
-  ...withProvider("mistral")(mistralModels),
-  ...withProvider("mimo")(mimoModels),
   ...withProvider("cloudflare")(cloudflareModels),
   ...withProvider("gmi")(gmiModels),
   ...withProvider("zai")(zaiModels),

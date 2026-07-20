@@ -71,8 +71,6 @@ export const FIREWORKS_KIMI_CURRENT_MODEL =
 export const FIREWORKS_KIMI_K2P6_MODEL = "accounts/fireworks/models/kimi-k2p6";
 /** @deprecated */
 export const DEEPINFRA_KIMI_FALLBACK_MODEL = "moonshotai/Kimi-K2.6";
-/** @deprecated */
-export const VULTR_KIMI_MODEL = "moonshotai/Kimi-K2.6";
 
 export const KIMI_PLATFORM_FALLBACK_STATUSES = [
   401, 402, 429, 500, 502, 503, 504,
@@ -89,9 +87,6 @@ export const isFireworksKimiModel = (model?: string | null): boolean =>
 
 export const isDeepInfraKimiModel = (model?: string | null): boolean =>
   model === DEEPINFRA_KIMI_FALLBACK_MODEL;
-
-export const isVultrKimiModel = (model?: string | null): boolean =>
-  model === VULTR_KIMI_MODEL;
 
 /** Platform catalog + proxy: only ollama-cloud Kimi (legacy id still accepted). */
 export const isPlatformKimiProviderModel = (

@@ -596,8 +596,6 @@
     "ai/llm/openrouterModels.ts",
     "ai/llm/fireworks.ts",
     "ai/llm/ollamaCloud.ts",
-    "ai/llm/mistral.ts",
-    "ai/llm/mimo.ts",
     "ai/llm/cloudflare.ts",
     "ai/llm/gmi.ts",
     "ai/llm/zai.ts",

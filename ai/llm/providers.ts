@@ -14,8 +14,6 @@ import {
   PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
   platformHostedModels,
 } from "./platformHosted";
-import { mistralModels } from "./mistral";
-import { mimoModels } from "./mimo";
 import {
   cloudflareModels,
   getCloudflareWorkersAiChatCompletionsUrl,
@@ -46,8 +44,6 @@ const MODEL_MAP = {
   openrouter: openrouterModels,
   fireworks: fireworksModels,
   nolo: platformHostedModels,
-  mistral: mistralModels,
-  mimo: mimoModels,
   cloudflare: cloudflareModels,
   gmi: gmiModels,
   zai: zaiModels,
@@ -215,9 +211,6 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   deepinfra: {
     default: "https://api.deepinfra.com/v1/openai/chat/completions",
   },
-  mistral: {
-    default: "https://api.mistral.ai/v1/chat/completions",
-  },
   google: {
     default:
       "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -234,9 +227,6 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   // Legacy agent records may still store provider=ollama-cloud
   "ollama-cloud": {
     default: PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
-  },
-  mimo: {
-    default: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
   },
   cloudflare: {
     default: "__cloudflare_workers_ai_chat_completions__",

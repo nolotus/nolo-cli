@@ -1103,6 +1103,9 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
   const allowedToolNames = normalizeRemoteStringList(
     args.input.runtimeContext?.allowedToolNames,
   );
+  const blockedToolNames = normalizeRemoteStringList(
+    args.input.runtimeContext?.blockedToolNames,
+  );
   const wakeResponse = await args.fetchImpl(`${args.serverUrl}/api/agent/run`, {
     method: "POST",
     headers: {
@@ -1128,6 +1131,7 @@ async function maybeWakeParentDialogAfterLocalSync(args: {
         subjectRefs,
         ...(allowedChildAgentKeys.length ? { allowedChildAgentKeys } : {}),
         ...(allowedToolNames.length ? { allowedToolNames } : {}),
+        ...(blockedToolNames.length ? { blockedToolNames } : {}),
       },
     }),
   });

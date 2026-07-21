@@ -46,6 +46,7 @@ export type ParsedAgentRunArgs = {
   subjectRefs?: Array<{ kind: string; id: string; role?: string }>;
   allowedChildAgentKeys?: string[];
   allowedToolNames?: string[];
+  blockedToolNames?: string[];
   background: boolean;
   noStream: boolean;
   cwd?: string;
@@ -218,7 +219,7 @@ export function writeUsage(
   }
   output.write(
     "Usage: nolo agent run <agent> <message> [--local|--server|--auto] [--continue <dialogId>] [--cwd <path>]\n" +
-      "       nolo agent run --agent <agent> (--msg <message>|--msg-file <path>) [--image <url-or-path>] [--space <spaceId>] [--category <name>] [--inherit-from-dialog <dialog>] [--parent-dialog <dialog>] [--subject-dialog <dialog>] [--subject-ref <kind:id[:role]>] [--task-row-dbkey <key>] [--allowed-child-agent <agent>] [--fallback-agent <agent>] (suggestions for agent to decide on quota) [--allowed-tool <tool>] [--bg] [--timeout-ms <n>] [--events jsonl] [--no-stream] [--skill <dbKey-or-md-path>]\n"
+      "       nolo agent run --agent <agent> (--msg <message>|--msg-file <path>) [--image <url-or-path>] [--space <spaceId>] [--category <name>] [--inherit-from-dialog <dialog>] [--parent-dialog <dialog>] [--subject-dialog <dialog>] [--subject-ref <kind:id[:role]>] [--task-row-dbkey <key>] [--allowed-child-agent <agent>] [--fallback-agent <agent>] (suggestions for agent to decide on quota) [--allowed-tool <tool>] [--blocked-tool <tool>] [--bg] [--timeout-ms <n>] [--events jsonl] [--no-stream] [--skill <dbKey-or-md-path>]\n"
   );
 }
 
@@ -275,6 +276,9 @@ export function parseAgentRunArgs(
   const parentDialogRef = explicitParentDialog
     ? parseDialogReference(explicitParentDialog)
     : undefined;
+  const blockedToolNames = readRepeatedFlagValues(args, "--blocked-tool")
+    .map((value) => value.trim())
+    .filter(Boolean);
   const imageUrls = [
     ...readRepeatedFlagValues(args, "--image"),
     ...readRepeatedFlagValues(args, "--image-url"),
@@ -329,6 +333,7 @@ export function parseAgentRunArgs(
     ...(fallbackAgentKeys.length ? { fallbackAgentKeys } : {}),
     ...(allowedToolNames.length ? { allowedToolNames } : {}),
     ...(cwd ? { cwd } : {}),
+    ...(blockedToolNames.length ? { blockedToolNames } : {}),
     ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
   };
 }

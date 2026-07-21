@@ -383,6 +383,31 @@ describe("cli agent run client", () => {
       "callAgent",
     ]);
   });
+  test("sends blocked tool guard names over HTTP runtime context", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+
+    await runAgentTurn({
+      agentName: "project-manager",
+      agentKey: NOLO_PROJECT_MANAGER_AGENT_KEY,
+      serverUrl: "https://nolo.chat",
+      message: "Review only, do not modify",
+      blockedToolNames: ["writeFile", "editFile"],
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "server",
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "queued", dialogId: "dialog-pm" });
+      },
+    });
+
+    expect(requests[0]?.body.runtimeContext.blockedToolNames).toEqual([
+      "writeFile",
+      "editFile",
+    ]);
+  });
 
   test("does not write background handoff state", async () => {
     const output = new CaptureOutput();

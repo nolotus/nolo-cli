@@ -102,6 +102,7 @@ export type RunAgentTurnOptions = {
   subjectDialogKey?: string;
   subjectRefs?: AgentRunSubjectRef[];
   allowedChildAgentKeys?: string[];
+  blockedToolNames?: string[];
   allowedToolNames?: string[];
   background?: boolean;
   noStream?: boolean;
@@ -638,6 +639,9 @@ async function runHttpAgentTurn(
   const allowedToolNames = options.allowedToolNames?.filter((name) =>
     name.trim(),
   );
+  const blockedToolNames = options.blockedToolNames?.filter((name) =>
+    name.trim(),
+  );
   const shouldStream = !options.noStream && !options.background;
   const buildRequestBody = (stream: boolean) =>
     JSON.stringify({
@@ -651,6 +655,7 @@ async function runHttpAgentTurn(
         capabilities: ["text-io", "streaming", "slash-commands"],
         ...(subjectRefs ? { subjectRefs } : {}),
         ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
+        ...(blockedToolNames?.length ? { blockedToolNames } : {}),
         ...(allowedToolNames?.length ? { allowedToolNames } : {}),
       },
       ...(options.continueDialogId
@@ -824,15 +829,20 @@ async function runLocalAgentTurnForCli(
   const allowedToolNames = options.allowedToolNames?.filter((name) =>
     name.trim(),
   );
+  const blockedToolNames = options.blockedToolNames?.filter((name) =>
+    name.trim(),
+  );
   const runtimeContext: Record<string, any> | undefined =
     subjectRefs ||
     allowedChildAgentKeys?.length ||
     allowedToolNames?.length ||
+    blockedToolNames?.length ||
     options.parentWakeOnTerminal
       ? {
           ...(subjectRefs ? { subjectRefs } : {}),
           ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
           ...(allowedToolNames?.length ? { allowedToolNames } : {}),
+          ...(blockedToolNames?.length ? { blockedToolNames } : {}),
           ...(options.parentWakeOnTerminal
             ? { parentWakeOnTerminal: true }
             : {}),

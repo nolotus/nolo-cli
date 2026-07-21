@@ -433,6 +433,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(parsed.subjectRefs?.length ? { subjectRefs: parsed.subjectRefs } : {}),
     ...(parsed.allowedChildAgentKeys?.length ? { allowedChildAgentKeys: parsed.allowedChildAgentKeys } : {}),
     ...(parsed.allowedToolNames?.length ? { allowedToolNames: parsed.allowedToolNames } : {}),
+    ...(parsed.blockedToolNames?.length ? { blockedToolNames: parsed.blockedToolNames } : {}),
     ...(activityTracker ? { onLoopEvent: activityTracker.onLoopEvent } : {}),
     background: parsed.background,
     noStream: parsed.noStream,

@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.1.56",
+  "version": "0.1.57",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -884,7 +884,7 @@
     "serpapi": "^2.2.1"
   },
   "optionalDependencies": {
-    "nolo-cli-darwin-arm64": "0.1.55"
+    "nolo-cli-darwin-arm64": "0.1.57"
   },
   "devDependencies": {
     "bun-types": "latest"

@@ -73,6 +73,8 @@ describe("CLI local runtime adapter", () => {
     "globFiles",
     "searchFiles",
     "execShell",
+    "launchProcess",
+    "listProcesses",
   ];
   const SHELL_LOCAL_CODING_TOOL_NAMES = [
     ...DEFAULT_LOCAL_CODING_TOOL_NAMES,

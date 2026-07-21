@@ -909,9 +909,7 @@ export default {
         },
         autoAgent: {
           label: "Auto-mode agent",
-          hint: "Pick a favorite agent to override the auto router's model layer and merge its skills",
-          default: "Default (built-in tier models)",
-          defaultDesc: "The classifier routes across flash / balanced / quality automatically",
+          default: "Default",
           empty: "No favorite agents yet",
         },
         personalization: {
@@ -2135,9 +2133,7 @@ export default {
         },
         autoAgent: {
           label: "自动模式 Agent",
-          hint: "选择收藏 Agent 替换自动路由的模型层，并合并其技能",
-          default: "默认（内置档位模型）",
-          defaultDesc: "由分类路由在 flash / balanced / quality 间自动选择",
+          default: "默认",
           empty: "暂无收藏的 Agent",
         },
         personalization: {
@@ -3359,9 +3355,7 @@ quickChat: {
         },
         autoAgent: {
           label: "自動模式 Agent",
-          hint: "選擇收藏 Agent 取代自動路由的模型層，並合併其技能",
-          default: "預設（內建檔位模型）",
-          defaultDesc: "由分類路由在 flash / balanced / quality 間自動選擇",
+          default: "預設",
           empty: "暫無收藏的 Agent",
         },
         personalization: {
@@ -4523,9 +4517,7 @@ quickChat: {
         },
         autoAgent: {
           label: "自動モード Agent",
-          hint: "お気に入りの Agent で自動ルーターのモデル層を置き換え、スキルを統合します",
-          default: "デフォルト（内蔵ティアモデル）",
-          defaultDesc: "分類ルーターが flash / balanced / quality を自動選択します",
+          default: "デフォルト",
           empty: "お気に入りの Agent はまだありません",
         },
         personalization: {

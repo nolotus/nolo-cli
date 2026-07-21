@@ -29,15 +29,6 @@ const createSliceWithThunks = buildCreateSlice({
 
 const VIEW_MODE_STORAGE_KEY = "nolo-space-view-mode";
 
-const readStoredViewMode = (): SpaceViewMode => {
-  if (typeof window === "undefined") return "all";
-  try {
-    const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    return stored === "categories" ? "categories" : "all";
-  } catch {
-    return "all";
-  }
-};
 
 const initialState: SpaceState = {
   currentSpaceId: null,
@@ -47,7 +38,7 @@ const initialState: SpaceState = {
   membershipStatus: "idle",
   initialized: false,
   collapsedCategories: {},
-  viewMode: readStoredViewMode(),
+  viewMode: "all",
   dialogStatuses: {},
   dialogEventTimestamps: {},
   dialogTitles: {},

@@ -76,6 +76,11 @@ export interface SettingState {
   // 默认启动的智能体 ID
   defaultAgentId?: string;
 
+  // quick-chat 自动模式的「模型层覆盖」agent：分类路由落到通用档时，
+  // 用该收藏 agent 的 model 配置替换内置档位 model 层，并合并其技能。
+  // 空字符串 = 不覆盖（使用内置档位 agent）。
+  quickChatAutoAgentId: string;
+
   // PDF OCR 模型选择("none" 表示不使用 OCR,用 pdf.js 提取文本)
   ocrModel: "none" | "google_document_ocr" | "olm_ocr";
 

@@ -8,6 +8,7 @@ import { buildProviderAuthHeaders } from "../../agent-runtime/providerResolution
 import { performServerProxyFetchWithRetry } from "./serverProxyRetry";
 import { resolveAgentCallPlan } from "../../agent-runtime/agentCallPlan";
 import { resolveDirectRequestApiKey } from "./resolveDirectRequestApiKey";
+import { fetchServerSyncedCredential as fetchSyncedCredential } from "./agentCredentialSyncClient";
 
 interface BodyData {
   model: string;
@@ -59,14 +60,14 @@ const buildProxyPayload = (
   };
 };
 
-const fetchDirectly = async ({
-  api,
-  agentConfig,
-  bodyData,
-  signal,
-}: Omit<FetchParams, "currentServer" | "token">): Promise<Response> => {
+const fetchDirectly = async (params: FetchParams): Promise<Response> => {
+  const { api, agentConfig, bodyData, signal, currentServer, token } = params;
   try {
-    const apiKey = await resolveDirectRequestApiKey(agentConfig);
+    const apiKey = await resolveDirectRequestApiKey(agentConfig, {
+      syncFetcher: currentServer && token
+        ? (ref) => fetchSyncedCredential({ currentServer, authToken: token }, ref)
+        : undefined,
+    });
     const authHeaders = buildProviderAuthHeaders({
       endpoint: api,
       apiKey: apiKey ?? "",

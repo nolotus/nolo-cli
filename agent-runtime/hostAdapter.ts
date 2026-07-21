@@ -20,6 +20,8 @@ export type AgentRuntimeAgentConfig = {
   apiKeyRef?: string;
   /** Broker ref for local-first secrets (never a raw API key). */
   credentialRef?: string;
+  /** Whether the custom api-key is synced to the user's server account (fallback source). */
+  credentialSynced?: boolean;
   useServerProxy?: boolean;
   temperature?: number;
   top_p?: number;

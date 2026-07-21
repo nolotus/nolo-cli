@@ -81,6 +81,7 @@ export const initialState: SettingState = {
   autoApproveSelfUpdateFields: [...DEFAULT_AUTO_APPROVED_SELF_UPDATE_FIELDS],
   aiRecentContentLimit: 50,
   defaultAgentId: SYSTEM_DEFAULT_AGENT_ID,
+  quickChatAutoAgentId: "",
   ocrModel: "google_document_ocr",
   showScrollToTopButton: false,
   showScrollToBottomButton: false,

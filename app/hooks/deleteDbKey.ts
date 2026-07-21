@@ -23,6 +23,8 @@ import {
     extractAgentLocalCredentialRef,
     isPublicAgentProjectionKey,
 } from "../../agent-runtime/deleteAgentLocalCredential";
+import { selectRuntimeSnapshot } from "../stateViews/runtime";
+import { deleteServerSyncedCredential } from "../../ai/chat/agentCredentialSyncClient";
 
 type DeleteDbKeyInput =
     | string
@@ -69,9 +71,9 @@ const performDirectDelete = async (
 
     if (isAgentKey(contentKey)) {
         // Peek credentialRef before DB delete — never read secrets; never use OAuth apiKeyRef.
-        // Public projections share the private agent's ref and must not clear the broker key.
-        // Prefer Redux when warm; cold cache (list/deep-link) falls back to existing DB read.
         let credentialRef: string | null = null;
+        let credentialSynced = false;
+        // Prefer Redux when warm; cold cache (list/deep-link) falls back to existing DB read.
         if (!isPublicAgentProjectionKey(contentKey)) {
             try {
                 let record: unknown = selectById(getState() as any, contentKey);
@@ -88,6 +90,9 @@ const performDirectDelete = async (
                     }
                 }
                 credentialRef = extractAgentLocalCredentialRef(record);
+                if (record && typeof record === "object" && "credentialSynced" in record) {
+                    credentialSynced = (record as { credentialSynced?: unknown }).credentialSynced === true;
+                }
             } catch {
                 credentialRef = null;
             }
@@ -110,6 +115,23 @@ const performDirectDelete = async (
                     "[deleteDbKey] local API credential cleanup failed after agent delete:",
                     cleanup.warning
                 );
+            }
+        }
+
+        // Server sync cleanup: best-effort, never blocks agent deletion.
+        if (credentialRef && credentialSynced) {
+            try {
+                const { currentServer, currentToken } = selectRuntimeSnapshot(
+                    getState() as any,
+                );
+                if (currentServer && currentToken) {
+                    await deleteServerSyncedCredential(
+                        { currentServer, authToken: currentToken },
+                        credentialRef,
+                    );
+                }
+            } catch {
+                // Network cleanup failure is non-fatal; server entry may linger.
             }
         }
         return;

@@ -907,6 +907,13 @@ export default {
           systemDefault: "System default",
           noFavorites: "No favorited agents yet",
         },
+        autoAgent: {
+          label: "Auto-mode agent",
+          hint: "Pick a favorite agent to override the auto router's model layer and merge its skills",
+          default: "Default (built-in tier models)",
+          defaultDesc: "The classifier routes across flash / balanced / quality automatically",
+          empty: "No favorite agents yet",
+        },
         personalization: {
           title: "Tell Nolo about my habits",
           label: "Tell Nolo about my habits",
@@ -2126,6 +2133,13 @@ export default {
           systemDefault: "系统默认",
           noFavorites: "暂无收藏的智能体",
         },
+        autoAgent: {
+          label: "自动模式 Agent",
+          hint: "选择收藏 Agent 替换自动路由的模型层，并合并其技能",
+          default: "默认（内置档位模型）",
+          defaultDesc: "由分类路由在 flash / balanced / quality 间自动选择",
+          empty: "暂无收藏的 Agent",
+        },
         personalization: {
           title: "告诉 Nolo 我的习惯",
           label: "告诉 Nolo 我的习惯",
@@ -3343,6 +3357,13 @@ quickChat: {
           systemDefault: "系統預設",
           noFavorites: "尚無收藏的智慧體",
         },
+        autoAgent: {
+          label: "自動模式 Agent",
+          hint: "選擇收藏 Agent 取代自動路由的模型層，並合併其技能",
+          default: "預設（內建檔位模型）",
+          defaultDesc: "由分類路由在 flash / balanced / quality 間自動選擇",
+          empty: "暫無收藏的 Agent",
+        },
         personalization: {
           title: "告訴 Nolo 我的習慣",
           label: "告訴 Nolo 我的習慣",
@@ -4499,6 +4520,13 @@ quickChat: {
           selectAgentHint: "お気に入りエージェント",
           systemDefault: "システム既定",
           noFavorites: "お気に入りのエージェントはまだありません",
+        },
+        autoAgent: {
+          label: "自動モード Agent",
+          hint: "お気に入りの Agent で自動ルーターのモデル層を置き換え、スキルを統合します",
+          default: "デフォルト（内蔵ティアモデル）",
+          defaultDesc: "分類ルーターが flash / balanced / quality を自動選択します",
+          empty: "お気に入りの Agent はまだありません",
         },
         personalization: {
           title: "Nolo に私の習慣を教える",

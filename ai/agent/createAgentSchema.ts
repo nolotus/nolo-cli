@@ -169,6 +169,13 @@ export const getCreateAgentSchema = (t: TFunction) =>
       apiKeyRef: z.string().trim().nullable().optional().or(z.string().length(0)),
 
       /**
+       * credentialSynced：是否把 custom api-key 同步到用户服务端账户（可选 opt-in）。
+       * 开启后各端 local broker miss 时 fallback 到服务端读取 + 本机缓存。
+       * 仅对 custom apiSource + 非 OAuth 凭证的 agent 有意义。
+       */
+      credentialSynced: z.boolean().optional(),
+
+      /**
        * apiKeyHeader：自定义鉴权 header 名（例如 "x-api-key"）。
        * 不传时按 endpoint 自动推断，通常为 "Authorization"。
        */

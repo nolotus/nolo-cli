@@ -241,6 +241,8 @@ export interface Agent {
   apiKeyRef?: string;
   apiKeyHeader?: string;
   apiKeyFromAgentKey?: string;
+  /** Whether the custom api-key is synced to the user's server account (optional sync opt-in). */
+  credentialSynced?: boolean;
   temperature?: number;
   top_p?: number;
   frequency_penalty?: number;

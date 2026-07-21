@@ -62,6 +62,7 @@ export function resolveAgentRuntimeConfigFromRecord(
   const apiKeyFromAgentKey = stringField(record, "apiKeyFromAgentKey");
   const apiKeyRef = stringField(record, "apiKeyRef");
   const credentialRef = stringField(record, "credentialRef");
+  const credentialSynced = record.credentialSynced === true;
   const useServerProxy = record.useServerProxy === true;
   const provider = stringField(record, "provider") ?? stringField(record, "apiSource");
   const toolNames = resolveAgentRuntimeToolNames(record);
@@ -91,6 +92,7 @@ export function resolveAgentRuntimeConfigFromRecord(
     ...(apiKeyFromAgentKey ? { apiKeyFromAgentKey } : {}),
     ...(apiKeyRef ? { apiKeyRef } : {}),
     ...(credentialRef ? { credentialRef } : {}),
+    ...(credentialSynced ? { credentialSynced } : {}),
     ...(useServerProxy ? { useServerProxy } : {}),
     ...(toolNames ? { toolNames } : {}),
     ...(temperature !== undefined ? { temperature } : {}),

@@ -33,7 +33,16 @@ export class DirectApiKeyResolutionError extends Error {
 export type DirectRequestCredentialConfig = {
   apiKey?: string | null;
   credentialRef?: string | null;
+  /** When true, fall back to server sync store if local broker misses. */
+  credentialSynced?: boolean;
 };
+
+/**
+ * Injected server-side credential sync fetcher.
+ * Returns the plaintext API key from the server store, or null if not found.
+ * Caller binds serverUrl + authToken; this module stays transport-agnostic.
+ */
+export type CredentialSyncFetcher = (credentialRef: string) => Promise<string | null>;
 
 type BrokerFactory = (
   options?: CreateFileCredentialBrokerOptions,
@@ -61,7 +70,11 @@ function readNonEmpty(value: unknown): string {
  */
 export async function resolveDirectRequestApiKey(
   agentConfig: DirectRequestCredentialConfig,
-  options?: { brokerFactory?: BrokerFactory },
+  options?: {
+    brokerFactory?: BrokerFactory;
+    /** Server sync fallback; only invoked when credentialSynced is true and broker misses. */
+    syncFetcher?: CredentialSyncFetcher;
+  },
 ): Promise<string | undefined> {
   const rawKey = readNonEmpty(agentConfig.apiKey);
   if (rawKey) return rawKey;
@@ -69,18 +82,39 @@ export async function resolveDirectRequestApiKey(
   const credentialRef = readNonEmpty(agentConfig.credentialRef);
   if (!credentialRef) return undefined;
 
-  try {
-    const factory = options?.brokerFactory ?? createDirectCredentialBroker;
-    const broker = factory();
-    const secret = await broker.get(credentialRef);
-    const trimmed = asTrimmedString(secret);
-    if (!trimmed) {
-      throw new DirectApiKeyResolutionError();
+ const factory = options?.brokerFactory ?? createDirectCredentialBroker;
+  const broker = factory();
+
+  // Priority 1: local broker
+  const local = await safeBrokerGet(broker, credentialRef);
+  if (local) return local;
+
+  // Priority 2: server sync fallback (only when opted in)
+  if (agentConfig.credentialSynced && options?.syncFetcher) {
+    const synced = await options.syncFetcher(credentialRef);
+    const trimmed = asTrimmedString(synced);
+    if (trimmed) {
+      // Cache back to local broker so subsequent reads stay local.
+      try {
+        await broker.put(credentialRef, trimmed);
+      } catch {
+        // Caching is best-effort; the resolved key is still returned.
+      }
+      return trimmed;
     }
-    return trimmed;
-  } catch (error) {
-    if (error instanceof DirectApiKeyResolutionError) throw error;
-    // Drop broker/assert messages that may embed the ref; never surface secrets.
-    throw new DirectApiKeyResolutionError();
+  }
+
+  // No key anywhere — only throw if a credentialRef was expected to resolve.
+  throw new DirectApiKeyResolutionError();
+}
+
+async function safeBrokerGet(
+  broker: CredentialBroker,
+  ref: string,
+): Promise<string | null> {
+  try {
+    return asTrimmedString(await broker.get(ref)) || null;
+  } catch {
+    return null;
   }
 }

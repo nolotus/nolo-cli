@@ -72,7 +72,7 @@ export async function runConfirmDialog(args: {
    * painted into the scroll region and wiped by the next streaming repaint.
    */
   bottomAnchored?: boolean;
-  bottomRow?: number;
+  bottomRow?: number | (() => number);
 }): Promise<boolean> {
   const output = args.output ?? process.stdout;
   const input = args.input ?? process.stdin;

@@ -2,6 +2,11 @@ import {
   LOCAL_AGENT_CONFIG_MISSING_CODE,
   LOCAL_TURN_ABORTED_CODE,
 } from "../agent-runtime/localLoop";
+import { resolveAgentRuntimeConfigFromRecord } from "../agent-runtime/agentRecordConfig";
+import {
+  applyModelLayerOverride,
+  type ModelLayerOverride,
+} from "../agent-runtime/modelLayerOverride";
 import { NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
 import type {
   LocalAgentActionGate,
@@ -124,6 +129,13 @@ export type RunAgentTurnOptions = {
   abortSignal?: AbortSignal;
   /** Local loop lifecycle events; used by the CLI runner to write heartbeat activity to the registry. */
   onLoopEvent?: (event: LocalAgentLoopEvent) => void;
+  /**
+   * quick-chat 自动路由的「模型层覆盖」：分类路由落到通用档（tier agent）时，
+   * 用用户选择的 agent 的 model 层替换档位 agent 的 model 层。
+   * server 模式随 body 的 runtimeOptions.quickChatModelOverride 由服务端应用；
+   * local 模式在 adapter 读出 tier 配置后本地应用。
+   */
+  modelOverride?: ModelLayerOverride | null;
 };
 
 export type RunAgentTurnResult = {
@@ -321,6 +333,32 @@ function resolveLocalRuntimeAdapter(options: RunAgentTurnOptions) {
     }) ||
     buildDefaultLocalRuntimeAdapter(options)
   );
+}
+
+/**
+ * quick-chat 自动路由的 model 层覆盖（local 模式）：tier agent 的配置从
+ * adapter 读出后，用覆盖包替换其 model 层再交给 local loop；
+ * 其余 agentRef 透传，不影响 callAgent 子代理。
+ */
+function wrapLoadAgentConfigWithModelOverride(
+  adapter: AgentRuntimeHostAdapter,
+  targetAgentKey: string,
+  override: ModelLayerOverride,
+): AgentRuntimeHostAdapter {
+  return {
+    ...adapter,
+    loadAgentConfig: async (agentRef: string) => {
+      const config = await adapter.loadAgentConfig(agentRef);
+      if (!config || agentRef !== targetAgentKey) return config;
+      const baseRecord =
+        (config as { rawRecord?: Record<string, unknown> }).rawRecord ??
+        (config as unknown as Record<string, unknown>);
+      return resolveAgentRuntimeConfigFromRecord(
+        agentRef,
+        applyModelLayerOverride(baseRecord, override),
+      );
+    },
+  };
 }
 
 async function shouldSkipAutoLocalForServerPlatformTools(
@@ -630,6 +668,9 @@ async function runHttpAgentTurn(
       ...(typeof options.timeoutMs === "number"
         ? { timeoutMs: options.timeoutMs }
         : {}),
+      ...(options.modelOverride
+        ? { runtimeOptions: { quickChatModelOverride: options.modelOverride } }
+        : {}),
       stream,
     });
   const postAgentRun = (stream: boolean) =>
@@ -760,7 +801,15 @@ async function runLocalAgentTurnForCli(
   options: RunAgentTurnOptions,
   settings: { reportFailure: boolean },
 ) {
-  const baseAdapter = resolveLocalRuntimeAdapter(options);
+  const resolvedBaseAdapter = resolveLocalRuntimeAdapter(options);
+  const baseAdapter =
+    resolvedBaseAdapter && options.modelOverride
+      ? wrapLoadAgentConfigWithModelOverride(
+          resolvedBaseAdapter,
+          options.agentKey,
+          options.modelOverride,
+        )
+      : resolvedBaseAdapter;
   if (!baseAdapter) {
     options.output.write(
       "[nolo] Local runtime was requested but no local runtime adapter is available.\n",

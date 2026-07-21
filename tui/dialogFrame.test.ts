@@ -15,12 +15,12 @@ describe("dialog frame primitives", () => {
     expect(renderDialogRow({ label: "alpha", focused: false }, false)).toBe(
       "  alpha",
     );
-    expect(renderDialogRow({ label: "alpha", focused: true }, false)).toBe(
-      "> alpha",
-    );
     expect(
       renderDialogRow({ label: "alpha", detail: "the one", focused: false }, false),
     ).toBe("  alpha  the one");
+    expect(renderDialogRow({ label: "alpha", focused: true }, false)).toBe(
+      "❯ alpha",
+    );
     expect(renderDialogOverflow("... 3 more above", false)).toBe(
       "  ... 3 more above",
     );
@@ -74,7 +74,25 @@ describe("dialog frame primitives", () => {
       selectedValues: [],
       title: "Pick",
     });
-    expect(single).toContain("> alpha");
-    expect(multi).toContain(`> ${DIALOG_UNCHECKED} alpha`);
+    expect(single).toContain("❯ alpha");
+    expect(multi).toContain(`❯ ${DIALOG_UNCHECKED} alpha`);
+  });
+
+  test("focused row renders as a selection bar on truecolor terminals", () => {
+    const previous = process.env.COLORTERM;
+    process.env.COLORTERM = "truecolor";
+    try {
+      const row = renderDialogRow({ label: "alpha", focused: true }, true);
+      expect(row).toContain("\x1b[48;2;"); // surface fill behind the row
+      expect(row).toContain("\x1b[1m"); // bold
+      expect(row).toContain("❯ alpha");
+      expect(row.endsWith("\x1b[0m")).toBe(true);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.COLORTERM;
+      } else {
+        process.env.COLORTERM = previous;
+      }
+    }
   });
 });

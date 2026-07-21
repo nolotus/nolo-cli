@@ -6,6 +6,11 @@
 // for back-compat with existing callers.
 
 import { runAgentTurn, type RunAgentTurnOptions, type RunAgentTurnResult } from "./client/agentRun";
+import { classifyCliAutoRoute } from "./client/autoModelRouter";
+import {
+  buildModelLayerOverride,
+  type ModelLayerOverride,
+} from "../agent-runtime/modelLayerOverride";
 import { CliProviderQuotaError } from "../ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
 import { resolveAgentRecordFromHybridStore, readDbRecord } from "./agentRecordHelpers";
@@ -268,6 +273,47 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         }).catch(() => undefined)
       : undefined;
   const agentKey = resolvedAgentKey ?? parsed.agentKey;
+  // quick-chat 式自动路由（仅 chat 入口，需显式开启：--auto-route 或
+  // NOLO_AUTO_ROUTE=1；默认保持「无 --agent = 免登录 local codex」契约）。
+  // 仅在新对话首轮分类（--continue 续跑不分类，与 web「建对话前分类一次」对齐）。
+  // 显式 --agent 作为「模型层覆盖」源：分类照跑，
+  // 仅用所选 agent 的 model 层替换档位 agent 的 model 层。
+  let effectiveAgentKey = agentKey;
+  let modelOverride: ModelLayerOverride | null = null;
+  const autoRouteRequested =
+    deps.commandPath?.join(" ") === "chat" &&
+    !parsed.continueDialogId &&
+    (args.includes("--auto-route") || env.NOLO_AUTO_ROUTE === "1") &&
+    env.NOLO_AUTO_ROUTE !== "0";
+  if (autoRouteRequested) {
+    const authToken = resolveAuthToken(args, env);
+    const serverUrl = resolveServerUrl(env);
+    const hasExplicitAgent = Boolean(readFlagValue(args, "--agent"));
+    const route = await classifyCliAutoRoute(effectiveMessage, {
+      serverUrl,
+      authToken,
+    });
+    if (hasExplicitAgent) {
+      modelOverride = buildModelLayerOverride(
+        await readDbRecord({
+          dbKey: agentKey,
+          authToken,
+          serverUrl,
+          fetchImpl: fetch,
+        }).catch(() => null),
+      );
+    }
+    if (hasExplicitAgent && !modelOverride) {
+      output.write(
+        "[nolo] auto-route: 覆盖源 agent 读取失败，按原样直跑所选 agent。\n",
+      );
+    } else {
+      effectiveAgentKey = route.agentKey;
+      output.write(
+        `[nolo] auto → ${route.tier}${modelOverride ? ` (model: ${agentKey})` : ""}\n`,
+      );
+    }
+  }
   let workflowReference: ResolvedWorkflowReference | undefined;
   if (parsed.workflowRef) {
     try {
@@ -395,7 +441,12 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(parsed.taskEvidence ? { taskEvidence: parsed.taskEvidence } : {}),
   });
 
-  let result: RunAgentTurnResult = await raceWithWatchdog(runner(buildRunOptions(agentKey)));
+  let result: RunAgentTurnResult = await raceWithWatchdog(
+    runner({
+      ...buildRunOptions(effectiveAgentKey),
+      ...(modelOverride ? { modelOverride } : {}),
+    }),
+  );
   clearWatchdogs();
 
   // Quota auto-fallback: when a run fails because the provider reports a

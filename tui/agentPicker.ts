@@ -3,6 +3,7 @@ import { resolveCliAgentKeyInput } from "../agentAliases";
 import type { CliFetchImpl } from "../cliFetch";
 import {
   findAgentCatalogEntry,
+  formatAgentSourceLabel,
   loadAgentCatalog,
   renderAgentCatalogList,
   type AgentCatalogEntry,
@@ -18,7 +19,7 @@ export type AgentPickerItem = SelectDialogItem & {
 export function toAgentPickerItems(entries: AgentCatalogEntry[]): AgentPickerItem[] {
   return entries.map((entry) => ({
     label: entry.name,
-    detail: `${entry.model}  ${entry.kind}`,
+    detail: `${entry.favoritedAt ? "★ " : ""}${entry.model}  ${formatAgentSourceLabel(entry)}`,
     entry,
   }));
 }
@@ -42,7 +43,7 @@ export async function runAgentPicker(args: {
   interactive?: boolean;
   /** Dock the list above the composer; see runSelectDialog.bottomAnchored. */
   bottomAnchored?: boolean;
-  bottomRow?: number;
+  bottomRow?: number | (() => number);
 }) {
   const output = args.output ?? process.stdout;
   const input = args.input ?? process.stdin;

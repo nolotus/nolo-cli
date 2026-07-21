@@ -70,10 +70,12 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
           `${t("dialogSelectLabel")}  ${t("dialogSelectHint")}  ${args.selectedIndex + 1}/${total}`,
       ),
     ];
-  const lines = [...titleLines];
+  // Blank line between the title block and the list gives the frame some
+  // breathing room; it counts as an anchored row like any other.
+  const lines = [...titleLines, ""];
 
   if (window.start > 0) {
-    lines.push(renderDialogOverflow(`... ${window.start} more above`));
+    lines.push(renderDialogOverflow(`↑ ${window.start} more`));
   }
 
   for (let index = window.start; index < window.end; index += 1) {
@@ -88,7 +90,7 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
   }
 
   if (window.end < total) {
-    lines.push(renderDialogOverflow(`... ${total - window.end} more below`));
+    lines.push("", renderDialogOverflow(`↓ ${total - window.end} more`));
   }
 
   return lines.join("\n");
@@ -228,9 +230,12 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
    * Dock the list above the composer instead of letting it scroll to the top
    * of the terminal. When true, `bottomRow` (1-indexed absolute cursor row)
    * is the row the last line of the frame sits on; the rest stack upward.
+   * Pass a function to resolve the row lazily on every paint — the TUI uses
+   * this so the dialog re-anchors itself above the composer after a terminal
+   * resize instead of staying frozen at the rows captured when it opened.
    */
   bottomAnchored?: boolean;
-  bottomRow?: number;
+  bottomRow?: number | (() => number);
 }): Promise<SelectDialogResult<T>> {
   const items = args.items;
   if (items.length === 0) {
@@ -247,8 +252,15 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
 
   const wasRaw = Boolean(input.isTTY && input.isRaw);
   let renderedLineCount = 0;
-  const bottomAnchored = Boolean(args.bottomAnchored && args.bottomRow && args.bottomRow > 0);
-  const bottomRow = args.bottomRow ?? 0;
+  const bottomAnchored = Boolean(args.bottomAnchored && args.bottomRow);
+  const resolveBottomRow = () =>
+    Math.max(
+      1,
+      typeof args.bottomRow === "function" ? args.bottomRow() : args.bottomRow ?? 0
+    );
+  // Anchor of the last actual paint, tracked separately from resolveBottomRow()
+  // so a resize moves the frame: clear where it WAS, repaint where it IS.
+  let lastBottomRow = 0;
 
   const paint = () => {
     const frame = renderSelectDialog({
@@ -263,12 +275,18 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
     const canPosition = outputIsTty(output) && typeof output.write === "function";
 
     if (bottomAnchored && canPosition) {
-      clearAnchoredLines(output, bottomRow, renderedLineCount);
+      const anchorRow = resolveBottomRow();
+      clearAnchoredLines(
+        output,
+        lastBottomRow > 0 ? lastBottomRow : anchorRow,
+        renderedLineCount
+      );
       for (let i = 0; i < lines.length; i += 1) {
-        const row = bottomRow - (lines.length - 1 - i);
+        const row = anchorRow - (lines.length - 1 - i);
         if (row < 1) break;
         output.write(`\x1b[${row};1H\x1b[2K${lines[i]}`);
       }
+      lastBottomRow = anchorRow;
       renderedLineCount = lineCount;
       return;
     }
@@ -286,10 +304,23 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
     renderedLineCount = lineCount;
   };
 
+  // While anchored, the dialog owns its rows — re-paint on terminal resize so
+  // the frame follows the composer to its new position. The workspace's own
+  // resize handler skips repainting while a dialog is up (composer paused), so
+  // this listener is the only thing keeping the frame docked during a drag.
+  const resizeTarget = output as NodeJS.WritableStream & {
+    on?: (event: string, listener: () => void) => void;
+    off?: (event: string, listener: () => void) => void;
+  };
+  const onOutputResize = () => paint();
+
   // Do not pause the stream here: the key reader listens via 'data' events,
   // which an explicit pause() would silence.
   if (input.isTTY && !wasRaw) {
     input.setRawMode?.(true);
+  }
+  if (bottomAnchored && outputIsTty(output)) {
+    resizeTarget.on?.("resize", onOutputResize);
   }
   paint();
 
@@ -318,12 +349,17 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       }
     }
   } finally {
+    resizeTarget.off?.("resize", onOutputResize);
     readKey.dispose?.();
     if (input.isTTY) {
       drainInputBuffer(input);
       if (!wasRaw) input.setRawMode?.(false);
       if (bottomAnchored) {
-        clearAnchoredLines(output, bottomRow, renderedLineCount);
+        clearAnchoredLines(
+          output,
+          lastBottomRow > 0 ? lastBottomRow : resolveBottomRow(),
+          renderedLineCount
+        );
       } else {
         clearRenderedLines(output, renderedLineCount);
       }

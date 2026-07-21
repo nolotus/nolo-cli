@@ -1,5 +1,5 @@
 import { resolveCliColorEnabled } from "../client/terminalStyles";
-import { themeText } from "./theme";
+import { surfaceBackgroundSequence, themeColorSequence, themeText } from "./theme";
 
 /**
  * Shared look for every dialog frame (single-select, multi-select).
@@ -14,7 +14,7 @@ import { themeText } from "./theme";
  */
 
 /** Cursor marker for the focused row; blank keeps non-focused rows aligned. */
-export const DIALOG_CURSOR = ">";
+export const DIALOG_CURSOR = "❯";
 export const DIALOG_CHECKED = "◉";
 export const DIALOG_UNCHECKED = "○";
 
@@ -26,9 +26,12 @@ export function renderDialogTitle(
 }
 
 /**
- * One selectable row. The focused row is drawn in the accent color so the
- * cursor is findable without relying on the `>` glyph alone — the marker is
- * easy to lose against a wall of monospace text.
+ * One selectable row. The focused row reads as a selection bar — a
+ * low-contrast surface fill behind accent foreground text — so the cursor is
+ * findable at a glance instead of relying on the `❯` glyph alone. Terminals
+ * without truecolor get accent + bold instead: ANSI-16 has no safe subtle
+ * background (see surfaceBackgroundSequence), and a solid inverse block
+ * would invert readability.
  */
 export function renderDialogRow(
   args: {
@@ -42,13 +45,12 @@ export function renderDialogRow(
 ): string {
   const marker = args.focused ? DIALOG_CURSOR : " ";
   const checkbox = args.checkbox ? `${args.checkbox} ` : "";
-  const label = args.focused
-    ? themeText(args.label, "accent", colorEnabled)
-    : args.label;
   const detail = args.detail
     ? `  ${themeText(args.detail, "muted", colorEnabled)}`
     : "";
-  return `${marker} ${checkbox}${label}${detail}`;
+  const row = `${marker} ${checkbox}${args.label}${detail}`;
+  if (!args.focused || !colorEnabled) return row;
+  return `${surfaceBackgroundSequence()}${themeColorSequence("accent")}\x1b[1m${row}\x1b[0m`;
 }
 
 /** "... N more above/below" affordance shown when the list is windowed. */

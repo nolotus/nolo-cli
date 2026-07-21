@@ -77,7 +77,7 @@ describe("tui theme", () => {
     test("formats inline code with muted color, not the code-block info hue", () => {
       const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
       const formatted = highlightMarkdown("this is `code`", true, env);
-      expect(formatted).toContain("\x1b[38;2;166;173;200mcode\x1b[39m"); // trail dark muted
+      expect(formatted).toContain("\x1b[38;2;154;163;184mcode\x1b[39m"); // trail dark muted
       expect(formatted).not.toContain("\x1b[38;2;148;226;213m"); // info stays for blocks only
     });
 

@@ -20,6 +20,10 @@ export type ListedAgent = {
   credentialConfigured: boolean;
   credentialRef?: string;
   apiKeyRef?: string;
+  /** 执行来源：platform=平台API  custom=自定义API  cli=订阅制 CLI 工具。 */
+  apiSource?: string;
+  /** apiSource=cli 时的具体 CLI（copilot/codex/claude 等订阅）。 */
+  cliProvider?: string;
 };
 
 function parseAgentRecordId(privateKey: string, explicitId?: string) {
@@ -76,6 +80,12 @@ export function normalizeListedAgent(record: any): ListedAgent | null {
     credentialConfigured,
     credentialRef,
     apiKeyRef,
+    ...(typeof record?.apiSource === "string" && record.apiSource
+      ? { apiSource: record.apiSource }
+      : {}),
+    ...(typeof record?.cliProvider === "string" && record.cliProvider
+      ? { cliProvider: record.cliProvider }
+      : {}),
   };
 }
 
@@ -213,6 +223,54 @@ export async function listRemoteAgentsAcrossServers(args: {
       .filter((agent): agent is ListedAgent => agent != null)
   );
   return { agents, failures: remoteResult.failures };
+}
+
+/**
+ * 拉取用户收藏的 agent（web 收藏功能的同一 RPC：POST /rpc/listFavorites）。
+ * 返回 agentKey → favoritedAt；多服务器合并取最新，无时间戳时以 1 标记。
+ * 单个服务器失败静默跳过（目录展示不阻塞）。
+ */
+export async function listFavoriteAgentIdsAcrossServers(args: {
+  authToken: string;
+  fetchImpl: CliFetchImpl;
+  serverUrls: string[];
+}): Promise<Record<string, number>> {
+  const favoritedAtByKey: Record<string, number> = {};
+  await Promise.all(
+    args.serverUrls.map(async (serverUrl) => {
+      try {
+        const res = await args.fetchImpl(`${serverUrl}/rpc/listFavorites`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${args.authToken}`,
+          },
+          body: JSON.stringify({ targetType: "agent" }),
+        });
+        if (!res.ok) return;
+        const data: any = await res.json().catch(() => ({}));
+        const items = Array.isArray(data?.items) ? data.items : [];
+        for (const item of items) {
+          const id = typeof item?.id === "string" ? item.id : "";
+          if (!id) continue;
+          const at = Number(item?.favoritedAt) || 0;
+          favoritedAtByKey[id] = Math.max(
+            favoritedAtByKey[id] ?? 0,
+            at || Date.now(),
+          );
+        }
+        const ids = Array.isArray(data?.ids) ? data.ids : [];
+        for (const id of ids) {
+          if (typeof id === "string" && id && !(id in favoritedAtByKey)) {
+            favoritedAtByKey[id] = 1;
+          }
+        }
+      } catch {
+        // 单服务器失败不阻塞目录
+      }
+    }),
+  );
+  return favoritedAtByKey;
 }
 
 export async function decorateAgentsWithPublicStatusAcrossServers(args: {

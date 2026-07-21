@@ -27,8 +27,14 @@ export type DialogHostComposer = {
  */
 export type DialogAnchor = {
   bottomAnchored: true;
-  /** 1-indexed absolute row the last line of the frame sits on. */
-  bottomRow: number;
+  /**
+   * Lazily resolved 1-indexed absolute row the last line of the frame sits
+   * on. A function (not a snapshot) so the dialog re-anchors above the
+   * composer on every paint — a terminal resize changes `output.rows` while
+   * the dialog is open, and a captured number would leave the frame frozen
+   * at the pre-resize rows.
+   */
+  bottomRow: () => number;
 };
 
 export type DialogHost = {
@@ -68,10 +74,11 @@ export function createDialogHost(args: {
     async run(body) {
       const anchor: DialogAnchor = {
         bottomAnchored: true,
-        bottomRow: resolveDialogBottomRow({
-          output: args.output,
-          inputLines: args.composer.getInputLines(),
-        }),
+        bottomRow: () =>
+          resolveDialogBottomRow({
+            output: args.output,
+            inputLines: args.composer.getInputLines(),
+          }),
       };
       // pause() flips isPaused(), which is what suppresses the transcript
       // repaint while the dialog owns the screen. Without it a dialog opened

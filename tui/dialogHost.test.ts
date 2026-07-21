@@ -44,8 +44,24 @@ describe("createDialogHost", () => {
 
     const anchor = await host.run(async (a) => a);
 
-    expect(anchor).toEqual({ bottomAnchored: true, bottomRow: 28 });
+    expect(anchor.bottomAnchored).toBe(true);
+    expect(anchor.bottomRow()).toBe(28);
     expect(calls).toEqual(["pause", "resume"]);
+  });
+
+  test("anchor resolves lazily so a terminal resize re-docks the dialog", async () => {
+    // The picker used to capture bottomRow once at open; dragging the window
+    // then left the frame frozen at the pre-resize rows instead of stacked
+    // above the composer.
+    const { composer } = createComposerSpy();
+    const resizable = { rows: 30, write: () => true } as unknown as NodeJS.WritableStream;
+    const host = createDialogHost({ composer, output: resizable });
+
+    await host.run(async (anchor) => {
+      expect(anchor.bottomRow()).toBe(28);
+      (resizable as { rows: number }).rows = 20;
+      expect(anchor.bottomRow()).toBe(18);
+    });
   });
 
   test("reports paused while the dialog body runs", async () => {

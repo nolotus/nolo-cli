@@ -520,7 +520,7 @@ export const catppuccin = {
     backgroundGhost:     "rgba(252, 253, 254, 0.94)",
     backgroundHover:     "#DCE0EA",
     backgroundSelected:  "#CCD2DF",
-    backgroundElevated:  "#F4F6FA",
+    backgroundElevated:  "#EBEFF6",  // 雾灰下沉面板：与 #FCFDFE 画布/字段拉开对比，修复 surface 层级倒挂
     text:                "#4C4F69",
     textSecondary:       "#5C5F77",
     textTertiary:        "#6C6F85",

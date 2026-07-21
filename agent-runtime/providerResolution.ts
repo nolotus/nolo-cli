@@ -252,6 +252,8 @@ export async function buildProviderExecutionPlan(args: {
   apiKeyRefResolver?: ApiKeyRefResolver;
   /** Local-first OS credential broker (API keys). Prefer over raw agent.apiKey. */
   credentialBroker?: CredentialBroker;
+  /** Server sync fallback; only invoked when credentialSynced is true and broker misses. */
+  syncFetcher?: (credentialRef: string) => Promise<string | null>;
 }): Promise<ProviderExecutionPlan> {
   const { agentConfig, env } = args;
   const mode = resolveAgentProviderMode(agentConfig);
@@ -298,14 +300,28 @@ export async function buildProviderExecutionPlan(args: {
       }
     }
 
+    // broker miss → server sync fallback (only when opted in)
+    if (!apiKey && agentConfig.credentialSynced && args.syncFetcher && credentialRef) {
+      const synced = await args.syncFetcher(credentialRef);
+      const trimmed = asTrimmedString(synced);
+      if (trimmed) {
+        try { await args.credentialBroker?.put(credentialRef, trimmed); } catch {}
+        apiKey = trimmed;
+      }
+    }
+
     if (!apiKey && apiKeyRef && args.apiKeyRefResolver) {
       const resolved = await args.apiKeyRefResolver(apiKeyRef);
       if (resolved) {
         apiKey = resolved;
       } else if (!agentConfig.apiKey?.trim() && !agentConfig.apiKeyFromAgentKey?.trim()) {
-        throw new Error(
-          `OAuth credential for "${apiKeyRef}" not found locally. Run \`nolo auth ${apiKeyRef}\` (and \`--sync-to-server\` for server-side agent runs).`,
-        );
+        const isApiKeyRef = apiKeyRef.startsWith("api-key:");
+        const hint = isApiKeyRef
+          ? (agentConfig.credentialSynced
+            ? `Local credential for "${apiKeyRef}" not found. It is synced to your account — run this agent once on a device that has the key, or re-enter it in agent settings.`
+            : `Local credential for "${apiKeyRef}" not found. Re-enter the API key in agent settings, or enable cross-device sync.`)
+          : `OAuth credential for "${apiKeyRef}" not found locally. Run \`nolo auth ${apiKeyRef}\` (and \`--sync-to-server\` for server-side agent runs).`;
+        throw new Error(hint);
       }
     }
 
@@ -375,6 +391,15 @@ export async function buildProviderExecutionPlan(args: {
     const fromBroker = await resolveCredentialFromBroker(args.credentialBroker, credentialRef);
     if (fromBroker) {
       apiKey = fromBroker;
+    }
+  }
+  // broker miss → server sync fallback (only when opted in)
+  if (!apiKey && agentConfig.credentialSynced && args.syncFetcher && credentialRef) {
+    const synced = await args.syncFetcher(credentialRef);
+    const trimmed = asTrimmedString(synced);
+    if (trimmed) {
+      try { await args.credentialBroker?.put(credentialRef, trimmed); } catch {}
+      apiKey = trimmed;
     }
   }
   if (!apiKey) {

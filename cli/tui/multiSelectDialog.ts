@@ -50,9 +50,10 @@ export function renderMultiSelectFrame<TValue>(args: {
       args.title ??
         `${t("dialogMultiSelectLabel")}  ${t("dialogMultiSelectHint")}  ${args.selectedValues.length}/${total} ${t("dialogMultiSelectSelected")}`,
     ),
+    "",
   ];
   if (window.start > 0) {
-    lines.push(renderDialogOverflow(`... ${window.start} more above`));
+    lines.push(renderDialogOverflow(`↑ ${window.start} more`));
   }
   for (let index = window.start; index < window.end; index += 1) {
     const item = args.items[index];
@@ -68,7 +69,7 @@ export function renderMultiSelectFrame<TValue>(args: {
     );
   }
   if (window.end < total) {
-    lines.push(renderDialogOverflow(`... ${total - window.end} more below`));
+    lines.push("", renderDialogOverflow(`↓ ${total - window.end} more`));
   }
   if (args.error) {
     lines.push(renderDialogError(args.error));

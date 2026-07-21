@@ -87,7 +87,7 @@ describe("runMultiSelectDialog (@clack/core)", () => {
     await resultPromise;
     const frames = stdout();
     expect(frames).toContain("◉ listFiles");
-    expect(frames).toContain("> ○ readFile");
+    expect(frames).toContain("❯ ○ readFile");
     expect(frames).toContain("execShell  needs approval");
   });
 
@@ -109,9 +109,10 @@ describe("renderMultiSelectFrame", () => {
       selectedValues: [10],
       maxVisible: 5,
     });
-    expect(frame).toContain("more above");
-    expect(frame).toContain("more below");
-    expect(frame).toContain("> ◉ item 10");
-    expect(frame.split("\n").length).toBeLessThanOrEqual(8);
+    expect(frame).toContain("↑ 8 more");
+    expect(frame).toContain("↓ 7 more");
+    expect(frame).toContain("❯ ◉ item 10");
+    // title + blank + ↑ hint + 5 windowed rows + blank + ↓ hint
+    expect(frame.split("\n").length).toBeLessThanOrEqual(10);
   });
 });

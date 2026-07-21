@@ -2,8 +2,11 @@
 
 import { asyncThunkCreator, buildCreateSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { Agent, AgentRuntimeBinding, ReferenceItem } from "../../app/types";
+import type { RootState } from "../../app/store";
 
 import { write, patch, remove } from "../../database/dbSlice";
+import { getRuntimeServerContext } from "../../database/runtimeServerContext";
+import { pushServerSyncedCredential } from "../chat/agentCredentialSyncClient";
 import { createAgentKey } from "../../database/keys";
 import { DataType } from "../../create/types";
 import { asOptionalTrimmedString } from "../../core/optionalString";
@@ -517,6 +520,24 @@ export const slice = createSliceWithThunks({
             .unwrap();
         }
 
+        // credentialSynced: push raw key to server encrypted store using the
+        // same token the DB write uses (getRuntimeServerContext), not a UI
+        // hook. Best-effort: never blocks agent creation.
+        if (agent.credentialSynced && createRawApiKey) {
+          const ctx = getRuntimeServerContext(thunkApi.getState() as RootState);
+          const credentialRef = (agent as Agent & { credentialRef?: string }).credentialRef;
+          if (ctx.currentToken && credentialRef) {
+            try {
+              await pushServerSyncedCredential(
+                { currentServer: ctx.currentServer ?? "", authToken: ctx.currentToken },
+                credentialRef,
+                createRawApiKey,
+              );
+            } catch {
+              // Non-fatal: agent is created; key stays local, can re-push later.
+            }
+          }
+        }
         try {
           const { localFirstLog } = await import("../../app/localFirst/localFirstLog");
           localFirstLog("agent.create.done", {

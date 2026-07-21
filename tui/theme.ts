@@ -7,6 +7,12 @@ import { resolveCliColorEnabled } from "../client/terminalStyles";
  * theme). The published nolo-cli package cannot import packages/app, so the
  * hex values are mirrored here — keep them in sync when the default theme
  * changes. Terminals without truecolor fall back to the nearest ANSI-16 code.
+ *
+ * Intentional divergence: a few trail tokens (light chrome/warning, dark
+ * muted) are tuned one step darker/dimmer than the app values they mirror.
+ * The app uses those hexes for placeholder-grade text; the TUI uses the same
+ * tokens for rules, titles and secondary body text, which need more contrast
+ * than a placeholder.
  */
 
 /** Brightness of the terminal background — drives light/dark token selection. */
@@ -33,9 +39,9 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
   trail: {
     light: {
       accent: { hex: "2E7DB5", ansiFallback: "\x1b[34m" }, // ocean blue
-      chrome: { hex: "A3B0BD", ansiFallback: "\x1b[90m" }, // gray
+      chrome: { hex: "8A97A5", ansiFallback: "\x1b[90m" }, // slate — darkened from the app's placeholder-grade A3B0BD; rules/titles need more contrast on white than placeholder text does
       success: { hex: "3F8F5C", ansiFallback: "\x1b[32m" }, // moss green
-      warning: { hex: "D4A054", ansiFallback: "\x1b[33m" }, // amber/orange
+      warning: { hex: "B57F2E", ansiFallback: "\x1b[33m" }, // deep amber — D4A054 washed out on light backgrounds
       info: { hex: "4A9FD4", ansiFallback: "\x1b[36m" }, // sky blue
       danger: { hex: "C45C4A", ansiFallback: "\x1b[31m" }, // reddish
       muted: { hex: "7A8796", ansiFallback: "\x1b[90m" }, // slate gray
@@ -47,7 +53,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
       info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
       danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
-      muted: { hex: "A6ADC8", ansiFallback: "\x1b[37m" },
+      muted: { hex: "9AA3B8", ansiFallback: "\x1b[37m" }, // dimmed from A6ADC8 so secondary text sits a step below body text
     },
   },
   catppuccin: {

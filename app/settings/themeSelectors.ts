@@ -256,10 +256,12 @@ export const selectTheme = createSelector(
         const radius = compact ? `${14 + boost}px` : `${16 + boost}px`;
         const pad = "6px";
         return {
+          // 弹层是最上浮的层：light 下 background（雪白）亮于下沉面板 elevated；
+          // dark 下相反，elevated 才是更亮的上浮面，必须取 brighter 的那个。
           bg: alphaColor(
-            c.backgroundElevated ?? c.background,
+            isDark ? (c.backgroundElevated ?? c.background) : c.background,
             isDark ? 0.86 : 0.92,
-            c.backgroundElevated ?? c.background,
+            isDark ? (c.backgroundElevated ?? c.background) : c.background,
           ),
           border: alphaColor(c.border, isDark ? 0.5 : 0.7, c.borderLight),
           // Layered: a wide ambient pool plus a tight contact edge. The pair is

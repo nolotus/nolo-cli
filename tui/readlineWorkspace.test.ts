@@ -252,6 +252,28 @@ describe("createFixedInput", () => {
     );
   });
 
+  test("repaints the composer while paused so it re-docks after a resize", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "nolo > test",
+    });
+
+    input.init();
+    input.repaint("");
+    input.pause();
+
+    // A dialog owns the top rows while paused; the workspace's resize handler
+    // still re-docks the composer at the new bottom (the dialog repaints
+    // itself on top via its own listener).
+    (tty.output as { rows: number }).rows = 12;
+    input.repaint("draft");
+
+    expect(input.isPaused()).toBe(true);
+    const composerStart = 12 - EMPTY_COMPOSER_LINES + 1;
+    expect(tty.stdout()).toContain(`\x1b[${composerStart};1H`);
+    expect(tty.stdout()).toContain("draft");
+  });
+
   test("truncates a long status line instead of wrapping and breaking the composer", () => {
     const tty = mockTty(TERM_ROWS, 40);
     const longStatus =

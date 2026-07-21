@@ -11,6 +11,7 @@ export async function resolveOpenAiCompatibleProviderConfig(args: {
   apiKeyRefResolver?: ApiKeyRefResolver;
   /** Local-first OS credential broker (API keys). Prefer over raw agent.apiKey. */
   credentialBroker?: CredentialBroker;
+  syncFetcher?: (credentialRef: string) => Promise<string | null>;
 }): Promise<OpenAiCompatibleProviderConfig> {
   const plan = await buildProviderExecutionPlan({
     agentConfig: args.agentConfig,
@@ -18,6 +19,7 @@ export async function resolveOpenAiCompatibleProviderConfig(args: {
     runtimeKind: "local",
     ...(args.apiKeyRefResolver ? { apiKeyRefResolver: args.apiKeyRefResolver } : {}),
     ...(args.credentialBroker ? { credentialBroker: args.credentialBroker } : {}),
+    ...(args.syncFetcher ? { syncFetcher: args.syncFetcher } : {}),
   });
   if (plan.mode === "cli" || plan.transport !== "direct") {
     throw new Error("OpenAI-compatible provider config requires a direct provider execution plan.");

@@ -25,7 +25,10 @@ import {
   normalizeToolDisplayMode,
   type ToolDisplayMode,
 } from "../client/toolOutput";
-import { DEFAULT_TUI_AGENT_KEY, PLATFORM_AGENTS } from "./agentCatalog";
+import {
+  DEFAULT_TUI_AGENT_KEY,
+  resolveCatalogPlatformAgents,
+} from "./agentCatalog";
 import { resolveAgentSwitchTarget } from "./agentPicker";
 import type { AttachedImage } from "./pasteImage";
 import { detectImagePaths, summarizeAttachment } from "./pasteImage";
@@ -251,7 +254,19 @@ export function renderStatusLine(state: TuiState) {
   // saturated, light/dark-safe colors the raw names used to provide.
   const sep = themeText(" · ", "chrome", colorEnabled);
 
-  const agentLabel = `🏔 ${state.agentName}${state.modeLabel ? ` · ${state.modeLabel}` : ""}`;
+  // 自动路由开启且未显式选择 agent 时，状态行显示 auto（实际档位在首轮
+  // 分类后确定并打印 auto → tier）；显式选择的 agent 是 model 层覆盖源，
+  // 显示其名。NOLO_AUTO_ROUTE=0 时恢复显示默认 agent 名。
+  const autoRouteActive =
+    state.agentKey === DEFAULT_TUI_AGENT_KEY &&
+    (typeof process === "undefined" || process.env?.NOLO_AUTO_ROUTE !== "0");
+  const agentDisplayName = autoRouteActive ? "auto" : state.agentName;
+  // 路由已是 auto 时隐藏重复的 runtime-mode auto 标签，避免 "auto · auto"。
+  const modeSuffix =
+    state.modeLabel && !(autoRouteActive && state.modeLabel === "auto")
+      ? ` · ${state.modeLabel}`
+      : "";
+  const agentLabel = `🏔 ${agentDisplayName}${modeSuffix}`;
   const agentSegment = themeText(agentLabel, "accent", colorEnabled);
 
   const cwdSegment = themeText(`📁 ${formatCwd(state.cwd)}`, "info", colorEnabled);
@@ -477,7 +492,7 @@ export function renderContextPanel(state: TuiState) {
   return [
     "Workspace context",
     "-----------------",
-    `agent    ${state.agentName}`,
+    `agent    ${state.agentName} (${state.agentKey})`,
     `tokens   ${renderTokenStatus(state.turnTokens)}`,
     `dialog   ${
       state.dialogKey ?? (state.dialogId ? "unavailable" : state.dialogLabel)
@@ -500,7 +515,7 @@ export function renderContextPanel(state: TuiState) {
 export function renderKnownAgents() {
   return [
     "Agents:",
-    ...PLATFORM_AGENTS.map(
+    ...resolveCatalogPlatformAgents().map(
       (agent, index) =>
         `  ${index + 1}  ${agent.name.padEnd(11)} ${agent.description ?? ""}`
     ),
@@ -866,7 +881,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           output: `Current agent: ${state.agentName} (${state.agentKey})`,
         };
       }
-      const resolvedTarget = resolveAgentSwitchTarget(argText, PLATFORM_AGENTS);
+      const resolvedTarget = resolveAgentSwitchTarget(argText, resolveCatalogPlatformAgents());
       if (!resolvedTarget) {
         return {
           nextState: state,
@@ -889,7 +904,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           output: "Usage: /switch <agent-key|alias>  (or run /agent)",
         };
       }
-      const resolvedTarget = resolveAgentSwitchTarget(argText, PLATFORM_AGENTS);
+      const resolvedTarget = resolveAgentSwitchTarget(argText, resolveCatalogPlatformAgents());
       if (!resolvedTarget) {
         return {
           nextState: state,

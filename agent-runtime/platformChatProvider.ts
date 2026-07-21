@@ -123,6 +123,7 @@ export async function resolvePlatformChatProviderConfig(args: {
   apiKeyRefResolver?: ApiKeyRefResolver;
   /** Local-first OS credential broker (API keys). Prefer over raw agent.apiKey. */
   credentialBroker?: CredentialBroker;
+  syncFetcher?: (credentialRef: string) => Promise<string | null>;
 }): Promise<PlatformChatProviderConfig> {
   const plan = await buildProviderExecutionPlan({
     agentConfig: args.agentConfig,
@@ -130,6 +131,7 @@ export async function resolvePlatformChatProviderConfig(args: {
     runtimeKind: "local",
     ...(args.apiKeyRefResolver ? { apiKeyRefResolver: args.apiKeyRefResolver } : {}),
     ...(args.credentialBroker ? { credentialBroker: args.credentialBroker } : {}),
+    ...(args.syncFetcher ? { syncFetcher: args.syncFetcher } : {}),
   });
   if (plan.mode === "cli") {
     throw new Error("Platform chat provider does not support cli agents.");

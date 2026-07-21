@@ -106,6 +106,7 @@ let getDefaultCliLocalRuntimeDb: any;
 let resolveAgentRuntimeConfigFromRecord: any;
 let resolveCliOpenAiProviderConfig: any;
 let createFileCredentialBroker: any;
+let fetchServerSyncedCredential: any;
 let createOAuthApiKeyRefResolver: any;
 let buildLocalDialogWritePlan: any;
 let localDialogMessageRecordToRuntimeMessage: any;
@@ -192,6 +193,9 @@ function ensureHeavyCliLocalRuntimeModules() {
   ));
   ({ createFileCredentialBroker } = requireFromAdapter(
     "../../agent-runtime/fileCredentialBroker.ts",
+  ));
+  ({ fetchServerSyncedCredential } = requireFromAdapter(
+    "../../ai/chat/agentCredentialSyncClient.ts",
   ));
   ({ createOAuthApiKeyRefResolver } = requireFromAdapter(
     "../oauth/apiKeyRefResolver.ts",
@@ -2057,6 +2061,11 @@ export function createCliLocalRuntimeAdapter(
       // Broker is preferred inside buildProviderExecutionPlan when both are present.
       const apiKeyRefResolver = createOAuthApiKeyRefResolver();
       const credentialBroker = createFileCredentialBroker();
+      const serverUrl = asOptionalTrimmedString(deps.env.NOLO_SERVER) ?? "https://us.nolo.chat";
+      const authToken = asOptionalTrimmedString(deps.env.AUTH_TOKEN);
+      const syncFetcher = authToken
+        ? (ref: string) => fetchServerSyncedCredential({ currentServer: serverUrl, authToken }, ref)
+        : undefined;
 
       // Antigravity (Google Cloud Code Assist) is not OpenAI-compatible: local
       // direct `/chat/completions` against daily-cloudcode-pa returns HTTP 404.
@@ -2253,6 +2262,7 @@ export function createCliLocalRuntimeAdapter(
           env: deps.env,
           apiKeyRefResolver,
           credentialBroker,
+          syncFetcher,
         });
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -2370,6 +2380,7 @@ export function createCliLocalRuntimeAdapter(
         env: deps.env,
         apiKeyRefResolver,
         credentialBroker,
+        syncFetcher,
       });
       logLocalRuntimeDiagnostic("provider.selected", {
         agentKey: agentConfig.key,

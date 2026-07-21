@@ -3,6 +3,12 @@ import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
+import { classifyCliAutoRoute } from "../client/autoModelRouter";
+import {
+  buildModelLayerOverride,
+  type ModelLayerOverride,
+} from "../../agent-runtime/modelLayerOverride";
+import { readDbRecord } from "../agentRecordHelpers";
 import type { LocalAgentActionGate } from "../../agent-runtime/localLoop";
 import { readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
@@ -14,6 +20,7 @@ import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
 import { createDialogHost } from "./dialogHost";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
+import { prefetchAgentCatalog } from "./agentCatalog";
 import { loadDialogHistory, runDialogPicker } from "./dialogPicker";
 import { mergeAttachedImages, readImagePaths, resolveImageSource, summarizeAttachment } from "./pasteImage";
 import { getProcessRegistry } from "../../agent-runtime/processRegistry";
@@ -25,6 +32,7 @@ import {
   renderPrompt,
   renderStatusLine,
   renderWelcome,
+  DEFAULT_TUI_AGENT_KEY,
   type TuiState,
 } from "./session";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "../client/terminalStyles";
@@ -313,6 +321,14 @@ export function createHistoryOutputStream(
   } as unknown as NodeJS.WritableStream;
 }
 
+// 对话 → 首轮自动路由结果。镜像 web quick-chat 语义：分类只发生在
+// 新对话的第一轮（建对话前），同一段对话的后续轮复用首轮选定的
+// agent 与 model 层覆盖，不再重复调用分类器（省钱也省延迟）。
+const autoRouteByDialog = new Map<
+  string,
+  { agentKey: string; agentName: string; modelOverride: ModelLayerOverride | null }
+>();
+
 async function runAgentChat(
   scriptDir: string,
   state: TuiState,
@@ -327,9 +343,58 @@ async function runAgentChat(
     abortSignal?: AbortSignal;
   } = {}
 ) {
+  let effectiveAgentKey = state.agentKey;
+  let effectiveAgentName = state.agentName;
+  let modelOverride: ModelLayerOverride | null = null;
+  const continueId = state.dialogId;
+  const cachedRoute = continueId ? autoRouteByDialog.get(continueId) : undefined;
+
+  if (cachedRoute) {
+    // 同一段对话的后续轮：复用首轮路由结果，不再分类。
+    effectiveAgentKey = cachedRoute.agentKey;
+    effectiveAgentName = cachedRoute.agentName;
+    modelOverride = cachedRoute.modelOverride;
+  } else if (!continueId && env.NOLO_AUTO_ROUTE !== "0") {
+    // 新对话第一轮（web 的「建对话前」）：LLM 分类器在内置档间选档。
+    // 未显式选择 agent（仍是默认平台 agent）→ 直接跑分类出的档位；
+    // 显式选择了 agent（/agent 或 NOLO_AGENT）→ 镜像 web 语义：分类照跑，
+    // 仅用所选 agent 的 model 层替换档位 agent 的 model 层。
+    const authToken =
+      env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
+    const route = await classifyCliAutoRoute(message, {
+      serverUrl: state.serverUrl,
+      authToken,
+    });
+    effectiveAgentKey = route.agentKey;
+    effectiveAgentName = `auto→${route.tier}`;
+    if (state.agentKey !== DEFAULT_TUI_AGENT_KEY) {
+      const record = await readDbRecord({
+        dbKey: state.agentKey,
+        authToken,
+        serverUrl: state.serverUrl,
+        fetchImpl: fetch,
+      }).catch(() => null);
+      const override = buildModelLayerOverride(
+        record as Record<string, unknown> | null,
+      );
+      if (override) {
+        modelOverride = override;
+        effectiveAgentName = `auto→${route.tier}·${state.agentName}`;
+      } else {
+        // 覆盖源 record 读不到（离线/无权限）→ 保持现状直跑所选 agent。
+        effectiveAgentKey = state.agentKey;
+        effectiveAgentName = state.agentName;
+      }
+    }
+    if (effectiveAgentKey !== state.agentKey || modelOverride) {
+      output.write(
+        `\n[nolo] auto → ${route.tier}${modelOverride ? ` (model: ${state.agentName})` : ""}\n`,
+      );
+    }
+  }
   const result: RunAgentTurnResult = await agentRunner({
-    agentName: state.agentName,
-    agentKey: state.agentKey,
+    agentName: effectiveAgentName,
+    agentKey: effectiveAgentKey,
     serverUrl: state.serverUrl,
     message,
     continueDialogId: state.dialogId,
@@ -351,7 +416,20 @@ async function runAgentChat(
       ? { confirmDestructiveAction: options.confirmDestructiveAction }
       : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    ...(modelOverride ? { modelOverride } : {}),
   });
+  // 首轮分类完成后按对话缓存，同一段对话的后续轮直接复用、不再分类。
+  if (
+    !continueId &&
+    result.dialogId &&
+    (effectiveAgentKey !== state.agentKey || modelOverride)
+  ) {
+    autoRouteByDialog.set(result.dialogId, {
+      agentKey: effectiveAgentKey,
+      agentName: effectiveAgentName,
+      modelOverride,
+    });
+  }
   return result;
 }
 
@@ -1345,6 +1423,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // merges the profile config (NOLO_LANG from /lang) on top.
   initCliLocale(options.env ?? process.env);
   let state = createInitialTuiState(options.env ?? process.env);
+  // 启动预热 agent 目录缓存：/agent 打开即命中（SWR，后台失败静默）。
+  prefetchAgentCatalog({ env: options.env ?? process.env });
   const input = options.input ?? defaultInput;
   const output = options.output ?? defaultOutput;
   const cliEntrypointPath =
@@ -1385,7 +1465,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   const dialogHost = createDialogHost({
     composer: {
       pause: () => fixedInput.pause(),
-      resumeFromDialog: () => fixedInput.resumeFromDialog(),
+      resumeFromDialog: () => {
+        fixedInput.resumeFromDialog();
+        // If the terminal was resized while the dialog owned the screen, the
+        // composer is still parked at the pre-resize rows (onResize skips
+        // repainting while paused). Repaint so it re-docks at the new bottom.
+        renderHistoryToOutput();
+        fixedInput.repaint(buffer);
+      },
       getInputLines: () => fixedInput.getInputLines(),
       isPaused: () => fixedInput.isPaused(),
     },
@@ -1935,6 +2022,16 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       // Re-measure rows/cols, rebuild scroll region + full-width rules, repaint.
       // Keep the user's current draft visible even during an agent turn so
       // typing is not lost on terminal resize.
+      if (fixedInput.isPaused()) {
+        // A dialog (picker / confirm) owns the rows above the composer.
+        // Repaint the transcript + composer underneath anyway: terminal
+        // reflow on resize garbles absolute-row frames (stale fragments,
+        // vanished composer), and the dialog's own resize listener —
+        // registered after this one — repaints its frame on top.
+        renderHistory(output, history, fixedInput.getInputLines());
+        fixedInput.repaint(buffer);
+        return;
+      }
       paintFrame(buffer);
     };
     const resizeTarget = output as NodeJS.WritableStream & {

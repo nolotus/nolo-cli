@@ -151,7 +151,7 @@ export async function runDialogPicker(args: {
   limit?: number;
   /** Dock the list above the composer; see runSelectDialog.bottomAnchored. */
   bottomAnchored?: boolean;
-  bottomRow?: number;
+  bottomRow?: number | (() => number);
 }): Promise<DialogPickerResult> {
   const output = args.output ?? process.stdout;
   const input = args.input ?? process.stdin;

@@ -62,6 +62,8 @@ describe("CLI local runtime adapter", () => {
     "globFiles",
     "searchFiles",
     "execShell",
+    "launchProcess",
+    "listProcesses",
   ];
   const LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES = [
     "listFiles",

@@ -21,6 +21,8 @@ describe("CLI local runtime dry run", () => {
     "globFiles",
     "searchFiles",
     "execShell",
+    "launchProcess",
+    "listProcesses",
     "listDialogs",
     "readDialog",
     "queryDialogsBySubjectRef",

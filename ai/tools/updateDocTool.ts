@@ -83,8 +83,22 @@ export async function updateDocFunc(
         };
 
         // 4. 写入数据库
-        // 4. 写入数据库
         await (dispatch as any)(write({ data: updatedPageData, customKey: id })).unwrap();
+
+        // 5. 若更新的正是当前打开的文档，刷新编辑器视图。
+        // docSlice 持有编辑器的渲染态（slateData），只写记录不会触发重渲染，
+        // 表现为「AI 说改好了但编辑器没变化」。initDoc 会重新 readAndWait
+        // （此时本地缓存已是新值）并重置 docSlice。
+        const stateAfterWrite = thunkApi.getState?.();
+        if (stateAfterWrite?.doc?.pageKey === id) {
+            const { docSlice } = await import("../../render/page/docSlice");
+            await (dispatch as any)(
+                docSlice.actions.initDoc({
+                    pageKey: id,
+                    isReadOnly: stateAfterWrite.doc.isReadOnly,
+                }),
+            );
+        }
 
         const displayData = mode === "append"
             ? `已成功在页面《${originalData.title}》末尾追加了内容。`

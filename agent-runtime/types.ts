@@ -26,6 +26,12 @@ export interface AgentRuntimeToolCall {
   id: string;
   type: "function";
   function: { name: string; arguments: string };
+  /**
+   * Gemini 3.5 家族要求回放 functionCall 时携带真实的 thoughtSignature，
+   * 否则返回 400 或空响应。由 antigravity CCA provider 在流式响应中捕获，
+   * 随消息记录持久化，回放时原样带回（缺失时才回退哨兵）。
+   */
+  thought_signature?: string;
 }
 
 export interface AgentRuntimeChatMessage {

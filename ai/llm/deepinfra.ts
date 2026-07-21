@@ -15,8 +15,8 @@ export const deepinfraModels = [
     supportsTool: false,
   },
   {
-    name: "anthropic/claude-sonnet-4-6",
-    displayName: "Anthropic: Claude Sonnet 4.6",
+    name: "anthropic/claude-sonnet-5",
+    displayName: "Anthropic: Claude Sonnet 5",
     hasVision: true,
     price: {
       input: 3 * 9,

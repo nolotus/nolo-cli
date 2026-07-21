@@ -9,7 +9,7 @@ export async function readDialogFromLocalDb(args: {
   limit: number;
 }): Promise<LocalDialogReadResult> {
   const [{ default: serverDb, ensureServerDbOpen }, { fetchMessages }] = await Promise.all([
-    import("../database/server/db"),
+    import("../database-engine/db"),
     import("../chat/messages/fetchMessages"),
   ]);
   await ensureServerDbOpen();

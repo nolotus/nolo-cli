@@ -4,7 +4,7 @@ import { toErrorMessage } from "./core/errorMessage";
 import {
   createCliAuthorityBrokerClient,
   createCliAuthorityBrokerSocketInvoker,
-} from "./database/server/cliAuthorityBrokerClient";
+} from "./database-engine/cliAuthorityBrokerClient";
 
 type BrokerHealthRecord = {
   ok?: unknown;

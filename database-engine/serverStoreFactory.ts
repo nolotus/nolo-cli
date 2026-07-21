@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { Level } from "level";
 
-import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import type { AuthorityStore } from "./authorityStoreTypes";
 import { createLegacyServerDb, type LegacyServerDb } from "./legacyServerDb";
 import { createLevelAuthorityStore } from "./levelAuthorityStore";

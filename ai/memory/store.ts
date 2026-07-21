@@ -1,4 +1,4 @@
-import serverDb from "../../database/server/db";
+import serverDb from "../../database-engine/db";
 import type { MemoryItem } from "./types";
 import {
   adjustMemoryConfidenceInDb,

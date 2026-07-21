@@ -214,6 +214,22 @@ const getDialogRuntimeState = (
   state.dialogRuntimeByKey[resolveDialogRuntimeKey(state, dialogKey)] ??
   createEmptyDialogRuntimeState();
 
+/**
+ * Reset per-session runtime state for a dialog runtime. Called when a dialog is
+ * (re)initialized so stale loop/queue state from a previous visit does not leak
+ * into the fresh load.
+ *
+ * Resets: tokens, loopStopReason, pendingUserInputQueue.
+ * Preserves: activeControllers (an in-flight stream must not be aborted by a
+ * page reload of the same dialog), pendingFiles, pendingRawData (user-added
+ * attachments that should survive a dialog reload).
+ */
+const resetDialogRuntimeSessionState = (runtime: DialogRuntimeState): void => {
+  runtime.tokens = createEmptyTokenStats();
+  runtime.loopStopReason = null;
+  runtime.pendingUserInputQueue = [];
+};
+
 
 // --- Slice Definition ---
 

@@ -1,6 +1,6 @@
 import type { CliLocalRuntimeDb } from "./client/localRuntimeAdapter";
 import path from "node:path";
-import { resolveNoloHome } from "./database/server/dbPath";
+import { resolveNoloHome } from "./database-engine/dbPath";
 
 type EnvLike = Record<string, string | undefined>;
 

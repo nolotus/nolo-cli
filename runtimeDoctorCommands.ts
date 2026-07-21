@@ -5,7 +5,7 @@ import {
   resolveCliAuthorityBrokerHealthPath,
   resolveCliAuthorityBrokerMetadataPath,
   resolveCliAuthorityStoreDriver,
-} from "./database/server/cliAuthorityStoreDriver";
+} from "./database-engine/cliAuthorityStoreDriver";
 import {
   type AgentCommandDeps,
   type LocalRuntimeProbeResult,

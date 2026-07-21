@@ -1,6 +1,6 @@
 // 文件路径: packages/database/server/db.ts
 
-import { isLevelLockError } from "../levelLockError";
+import { isLevelLockError } from "../database/levelLockError";
 import { ensureDbOpen } from "./ensureDbOpen";
 import { resolveServerDbPath } from "./dbPath";
 import type { LegacyServerDb } from "./legacyServerDb";

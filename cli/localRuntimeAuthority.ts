@@ -6,26 +6,26 @@ import {
   createCliAuthorityBrokerClient,
   createCliAuthorityBrokerSocketInvoker,
   isCliAuthorityBrokerUnavailableError,
-} from "../database/server/cliAuthorityBrokerClient";
-import type { CliAuthorityBrokerClientOptions } from "../database/server/cliAuthorityBrokerClient";
+} from "../database-engine/cliAuthorityBrokerClient";
+import type { CliAuthorityBrokerClientOptions } from "../database-engine/cliAuthorityBrokerClient";
 import {
   getOrCreateCliAuthorityBrokerServer,
-} from "../database/server/cliAuthorityBrokerServer";
-import type { CliAuthorityBrokerServerOptions } from "../database/server/cliAuthorityBrokerServer";
+} from "../database-engine/cliAuthorityBrokerServer";
+import type { CliAuthorityBrokerServerOptions } from "../database-engine/cliAuthorityBrokerServer";
 import {
   resolveCliAuthorityBrokerEndpoint,
   resolveCliAuthorityBrokerHealthPath,
   resolveCliAuthorityBrokerMetadataPath,
-} from "../database/server/cliAuthorityStoreDriver";
+} from "../database-engine/cliAuthorityStoreDriver";
 import { isLevelLockError } from "../database/levelLockError";
-import { resolveNoloHome } from "../database/server/dbPath";
+import { resolveNoloHome } from "../database-engine/dbPath";
 import type {
   AuthorityBatchOperation,
   AuthorityIteratorOptions,
   AuthorityStore,
-} from "../database/server/authorityStoreTypes";
-import { createLevelAuthorityStore } from "../database/server/levelAuthorityStore";
-import { createLegacyServerDb } from "../database/server/legacyServerDb";
+} from "../database-engine/authorityStoreTypes";
+import { createLevelAuthorityStore } from "../database-engine/levelAuthorityStore";
+import { createLegacyServerDb } from "../database-engine/legacyServerDb";
 
 type EnvLike = Record<string, string | undefined>;
 

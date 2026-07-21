@@ -1,4 +1,4 @@
-import serverDb from "../../database/server/db";
+import serverDb from "../../database-engine/db";
 import { resolveScopedMemoryTargets, type MemoryScope } from "./scope";
 import { createMemoryItem, writeMemoryItemWithIndexesToDb } from "./store";
 import type {

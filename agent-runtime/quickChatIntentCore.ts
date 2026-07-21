@@ -42,6 +42,11 @@ export interface QuickChatIntentResult {
    * 缺失或格式不对时不影响 agentKey 的判定(不会因此走 fallback)。
    */
   confidence?: number;
+  /**
+   * 本轮消息命中了哪些对象操作技能（"table"=建表/表格数据处理，"doc"=文档写改）。
+   * 调用方可据此给对话挂载对应内置 skill 引用；未命中时为 undefined。
+   */
+  skills?: Array<"table" | "doc">;
 }
 
 /**
@@ -116,8 +121,13 @@ ${agentList}
 
 在给出 agentKey 之前，先在心里区分候选档位的边界再给置信度：balanced 与 quality 的边界在于复杂度/篇幅/是否需要深度分析，拿不准就给低 confidence。
 
+同时判断本轮消息是否需要挂载对象操作技能（skills 数组，未命中给 []）：
+- 用户要新建/整理/录入/批量处理表格数据（建表、加行、改列、按条件整理数据）→ skills 含 "table"
+- 用户要写/润色/改写/续写/排版一篇文档或文章 → skills 含 "doc"
+- 普通问答/闲聊/代码任务/建应用 → skills 为 []
+
 只输出 JSON，不要输出其他内容：
-{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "needsWorkspace": <true 或 false>}`;
+{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "needsWorkspace": <true 或 false>, "skills": <字符串数组，元素只能是 "table" 或 "doc"，未命中给 []>}`;
 }
 
 /**
@@ -128,7 +138,12 @@ ${agentList}
 export function parseQuickChatIntentResult(
   content: string,
   tierAgents: TierAgentOption[],
-): { agentKey: string; needsWorkspace: boolean; confidence?: number } | null {
+): {
+  agentKey: string;
+  needsWorkspace: boolean;
+  confidence?: number;
+  skills?: Array<"table" | "doc">;
+} | null {
   try {
     const parsed = JSON.parse(content.trim()) as unknown;
     if (typeof parsed !== "object" || parsed === null || !("agentKey" in parsed)) return null;
@@ -146,7 +161,16 @@ export function parseQuickChatIntentResult(
       rawConfidence <= 1
         ? rawConfidence
         : undefined;
-    return { agentKey: key, needsWorkspace, confidence };
+    // 解析 skills：只保留 "table"/"doc"，非法值与重复值过滤掉；空数组视为未命中。
+    const rawSkills = (parsed as { skills?: unknown }).skills;
+    let skills: Array<"table" | "doc"> | undefined;
+    if (Array.isArray(rawSkills)) {
+      const filtered = [...new Set(rawSkills)].filter(
+        (s): s is "table" | "doc" => s === "table" || s === "doc",
+      );
+      if (filtered.length > 0) skills = filtered;
+    }
+    return { agentKey: key, needsWorkspace, confidence, skills };
   } catch {
     return null;
   }

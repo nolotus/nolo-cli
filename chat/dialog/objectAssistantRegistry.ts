@@ -3,6 +3,7 @@ import type { AgentRuntimeOptions } from "../../ai/agent/types";
 import { DataType } from "../../create/types";
 import { createAgentKey } from "../../database/keys";
 import { APP_BUILDER_PUBLIC_AGENT_KEY } from "../../app/constants/appEditor";
+import { buildBuiltinObjectSkillReference } from "../../ai/skills/builtinObjectSkills";
 
 import {
   PLATFORM_HOSTED_GLM_52_MODEL,
@@ -25,7 +26,6 @@ export const BUILTIN_OBJECT_ASSISTANT_IDS: Record<BuiltinObjectAssistantKind, st
 type ObjectAssistantUiConfig = {
   panelTitle: string;
   activePanelTitle: string;
-  chatSubtitle: string;
   loginMessage: string;
   emptyMessage: string;
 };
@@ -34,35 +34,30 @@ const OBJECT_ASSISTANT_UI: Record<ObjectAssistantKind, ObjectAssistantUiConfig> 
   app: {
     panelTitle: "应用助手",
     activePanelTitle: "应用助手",
-    chatSubtitle: "围绕当前应用继续迭代、预检与重新部署",
     loginMessage: "登录后可在侧边栏使用助手继续修改当前应用",
     emptyMessage: "还没有收藏 AI 助手，先去 AI 广场逛逛吧",
   },
   page: {
     panelTitle: "文档助手",
     activePanelTitle: "文档助手",
-    chatSubtitle: "帮你润色、改写、排版和扩展当前文档",
     loginMessage: "登录后可在侧边栏使用文档助手",
     emptyMessage: "文档助手暂时不可用，请稍后重试",
   },
   table: {
     panelTitle: "表格助手",
     activePanelTitle: "表格助手",
-    chatSubtitle: "帮你理解当前表、补数据、改数据和整理结构",
     loginMessage: "登录后可在侧边栏使用表格助手",
     emptyMessage: "表格助手暂时不可用，请稍后重试",
   },
   image: {
     panelTitle: "图片助手",
     activePanelTitle: "图片助手",
-    chatSubtitle: "先做图片分析与整理占位，后面可继续增强",
     loginMessage: "登录后可在侧边栏使用图片助手",
     emptyMessage: "图片助手暂时不可用，请稍后重试",
   },
   file: {
     panelTitle: "文件助手",
     activePanelTitle: "文件助手",
-    chatSubtitle: "先做文件理解与处理建议占位，后面可继续增强",
     loginMessage: "登录后可在侧边栏使用文件助手",
     emptyMessage: "文件助手暂时不可用，请稍后重试",
   },
@@ -150,7 +145,7 @@ export const buildBuiltinObjectAssistantAgent = (
             { id: "continue", label: "继续写", userMessage: "基于当前文档继续往下写" },
           ],
         },
-        tools: ["readDoc", "updateDoc"],
+        references: [buildBuiltinObjectSkillReference("doc", userId)],
         prompt:
           "你是一个文档编辑助手。优先基于当前文档做增量修改，不要脱离现有内容空想重写。重点帮助用户润色、改写、续写、重组结构、生成标题和摘要。涉及修改时，优先读取当前文档真值，再进行定点编辑。",
       };
@@ -168,14 +163,7 @@ export const buildBuiltinObjectAssistantAgent = (
             { id: "fix-data", label: "批量改数据", userMessage: "我想修改当前表里的部分数据" },
           ],
         },
-        tools: [
-          "createTable",
-          "addTableRow",
-          "addTableRows",
-          "queryTableRows",
-          "updateTableRow",
-          "deleteTableRow",
-        ],
+        references: [buildBuiltinObjectSkillReference("table", userId)],
         prompt:
           "你是一个表格编辑助手。优先帮助用户理解当前表的字段、记录和结构，然后再做新增、查询、更新或删除。对用户说“这个表里的 xxx 怎么怎么改”时，默认理解为当前聚焦或最近提到的表；必要时先确认目标行/字段。",
       };
@@ -251,13 +239,6 @@ export const buildObjectAssistantRuntimeOptions = (
 
   if (kind === "table") {
     return {
-      extraTools: [
-        "addTableRow",
-        "addTableRows",
-        "queryTableRows",
-        "updateTableRow",
-        "deleteTableRow",
-      ],
       editingTarget: {
         kind: "table",
         key: contentKey ?? undefined,
@@ -272,7 +253,6 @@ export const buildObjectAssistantRuntimeOptions = (
 
   if (kind === "page") {
     return {
-      extraTools: ["readDoc", "updateDoc"],
       editingTarget: {
         kind: "page",
         key: contentKey ?? undefined,

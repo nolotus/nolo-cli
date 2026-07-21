@@ -65,7 +65,26 @@ describe("classifyCliAutoRoute", () => {
       tier: "balanced",
       classified: true,
       confidence: 0.9,
+      needsWorkspace: false,
+      skills: undefined,
     });
+  });
+
+  it("passes through needsWorkspace and skills from the classifier protocol", async () => {
+    const { fetchImpl } = captureFetch(() =>
+      okResponse(
+        `{"confidence":0.7,"agentKey":"${CLI_AUTO_TIER_AGENT_KEYS.quality}","needsWorkspace":true,"skills":["table"]}`,
+      ),
+    );
+
+    const result = await classifyCliAutoRoute("帮我建个表整理这些数据", {
+      serverUrl: SERVER_URL,
+      authToken: AUTH_TOKEN,
+      fetchImpl,
+    });
+
+    expect(result.needsWorkspace).toBe(true);
+    expect(result.skills).toEqual(["table"]);
   });
 
   it("skips the LLM call for short greetings", async () => {

@@ -596,6 +596,7 @@
     "ai/memory/understandingGreeting.ts",
     "ai/memory/queryShared.ts",
     "ai/memory/policy.ts",
+    "ai/skills/builtinObjectSkills.ts",
     "ai/llm/platformHosted.ts",
     "ai/token/types.ts",
     "ai/token/saveTokenRecord.ts",

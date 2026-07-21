@@ -373,6 +373,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         agentKey,
         cwd: localRuntimeCwd,
         msgFile: readFlagValue(args, "--msg-file"),
+        message: parsed.message,
         timeoutMs: parsed.timeoutMs,
         output,
       },

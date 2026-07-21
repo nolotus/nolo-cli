@@ -6,7 +6,7 @@
 // with ordinary shell tools.
 
 import { homedir as nodeHomedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import * as nodeFs from "node:fs";
@@ -283,15 +283,78 @@ export function stripBackgroundFlag(args: string[]): string[] {
   return result;
 }
 
+/**
+ * 后台子进程会以 --cwd 为工作目录重新解析参数（spawnLocalBackgroundRun）。
+ * --skill 的值可以是 dbKey 也可以是 md 文件路径；是相对路径时必须按
+ * 「调用者的 cwd」转成绝对路径，否则子进程在 run cwd 下找不到文件（ENOENT）。
+ */
+export function absolutizeSkillArgs(
+  args: string[],
+  baseCwd: string = process.cwd()
+): string[] {
+  const result: string[] = [];
+  const resolveIfPath = (value: string): string => {
+    if (isAbsolute(value)) return value;
+    const looksLikePath = value.includes("/") || value.endsWith(".md");
+    return looksLikePath ? resolve(baseCwd, value) : value;
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--skill" && typeof args[i + 1] === "string") {
+      result.push(arg, resolveIfPath(args[i + 1]));
+      i++;
+      continue;
+    }
+    const eqMatch = arg.match(/^--skill=(.+)$/);
+    if (eqMatch) {
+      result.push(`--skill=${resolveIfPath(eqMatch[1])}`);
+      continue;
+    }
+    result.push(arg);
+  }
+  return result;
+}
+
+/**
+ * --msg-file 根治：任务内容不走调用者的本地文件。
+ * 父进程已把文件内容读入内存，spawn 前快照进 nolo runs 目录
+ * （~/.nolo/runs/<runId>.msg.md），子进程参数里的 --msg-file 一律改写为
+ * 该快照的绝对路径——即使调用者随后移动/删除原 spec 文件，run 也不受影响。
+ */
+export function rewriteMsgFileArg(args: string[], messagePath: string): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--msg-file" && typeof args[i + 1] === "string") {
+      result.push(arg, messagePath);
+      i++;
+      continue;
+    }
+    if (arg.startsWith("--msg-file=")) {
+      result.push(`--msg-file=${messagePath}`);
+      continue;
+    }
+    result.push(arg);
+  }
+  return result;
+}
+
 function buildAgentRunChildCommand(options: {
   rawArgs: string[];
   commandPath?: string[];
   cliEntrypointPath?: string;
+  messagePath?: string;
 }): { execPath: string; childArgs: string[] } {
   const execPath = process.execPath;
   const entrypoint = options.cliEntrypointPath || resolveCliEntrypointPath();
   const commandParts = options.commandPath ?? [];
-  const strippedArgs = stripBackgroundFlag(options.rawArgs);
+  // 子进程以 run cwd 启动并重解析参数：--msg-file 改写为 nolo runs 目录里的
+  // 内容快照（不依赖调用者本地文件）；--skill 相对路径按调用者 cwd 绝对化。
+  let strippedArgs = stripBackgroundFlag(options.rawArgs);
+  if (options.messagePath) {
+    strippedArgs = rewriteMsgFileArg(strippedArgs, options.messagePath);
+  }
+  strippedArgs = absolutizeSkillArgs(strippedArgs);
   if (isCompiledBinary() || entrypoint === execPath) {
     return { execPath, childArgs: [...commandParts, ...strippedArgs] };
   }
@@ -306,6 +369,8 @@ export async function spawnLocalBackgroundRun(
     agentKey: string;
     cwd?: string;
     msgFile?: string;
+    /** 已解析的任务内容；提供时会快照进 runs 目录并让子进程读快照而非原始文件。 */
+    message?: string;
     timeoutMs?: number;
     output: OutputLike;
   },
@@ -324,11 +389,18 @@ export async function spawnLocalBackgroundRun(
   const runsDir = resolveRunsDir(env, homedir);
   fs.mkdirSync(runsDir, { recursive: true });
 
+  // 任务内容快照：子进程只依赖 nolo runs 目录，不依赖调用者的本地文件。
+  let messagePath: string | undefined;
+  if (typeof input.message === "string") {
+    messagePath = join(runsDir, `${runId}.msg.md`);
+    fs.writeFileSync(messagePath, input.message);
+  }
+
   const record: RunRecord = {
     runId,
     agentKey: input.agentKey,
     cwd: input.cwd,
-    ...(input.msgFile ? { msgFile: input.msgFile } : {}),
+    ...(messagePath ? { msgFile: messagePath } : input.msgFile ? { msgFile: input.msgFile } : {}),
     startedAt: now().toISOString(),
     ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
     status: "running",
@@ -340,6 +412,7 @@ export async function spawnLocalBackgroundRun(
     rawArgs: input.rawArgs,
     commandPath: input.commandPath,
     cliEntrypointPath: input.cliEntrypointPath,
+    messagePath,
   });
 
   const childEnv: EnvLike = {

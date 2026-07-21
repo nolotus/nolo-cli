@@ -85,17 +85,22 @@ export async function updateDocFunc(
         // 4. 写入数据库
         await (dispatch as any)(write({ data: updatedPageData, customKey: id })).unwrap();
 
-        // 5. 若更新的正是当前打开的文档，刷新编辑器视图。
+        // 5. 若更新的正是当前打开的文档，把新内容直接应用到编辑器。
         // docSlice 持有编辑器的渲染态（slateData），只写记录不会触发重渲染，
-        // 表现为「AI 说改好了但编辑器没变化」。initDoc 会重新 readAndWait
-        // （此时本地缓存已是新值）并重置 docSlice。
+        // 表现为「AI 说改好了但编辑器没变化」；且编辑器随后可能用过期的
+        // in-memory slate 自动保存，把刚写的内容覆盖掉。
+        // applyExternalDocUpdate 同步替换 slateData + lastSaved 标记并静默重挂载，
+        // 不走 initDoc 全量 loading 重载（用户期待内容就地出现，不是整页刷新）。
         const stateAfterWrite = thunkApi.getState?.();
         if (stateAfterWrite?.doc?.pageKey === id) {
             const { docSlice } = await import("../../render/page/docSlice");
-            await (dispatch as any)(
-                docSlice.actions.initDoc({
-                    pageKey: id,
-                    isReadOnly: stateAfterWrite.doc.isReadOnly,
+            (dispatch as any)(
+                docSlice.actions.applyExternalDocUpdate({
+                    slateData: finalSlateData,
+                    content: parsedProtocol.content,
+                    title: originalData.title,
+                    tools,
+                    ...(parsedProtocol.meta ? { meta: parsedProtocol.meta } : {}),
                 }),
             );
         }

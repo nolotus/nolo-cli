@@ -35,6 +35,12 @@ export interface DocState {
   lastSavedAt: string | null;
   /** ISO creation time from page record (for title meta chrome). */
   createdAt: string | null;
+  /**
+   * 外部（AI 工具/其它入口）写入当前文档时递增。
+   * RenderPage 用它做编辑器 key 的一部分触发静默重挂载，
+   * 使新内容立即显示，而不走 initDoc 全量 loading 重载。
+   */
+  docVersion: number;
   lastSavedSlateData: EditorContent | null;
   lastSavedTitle: string | null;
   lastSavedIcon: ContentIcon | null;
@@ -72,6 +78,7 @@ const initialState: DocState = {
   saveError: null,
   lastSavedAt: null,
   createdAt: null,
+  docVersion: 0,
   lastSavedSlateData: null,
   lastSavedTitle: null,
   lastSavedIcon: null,
@@ -217,6 +224,39 @@ export const docSlice = createSliceWithThunks({
       }
     ),
 
+    /**
+     * 外部写入（如 AI updateDoc 工具）已落库后，把新内容应用到当前打开的编辑器：
+     * 直接替换 slateData 并同步 lastSaved 标记（避免自动保存用过期内容回写），
+     * docVersion+1 触发编辑器静默重挂载。不走 initDoc 全量 loading 重载。
+     */
+    applyExternalDocUpdate: create.reducer(
+      (
+        state,
+        action: PayloadAction<{
+          slateData: EditorContent;
+          content?: string | null;
+          title?: string | null;
+          tools?: string[] | null;
+          meta?: PageSkillMetadata | null;
+        }>,
+      ) => {
+        if (!state.isInitialized) return;
+        const { slateData, content, title, tools, meta } = action.payload;
+        state.slateData = slateData;
+        state.lastSavedSlateData = slateData;
+        if (content !== undefined) state.content = content;
+        if (title != null) {
+          state.title = title;
+          state.lastSavedTitle = title;
+        }
+        if (tools !== undefined) state.tools = tools;
+        if (meta !== undefined) state.meta = meta;
+        state.justSaved = true;
+        state.saveError = null;
+        state.docVersion += 1;
+      }
+    ),
+
     updateTitle: create.reducer((state, action: PayloadAction<string>) => {
       if (state.isInitialized && !state.isReadOnly) {
         state.title = action.payload;
@@ -282,14 +322,23 @@ export const docSlice = createSliceWithThunks({
           ).unwrap();
 
           if (dbSpaceId) {
-            await (dispatch as (action: any) => any)(
-              (updateContentTitle as any)({
-                spaceId: dbSpaceId,
-                contentKey: pageKey,
-                title,
-                skillSummary,
-              })
-            ).unwrap();
+            // 空间侧标题同步是次级操作：页面本身已保存成功，
+            // 空间记录不可读（跨服务器空间/本地未同步）不应把整个保存判失败，
+            // 否则每次自动保存都双重报错（「内容保存失败」+「无法加载空间数据」）。
+            try {
+              await (dispatch as (action: any) => any)(
+                (updateContentTitle as any)({
+                  spaceId: dbSpaceId,
+                  contentKey: pageKey,
+                  title,
+                  skillSummary,
+                })
+              ).unwrap();
+            } catch (spaceSyncError) {
+              console.warn(
+                `[saveDoc] 空间标题同步失败（页面已保存）: ${toErrorMessage(spaceSyncError)}`,
+              );
+            }
           }
 
           if (typeof window !== "undefined") {

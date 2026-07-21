@@ -140,7 +140,12 @@ export const createContentThunks = (create: Create) => ({
       }
     },
     rejected: (_state: SpaceState, action: any) => {
-      toast.error(action.error.message || "标题保存失败");
+      const message = action.error.message || "标题保存失败";
+      // 空间记录不可读（跨服务器/本地未同步的空间）属于次级同步失败：
+      // 页面本身已保存成功，自动保存路径不需要每次按键都弹这个 toast；
+      // 真正的写入失败（如 patch 失败）仍然提示。
+      if (message.includes("无法加载空间数据")) return;
+      toast.error(message);
     },
   }),
 

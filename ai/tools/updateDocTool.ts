@@ -100,6 +100,7 @@ export async function updateDocFunc(
                     content: parsedProtocol.content,
                     title: originalData.title,
                     tools,
+                    savedAt: updatedPageData.updated_at,
                     ...(parsedProtocol.meta ? { meta: parsedProtocol.meta } : {}),
                 }),
             );

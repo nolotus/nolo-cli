@@ -35,12 +35,6 @@ export interface DocState {
   lastSavedAt: string | null;
   /** ISO creation time from page record (for title meta chrome). */
   createdAt: string | null;
-  /**
-   * 外部（AI 工具/其它入口）写入当前文档时递增。
-   * RenderPage 用它做编辑器 key 的一部分触发静默重挂载，
-   * 使新内容立即显示，而不走 initDoc 全量 loading 重载。
-   */
-  docVersion: number;
   lastSavedSlateData: EditorContent | null;
   lastSavedTitle: string | null;
   lastSavedIcon: ContentIcon | null;
@@ -78,7 +72,6 @@ const initialState: DocState = {
   saveError: null,
   lastSavedAt: null,
   createdAt: null,
-  docVersion: 0,
   lastSavedSlateData: null,
   lastSavedTitle: null,
   lastSavedIcon: null,
@@ -226,8 +219,9 @@ export const docSlice = createSliceWithThunks({
 
     /**
      * 外部写入（如 AI updateDoc 工具）已落库后，把新内容应用到当前打开的编辑器：
-     * 直接替换 slateData 并同步 lastSaved 标记（避免自动保存用过期内容回写），
-     * docVersion+1 触发编辑器静默重挂载。不走 initDoc 全量 loading 重载。
+     * 直接替换 slateData 并同步 lastSaved 标记（避免自动保存用过期内容回写）。
+     * lastSavedAt 同时是 RenderPage 编辑器 key 的一部分——外部写入更新它，
+     * 触发编辑器静默重挂载，不走 initDoc 全量 loading 重载。
      */
     applyExternalDocUpdate: create.reducer(
       (
@@ -238,10 +232,12 @@ export const docSlice = createSliceWithThunks({
           title?: string | null;
           tools?: string[] | null;
           meta?: PageSkillMetadata | null;
+          /** 外部写入的落库时间（ISO），同步为 lastSavedAt 并驱动编辑器重挂载。 */
+          savedAt?: string;
         }>,
       ) => {
         if (!state.isInitialized) return;
-        const { slateData, content, title, tools, meta } = action.payload;
+        const { slateData, content, title, tools, meta, savedAt } = action.payload;
         state.slateData = slateData;
         state.lastSavedSlateData = slateData;
         if (content !== undefined) state.content = content;
@@ -251,9 +247,9 @@ export const docSlice = createSliceWithThunks({
         }
         if (tools !== undefined) state.tools = tools;
         if (meta !== undefined) state.meta = meta;
+        state.lastSavedAt = savedAt ?? new Date().toISOString();
         state.justSaved = true;
         state.saveError = null;
-        state.docVersion += 1;
       }
     ),
 

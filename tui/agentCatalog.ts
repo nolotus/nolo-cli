@@ -312,7 +312,7 @@ export function renderAgentCatalogList(entries: AgentCatalogEntry[], currentKey:
     );
   });
   lines.push("");
-  lines.push("Tip: run /agent in an interactive terminal to pick with ↑↓.");
+  lines.push("Tip: run /switch in an interactive terminal to pick with ↑↓.");
   return lines.join("\n");
 }
 

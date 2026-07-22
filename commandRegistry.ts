@@ -16,6 +16,7 @@ export const COMMANDS: CommandEntry[] = [
 export const GROUP_ORDER = [
   "run",
   "chat",
+  "auth",
   "doc",
   "skill-doc",
   "skill",

@@ -269,7 +269,7 @@ describe("isLikelySlashCommand", () => {
   test("recognizes known slash commands", () => {
     expect(isLikelySlashCommand("/help")).toBe(true);
     expect(isLikelySlashCommand("/new")).toBe(true);
-    expect(isLikelySlashCommand("/agent list")).toBe(true);
+    expect(isLikelySlashCommand("/switch list")).toBe(true);
     expect(isLikelySlashCommand("/runtime local")).toBe(true);
     expect(isLikelySlashCommand("/customize")).toBe(true);
   });
@@ -305,9 +305,9 @@ describe("completeSlashCommand", () => {
   });
 
   test("returns all commands starting with the prefix", () => {
-    const matches = completeSlashCommand("/a");
-    expect(matches).toContain("/agent");
-    expect(matches).toContain("/agents");
+    const matches = completeSlashCommand("/s");
+    expect(matches).toContain("/switch");
+    expect(matches).toContain("/stop");
   });
 
   test("excludes exact match from completions", () => {
@@ -321,7 +321,7 @@ describe("completeSlashCommand", () => {
   });
 
   test("returns empty when buffer has spaces", () => {
-    expect(completeSlashCommand("/agent list")).toEqual([]);
+    expect(completeSlashCommand("/switch list")).toEqual([]);
     expect(completeSlashCommand("/runtime local")).toEqual([]);
   });
 

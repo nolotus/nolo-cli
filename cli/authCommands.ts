@@ -29,6 +29,15 @@ Options:
 By default, opens the Nolo website and polls until authorization completes.
 In SSH sessions, use --no-browser and open the printed URL on a machine with a browser
 where you are already logged into Nolo.
+
+Note: nolo login only authorizes your Nolo platform account. To let your agents
+call third-party models using your own subscriptions, you also need:
+  nolo auth antigravity   # Google Antigravity (Gemini 3, Claude, GPT-OSS)
+  nolo auth claude        # Claude Pro/Max
+  nolo auth chatgpt       # ChatGPT Plus / OpenAI Codex
+  nolo auth xai           # xAI Grok (SuperGrok)
+  nolo auth cloudflare    # Cloudflare OAuth (email routing, etc.)
+See "nolo auth <provider> --help" for details.
 `;
 
 export const LOGOUT_HELP_TEXT = `Log out of Nolo by clearing the saved auth token.

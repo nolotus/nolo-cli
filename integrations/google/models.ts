@@ -87,17 +87,18 @@ export const googleModels: Model[] = [
     },
   },
   {
-    name: "gemini-3.5-flash",
-    displayName: "Gemini 3.5 Flash",
+    name: "gemini-3.6-flash",
+    displayName: "Gemini 3.6 Flash",
     provider: "google",
     description:
-      "Gemini 3.5 Flash GA model for fast frontier agentic, coding, and multimodal tasks.",
+      "Gemini 3.6 Flash model for fast frontier agentic, coding, and multimodal tasks.",
     hasVision: true,
     hasAudio: true,
     contextWindow: 1048576,
     maxOutputTokens: 65536,
     supportsTool: true,
     supportsReasoningEffort: true,
+    // TODO(pricing): gemini-3.6-flash 官方定价未确认，暂沿用 3.5-flash 费率，确认后更新。
     price: {
       input: 1.5 * 7,
       output: 9 * 7,
@@ -108,111 +109,6 @@ export const googleModels: Model[] = [
       batch: { inputOutput: 0.5, cache: 0.5 },
       flex: { inputOutput: 0.5, cache: 0.08 / 0.15 },
       priority: { inputOutput: 1.8, cache: 1.8 },
-    },
-  },
-  {
-    name: "gemini-3.1-flash-lite",
-    displayName: "Gemini 3.1 Flash-Lite",
-    provider: "google",
-    hasVision: true,
-    contextWindow: 1048576,
-    maxOutputTokens: 65500,
-    supportsTool: true,
-    price: {
-      input: 0.25 * 7,
-      output: 1.5 * 7,
-      cachingWrite: 0.025 * 7,
-      cachingRead: 0.025 * 7,
-    },
-    serviceTierPriceMultipliers: {
-      batch: { inputOutput: 0.5, cache: 0.5 },
-      flex: { inputOutput: 0.5, cache: 0.5 },
-      priority: { inputOutput: 1.8, cache: 1.8 },
-    },
-  },
-  {
-    name: "gemini-3-flash-preview",
-    displayName: "Gemini 3 Flash Preview",
-    provider: "google",
-    hasVision: true,
-    contextWindow: 1048576,
-    maxOutputTokens: 65500,
-    supportsTool: true,
-    supportsReasoningEffort: true,
-    price: {
-      input: 0.5 * 7,
-      output: 3 * 7,
-      cachingWrite: 0.05 * 7,
-      cachingRead: 0.05 * 7,
-    },
-    serviceTierPriceMultipliers: {
-      priority: { inputOutput: 1.8, cache: 1.8 },
-    },
-  },
-  {
-    name: "gemini-3-pro-preview",
-    displayName: "Gemini 3 Pro (Preview)",
-    provider: "google",
-    description:
-      "Google's most advanced model with enhanced reasoning, vision, and audio.",
-    hasVision: true,
-    hasAudio: true,
-    contextWindow: 2097152,
-    maxOutputTokens: 65536,
-    supportsTool: true,
-    supportsReasoningEffort: true,
-    price: {
-      input: 2 * 7,
-      output: 12 * 7,
-      cachingWrite: 0.2 * 7,
-      cachingRead: 0.2 * 7,
-    },
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 200001,
-          price: {
-            input: 4 * 7,
-            output: 18 * 7,
-            cachingWrite: 0.4 * 7,
-            cachingRead: 0.4 * 7,
-          },
-        },
-      ],
-    },
-  },
-  {
-    name: "gemini-3.1-pro-preview",
-    displayName: "Gemini 3.1 Pro Preview",
-    provider: "google",
-    hasVision: true,
-    contextWindow: 1050000,
-    maxOutputTokens: 65500,
-    supportsTool: true,
-    supportsReasoningEffort: true,
-    price: {
-      input: 2 * 7,
-      output: 12 * 7,
-      cachingRead: 0.2 * 7,
-      cachingWrite: 0.2 * 7,
-    },
-    serviceTierPriceMultipliers: {
-      priority: { inputOutput: 1.8, cache: 1.8 },
-    },
-    pricingStrategy: {
-      type: "tiered_context",
-      tiers: [
-        {
-          minContext: 200001,
-          price: {
-            input: 4 * 7,
-            output: 18 * 7,
-            cachingRead: 0.4 * 7,
-            cachingWrite: 0.4 * 7,
-          },
-        },
-      ],
     },
   },
   createGoogleImageModel({

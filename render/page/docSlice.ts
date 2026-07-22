@@ -11,6 +11,7 @@ import {
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { readAndWait, patch } from "../../database/dbSlice";
 import { updateContentTitle } from "../../create/space/spaceSlice";
+import { toErrorMessage } from "../../core/errorMessage";
 import type { EditorContent } from "../../create/editor/utils/slateUtils";
 import { DataType } from "../../create/types";
 import { PageData } from "./types";

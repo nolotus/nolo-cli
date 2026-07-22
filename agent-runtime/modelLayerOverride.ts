@@ -102,7 +102,7 @@ export function buildModelLayerOverride(
     if (key === "provider" || key === "model") continue;
     const value = agent[key];
     if (value !== undefined) {
-      (override as Record<string, unknown>)[key] = value;
+      (override as unknown as Record<string, unknown>)[key] = value;
     }
   }
   if (Array.isArray(agent.references) && agent.references.length > 0) {

@@ -455,6 +455,7 @@ export const SLASH_COMMANDS = [
   "/thinking",
   "/render",
   "/switch",
+  "/agent",
   "/agents",
   "/history",
   "/resume",
@@ -467,6 +468,8 @@ export const SLASH_COMMANDS = [
   "/profile",
   "/update",
   "/version",
+  "/tasks",
+  "/jobs",
   "/procs",
   "/stop",
   "/exit",
@@ -768,6 +771,8 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         output: `Render display: ${nextMode}`,
       };
     }
+    case "/tasks":
+    case "/jobs":
     case "/procs": {
       const registry = getProcessRegistry();
       const all = registry.list();
@@ -859,6 +864,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         output: "Compacting current dialog...",
         action: { type: "compact", dialogId: state.dialogId },
       };
+    case "/agent":
     case "/switch": {
       if (!argText) {
         return {

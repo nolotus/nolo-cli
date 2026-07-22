@@ -37,11 +37,13 @@ import {
 } from "./assistantOutput";
 import {
   createThinkingAwareStreamFilter,
+  createThinkingEventSink,
   formatAssistantTextForCli,
   resolveThinkingDisplayMode,
 } from "./thinkingOutput";
 import { buildTurnTokenUsage, type TurnTokenUsage } from "./tokenUsage";
 import {
+  createSseToolEventAdapter,
   createToolEventFormatter,
   formatActiveToolLabel,
   resolveToolDisplayMode,
@@ -232,6 +234,123 @@ function formatElapsed(totalSeconds: number): string {
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
   return `${hours}h ${mins}m`;
+}
+
+interface CliTurnOutputOptions {
+  options: RunAgentTurnOptions;
+  workingLabel?: string;
+  spinner?: Spinner;
+}
+
+function createCliTurnOutput(params: CliTurnOutputOptions) {
+  const { options } = params;
+  const workingLabel = params.workingLabel ?? `${options.agentName} -> working`;
+  const spinner = params.spinner ?? new Spinner(options.output, workingLabel);
+
+  const toolDisplayMode = resolveToolDisplayMode(options.env);
+  const traceLocalTools = shouldEmitToolEvents(toolDisplayMode);
+  const formatToolEvent = createToolEventFormatter(toolDisplayMode);
+  const eventMode = resolveAgentEventMode(options);
+
+  let streamedAssistantText = false;
+  let printedAssistantLabel = false;
+
+  const thinkingMode = resolveThinkingDisplayMode(options.env);
+  const renderMode = resolveRenderDisplayMode(options.env);
+  const renderWriter = createRenderAwareStreamWriter({
+    write: (chunk) => options.output.write(chunk),
+    renderMode,
+  });
+
+  const writeVisibleAssistantChunk = (chunk: string) => {
+    if (!chunk) return;
+    spinner.stop();
+    if (!printedAssistantLabel) {
+      options.output.write(`\n${options.agentName} > `);
+      printedAssistantLabel = true;
+    }
+    streamedAssistantText = true;
+    renderWriter.push(chunk);
+  };
+
+  const thinkingFilter = createThinkingAwareStreamFilter(
+    writeVisibleAssistantChunk,
+    thinkingMode,
+  );
+
+  const thinkingSink = createThinkingEventSink((chunk) => {
+    spinner.stop();
+    options.output.write(chunk);
+  }, thinkingMode);
+
+  const handleToolEvent = (event: LocalAgentToolEvent) => {
+    if (!traceLocalTools) return;
+    if (event.type === "tool-call") {
+      thinkingFilter.flush();
+      renderWriter.flush();
+      if (streamedAssistantText) {
+        options.output.write("\n");
+        streamedAssistantText = false;
+        printedAssistantLabel = false;
+      }
+    }
+
+    const chunk =
+      eventMode === "jsonl"
+        ? formatToolJsonEvent(event)
+        : formatToolEvent(event);
+
+    if (
+      eventMode !== "jsonl" &&
+      toolDisplayMode === "compact" &&
+      event.type === "tool-call"
+    ) {
+      spinner.show(formatActiveToolLabel(event));
+      return;
+    }
+
+    if (!chunk) return;
+    spinner.stop();
+    options.output.write(chunk);
+    if (event.type === "tool-call") {
+      spinner.show(formatActiveToolLabel(event));
+    }
+  };
+
+  return {
+    spinner,
+    thinkingMode,
+    toolDisplayMode,
+    traceLocalTools,
+    eventMode,
+    pushText(chunk: string) {
+      thinkingFilter.push(chunk);
+    },
+    pushThinking(chunk: string) {
+      thinkingSink.push(chunk);
+    },
+    handleToolEvent,
+    showWorking(label?: string) {
+      spinner.show(label ?? workingLabel);
+    },
+    finish(fallbackContent?: string) {
+      spinner.stop();
+      if (streamedAssistantText) {
+        thinkingFilter.flush();
+        renderWriter.flush();
+        options.output.write("\n");
+      } else {
+        const content = fallbackContent
+          ? formatAssistantResponseForCli(fallbackContent.trim(), options)
+          : "";
+        if (content) {
+          options.output.write(`\n${options.agentName} > ${content}\n`);
+        } else {
+          options.output.write(`\n${options.agentName} > (no text response)\n`);
+        }
+      }
+    },
+  };
 }
 
 // Table mutations require the server runtime.
@@ -720,8 +839,7 @@ async function runHttpAgentTurn(
 
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("text/event-stream") && res.body) {
-    spinner.stop();
-    const result = await readStreamingAgentRun(options, res);
+    const result = await readStreamingAgentRun(options, res, spinner);
     return result;
   }
 
@@ -912,35 +1030,12 @@ async function runLocalAgentTurnForCli(
   });
 
   const workingLabel = `${options.agentName} -> working locally`;
-  const spinner = new Spinner(options.output, workingLabel);
-  spinner.start();
+  const turnOutput = createCliTurnOutput({
+    options,
+    workingLabel,
+  });
+  turnOutput.spinner.start();
   try {
-    const toolDisplayMode = resolveToolDisplayMode(options.env);
-    const traceLocalTools = shouldEmitToolEvents(toolDisplayMode);
-    const formatToolEvent = createToolEventFormatter(toolDisplayMode);
-    const eventMode = resolveAgentEventMode(options);
-    let streamedAssistantText = false;
-    let printedAssistantLabel = false;
-    const thinkingMode = resolveThinkingDisplayMode(options.env);
-    const renderMode = resolveRenderDisplayMode(options.env);
-    const renderWriter = createRenderAwareStreamWriter({
-      write: (chunk) => options.output.write(chunk),
-      renderMode,
-    });
-    const writeVisibleAssistantChunk = (chunk: string) => {
-      if (!chunk) return;
-      spinner.stop();
-      if (!printedAssistantLabel) {
-        options.output.write(`\n${options.agentName} > `);
-        printedAssistantLabel = true;
-      }
-      streamedAssistantText = true;
-      renderWriter.push(chunk);
-    };
-    const thinkingFilter = createThinkingAwareStreamFilter(
-      writeVisibleAssistantChunk,
-      thinkingMode,
-    );
     const runLocalAgentTurn = await loadRunLocalAgentTurn();
     const result = await runLocalAgentTurn({
       adapter,
@@ -962,75 +1057,34 @@ async function runLocalAgentTurnForCli(
         : {}),
       onLoopEvent: (event) => {
         if (event.kind === "llm-start") {
-          spinner.show(workingLabel);
+          turnOutput.showWorking();
         }
         options.onLoopEvent?.(event);
       },
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-      ...(traceLocalTools
+      ...(turnOutput.traceLocalTools
         ? {
             onToolEvent: (event) => {
-              if (event.type === "tool-call") {
-                thinkingFilter.flush();
-                renderWriter.flush();
-                if (streamedAssistantText) {
-                  options.output.write("\n");
-                  streamedAssistantText = false;
-                  printedAssistantLabel = false;
-                }
-              }
-              const chunk =
-                eventMode === "jsonl"
-                  ? formatToolJsonEvent(event)
-                  : formatToolEvent(event);
-              if (
-                eventMode !== "jsonl" &&
-                toolDisplayMode === "compact" &&
-                event.type === "tool-call"
-              ) {
-                spinner.show(formatActiveToolLabel(event));
-                return;
-              }
-              if (!chunk) return;
-              spinner.stop();
-              options.output.write(chunk);
-              if (event.type === "tool-call") {
-                spinner.show(formatActiveToolLabel(event));
-              }
+              turnOutput.handleToolEvent(event);
             },
           }
         : {}),
       ...(!options.noStream
         ? {
             onTextDelta: (chunk) => {
-              thinkingFilter.push(chunk);
+              turnOutput.pushText(chunk);
             },
           }
         : {}),
     });
-    spinner.stop();
-    if (streamedAssistantText) {
-      thinkingFilter.flush();
-      renderWriter.flush();
-      options.output.write("\n");
-    } else {
-      const content = formatAssistantResponseForCli(
-        result.content.trim(),
-        options,
-      );
-      if (content) {
-        options.output.write(`\n${options.agentName} > ${content}\n`);
-      } else {
-        options.output.write(`\n${options.agentName} > (no text response)\n`);
-      }
-    }
+    turnOutput.finish(result.content);
     return {
       exitCode: 0,
       dialogId: result.dialogId,
       turnTokens: buildTurnTokenUsage(result.usage, result.model),
     };
   } catch (error) {
-    spinner.stop();
+    turnOutput.spinner.stop();
     if (
       (error as { code?: string })?.code === LOCAL_TURN_ABORTED_CODE ||
       options.abortSignal?.aborted
@@ -1050,9 +1104,11 @@ async function runLocalAgentTurnForCli(
 async function readStreamingAgentRun(
   options: RunAgentTurnOptions,
   res: Response,
+  existingSpinner?: Spinner,
 ): Promise<RunAgentTurnResult> {
   const reader = res.body?.getReader();
   if (!reader) {
+    existingSpinner?.stop();
     options.output.write(
       "[nolo] Agent stream response did not include a readable body.\n",
     );
@@ -1060,30 +1116,19 @@ async function readStreamingAgentRun(
   }
 
   const decoder = new TextDecoder();
-  const thinkingMode = resolveThinkingDisplayMode(options.env);
-  const renderMode = resolveRenderDisplayMode(options.env);
-  const renderWriter = createRenderAwareStreamWriter({
-    write: (chunk) => options.output.write(chunk),
-    renderMode,
+  const turnOutput = createCliTurnOutput({
+    options,
+    workingLabel: `${options.agentName} -> working`,
+    spinner: existingSpinner,
   });
-  const writer = createStreamingTextWriter({
-    write: (chunk) => renderWriter.push(chunk),
+  const sseAdapter = createSseToolEventAdapter((evt) => {
+    turnOutput.handleToolEvent(evt);
   });
-  const thinkingFilter = createThinkingAwareStreamFilter(
-    (chunk) => writer.push(chunk),
-    thinkingMode,
-  );
+
   let buffer = "";
   let content = "";
   let dialogId: string | undefined;
   let usage: any;
-  let hasPrintedLabel = false;
-
-  const printLabel = () => {
-    if (hasPrintedLabel) return;
-    options.output.write(`\n${options.agentName} > `);
-    hasPrintedLabel = true;
-  };
 
   const handlePayload = (payload: any) => {
     if (typeof payload?.dialogId === "string" && payload.dialogId.trim()) {
@@ -1101,6 +1146,36 @@ async function readStreamingAgentRun(
     if (payload?.type === "dialog" || payload?.type === "status") {
       return;
     }
+    if (payload?.type === "turn_warning") {
+      // Silence turn_warning SSE events because their fallback/explanatory content
+      // arrives as standard text events; displaying both would create noisy duplicate warnings.
+      return;
+    }
+    if (payload?.type === "thinking") {
+      const thinkChunk =
+        typeof payload.content === "string"
+          ? payload.content
+          : typeof payload.chunk === "string"
+            ? payload.chunk
+            : "";
+      if (thinkChunk) {
+        turnOutput.pushThinking(thinkChunk);
+      }
+      return;
+    }
+    if (payload?.type === "tool_start") {
+      sseAdapter.onToolStart(payload.calls ?? payload);
+      return;
+    }
+    if (payload?.type === "tool_result") {
+      sseAdapter.onToolResult(payload);
+      return;
+    }
+    if (payload?.type === "tool_end") {
+      sseAdapter.onToolEnd();
+      turnOutput.showWorking();
+      return;
+    }
 
     const chunk =
       payload?.type === "text"
@@ -1110,9 +1185,8 @@ async function readStreamingAgentRun(
           : "";
     if (!chunk) return;
 
-    printLabel();
     content += chunk;
-    thinkingFilter.push(chunk);
+    turnOutput.pushText(chunk);
   };
 
   try {
@@ -1144,6 +1218,7 @@ async function readStreamingAgentRun(
       if (raw) handlePayload(JSON.parse(raw));
     }
   } catch (error) {
+    turnOutput.spinner.stop();
     if (options.abortSignal?.aborted) {
       // User-initiated stop; the server may still finish the dialog.
       return {
@@ -1164,17 +1239,9 @@ async function readStreamingAgentRun(
     }
     options.output.write(`\n[nolo] Agent stream failed: ${message}\n`);
     return { exitCode: 1 };
-  } finally {
-    writer.flushAll();
-    thinkingFilter.flush();
-    renderWriter.flush();
   }
 
-  if (!content) {
-    options.output.write(`\n${options.agentName} > (no text response)\n`);
-  } else {
-    options.output.write("\n");
-  }
+  turnOutput.finish(content);
 
   const usageText = formatUsage(usage, dialogId);
   if (usageText && shouldShowUsage(options.env))

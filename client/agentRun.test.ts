@@ -2127,4 +2127,173 @@ describe("cli agent run client", () => {
     expect(text).toContain("nolo -> working");
     expect(text).not.toContain("nolo -> working...");
   });
+
+  test("SSE stream renders thinking events according to thinking mode (show vs hide)", async () => {
+    const sseBody = [
+      `data: ${JSON.stringify({ type: "thinking", content: "Deep thinking details..." })}`,
+      "",
+      `data: ${JSON.stringify({ type: "text", content: "Final answer" })}`,
+      "",
+      `data: ${JSON.stringify({ type: "done", dialogId: "dialog-sse-thinking" })}`,
+      "",
+    ].join("\n");
+
+    // Mode: show
+    const outputShow = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "show" },
+      runtimeMode: "server",
+      output: outputShow,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+    expect(outputShow.text()).toContain("Deep thinking details...");
+    expect(outputShow.text()).toContain("Final answer");
+
+    // Mode: hide
+    const outputHide = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
+      runtimeMode: "server",
+      output: outputHide,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+    expect(outputHide.text()).not.toContain("Deep thinking details...");
+    expect(outputHide.text()).toContain("Final answer");
+  });
+
+  test("SSE stream renders compact tool events without verbose tool_result content flooding", async () => {
+    const longContent = "very long result content ".repeat(20);
+    const sseBody = [
+      `data: ${JSON.stringify({ type: "tool_start", calls: ["readFile"] })}`,
+      "",
+      `data: ${JSON.stringify({ type: "tool_result", toolName: "readFile", content: longContent })}`,
+      "",
+      `data: ${JSON.stringify({ type: "tool_end" })}`,
+      "",
+      `data: ${JSON.stringify({ type: "text", content: "Done reading file." })}`,
+      "",
+      `data: ${JSON.stringify({ type: "done", dialogId: "dialog-sse-tools" })}`,
+      "",
+    ].join("\n");
+
+    const output = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_TOOLS: "compact" },
+      runtimeMode: "server",
+      output,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+
+    const text = output.text();
+    expect(text).toContain("Read");
+    expect(text).not.toContain(longContent);
+    expect(text).toContain("Done reading file.");
+  });
+
+  test("SSE stream silences turn_warning events", async () => {
+    const sseBody = [
+      `data: ${JSON.stringify({ type: "turn_warning", reason: "rate_limit", message: "Warning: slow response" })}`,
+      "",
+      `data: ${JSON.stringify({ type: "text", content: "Actual response text" })}`,
+      "",
+      `data: ${JSON.stringify({ type: "done", dialogId: "dialog-sse-warning" })}`,
+      "",
+    ].join("\n");
+
+    const output = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      output,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+
+    const text = output.text();
+    expect(text).not.toContain("Warning: slow response");
+    expect(text).toContain("Actual response text");
+  });
+
+  test("pure thinking + done stream falls back to (no text response) when thinking is hidden", async () => {
+    const sseBody = [
+      `data: ${JSON.stringify({ type: "thinking", content: "Thinking only..." })}`,
+      "",
+      `data: ${JSON.stringify({ type: "done", dialogId: "dialog-sse-pure-thinking" })}`,
+      "",
+    ].join("\n");
+
+    // show mode: displays thinking
+    const outputShow = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "show" },
+      runtimeMode: "server",
+      output: outputShow,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+    expect(outputShow.text()).toContain("Thinking only...");
+
+    // hide mode: falls back to (no text response)
+    const outputHide = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
+      runtimeMode: "server",
+      output: outputHide,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+    expect(outputHide.text()).not.toContain("Thinking only...");
+    expect(outputHide.text()).toContain("(no text response)");
+  });
 });

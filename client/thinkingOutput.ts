@@ -50,6 +50,57 @@ export function formatAssistantTextForCli(text: string, mode: ThinkingDisplayMod
   return mode === "hide" ? stripCollapsedThinkingMarkers(collapsed) : collapsed;
 }
 
+export function createThinkingEventSink(
+  write: (chunk: string) => void,
+  mode?: ThinkingDisplayMode
+): { push(chunk: string): void };
+export function createThinkingEventSink(
+  mode: ThinkingDisplayMode,
+  write: (chunk: string) => void
+): { push(chunk: string): void };
+export function createThinkingEventSink(
+  arg1: ThinkingDisplayMode | ((chunk: string) => void),
+  arg2?: ((chunk: string) => void) | ThinkingDisplayMode
+): { push(chunk: string): void } {
+  let mode: ThinkingDisplayMode = "hide";
+  let write: (chunk: string) => void = () => {};
+
+  if (typeof arg1 === "function") {
+    write = arg1;
+    if (typeof arg2 === "string") {
+      mode = arg2;
+    }
+  } else {
+    mode = arg1;
+    if (typeof arg2 === "function") {
+      write = arg2;
+    }
+  }
+
+  if (mode === "hide") {
+    return {
+      push(_chunk: string) {},
+    };
+  }
+
+  if (mode === "show") {
+    return {
+      push(chunk: string) {
+        if (chunk) write(chunk);
+      },
+    };
+  }
+
+  let markerEmitted = false;
+  return {
+    push(chunk: string) {
+      if (!chunk || markerEmitted) return;
+      write("\n▸ 思考已折叠\n");
+      markerEmitted = true;
+    },
+  };
+}
+
 export function createThinkingAwareStreamFilter(
   write: (chunk: string) => void,
   mode: ThinkingDisplayMode = "hide"

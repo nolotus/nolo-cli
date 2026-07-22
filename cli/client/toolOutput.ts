@@ -183,3 +183,73 @@ export function createToolEventFormatter(
     return formatCompactToolLine(event, call, colorEnabled);
   };
 }
+
+export function createSseToolEventAdapter(
+  onEvent?: (event: LocalAgentToolEvent) => void
+) {
+  let round = 0;
+  let callIndex = 0;
+  let pendingCalls: Array<{ toolCallId: string; toolName: string }> = [];
+
+  const emit = (event: LocalAgentToolEvent): LocalAgentToolEvent => {
+    onEvent?.(event);
+    return event;
+  };
+
+  return {
+    onToolStart(payload: { calls?: string[] } | string[]): LocalAgentToolEvent[] {
+      const calls = Array.isArray(payload) ? payload : payload?.calls ?? [];
+      pendingCalls = [];
+      const events: LocalAgentToolEvent[] = [];
+      for (const name of calls) {
+        callIndex++;
+        const toolCallId = `sse-call-${callIndex}`;
+        const toolName = name || "tool";
+        pendingCalls.push({ toolCallId, toolName });
+        const event: LocalAgentToolEvent = {
+          type: "tool-call",
+          toolCallId,
+          toolName,
+          round,
+        };
+        events.push(emit(event));
+      }
+      return events;
+    },
+
+    onToolResult(payload: {
+      toolCallId?: string;
+      toolName?: string;
+      content?: string;
+      metadata?: Record<string, any>;
+    }): LocalAgentToolEvent {
+      const pending = payload.toolCallId
+        ? pendingCalls.find((p) => p.toolCallId === payload.toolCallId)
+        : pendingCalls.shift();
+
+      if (pending && payload.toolCallId) {
+        pendingCalls = pendingCalls.filter((p) => p.toolCallId !== payload.toolCallId);
+      }
+
+      const toolCallId = payload.toolCallId || pending?.toolCallId || `sse-call-${callIndex}`;
+      const toolName = payload.toolName || pending?.toolName || "tool";
+      const rawContent = typeof payload.content === "string" ? payload.content : "";
+      const summary = rawContent ? clipCompactText(rawContent, 120, "…") : undefined;
+
+      const event: LocalAgentToolEvent = {
+        type: "tool-result",
+        toolCallId,
+        toolName,
+        summary,
+        metadata: payload.metadata,
+        round,
+      };
+      return emit(event);
+    },
+
+    onToolEnd() {
+      round++;
+      pendingCalls = [];
+    },
+  };
+}

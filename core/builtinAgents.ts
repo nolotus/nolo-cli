@@ -35,6 +35,12 @@ export const PUBLIC_KIMI_K27_CODING_AGENT_KEY =
 
 export const PUBLIC_GLM_52_AGENT_ID = "01GLM52CHAT00000000001U721";
 export const PUBLIC_GLM_52_AGENT_KEY = `agent-pub-${PUBLIC_GLM_52_AGENT_ID}`;
+/**
+ * Public Kimi K2.6 image-capable agent used as the Quick Chat image tier
+ * and CLI auto-switch target when the routed agent lacks vision.
+ */
+export const PUBLIC_KIMI_K26_IMAGE_AGENT_ID = "01KIMIK26OLLAMA0000000001";
+export const PUBLIC_KIMI_K26_IMAGE_AGENT_KEY = `agent-pub-${PUBLIC_KIMI_K26_IMAGE_AGENT_ID}`;
 
 /**
  * Default Code Planner executor candidate pool.

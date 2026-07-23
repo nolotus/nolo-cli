@@ -3,12 +3,17 @@ import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
-import { classifyCliAutoRoute } from "../client/autoModelRouter";
+import {
+  classifyCliAutoRoute,
+  CLI_AUTO_TIER_AGENT_KEY_TABLE,
+  CLI_IMAGE_AGENT_KEY,
+} from "../client/autoModelRouter";
 import {
   buildModelLayerOverride,
   type ModelLayerOverride,
 } from "../agent-runtime/modelLayerOverride";
 import { readDbRecord } from "../agentRecordHelpers";
+import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../ai/llm/agentCapabilities";
 import type { LocalAgentActionGate } from "../agent-runtime/localLoop";
 import { readCommandActionGatePayload } from "../agent-runtime/actionGate";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
@@ -390,6 +395,36 @@ async function runAgentChat(
       output.write(
         `\n[nolo] auto → ${route.tier}${modelOverride ? ` (model: ${state.agentName})` : ""}\n`,
       );
+    }
+  }
+  // 图片输入：检测当前 agent 是否支持 vision，不支持则自动切换到 Kimi K2.6。
+  const hasImages = options.imageUrls && options.imageUrls.length > 0;
+  if (hasImages && effectiveAgentKey !== CLI_IMAGE_AGENT_KEY) {
+    let needsVisionSwitch = false;
+    if (CLI_AUTO_TIER_AGENT_KEY_TABLE[effectiveAgentKey]) {
+      // 三个 tier agent（flash/balanced/quality）均无 vision 能力。
+      needsVisionSwitch = true;
+    } else {
+      // 用户选择的 agent：读 record 检查 vision 能力。
+      const authToken =
+        env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
+      const record = await readDbRecord({
+        dbKey: effectiveAgentKey,
+        authToken,
+        serverUrl: state.serverUrl,
+        fetchImpl: fetch,
+      }).catch(() => null);
+      if (record && !resolveAgentImageInputSupport(record as AgentCapabilityConfig)) {
+        needsVisionSwitch = true;
+      }
+    }
+    if (needsVisionSwitch) {
+      output.write(
+        `\n[nolo] 当前 agent 不支持图片输入，已自动切换到 Kimi K2.6\n`,
+      );
+      effectiveAgentKey = CLI_IMAGE_AGENT_KEY;
+      effectiveAgentName = "Kimi K2.6";
+      modelOverride = null;
     }
   }
   const result: RunAgentTurnResult = await agentRunner({

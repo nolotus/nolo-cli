@@ -38,6 +38,12 @@ export type LocalAgentTurnInput = {
   onToolEvent?: (event: LocalAgentToolEvent) => void;
   onActionGate?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
   onTextDelta?: (chunk: string) => void;
+  /**
+   * 端侧 reasoning 增量透传（第一层）。provider.complete 收到 reasoning
+   * 增量时回调，与 onTextDelta 同模式。端侧（desktop handler / CLI 显示）
+   * 接入是后续 Task B，本字段只打通 localLoop 接口层与 provider 读取路径。
+   */
+  onReasoningDelta?: (chunk: string) => void;
   onLoopEvent?: (event: LocalAgentLoopEvent) => void;
   /**
    * 单次 provider.complete 的可选硬超时。
@@ -83,6 +89,53 @@ export type LocalAgentActionGate = ActionGate & {
 };
 
 export const LOCAL_AGENT_CONFIG_MISSING_CODE = "LOCAL_AGENT_CONFIG_MISSING";
+
+/**
+ * 空轮修复共享常量。
+ *
+ * 这两个文案常量与判定语义由 `packages/server/handlers/agentRun/loop.ts`
+ * 的空轮处置流程首次落地，现下沉到 agent-runtime 共享层，使 CLI local 与
+ * 桌面 local turn（都消费 `runLocalAgentTurn`）与服务端 loop 行为一致。
+ * 服务端 loop 通过 `../../../agent-runtime` 引用同一常量，仅替换常量来源，
+ * 不动其判定/流程逻辑。
+ */
+export const EMPTY_ASSISTANT_REPAIR_PROMPT =
+  "你刚刚返回了空消息。请继续完成当前任务：如果需要工具就调用工具，否则直接输出可执行的简短结果；不要留空。";
+export const EMPTY_ASSISTANT_FALLBACK_MESSAGE =
+  "模型连续返回空消息，当前任务未完成。请重试当前步骤，或给出更具体的修改范围。";
+
+/**
+ * 判定空 assistant 回复的处置方式。语义与 server loop 完全一致：
+ *
+ * - 有 tool calls 或可见输出（文本/图片等） → ok
+ * - 未用过 repair → repair（注入 repair system message 重试一次）
+ * - 用过 repair → fallback/empty_completion（以诊断文案结束）
+ *
+ * reasoning-only 流（content 空、无 tool_calls）算空轮，无论 reasoning 有无。
+ */
+export function resolveEmptyAssistantOutcome(args: {
+  hasToolCalls: boolean;
+  hasVisibleOutput: boolean;
+  repairUsed: boolean;
+}): { kind: "ok" } | { kind: "repair" } | { kind: "fallback"; reason: "empty_completion" } {
+  if (args.hasToolCalls || args.hasVisibleOutput) return { kind: "ok" };
+  if (!args.repairUsed) return { kind: "repair" };
+  return { kind: "fallback", reason: "empty_completion" };
+}
+
+/** assistant 是否产生了可见输出（文本/图片）。tool_calls 由调用方单独判定。 */
+export function hasAssistantVisibleOutput(content: AgentRuntimeMessageContent): boolean {
+  if (typeof content === "string") return content.trim().length > 0;
+  if (!Array.isArray(content)) return false;
+  return content.some((part) => {
+    if (part?.type === "text" && String(part.text ?? "").trim()) return true;
+    if (part?.type === "image_url") {
+      const url = part?.image_url?.url;
+      return typeof url === "string" && url.trim().length > 0;
+    }
+    return false;
+  });
+}
 
 function formatToolExecutionError(args: {
   toolName: string;
@@ -454,15 +507,27 @@ export async function runLocalAgentTurn(
   let turnUsage: Record<string, unknown> | undefined;
   let loopError: unknown;
   let round = 0;
+  // 空轮修复状态（语义与 server loop 对齐）：
+  //   repairPending  → 下一轮请求注入 repair system message
+  //   repairUsed     → 已用过 repair，二次仍空则 fallback
+  let emptyAssistantRepairPending = false;
+  let emptyAssistantRepairUsed = false;
   try {
     while (true) {
       throwIfAborted(input);
+      // 空轮修复：把 repair system message 追加到本轮请求末尾重试一次。
+      const baseRequestMessages = prepareMessagesForProviderCall(messages);
+      const requestMessages: AgentRuntimeChatMessage[] = emptyAssistantRepairPending
+        ? [...baseRequestMessages, { role: "system", content: EMPTY_ASSISTANT_REPAIR_PROMPT }]
+        : baseRequestMessages;
+      emptyAssistantRepairPending = false;
       result = await runCompleteWithTimeout({
         provider,
-        messages: prepareMessagesForProviderCall(messages),
+        messages: requestMessages,
         options: {
           ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
           ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
+          ...(input.onReasoningDelta ? { onReasoningDelta: input.onReasoningDelta } : {}),
         },
         timeoutMs: resolveLlmRequestTimeoutMs(input),
         round,
@@ -470,7 +535,25 @@ export async function runLocalAgentTurn(
       });
       turnUsage = mergeTurnUsage(turnUsage, result.usage);
       const toolCalls = result.tool_calls ?? [];
-      if (toolCalls.length === 0) break;
+      if (toolCalls.length === 0) {
+        // 空轮判定：content 空、无 tool_calls 即空轮（reasoning-only 也算空轮）。
+        const outcome = resolveEmptyAssistantOutcome({
+          hasToolCalls: false,
+          hasVisibleOutput: hasAssistantVisibleOutput(result.content),
+          repairUsed: emptyAssistantRepairUsed,
+        });
+        if (outcome.kind === "repair") {
+          emptyAssistantRepairPending = true;
+          emptyAssistantRepairUsed = true;
+          continue;
+        }
+        if (outcome.kind === "fallback") {
+          // 二次仍空：以诊断文案作为最终 content 结束，不抛错（行为与 server loop 对齐）。
+          result = { ...result, content: EMPTY_ASSISTANT_FALLBACK_MESSAGE };
+          break;
+        }
+        break;
+      }
       toolCallCount += toolCalls.length;
       messages.push({
         role: "assistant",
@@ -596,6 +679,11 @@ export async function runLocalAgentTurn(
   messages.push({
     role: "assistant",
     content: result.content,
+    // 与中间轮(:561)一致带上 reasoning_content,让 saveTurn 持久化思维链,
+    // 空轮/异常排查时能回看模型实际想了什么。
+    ...(result.reasoning_content
+      ? { reasoning_content: result.reasoning_content }
+      : {}),
   });
   const turnMessages = messages.slice(turnStartIndex);
   const saved = await input.adapter.saveTurn({

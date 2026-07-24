@@ -40,6 +40,12 @@ export type AgentRuntimeAgentConfig = {
 export type AgentRuntimeCompleteOptions = {
   timeoutMs?: number;
   onTextDelta?: (chunk: string) => void;
+  /**
+   * reasoning 增量回调（第一层透传）。provider 在 SSE 读取路径收到
+   * reasoning 增量时回调；与 onTextDelta 同模式。localLoop 把 input
+   * 上的 onReasoningDelta 透传到这里。
+   */
+  onReasoningDelta?: (chunk: string) => void;
 };
 
 export type AgentRuntimeProvider = {

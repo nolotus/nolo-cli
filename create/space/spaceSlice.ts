@@ -117,6 +117,10 @@ const spaceSlice = createSliceWithThunks({
       (state, action) => {
         if (state.memberSpaces !== null || action.payload.length === 0) return;
         state.memberSpaces = dedupeMemberSpacesById(action.payload);
+        // 本地缓存已出列表即解除 loading（stale-while-revalidate）：
+        // 选择器立刻停止转圈显示本地空间，远端校验在 thunk 内后台继续，
+        // fulfilled 时照常覆盖 memberSpaces 并复位 loading/membershipStatus。
+        state.loading = false;
       }
     ),
 

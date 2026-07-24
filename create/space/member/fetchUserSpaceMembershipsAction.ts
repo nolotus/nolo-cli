@@ -231,31 +231,39 @@ const recoverMembershipsFromContentSpaces = async ({
     })
   );
 
-  const recovered: MembershipWithSource[] = [];
-  for (const spaceId of candidateSpaceIds) {
-    for (const server of servers) {
-      const remoteSpace = await fetchRemoteSpace(server, token, spaceId);
-      if (!spaceListsUser(remoteSpace, userId)) continue;
-      recovered.push({
-        userId,
-        spaceId,
-        spaceName:
-          typeof remoteSpace?.name === "string" && remoteSpace.name.trim()
-            ? remoteSpace.name
-            : spaceId,
-        role:
-          remoteSpace?.ownerId === userId
-            ? MemberRole.OWNER
-            : MemberRole.MEMBER,
-        joinedAt:
-          remoteSpace?.updatedAt ??
-          remoteSpace?.createdAt ??
-          Date.now(),
-        sourceServer: server,
-      } as unknown as MembershipWithSource);
-      break;
-    }
-  }
+  const results = await Promise.all(
+    [...candidateSpaceIds].map(async (spaceId) => {
+      try {
+        for (const server of servers) {
+          const remoteSpace = await fetchRemoteSpace(server, token, spaceId);
+          if (!spaceListsUser(remoteSpace, userId)) continue;
+          return {
+            userId,
+            spaceId,
+            spaceName:
+              typeof remoteSpace?.name === "string" && remoteSpace.name.trim()
+                ? remoteSpace.name
+                : spaceId,
+            role:
+              remoteSpace?.ownerId === userId
+                ? MemberRole.OWNER
+                : MemberRole.MEMBER,
+            joinedAt:
+              remoteSpace?.updatedAt ??
+              remoteSpace?.createdAt ??
+              Date.now(),
+            sourceServer: server,
+          } as unknown as MembershipWithSource;
+        }
+      } catch {
+        // Single space error should not block other spaces
+      }
+      return null;
+    })
+  );
+  const recovered = results.filter(
+    (m): m is MembershipWithSource => m !== null
+  );
   return recovered;
 };
 

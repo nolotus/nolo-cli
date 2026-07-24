@@ -320,6 +320,7 @@ function processPlatformChatSseEvent(
     usage?: Record<string, unknown>;
     usesResponsesApi: boolean;
     onTextDelta?: (chunk: string) => void;
+    onReasoningDelta?: (chunk: string) => void;
     completedResponsesPayload?: any;
     accumulatedToolCalls: Record<number, AccumulatedToolCall>;
   },
@@ -349,7 +350,10 @@ function processPlatformChatSseEvent(
           : typeof delta.reasoning === "string"
             ? delta.reasoning
             : "";
-      if (reasoningChunk) state.reasoning += reasoningChunk;
+      if (reasoningChunk) {
+        state.reasoning += reasoningChunk;
+        state.onReasoningDelta?.(reasoningChunk);
+      }
       if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
         accumulateToolCallDelta(state.accumulatedToolCalls, delta.tool_calls);
       }
@@ -373,6 +377,7 @@ function processPlatformChatSseEvent(
       typeof parsed?.delta === "string"
     ) {
       state.reasoning += parsed.delta;
+      state.onReasoningDelta?.(parsed.delta);
       continue;
     }
     if (eventType === "response.completed" && parsed?.response) {
@@ -388,6 +393,7 @@ export async function readPlatformChatSseCompletion(args: {
   response: Response;
   usesResponsesApi: boolean;
   onTextDelta?: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
 }) {
   const reader = args.response.body?.getReader();
   if (!reader) {
@@ -401,6 +407,7 @@ export async function readPlatformChatSseCompletion(args: {
     usage: undefined as Record<string, unknown> | undefined,
     usesResponsesApi: args.usesResponsesApi,
     onTextDelta: args.onTextDelta,
+    onReasoningDelta: args.onReasoningDelta,
     completedResponsesPayload: undefined as any,
     accumulatedToolCalls: {} as Record<number, AccumulatedToolCall>,
   };
@@ -455,6 +462,7 @@ export async function executePlatformChatCompletion(args: {
   fetchImpl: FetchLike;
   stream?: boolean;
   onTextDelta?: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
   signal?: AbortSignal;
   /**
    * 只约束「连接 + 响应头到达」的时长；响应头一到就解除计时，
@@ -512,14 +520,15 @@ export async function executePlatformChatCompletion(args: {
   const contentType = res.headers.get("content-type") ?? "";
   const usesResponsesApi = isResponsesEndpoint(args.providerConfig.endpoint);
   const shouldStream =
-    Boolean(args.stream && args.onTextDelta) &&
+    Boolean(args.stream && (args.onTextDelta || args.onReasoningDelta)) &&
     contentType.includes("text/event-stream");
 
-  if (shouldStream && args.onTextDelta) {
+  if (shouldStream) {
     const streamed = await readPlatformChatSseCompletion({
       response: res,
       usesResponsesApi,
-      onTextDelta: args.onTextDelta,
+      ...(args.onTextDelta ? { onTextDelta: args.onTextDelta } : {}),
+      ...(args.onReasoningDelta ? { onReasoningDelta: args.onReasoningDelta } : {}),
     });
     return {
       content: streamed.content,
@@ -561,6 +570,7 @@ export async function executePlatformChatCompletionWithFallback(args: {
   requestTimeoutMs?: number;
   stream?: boolean;
   onTextDelta?: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
 }): Promise<AgentRuntimeResult> {
   const serverUrls = asNonEmptyStringArray(args.serverUrls);
   if (serverUrls.length === 0) {
@@ -571,6 +581,7 @@ export async function executePlatformChatCompletionWithFallback(args: {
       fetchImpl: args.fetchImpl,
       stream: args.stream,
       ...(args.onTextDelta ? { onTextDelta: args.onTextDelta } : {}),
+      ...(args.onReasoningDelta ? { onReasoningDelta: args.onReasoningDelta } : {}),
     });
   }
 
@@ -578,12 +589,15 @@ export async function executePlatformChatCompletionWithFallback(args: {
   // 一旦某台 server 已经向调用方吐过 delta，就不能再 fallback 重试，
   // 否则同一段文本会被下一台 server 重复 emit 给用户。
   let deltaEmitted = false;
-  const onTextDelta = args.onTextDelta
-    ? (chunk: string) => {
-        deltaEmitted = true;
-        args.onTextDelta!(chunk);
-      }
-    : undefined;
+  const wrapDelta = <T extends (chunk: string) => void>(cb: T | undefined): T | undefined =>
+    cb
+      ? (((chunk: string) => {
+          deltaEmitted = true;
+          cb(chunk);
+        }) as T)
+      : undefined;
+  const onTextDelta = wrapDelta(args.onTextDelta);
+  const onReasoningDelta = wrapDelta(args.onReasoningDelta);
   for (let index = 0; index < serverUrls.length; index += 1) {
     const serverUrl = normalizeServerOrigin(serverUrls[index]);
     const providerConfig: PlatformChatProviderConfig = {
@@ -598,6 +612,7 @@ export async function executePlatformChatCompletionWithFallback(args: {
         fetchImpl: args.fetchImpl,
         stream: args.stream,
         ...(onTextDelta ? { onTextDelta } : {}),
+        ...(onReasoningDelta ? { onReasoningDelta } : {}),
         // 只限「连接+首字节」；响应开始后长回答不受此超时影响。
         ...(args.requestTimeoutMs ? { requestTimeoutMs: args.requestTimeoutMs } : {}),
       });

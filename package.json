@@ -515,7 +515,7 @@
     "ai/tools/ziweiChartTool.ts",
     "ai/tools/dialogMessageSearch.ts",
     "ai/tools/toolApiClient.ts",
-    "ai/tools/toolRunSlice.ts",
+    "ai/tools/toolRunStore.ts",
     "ai/tools/toolResultError.ts",
     "ai/tools/appReadSnapshot.ts",
     "ai/tools/appEditGuard.ts",

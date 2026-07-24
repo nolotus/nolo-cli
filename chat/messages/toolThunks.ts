@@ -12,7 +12,7 @@ import {
   toolRunFailed,
   createToolRunId,
   toolRunSetPending,
-} from "../../ai/tools/toolRunSlice";
+} from "../../ai/tools/toolRunStore";
 import { streamAgentChatTurn } from "../../ai/agent/agentSlice";
 
 import type { Message, ToolPayload, ToolErrorPayload } from "./types";
@@ -114,22 +114,20 @@ const processToolData = createAsyncThunk(
 
     const inputSummary = JSON.stringify(executionToolArgs).slice(0, 400);
 
-    dispatch(
-      toolRunStarted({
-        id: toolRunId,
-        messageId: parentMessageId,
-        toolName: canonicalName,
-        behavior,
-        inputSummary,
-        interaction,
-        input: executionToolArgs,
-      })
-    );
+    toolRunStarted({
+      id: toolRunId,
+      messageId: parentMessageId,
+      toolName: canonicalName,
+      behavior,
+      inputSummary,
+      interaction,
+      input: executionToolArgs,
+    });
 
     // ========= 分支一：confirm / authorize 工具，走预览（暂停） =========
     if (interaction === "confirm" || interaction === "authorize") {
       try {
-        dispatch(toolRunSetPending({ id: toolRunId }));
+        toolRunSetPending({ id: toolRunId });
 
         const previewExecutor = def?.previewExecutor;
         const previewResult = previewExecutor
@@ -179,13 +177,11 @@ const processToolData = createAsyncThunk(
           asOptionalTrimmedString(structured?.displayData) ||
           `❌ ${canonicalName} 预览失败: ${errorMessage}`;
 
-        dispatch(
-          toolRunFailed({
-            id: toolRunId,
-            error: errorMessage,
-            outputSummary: summary,
-          })
-        );
+        toolRunFailed({
+          id: toolRunId,
+          error: errorMessage,
+          outputSummary: summary,
+        });
 
         const errorPayload: ToolErrorPayload = {
           type: e?.name || "Error",
@@ -231,12 +227,10 @@ const processToolData = createAsyncThunk(
         asOptionalTrimmedString(toolResult?.displayData) ||
         defaultSummary(canonicalName, "succeeded");
 
-      dispatch(
-        toolRunSucceeded({
-          id: toolRunId,
-          outputSummary: summary,
-        })
-      );
+      toolRunSucceeded({
+        id: toolRunId,
+        outputSummary: summary,
+      });
 
       const toolPayload: ToolPayload = {
         toolName: canonicalName,
@@ -285,18 +279,16 @@ const processToolData = createAsyncThunk(
             structured.displayData.trim()) ||
           `⚠️ ${canonicalName} 需要确认后执行`;
 
-        dispatch(
-          toolRunStarted({
-            id: toolRunId,
-            messageId: parentMessageId,
-            toolName: canonicalName,
-            behavior,
-            inputSummary: JSON.stringify(confirmedInput).slice(0, 400),
-            interaction: "confirm",
-            input: confirmedInput,
-          })
-        );
-        dispatch(toolRunSetPending({ id: toolRunId }));
+        toolRunStarted({
+          id: toolRunId,
+          messageId: parentMessageId,
+          toolName: canonicalName,
+          behavior,
+          inputSummary: JSON.stringify(confirmedInput).slice(0, 400),
+          interaction: "confirm",
+          input: confirmedInput,
+        });
+        toolRunSetPending({ id: toolRunId });
 
         const toolPayload: ToolPayload = {
           toolName: canonicalName,
@@ -328,13 +320,11 @@ const processToolData = createAsyncThunk(
         asOptionalTrimmedString(structured?.displayData) ||
         `❌ ${canonicalName} 执行失败: ${errorMessage}`;
 
-      dispatch(
-        toolRunFailed({
-          id: toolRunId,
-          error: errorMessage,
-          outputSummary: summary,
-        })
-      );
+      toolRunFailed({
+        id: toolRunId,
+        error: errorMessage,
+        outputSummary: summary,
+      });
 
       const errorPayload: ToolErrorPayload = {
         type: e?.name || "Error",

@@ -9,8 +9,8 @@ import spaceReducer from "../create/space/spaceSlice";
 import dialogReducer from "../chat/dialog/dialogSlice";
 import messageReducer from "../chat/messages/messageSlice";
 import favoriteReducer from ".//favorite/favoriteSlice";
-// 新增：工具调用 trace
-import toolRunReducer from "../ai/tools/toolRunSlice";
+
+// toolRun 已剥叶为 module store（ai/tools/toolRunStore.ts，Wave7），不再挂 reducer。
 
 // Explicit Record type so composite/declaration checks do not require naming
 // private slice state interfaces from other packages (TS4023).
@@ -23,6 +23,5 @@ export const reducer: Record<string, any> = {
   settings: settingReducer,
   space: spaceReducer,
   table: tableReducer,
-  toolRun: toolRunReducer,
   favorite: favoriteReducer,
 };

@@ -4,7 +4,7 @@
 
 import { toErrorMessage } from "../../core/errorMessage";
 import { asOptionalTrimmedString } from "../../core/optionalString";
-import { toolRunUpdated, type ToolRunStep } from "./toolRunSlice";
+import { toolRunUpdated, type ToolRunStep } from "./toolRunStore";
 import { callToolApi, getToolRequestContext } from "./toolApiClient";
 import { syncAppRecord } from "../../app/actions/syncAppRecord";
 import { deleteDbKey } from "../../app/hooks/deleteDbKey";
@@ -243,15 +243,13 @@ function updateDeployProgress(
   detail?: string
 ) {
   if (!toolRunId) return;
-  thunkApi.dispatch(
-    toolRunUpdated({
-      id: toolRunId,
-      outputSummary: summary,
-      steps: Array.isArray(stepIdOrSteps)
-        ? stepIdOrSteps
-        : buildDeploySteps(stepIdOrSteps, currentStatus, detail),
-    })
-  );
+  toolRunUpdated({
+    id: toolRunId,
+    outputSummary: summary,
+    steps: Array.isArray(stepIdOrSteps)
+      ? stepIdOrSteps
+      : buildDeploySteps(stepIdOrSteps, currentStatus, detail),
+  });
 }
 
 function normalizeAppDeployArgs(args: AppDeployArgs) {

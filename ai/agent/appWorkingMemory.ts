@@ -1,5 +1,5 @@
 import type { Message } from "../../chat/messages/types";
-import type { ToolRun } from "../tools/toolRunSlice";
+import type { ToolRun } from "../tools/toolRunStore";
 
 const APP_TOOL_NAMES = new Set([
   "appList",

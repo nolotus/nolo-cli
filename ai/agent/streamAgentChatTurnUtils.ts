@@ -58,8 +58,8 @@ import {
 import { TOOL_PACKS } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import {
-    selectAllToolRuns,
-} from "../tools/toolRunSlice";
+    getAllToolRuns,
+} from "../tools/toolRunStore";
 import { buildRecentAppToolMemory } from "./appWorkingMemory";
 import type { AgentRuntimeOptions } from "./types";
 import { getModelConfig, getProviderByModelName, type Provider } from "../llm/providers";
@@ -680,7 +680,7 @@ export const buildDynamicContexts = async (
     const dialogId = dialogConfig?.id ?? null;
     const currentDialogMessages = selectAllMsgs(state, dialogId);
     const currentDialogMessageIds = new Set(currentDialogMessages.map((msg) => msg.id));
-    const currentDialogToolRuns = selectAllToolRuns(state).filter((run) =>
+    const currentDialogToolRuns = getAllToolRuns().filter((run) =>
         currentDialogMessageIds.has(run.messageId)
     );
 

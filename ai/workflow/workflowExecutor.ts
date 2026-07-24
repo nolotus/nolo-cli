@@ -16,7 +16,7 @@ import {
   updateStep,
   incrementStepsExecuted,
   incrementFailedSteps,
-} from "./workflowSlice";
+} from "./workflowStore";
 import type {
   WorkflowDefinition,
   WorkflowStep,
@@ -243,7 +243,7 @@ export const runWorkflow = createAsyncThunk<
     type: s.type,
     status: "pending",
   }));
-  dispatch(setWorkflow({ title: definition.title, steps: initialStepStates }));
+  setWorkflow({ title: definition.title, steps: initialStepStates });
 
   const results: Record<string, any> = {};
   // Set of step IDs to skip (controlled by condition steps)
@@ -251,11 +251,11 @@ export const runWorkflow = createAsyncThunk<
 
   for (const step of definition.steps) {
     if (skippedIds.has(step.id)) {
-      dispatch(updateStep({ id: step.id, updates: { status: "skipped" } }));
+      updateStep({ id: step.id, updates: { status: "skipped" } });
       continue;
     }
 
-    dispatch(updateStep({ id: step.id, updates: { status: "in-progress" } }));
+    updateStep({ id: step.id, updates: { status: "in-progress" } });
 
     try {
       let result: any;
@@ -296,14 +296,14 @@ export const runWorkflow = createAsyncThunk<
       }
 
       results[step.id] = result;
-      dispatch(updateStep({ id: step.id, updates: { status: "completed", result } }));
-      dispatch(incrementStepsExecuted());
+      updateStep({ id: step.id, updates: { status: "completed", result } });
+      incrementStepsExecuted();
 
     } catch (err: any) {
-      dispatch(incrementFailedSteps());
+      incrementFailedSteps();
       const errorMessage = toErrorMessage(err);
-      dispatch(
-        updateStep({ id: step.id, updates: { status: "failed", error: errorMessage } })
+      updateStep(
+        { id: step.id, updates: { status: "failed", error: errorMessage } }
       );
 
       const policy = (step as WorkflowToolStep | WorkflowLlmStep).onError ?? "stop";

@@ -9,7 +9,6 @@ import spaceReducer from "../create/space/spaceSlice";
 
 import dialogReducer from "../chat/dialog/dialogSlice";
 import messageReducer from "../chat/messages/messageSlice";
-import workflowReducer from "../ai/workflow/workflowSlice";
 import favoriteReducer from ".//favorite/favoriteSlice";
 import notificationReducer from ".//notifications/notificationSlice";
 // 新增：工具调用 trace
@@ -20,7 +19,6 @@ import shareReducer from "../share/shareSlice";
 // private slice state interfaces from other packages (TS4023).
 export const reducer: Record<string, any> = {
   dialog: dialogReducer,
-  workflow: workflowReducer,
   message: messageReducer,
   auth: authReducer,
   doc: docReducer,

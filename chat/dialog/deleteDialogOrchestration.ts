@@ -11,7 +11,7 @@ import { asOptionalTrimmedString } from "../../core/optionalString";
 import { extractCustomId } from "../../core/prefix";
 import { asRecordOrEmpty } from "../../core/recordOrEmpty";
 import { remove, selectById } from "../../database/dbSlice";
-import { clearWorkflow } from "../../ai/workflow/workflowSlice";
+import { clearWorkflow } from "../../ai/workflow/workflowStore";
 import { resetMsgs } from "../messages/messageSlice";
 import { scheduleDeleteReplication } from "../../database/actions/replication";
 import {
@@ -231,7 +231,7 @@ export const deleteDialogThunk = async (
     // 与 dialogSlice 自身内嵌动作协调：用 lazy import 避开循环依赖
     const { clearPendingAttachments } = await import("./dialogSlice");
     dispatch(clearPendingAttachments());
-    dispatch(clearWorkflow());
+    clearWorkflow();
   }
 
   return { dialogKey, isCurrentDialog, attachmentPlan };

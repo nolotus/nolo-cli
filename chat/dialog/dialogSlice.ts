@@ -13,7 +13,7 @@ import type { Descendant } from "slate";
 import { clearAllStreaming } from "../messages/messageSlice";
 import { read, selectById } from "../../database/dbSlice";
 
-import { clearWorkflow } from "../../ai/workflow/workflowSlice";
+import { clearWorkflow } from "../../ai/workflow/workflowStore";
 
 import { updateTokensAction } from "./actions/updateTokensAction";
 
@@ -290,7 +290,7 @@ const dialogSlice = createSliceWithThunks({
     initDialog: create.asyncThunk(
       async (id: string, { dispatch, signal, getState }) => {
         dispatch(dialogSlice.actions.clearPendingAttachments());
-        dispatch(clearWorkflow());
+        clearWorkflow();
         const { currentServer: preferredServerOrigin } = getRuntimeServerContext(
           getState() as any
         );

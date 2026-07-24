@@ -11,7 +11,6 @@ export interface RootState {
   auth: any;
   dialog: any;
   plan: any;
-  workflow: any;
   message: any;
   doc: any;
   db: any;

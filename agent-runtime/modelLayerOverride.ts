@@ -24,6 +24,9 @@ export interface ModelLayerOverride {
   apiKey?: string;
   apiKeyRef?: string;
   apiKeyHeader?: string;
+  customProviderUrl?: string;
+  credentialRef?: string;
+  credentialSynced?: boolean;
   temperature?: number;
   top_p?: number;
   frequency_penalty?: number;
@@ -50,6 +53,9 @@ export const MODEL_LAYER_KEYS = [
   "apiKey",
   "apiKeyRef",
   "apiKeyHeader",
+  "customProviderUrl",
+  "credentialRef",
+  "credentialSynced",
   "temperature",
   "top_p",
   "frequency_penalty",
@@ -102,7 +108,7 @@ export function buildModelLayerOverride(
     if (key === "provider" || key === "model") continue;
     const value = agent[key];
     if (value !== undefined) {
-      (override as Record<string, unknown>)[key] = value;
+      (override as unknown as Record<string, unknown>)[key] = value;
     }
   }
   if (Array.isArray(agent.references) && agent.references.length > 0) {

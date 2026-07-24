@@ -454,9 +454,9 @@ export const SLASH_COMMANDS = [
   "/tools",
   "/thinking",
   "/render",
+  "/switch",
   "/agent",
   "/agents",
-  "/switch",
   "/history",
   "/resume",
   "/lang",
@@ -468,6 +468,8 @@ export const SLASH_COMMANDS = [
   "/profile",
   "/update",
   "/version",
+  "/tasks",
+  "/jobs",
   "/procs",
   "/stop",
   "/exit",
@@ -520,7 +522,7 @@ export function renderKnownAgents() {
         `  ${index + 1}  ${agent.name.padEnd(11)} ${agent.description ?? ""}`
     ),
     "",
-    "Tip: run /agent for the full picker, or /agent list for your private agents too.",
+    "Tip: run /switch for the full picker, or /switch list for your private agents too.",
   ].join("\n");
 }
 
@@ -553,7 +555,7 @@ function applyAgentSwitch(state: TuiState, target: { name: string; key: string }
  *   1. 路径(`/Users/foo`,因为 token 含第二个 `/`,regex 不匹配)
  *   2. 数字开头(`/123abc` 不是合法命令名)
  *
- * 这样 `/help`、`/agent list`、`/attach /tmp/x.png` 都正确判为 slash,
+ * 这样 `/help`、`/switch list`、`/attach /tmp/x.png` 都正确判为 slash,
  * `/Users/x.png 看图`、`/etc/hosts` 都正确判为 chat。
  */
 export function isLikelySlashCommand(input: string): boolean {
@@ -769,6 +771,8 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         output: `Render display: ${nextMode}`,
       };
     }
+    case "/tasks":
+    case "/jobs":
     case "/procs": {
       const registry = getProcessRegistry();
       const all = registry.list();
@@ -860,7 +864,8 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         output: "Compacting current dialog...",
         action: { type: "compact", dialogId: state.dialogId },
       };
-    case "/agent": {
+    case "/agent":
+    case "/switch": {
       if (!argText) {
         return {
           nextState: state,
@@ -887,7 +892,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           nextState: state,
           output:
             `I don't know agent "${argText}" yet.\n` +
-            "Use /agent, /agent list, /agent minimax-m3, or a full agent key.",
+            "Use /switch, /switch list, /switch minimax-m3, or a full agent key.",
         };
       }
       return applyAgentSwitch(state, resolvedTarget);
@@ -897,24 +902,6 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         nextState: state,
         output: renderKnownAgents(),
       };
-    case "/switch": {
-      if (!argText) {
-        return {
-          nextState: state,
-          output: "Usage: /switch <agent-key|alias>  (or run /agent)",
-        };
-      }
-      const resolvedTarget = resolveAgentSwitchTarget(argText, resolveCatalogPlatformAgents());
-      if (!resolvedTarget) {
-        return {
-          nextState: state,
-          output:
-            `I don't know agent shortcut "${argText}" yet.\n` +
-            "Use /agent, /switch nolo, /switch minimax-m3, or a full agent key.",
-        };
-      }
-      return applyAgentSwitch(state, resolvedTarget);
-    }
     case "/lang": {
       const locale = parseCliLocale(argText);
       if (!locale) {

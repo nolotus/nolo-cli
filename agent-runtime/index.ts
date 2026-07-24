@@ -22,6 +22,12 @@ export {
 export type { ThinkParseState } from "./thinkTagParser";
 export { runLocalAgentTurn } from "./localLoop";
 export {
+  EMPTY_ASSISTANT_REPAIR_PROMPT,
+  EMPTY_ASSISTANT_FALLBACK_MESSAGE,
+  resolveEmptyAssistantOutcome,
+  hasAssistantVisibleOutput,
+} from "./localLoop";
+export {
   pickAgentRuntimeInferenceOptions,
 } from "./agentConfigOptions";
 export {

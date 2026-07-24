@@ -121,6 +121,25 @@ const fetchWithServerProxy = async ({
     throw error; // 抛出错误，交给上层处理
   }
 };
+export const formatFriendlyNetworkErrorMessage = (error: unknown): string => {
+  if (
+    typeof window !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    navigator.onLine === false
+  ) {
+    return "网络连接已断开，请检查网络连接后重试";
+  }
+  const rawMessage = toErrorMessage(error);
+  if (
+    /failed to fetch|networkerror|network error|econnrefused|econnreset|socket hang up/i.test(
+      rawMessage
+    )
+  ) {
+    return "网络请求失败，请检查网络连接或代理/VPN设置";
+  }
+  return rawMessage;
+};
+
 export const performFetchRequest = async (
   params: FetchParams
 ): Promise<Response> => {
@@ -137,8 +156,12 @@ export const performFetchRequest = async (
       : await fetchDirectly(params);
   } catch (error: any) {
     console.error("[performFetchRequest] 请求过程中发生错误:", error);
-    // 如果是网络错误，抛出自定义错误对象，以便上层捕获
-    throw new Error(`网络请求失败: ${toErrorMessage(error)}`);
+    const friendlyMsg = formatFriendlyNetworkErrorMessage(error);
+    throw new Error(
+      friendlyMsg.startsWith("网络请求失败")
+        ? friendlyMsg
+        : `网络请求失败: ${friendlyMsg}`
+    );
   }
 };
 

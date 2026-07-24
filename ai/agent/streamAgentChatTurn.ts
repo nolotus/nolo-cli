@@ -665,7 +665,14 @@ const finalizeQuickChatAgentTurnFailure = async (
     const reason =
         error instanceof Error && error.message.trim()
             ? error.message.trim()
-            : "未能启动模型回复，请重试。";
+            : typeof error === "string" && error.trim()
+              ? error.trim()
+              : error &&
+                  typeof error === "object" &&
+                  typeof (error as { message?: unknown }).message === "string" &&
+                  (error as { message: string }).message.trim()
+                ? (error as { message: string }).message.trim()
+                : "未能启动模型回复，请重试。";
 
     await dispatch(
         messageStreamEnd({
@@ -1160,8 +1167,9 @@ export const streamAgentChatTurnHandler = async (
                         return await rejectMachineStream(result.message);
                     }
                     if (result.outcome === "aborted") {
-                        // onAbort 已完成清理/持久化;保持和原实现一致的提前退出。
-                        return;
+                        // onAbort 已完成清理/持久化;返回 abort 标记而非 undefined,
+                        // quick-chat 才能把「取消」和「启动失败」区分开(见外层 catch)。
+                        return { aborted: true };
                     }
                     if (result.outcome === "streamEnded") {
                         if (!result.sawDone) {
@@ -1391,8 +1399,9 @@ export const streamAgentChatTurnHandler = async (
                     return await rejectCliStream(result.message);
                 }
                 if (result.outcome === "aborted") {
-                    // onAbort 已完成清理/持久化;保持和原实现一致的提前退出。
-                    return;
+                    // onAbort 已完成清理/持久化;返回 abort 标记而非 undefined,
+                    // quick-chat 才能把「取消」和「启动失败」区分开(见外层 catch)。
+                    return { aborted: true };
                 }
                 if (result.outcome === "streamEnded") {
                     if (!result.sawDone) {
@@ -1479,6 +1488,10 @@ export const streamAgentChatTurnHandler = async (
             let assistantMessageKeys: { key: string; messageId: string } | null = null;
             let streamResult: any = null;
             let streamError: string | null = null;
+            // 累计桌面 SSE 的 thinking 事件内容（reasoning_content），供
+            // messageStreamEnd 持久化为 thinkContent（见 messageSlice）。
+            // 兜底用 streamResult.reasoning_content（provider 在 SSE 流内累计）。
+            let reasoningBuffer = "";
             const activeToolMessages = new Map<string, any>();
             const ensureAssistantMessageKeys = () => {
                 if (!assistantMessageKeys) {
@@ -1562,6 +1575,13 @@ export const streamAgentChatTurnHandler = async (
                     }
                     if (event.type === "delta") {
                         streamDesktopAssistantText(event.text);
+                    } else if (event.type === "thinking") {
+                        // B1 已在 localLoop/service/handler 链路打通 onReasoningDelta
+                        // → SSE {type:"thinking",content}。这里累计进 reasoningBuffer，
+                        // 在 messageStreamEnd 时传给 messageSlice 落成 thinkContent。
+                        if (typeof event.content === "string") {
+                            reasoningBuffer += event.content;
+                        }
                     } else if (event.type === "tool") {
                         const toolEvent = event.event;
                         const callId = toolEvent.toolCallId;
@@ -1700,7 +1720,9 @@ export const streamAgentChatTurnHandler = async (
                     soft: true,
                 });
                 remoteTransientMessageFinalized = true;
-                return;
+                // 用户取消:返回 abort 标记而非 undefined,quick-chat 才能把
+                // 「取消」和「启动失败」区分开(见外层 catch)。
+                return { aborted: true };
             }
 
             // On error, keep what the user already watched happen: finalize
@@ -1834,7 +1856,9 @@ export const streamAgentChatTurnHandler = async (
                 agentConfig,
                 dialogId,
                 dialogKey,
-                reasoningBuffer: "",
+                // 优先用本 turn 累计的 thinking SSE；为空时兜底 streamResult.reasoning_content
+                // （provider 在 SSE 流内累计返回的 reasoning_content）。
+                reasoningBuffer: reasoningBuffer || (typeof streamResult?.reasoning_content === "string" ? streamResult.reasoning_content : ""),
                 toolCalls: extractDesktopRuntimeToolCallsForUi(desktopTurnMessages),
                 messageMetadata: desktopMessageMetadata,
             })).unwrap();
@@ -2011,8 +2035,9 @@ export const streamAgentChatTurnHandler = async (
                         return await rejectRemoteStream(result.message);
                     }
                     if (result.outcome === "aborted") {
-                        // onAbort 已完成清理/持久化;保持和原实现一致的提前退出。
-                        return;
+                        // onAbort 已完成清理/持久化;返回 abort 标记而非 undefined,
+                        // quick-chat 才能把「取消」和「启动失败」区分开(见外层 catch)。
+                        return { aborted: true };
                     }
                     if (result.outcome === "streamEnded") {
                         if (!result.sawDone) {
@@ -2209,7 +2234,7 @@ export const streamAgentChatTurnHandler = async (
                         responseApi: true,
                     });
                     if (w) w.__LOOP_STOP_REASON__ = "aborted";
-                    break;
+                    return { aborted: true };
                 }
 
                 const loopState = getState() as RootState;
@@ -2483,7 +2508,7 @@ export const streamAgentChatTurnHandler = async (
                     responseApi: false,
                 });
                 if (w) w.__LOOP_STOP_REASON__ = "aborted";
-                break;
+                return { aborted: true };
             }
 
             const loopState = getState() as RootState;
@@ -2746,7 +2771,10 @@ export const streamAgentChatTurnHandler = async (
                     ? (globalThis as any).window
                     : null;
             if (w) w.__LOOP_STOP_REASON__ = "aborted";
-            return;
+            // 返回 abort 标记而不是 undefined:quick-chat 的 handleSendMessageAction
+            // 把 undefined 当「启动失败」写错误文案,abort(含竞态取消)不是失败,
+            // 必须能被区分(见 handleSendMessageAction 的 startup-failure 分支)。
+            return { aborted: true };
         }
         console.error(
             `Error in streamAgentChatTurn for [${agentKey}]:`,

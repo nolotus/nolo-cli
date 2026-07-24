@@ -25,6 +25,7 @@ import {
   processThinkChunk,
   type ThinkParseState,
 } from "../../agent-runtime/thinkTagParser";
+import { EMPTY_ASSISTANT_REPAIR_PROMPT } from "../../agent-runtime/localLoop";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getApiEndpoint } from "../llm/providers";
@@ -901,7 +902,7 @@ export const sendOpenAICompletionsRequest = async ({
   );
 
   let streamState: StreamState = createInitialStreamState();
-  const parseSSE = createSSEParser();
+  let parseSSE = createSSEParser();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   const finalizeCtx: FinalizeContext = {
@@ -919,6 +920,8 @@ export const sendOpenAICompletionsRequest = async ({
   let hasPendingInteractionOverall = false;
   let lastFinishReason: string | null = null;
   let activeMessageMetadata = messageMetadata;
+  // 空轮自动重试只放行一次(与 agent-runtime localLoop / server loop 语义对齐)。
+  let emptyCompletionRetryUsed = false;
 
   const buildMeta = (): CompletionMeta => ({
     hasToolCalls:
@@ -1015,7 +1018,7 @@ export const sendOpenAICompletionsRequest = async ({
       return buildMeta();
     }
 
-    const decoder = new TextDecoder();
+    let decoder = new TextDecoder();
     let loggedFirstStreamChunk = false;
     let loggedFirstParsedEvent = false;
     let loggedFirstVisibleDelta = false;
@@ -1024,6 +1027,49 @@ export const sendOpenAICompletionsRequest = async ({
       const { done, value } = await readStreamChunkWithTimeout(reader, signal);
 
       if (done) {
+        // 空轮自动重试:流正常结束但零产出(content/reasoning/tool_calls 全空)
+        // 时,把 repair prompt 追加到请求消息末尾重发一次;第二次仍空则落入
+        // 既有 markEmptyCompletionAsError 错误路径,不再重试。网络/HTTP 错误、
+        // 用户中断不触发(那些走别的分支)。
+        const producedNothing =
+          streamState.contentBuffer.length === 0 &&
+          !streamState.reasoningBuffer.trim() &&
+          (streamState.assistantToolCalls?.length ?? 0) === 0;
+        if (
+          producedNothing &&
+          !emptyCompletionRetryUsed &&
+          !streamState.hasHandedOff &&
+          !streamState.alreadyFinalized &&
+          !signal.aborted
+        ) {
+          emptyCompletionRetryUsed = true;
+          const retryResponse = await performFetchRequest({
+            agentConfig,
+            api,
+            bodyData: {
+              ...requestBody,
+              messages: [
+                ...(requestBody.messages ?? []),
+                { role: "system", content: EMPTY_ASSISTANT_REPAIR_PROMPT },
+              ],
+            },
+            currentServer: selectCurrentServer(getState() as RootState),
+            signal,
+            token,
+            dialogId,
+          });
+          if (retryResponse.ok && retryResponse.body) {
+            // 首轮零产出,直接重置流状态读新流;UI 上的流式消息尚无内容。
+            // parser/decoder 的闭包缓冲一并重置:首轮若在干净 close 前残留了
+            // 半截 SSE 报文或多字节字符,不能拼接到第二轮的首个 chunk 上。
+            streamState = createInitialStreamState();
+            parseSSE = createSSEParser();
+            decoder = new TextDecoder();
+            reader = retryResponse.body.getReader();
+            continue;
+          }
+          // 重试请求本身失败:落入既有空响应错误路径。
+        }
         const completion = await handleStreamCompletion(
           streamState,
       {

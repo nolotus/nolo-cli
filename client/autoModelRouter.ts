@@ -11,6 +11,7 @@ import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
   PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
   PUBLIC_GLM_52_AGENT_KEY,
+  PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
 } from "../core/builtinAgents";
 import {
   INTENT_MODEL,
@@ -30,13 +31,25 @@ import {
 import { resolvePlatformChatCompletionsEndpoint } from "../agent-runtime/platformProviderEndpoints";
 import type { AgentRuntimeChatMessage } from "../agent-runtime/types";
 import type { CliFetchImpl } from "../cliFetch";
-
-/** CLI 自动路由的三档 tier agent（与 web quickChatTierDefaults 对齐；image 档不接入 CLI）。 */
+/**
+ * CLI 自动路由的三档 tier agent（与 web quickChatTierDefaults 对齐）。
+ * image 档不参与 LLM 分类路由，由 runAgentChat 在检测到图片时自动切换。
+ */
 export const CLI_AUTO_TIER_AGENT_KEYS = {
   flash: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
   balanced: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
   quality: PUBLIC_GLM_52_AGENT_KEY,
 } as const;
+
+/** 图片输入时自动切换到的 vision agent key（Kimi K2.6）。 */
+export const CLI_IMAGE_AGENT_KEY = PUBLIC_KIMI_K26_IMAGE_AGENT_KEY;
+
+/** 所有 tier agent key 的查表（用于判断是否为自动路由的内置档）。 */
+export const CLI_AUTO_TIER_AGENT_KEY_TABLE: Record<string, true> = {
+  [CLI_AUTO_TIER_AGENT_KEYS.flash]: true,
+  [CLI_AUTO_TIER_AGENT_KEYS.balanced]: true,
+  [CLI_AUTO_TIER_AGENT_KEYS.quality]: true,
+};
 
 export type CliAutoTier = keyof typeof CLI_AUTO_TIER_AGENT_KEYS;
 

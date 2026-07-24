@@ -47,6 +47,9 @@ const SYNC_HELP_LINE = `  --sync-to-server  After local save, push the credentia
 
 const CHATGPT_HELP_TEXT = `Authorize nolo-cli to call the OpenAI Codex / ChatGPT Plus API on your behalf.
 
+This authorizes model API access only. It does NOT log you into the Nolo platform.
+To manage agents, docs, spaces, and other Nolo resources, run "nolo login" first.
+
 Usage:
   nolo auth chatgpt [--browser] [--no-browser] [--sync-to-server] [--help]
 
@@ -65,6 +68,9 @@ apiSource: "custom" and provider: "openai".
 `;
 
 const XAI_HELP_TEXT = `Authorize nolo-cli to call the xAI Grok API via your SuperGrok subscription.
+
+This authorizes model API access only. It does NOT log you into the Nolo platform.
+To manage agents, docs, spaces, and other Nolo resources, run "nolo login" first.
 
 Usage:
   nolo auth xai [--browser] [--device-code] [--no-browser] [--sync-to-server] [--help]
@@ -90,6 +96,9 @@ apiSource: "custom" and provider: "xai".
 
 const ANTIGRAVITY_HELP_TEXT = `Authorize nolo-cli to call Google Antigravity (Gemini 3, Claude, GPT-OSS) via your Google account.
 
+This authorizes model API access only. It does NOT log you into the Nolo platform.
+To manage agents, docs, spaces, and other Nolo resources, run "nolo login" first.
+
 Usage:
   nolo auth antigravity [--browser] [--no-browser] [--sync-to-server] [--help]
 
@@ -112,6 +121,9 @@ apiSource: "custom" and provider: "google-antigravity".
 
 const CLAUDE_HELP_TEXT = `Authorize nolo-cli to call Anthropic Claude with your Claude Pro/Max subscription.
 
+This authorizes model API access only. It does NOT log you into the Nolo platform.
+To manage agents, docs, spaces, and other Nolo resources, run "nolo login" first.
+
 Usage:
   nolo auth claude [--browser] [--no-browser] [--sync-to-server] [--help]
 
@@ -130,6 +142,9 @@ Agents can reference the stored token with apiKeyRef: "claude", provider:
 `;
 
 const CLOUDFLARE_HELP_TEXT = `Authorize nolo-cli to manage Cloudflare resources on your behalf.
+
+This authorizes Cloudflare API access only. It does NOT log you into the Nolo platform.
+To manage agents, docs, spaces, and other Nolo resources, run "nolo login" first.
 
 Usage:
   nolo auth cloudflare [--client-id <id>] [--scope <scopes>] [--generate-token] [--zone-name <domain>] [--token-name <label>] [--browser] [--no-browser] [--sync-to-server] [--help]

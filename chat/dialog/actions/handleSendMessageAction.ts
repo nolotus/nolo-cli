@@ -172,6 +172,9 @@ export const handleSendMessageAction = async (
                 quickChatPerfStartedAt: args.quickChatPerfStartedAt,
             })
         ).unwrap();
+        // undefined = turn 静默未启动(启动失败,写错误文案);
+        // { aborted: true } = 用户取消或竞态取消(streamAgentChatTurn 的 abort
+        // 标记)——不是失败,不写错误文案。
         if (args.quickChatPerfStartedAt && streamResult === undefined) {
             logQuickChatPerfStage(args.quickChatPerfStartedAt, "handle-send-message-stream-empty", {
                 dialogKey: dialogConfig.dbKey,

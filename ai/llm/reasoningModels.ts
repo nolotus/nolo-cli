@@ -1,6 +1,8 @@
 const REASONING_MODEL_NAMES = new Set([
   "deepseek-v4-flash",
   "deepseek-v4-pro",
+  "gemini-3.6-flash",
+  // Legacy Gemini ids — 已从模型注册表下线，保留只为存量 agent 的 reasoning UI。
   "gemini-3.5-flash",
   "gemini-3-flash-preview",
   "gemini-3-pro-preview",

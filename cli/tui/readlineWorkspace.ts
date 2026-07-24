@@ -3,12 +3,17 @@ import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
-import { classifyCliAutoRoute } from "../client/autoModelRouter";
+import {
+  classifyCliAutoRoute,
+  CLI_AUTO_TIER_AGENT_KEY_TABLE,
+  CLI_IMAGE_AGENT_KEY,
+} from "../client/autoModelRouter";
 import {
   buildModelLayerOverride,
   type ModelLayerOverride,
 } from "../../agent-runtime/modelLayerOverride";
 import { readDbRecord } from "../agentRecordHelpers";
+import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../../ai/llm/agentCapabilities";
 import type { LocalAgentActionGate } from "../../agent-runtime/localLoop";
 import { readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
@@ -390,6 +395,36 @@ async function runAgentChat(
       output.write(
         `\n[nolo] auto → ${route.tier}${modelOverride ? ` (model: ${state.agentName})` : ""}\n`,
       );
+    }
+  }
+  // 图片输入：检测当前 agent 是否支持 vision，不支持则自动切换到 Kimi K2.6。
+  const hasImages = options.imageUrls && options.imageUrls.length > 0;
+  if (hasImages && effectiveAgentKey !== CLI_IMAGE_AGENT_KEY) {
+    let needsVisionSwitch = false;
+    if (CLI_AUTO_TIER_AGENT_KEY_TABLE[effectiveAgentKey]) {
+      // 三个 tier agent（flash/balanced/quality）均无 vision 能力。
+      needsVisionSwitch = true;
+    } else {
+      // 用户选择的 agent：读 record 检查 vision 能力。
+      const authToken =
+        env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
+      const record = await readDbRecord({
+        dbKey: effectiveAgentKey,
+        authToken,
+        serverUrl: state.serverUrl,
+        fetchImpl: fetch,
+      }).catch(() => null);
+      if (record && !resolveAgentImageInputSupport(record as AgentCapabilityConfig)) {
+        needsVisionSwitch = true;
+      }
+    }
+    if (needsVisionSwitch) {
+      output.write(
+        `\n[nolo] 当前 agent 不支持图片输入，已自动切换到 Kimi K2.6\n`,
+      );
+      effectiveAgentKey = CLI_IMAGE_AGENT_KEY;
+      effectiveAgentName = "Kimi K2.6";
+      modelOverride = null;
     }
   }
   const result: RunAgentTurnResult = await agentRunner({
@@ -1084,6 +1119,11 @@ export function createNoopFixedInput(): FixedInputController {
 
 type FixedInputConfig = {
   getStatusLine: () => string;
+  /**
+   * Optional extra lines rendered above the composer (below the status line),
+   * e.g. a preview of queued follow-up messages. Each entry is one line.
+   */
+  getQueueLines?: () => string[];
 };
 
 export function createFixedInput(
@@ -1142,6 +1182,16 @@ export function createFixedInput(
     sections.push(rule);
     sections.push(fitAnsiLine(config.getStatusLine(), cols));
 
+    // Queued follow-up preview lines sit between the status line and the input
+    // prompt so the user sees the actual staged text, not just a count.
+    const queueLines = config.getQueueLines?.() ?? [];
+    for (const line of queueLines) {
+      // Collapse any newline so each queued entry occupies exactly one physical
+      // row. headerRows counts entries, not physical rows, so an embedded "\n"
+      // would emit extra rows and drift the input cursor upward.
+      sections.push(fitAnsiLine(line.replace(/\r?\n/g, " "), cols));
+    }
+
     const prompt = t("promptLabel");
     const promptWidth = displayWidth(prompt);
     const contentWidth = Math.max(1, cols - promptWidth);
@@ -1179,7 +1229,8 @@ export function createFixedInput(
 
     const text = sections.join("\n");
     const lines = sections.length;
-    const headerRows = (completions.length > 0 ? 1 : 0) + 2; // completion? + top rule + status
+    const headerRows =
+      (completions.length > 0 ? 1 : 0) + 2 + queueLines.length; // completion? + top rule + status + queued preview
     return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 
@@ -1610,6 +1661,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     return chatQueueBinding;
   };
 
+  const emitCommandOutput = (text: string) => {
+    if (!text) return;
+    if (!isInteractiveInput(input)) {
+      output.write(`${text}\n`);
+      return;
+    }
+    history.followBottom = true;
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, text);
+    finalizeCurrentTurn(history);
+    renderHistoryToOutput();
+    if (fixedInput.active) fixedInput.repaint(buffer);
+  };
+
   const runSubmittedLine = async (
     line: string,
     actionGateHandler: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>,
@@ -1625,19 +1690,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // composer repaint (\x1b[J), which made /context et al invisible. Route
     // command echo + output through history instead.
     const interactive = isInteractiveInput(input);
-    const emitCommandOutput = (text: string) => {
-      if (!text) return;
-      if (!interactive) {
-        output.write(`${text}\n`);
-        return;
-      }
-      history.followBottom = true;
-      startTurn(history, "assistant");
-      appendToCurrentTurn(history, text);
-      finalizeCurrentTurn(history);
-      renderHistoryToOutput();
-      if (fixedInput.active) fixedInput.repaint(buffer);
-    };
 
     if (interactive && result.action?.type !== "chat") {
       history.followBottom = true;
@@ -1948,13 +2000,28 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       // queued while this turn was running.
       const binding = ensureChatQueueBinding(actionGateHandler, confirmDestructiveAction);
       binding.notifyTurnStart();
-      const outcome = await runOneAgentTurn(
-        result.action.message,
-        imageUrls,
-        actionGateHandler,
-        confirmDestructiveAction,
-      );
-      await binding.notifyTurnEnd(outcome);
+      try {
+        const outcome = await runOneAgentTurn(
+          result.action.message,
+          imageUrls,
+          actionGateHandler,
+          confirmDestructiveAction,
+        );
+        await binding.notifyTurnEnd(outcome);
+      } catch (err) {
+        // A throw here (e.g. a post-stream persistence / server-replication
+        // failure inside the agent runner) must NOT leave the queue machine
+        // stuck in `running`. That was the root cause of "the reply finished
+        // but every later message silently goes to the queue and never
+        // drains": notifyTurnEnd was never reached, so `running` stayed true
+        // and no future turn-end drove a drain. Report a failed (non-aborted)
+        // turn-end — chatQueueMachine keeps the queue on failure — and surface
+        // the error instead of swallowing it.
+        await binding.notifyTurnEnd({ ok: false, aborted: false });
+        emitCommandOutput(
+          `${t("turnFailed")}${err instanceof Error && err.message ? `\n${err.message}` : ""}`,
+        );
+      }
       if (fixedInput.active) fixedInput.repaint(buffer);
     }
 
@@ -2010,6 +2077,22 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           base += dimCliText(` · ↕ ${scrollHints.join("/")}`, resolveCliColorEnabled());
         }
         return base;
+      },
+      getQueueLines: () => {
+        if (!chatQueueBinding || chatQueueBinding.queueLength() === 0) return [];
+        const colorEnabled = resolveCliColorEnabled();
+        // queuePreview is the shared projection: up to 3 entries, each already
+        // truncated to 40 chars. Render each as a dim "⤷ <text>" line so the
+        // staged follow-ups are visible above the composer. Newlines in a
+        // queued paste must be collapsed to a single-line marker: each entry is
+        // one `sections` row, and an embedded "\n" would emit extra physical
+        // lines that headerRows doesn't count, drifting the input cursor.
+        return chatQueueBinding
+          .getStatus()
+          .queuePreview.map((text, i) => {
+            const oneLine = text.replace(/\r?\n/g, " ⏎ ");
+            return dimCliText(`  ⤷ ${i + 1}. ${oneLine}`, colorEnabled);
+          });
       },
     });
     fixedInput.init();
@@ -2116,6 +2199,29 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           // once the turn ends). The draft is cleared only on a successful
           // enqueue.
           const submittedText = result.submit;
+          const trimmedText = submittedText.trim();
+          if (trimmedText === "/context" || trimmedText === "/ctx") {
+            // Busy /context is a read-only probe, executed locally right now.
+            // It MUST NOT touch the shared history state machine: while a
+            // turn runs the assistant stream owns currentRole/currentContent,
+            // and calling startTurn("user") here would prematurely finalize
+            // the half-streamed reply; the tail chunks would then land under
+            // currentRole===null and be silently dropped by
+            // finalizeCurrentTurn, losing the end of the answer from the
+            // transcript permanently. It also shouldn't persist into history
+            // as a conversation turn (it's not one).
+            // Route through a transient render channel: write straight to the
+            // output stream. The next streaming repaint will overwrite it,
+            // which is the desired behavior for an ephemeral query.
+            const res = handleTuiInput(submittedText, state);
+            state = res.nextState;
+            if (res.output) {
+              output.write(`${res.output}\n`);
+            }
+            buffer = "";
+            if (fixedInput.active) fixedInput.repaint(buffer);
+            return;
+          }
           const binding = ensureChatQueueBinding(
             async (gate) => {
               actionGateWaiting = true;
@@ -2163,35 +2269,44 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // gated by `busy` above. This avoids tearing the input chrome down
         // and lets the draft persist across the turn.
         fixedInput.enterOutputMode(submittedText);
-        const shouldExit = await runSubmittedLine(
-          submittedText,
-          async (gate) => {
-            actionGateWaiting = true;
-            try {
-              return await waitForRawActionGate(input, output, gate, spawnRunner, {
-                beforeSubprocess: () => fixedInput.pause(),
-                afterSubprocess: () => fixedInput.resumeFromSubprocess(),
-              });
-            } finally {
-              actionGateWaiting = false;
-            }
-          },
-          async (request) =>
-            dialogHost.run((anchor) =>
-              runConfirmDialog({
-                request,
-                input: input as any,
-                output: output as any,
-                ...anchor,
-              }),
-            ),
-        );
+        // `busy` gates whether Enter starts a turn or queues. It MUST be
+        // released no matter how runSubmittedLine settles; leaving it stuck
+        // (an unhandled throw used to do exactly that) silently routes every
+        // later Enter into the queue with no way to drain. The finally is the
+        // last-resort guard; runSubmittedLine also handles turn errors itself.
+        let shouldExit = false;
+        try {
+          shouldExit = await runSubmittedLine(
+            submittedText,
+            async (gate) => {
+              actionGateWaiting = true;
+              try {
+                return await waitForRawActionGate(input, output, gate, spawnRunner, {
+                  beforeSubprocess: () => fixedInput.pause(),
+                  afterSubprocess: () => fixedInput.resumeFromSubprocess(),
+                });
+              } finally {
+                actionGateWaiting = false;
+              }
+            },
+            async (request) =>
+              dialogHost.run((anchor) =>
+                runConfirmDialog({
+                  request,
+                  input: input as any,
+                  output: output as any,
+                  ...anchor,
+                }),
+              ),
+          );
+        } finally {
+          busy = false;
+        }
         if (shouldExit) {
           fixedInput.disable();
           finish();
           return;
         }
-        busy = false;
         // Status may have picked up token usage during the turn — repaint chips.
         // Restore the user's draft (which may have been edited while busy).
         fixedInput.exitOutputMode(buffer);

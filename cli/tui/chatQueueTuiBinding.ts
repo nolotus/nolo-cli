@@ -40,7 +40,9 @@ export type ChatQueueTuiBinding = {
   /**
    * Notify that an agent turn ended. If the queue is non-empty and the turn
    * ended cleanly, this drains the head by calling `runTurn`, then notifies
-   * the core of the next turn-start/end. Resolves once the drain cascade
+   * the core of the next turn-start/end. The head is dequeued as soon as the
+   * drain starts (before `runTurn` resolves), so a drained message is treated
+   * as consumed even if the turn fails. Resolves once the drain cascade
    * settles (queue empty, paused, or a turn fails).
    */
   notifyTurnEnd(outcome: { ok: boolean; aborted: boolean }): Promise<void>;
@@ -104,15 +106,18 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
       if (!status.running && !status.drainPaused && status.queue.length > 0 && lastOk) {
         const text = status.queue[0]!;
         runtime.send({ type: "turn-start" });
+        // Dequeue as soon as a message is consumed by the drain, before the
+        // turn runs. The queue machine contract treats "drain started" as
+        // "consumed": once a message has been fed to the agent turn it must
+        // leave the queue immediately, regardless of whether the turn later
+        // succeeds or fails. Dequeueing only on success left failed turns in
+        // the queue, so the next clean turn-end would resend them.
+        runtime.send({ type: "dequeue" });
         let turnOutcome: { ok: boolean; aborted: boolean };
         try {
           turnOutcome = await runTurn(text);
         } catch {
           turnOutcome = { ok: false, aborted: false };
-        }
-        // Commit the head only on success.
-        if (turnOutcome.ok && !turnOutcome.aborted) {
-          runtime.send({ type: "dequeue" });
         }
         runtime.send({ type: "turn-end", ...turnOutcome });
         lastOk = turnOutcome.ok && !turnOutcome.aborted;

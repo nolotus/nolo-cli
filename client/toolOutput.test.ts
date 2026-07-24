@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { getCliLocale, setCliLocale } from "../tui/i18n";
 import {
+  createSseToolEventAdapter,
   createToolEventFormatter,
   formatActiveToolLabel,
   formatToolEventForCli,
@@ -182,5 +183,44 @@ describe("toolOutput", () => {
         "verbose"
       )
     ).toBe("[nolo:tool] #1 -> readFile README.md\n");
+  });
+
+  test("createSseToolEventAdapter maps SSE tool payloads to LocalAgentToolEvent", () => {
+    const events: LocalAgentToolEvent[] = [];
+    const adapter = createSseToolEventAdapter((evt) => events.push(evt));
+
+    // tool_start with calls
+    adapter.onToolStart(["readFile"]);
+    expect(events.length).toBe(1);
+    expect(events[0]).toEqual({
+      type: "tool-call",
+      toolCallId: "sse-call-1",
+      toolName: "readFile",
+      round: 0,
+    });
+
+    // tool_result with content truncation (<= 120 chars) and metadata passthrough
+    const longContent = "a".repeat(150);
+    const resultEvt = adapter.onToolResult({
+      toolName: "readFile",
+      content: longContent,
+      metadata: { ok: true },
+    });
+    expect(resultEvt.type).toBe("tool-result");
+    expect(resultEvt.summary?.length).toBeLessThanOrEqual(120);
+    expect(resultEvt.summary?.endsWith("…")).toBe(true);
+    expect(resultEvt.metadata).toEqual({ ok: true });
+    expect(resultEvt.round).toBe(0);
+
+    // tool_end increments round
+    adapter.onToolEnd();
+
+    adapter.onToolStart(["execShell"]);
+    expect(events[events.length - 1]).toEqual({
+      type: "tool-call",
+      toolCallId: "sse-call-2",
+      toolName: "execShell",
+      round: 1,
+    });
   });
 });

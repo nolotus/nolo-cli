@@ -8,7 +8,6 @@ import {
 } from "@reduxjs/toolkit";
 // Import actions
 import { removeAction } from "./actions/remove";
-import { readAction } from "./actions/read";
 import { readAndWaitAction } from "./actions/readAndWait";
 import { writeAction } from "./actions/write";
 import { patchAction } from "./actions/patch";
@@ -16,7 +15,8 @@ import { purgeAction } from "./actions/purge";
 import { upsertAction } from "./actions/upsert";
 import { uploadFileAction } from "./actions/upload";
 import { readFileContentAction } from "./actions/fileContent";
-import { shareResourceAction } from "../share/action";
+import type { ShareActionConfig } from "../share/action";
+// NOTE: readAction is intentionally NOT statically imported here — see read thunk.
 
 // Use dbKey as the entity's unique identifier
 export const dbAdapter = createEntityAdapter<any, string>({
@@ -47,13 +47,23 @@ const dbSlice = createSliceWithThunks({
   initialState,
   reducers: (create) => ({
     // Async Thunks
-    read: create.asyncThunk(readAction, {
-      fulfilled: (state, action: PayloadAction<any>) => {
-        if (action.payload && Object.keys(action.payload).length > 0) {
-          dbAdapter.upsertOne(state, action.payload);
-        }
+    // 惰性加载 readAction：esbuild 把大型 read.ts 排到同 chunk 后部时，
+    // `var readAction` 在 create.asyncThunk(readAction) 执行时仍是 undefined，
+    // 之后所有 dispatch(read) 抛 "payloadCreator is not a function"。
+    // 动态 import 在调用期解析，避开 TDZ/求值顺序问题（同下方 share）。
+    read: create.asyncThunk(
+      async (payload: any, thunkApi: any) => {
+        const { readAction } = await import("./actions/read");
+        return readAction(payload, thunkApi);
       },
-    }),
+      {
+        fulfilled: (state, action: PayloadAction<any>) => {
+          if (action.payload && Object.keys(action.payload).length > 0) {
+            dbAdapter.upsertOne(state, action.payload);
+          }
+        },
+      },
+    ),
     readAndWait: create.asyncThunk(readAndWaitAction, {
       fulfilled: (state, action: PayloadAction<any>) => {
         if (action.payload && Object.keys(action.payload).length > 0) {
@@ -116,18 +126,19 @@ const dbSlice = createSliceWithThunks({
     readFileContent: create.asyncThunk(readFileContentAction, {
       // fulfilled 时不修改 db state；由调用方通过 unwrap() 拿返回值使用
     }),
-    share: create.asyncThunk(shareResourceAction, {
-      fulfilled: (state, action: PayloadAction<any>) => {
-        if (action.payload && action.payload.key) {
-          // We might want to store the shared object in local DB state too?
-          // writeAction already does it. This is just for return value.
-          // Actually, writeAction is dispatched inside shareResourceAction.
-          // Does writeAction update state? Yes.
-          // So here we might not need to do anything extra to state, 
-          // just define the thunk.
-        }
-      }
-    }),
+    // 惰性加载 shareResourceAction：静态 import 会形成
+    // dbSlice -> share/action -> settings/settingSlice -> settingPersistence
+    // -> settings/dbActionThunks -> database/dbActionThunks -> dbSlice 的循环依赖。
+    // 分包后 chunk 求值顺序一旦从环内进入 dbSlice，上面的 `readAction` 等
+    // `export const` 还处于未初始化状态，thunk 会以 undefined 作为 payloadCreator
+    // 建成，之后 dispatch(read(...)) 抛 "payloadCreator is not a function"。
+    // 这里改成动态 import，运行期才解析，彻底断开这条边。
+    share: create.asyncThunk(
+      async (config: ShareActionConfig, thunkApi: any) => {
+        const { shareResourceAction } = await import("../share/action");
+        return shareResourceAction(config, thunkApi);
+      },
+    ),
     // SSR 预取：服务端直接注入实体到 db slice，供首屏 hydrate 使用
     upsertSSREntity: create.reducer((state, action: PayloadAction<any>) => {
       if (action.payload && action.payload.dbKey) {

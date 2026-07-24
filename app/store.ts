@@ -16,12 +16,9 @@ export interface RootState {
   db: any;
   settings: any;
   space: any;
-  notifications: any;
-  agent: any;
   table: any;
   toolRun: any;
   favorite: any;
-  share: any;
 }
 
 export type AppExtra = {

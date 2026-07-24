@@ -1,6 +1,6 @@
 // 路径: ai/agent/agentSlice.ts
 
-import { asyncThunkCreator, buildCreateSlice, type PayloadAction } from "@reduxjs/toolkit";
+import { asyncThunkCreator, buildCreateSlice } from "@reduxjs/toolkit";
 import type { Agent, AgentRuntimeBinding, ReferenceItem } from "../../app/types";
 import type { RootState } from "../../app/store";
 
@@ -82,14 +82,15 @@ const createSliceWithThunks = buildCreateSlice({
   creators: { asyncThunk: asyncThunkCreator },
 });
 
-/** Slice State 定义 */
-interface AgentState {
-  pubAgents: {
-    loading: boolean;
-    error: string | null;
-    data: Agent[];
-  };
-}
+/**
+ * Slice State 定义
+ *
+ * Wave5 已把首页 SSR 公开 Agent 列表剥叶为 module store + ALS
+ * （packages/ai/agent/publicAgentsSSRStore.ts + publicAgentsSSRAls.ts）。
+ * 该 slice 仅保留 runLlm / runAgent / createAgent / updateAgent /
+ * streamAgentChatTurn 等 async thunk；state 现为空对象，reducer 仍挂载。
+ */
+interface AgentState {}
 
 /** runLlm 参数（通用 LLM 调用） */
 interface RunLlmArgs {
@@ -131,13 +132,7 @@ interface UpdateAgentArgs {
   previousAgent?: Partial<Agent>; // UI 编辑时可以传，用来保持公共副本同步
 }
 
-const initialState: AgentState = {
-  pubAgents: {
-    loading: false,
-    error: null,
-    data: [],
-  },
-};
+const initialState: AgentState = {};
 
 const normalizeAgentReferences = (references: any[]): ReferenceItem[] => {
   if (!Array.isArray(references)) return [];
@@ -376,17 +371,6 @@ export const slice = createSliceWithThunks({
   name: "agent",
   initialState,
   reducers: (create) => ({
-    /**
-     * SSR 首屏：服务端预取公开 Agent 列表后注入，走 __PRELOADED_STATE__ 链路
-     */
-    setSSRPublicAgents: create.reducer(
-      (state, action: PayloadAction<Agent[]>) => {
-        state.pubAgents.data = Array.isArray(action.payload) ? action.payload : [];
-        state.pubAgents.loading = false;
-        state.pubAgents.error = null;
-      }
-    ),
-
     /**
      * 通用 LLM 调用（不带 Agent 上下文 / 历史）
      */
@@ -722,13 +706,8 @@ export const {
   streamAgentChatTurn,
   createAgent,
   updateAgent,
-  setSSRPublicAgents,
 } = slice.actions;
 
 const agentReducer: (state: AgentState | undefined, action: any) => AgentState = slice.reducer;
 
 export default agentReducer;
-
-/** 读取 SSR 预载的公开 Agent 列表（首页 AI 广场） */
-export const selectSSRPublicAgents = (state: any): Agent[] =>
-  state.agent?.pubAgents?.data ?? [];

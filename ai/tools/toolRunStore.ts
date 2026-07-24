@@ -266,17 +266,17 @@ export function getSnapshot(): number {
 }
 
 export function useAllToolRuns(): ToolRun[] {
-  useSyncExternalStore(subscribe, getSnapshot);
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return getAllToolRuns();
 }
 
 export function useToolRunById(id: string): ToolRun | undefined {
-  useSyncExternalStore(subscribe, getSnapshot);
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return getToolRunById(id);
 }
 
 export function useToolRunsByMessageId(messageId: string): ToolRun[] {
-  useSyncExternalStore(subscribe, getSnapshot);
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return getToolRunsByMessageId(messageId);
 }
 

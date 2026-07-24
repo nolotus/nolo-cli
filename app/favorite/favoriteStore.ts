@@ -581,42 +581,42 @@ export function getSnapshot(): number {
 }
 
 export function useFavoriteAgentIds(): string[] {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return getFavoriteAgentIds();
 }
 
 export function useFavoriteContentIds(): string[] {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return getFavoriteContentIds();
 }
 
 export function useFavoriteFavoritedAtById(): Record<string, number> {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return getFavoriteFavoritedAtById();
 }
 
 export function useFavoritesLoading(): boolean {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return getFavoritesLoading();
 }
 
 export function useFavoritesInitialized(): boolean {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return getFavoritesInitialized();
 }
 
 export function useFavoritesError(): string | null {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return getFavoritesError();
 }
 
 export function useIsAgentFavorited(agentKey: string): boolean {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return isAgentFavorited(agentKey);
 }
 
 export function useIsContentFavorited(contentKey: string): boolean {
-    useSyncExternalStore(subscribe, getSnapshot);
+    useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     return isContentFavorited(contentKey);
 }
 

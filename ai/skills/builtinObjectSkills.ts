@@ -1,5 +1,5 @@
 /**
- * Builtin object assistant skill definitions (doc + table).
+ * Builtin object assistant skill definitions (doc + table + code).
  *
  * These skill pages are referenced by the builtin object assistant agents
  * instead of carrying tool lists directly on the agent record.
@@ -13,10 +13,11 @@ import { buildSkillDocMarkdown, type SkillDocConfig } from "./skillDocProtocol";
 export const BUILTIN_OBJECT_SKILL_IDS = {
   table: "builtin-table-skill-v1",
   doc: "builtin-doc-skill-v1",
+  code: "builtin-code-skill-v1",
 } as const;
 
 export function buildBuiltinObjectSkillDbKey(
-  kind: "doc" | "table",
+  kind: "doc" | "table" | "code",
   userId: string,
 ): string {
   const skillId = BUILTIN_OBJECT_SKILL_IDS[kind];
@@ -24,11 +25,16 @@ export function buildBuiltinObjectSkillDbKey(
 }
 
 export function buildBuiltinObjectSkillReference(
-  kind: "doc" | "table",
+  kind: "doc" | "table" | "code",
   userId: string,
 ): ReferenceItem {
   const dbKey = buildBuiltinObjectSkillDbKey(kind, userId);
-  const title = kind === "doc" ? "文档编辑技能" : "表格编辑技能";
+  const title =
+    kind === "doc"
+      ? "文档编辑技能"
+      : kind === "table"
+        ? "表格编辑技能"
+        : "编码风格技能";
   return { dbKey, title, type: "instruction" };
 }
 
@@ -81,6 +87,29 @@ function buildTableSkillConfig(): SkillDocConfig {
   };
 }
 
+function buildCodeSkillConfig(): SkillDocConfig {
+  return {
+    version: "0.1",
+    kind: "skill",
+    id: BUILTIN_OBJECT_SKILL_IDS.code,
+    name: "编码风格技能",
+    description: "提供编码规范与风格约束，供代码任务使用。",
+    triggerMode: "explicit",
+    toolNames: [],
+    promptPatch: [
+      "编码风格与规范指南：",
+      "1. 文件拆分：优先拆分为多文件（MANY SMALL FILES），典型长度 200-400 行，单文件最多 800 行（800 max）。",
+      "2. 函数与嵌套：函数保持短小（<50 lines），优先使用 early returns 提前返回，嵌套层级不超过 4 层（nesting ≤4）。",
+      "3. 不可变性（immutability）：保持数据不可变，不要原地 mutate 现有对象或数组，必须返回新对象/数组。",
+      "4. 错误处理与校验：显式处理所有错误（explicit error handling），在系统边界完成校验（validate at boundaries），不隐式吞错。",
+      "5. 完成前 Checklist：完成前自查函数/文件尺寸、嵌套深度、不可变性与边界错误处理。",
+    ].join("\n"),
+    discover: {
+      keywords: ["代码", "编码", "重构", "修bug", "code", "refactor", "bugfix", "coding-style"],
+    },
+  };
+}
+
 function buildDocSkillPageContent(): string {
   const skillConfig = buildDocSkillConfig();
   return buildSkillDocMarkdown({
@@ -97,13 +126,25 @@ function buildTableSkillPageContent(): string {
   });
 }
 
+function buildCodeSkillPageContent(): string {
+  const skillConfig = buildCodeSkillConfig();
+  return buildSkillDocMarkdown({
+    body: "# 编码风格技能\n\n提供编码规范与风格约束。",
+    skillConfig,
+  });
+}
+
 /** 生成内置 skill page 的 content（含 skill-config 协议块），供落库与测试共用。 */
-export function buildBuiltinObjectSkillPageContent(kind: "doc" | "table"): string {
-  return kind === "doc" ? buildDocSkillPageContent() : buildTableSkillPageContent();
+export function buildBuiltinObjectSkillPageContent(
+  kind: "doc" | "table" | "code",
+): string {
+  if (kind === "doc") return buildDocSkillPageContent();
+  if (kind === "table") return buildTableSkillPageContent();
+  return buildCodeSkillPageContent();
 }
 
 /**
- * Ensure both builtin object skill pages exist for the given userId.
+ * Ensure builtin object skill pages exist for the given userId.
  * Returns a thunk suitable for dispatch.
  */
 export function ensureBuiltinObjectSkills(
@@ -113,7 +154,12 @@ export function ensureBuiltinObjectSkills(
     const { readAndWait, write } = await import("../../database/dbSlice");
 
     const now = Date.now();
-    const skills: Array<{ kind: "doc" | "table"; dbKey: string; title: string; content: string }> = [
+    const skills: Array<{
+      kind: "doc" | "table" | "code";
+      dbKey: string;
+      title: string;
+      content: string;
+    }> = [
       {
         kind: "doc",
         dbKey: buildBuiltinObjectSkillDbKey("doc", userId),
@@ -125,6 +171,12 @@ export function ensureBuiltinObjectSkills(
         dbKey: buildBuiltinObjectSkillDbKey("table", userId),
         title: "表格编辑技能",
         content: buildBuiltinObjectSkillPageContent("table"),
+      },
+      {
+        kind: "code",
+        dbKey: buildBuiltinObjectSkillDbKey("code", userId),
+        title: "编码风格技能",
+        content: buildBuiltinObjectSkillPageContent("code"),
       },
     ];
 

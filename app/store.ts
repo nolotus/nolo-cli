@@ -23,7 +23,6 @@ export interface RootState {
   toolRun: any;
   favorite: any;
   share: any;
-  appInspector: any;
 }
 
 export type AppExtra = {

@@ -809,7 +809,6 @@
     "app/i18n/translations/localFirst.locale.ts",
     "app/utils/async.ts",
     "app/notifications/notificationSlice.ts",
-    "app/appInspector/appInspectorSlice.ts",
     "app/notifications/model.ts",
     "auth/routes.ts",
     "auth/types.ts",

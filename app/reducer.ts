@@ -8,8 +8,7 @@ import spaceReducer from "../create/space/spaceSlice";
 
 import dialogReducer from "../chat/dialog/dialogSlice";
 import messageReducer from "../chat/messages/messageSlice";
-import favoriteReducer from ".//favorite/favoriteSlice";
-
+// favorite 已剥叶为 module store（app/favorite/favoriteStore.ts，Wave8），不再挂 reducer。
 // toolRun 已剥叶为 module store（ai/tools/toolRunStore.ts，Wave7），不再挂 reducer。
 
 // Explicit Record type so composite/declaration checks do not require naming
@@ -23,5 +22,4 @@ export const reducer: Record<string, any> = {
   settings: settingReducer,
   space: spaceReducer,
   table: tableReducer,
-  favorite: favoriteReducer,
 };

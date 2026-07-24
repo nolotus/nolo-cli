@@ -784,7 +784,7 @@
     "app/i18n/types.ts",
     "app/i18n/i18n.base.ts",
     "app/hooks/deleteDbKey.ts",
-    "app/favorite/favoriteSlice.ts",
+    "app/favorite/favoriteStore.ts",
     "app/favorite/deletedFavoriteProjection.ts",
     "app/favorite/type.ts",
     "app/constants/appEditor.ts",

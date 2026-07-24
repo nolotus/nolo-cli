@@ -1,5 +1,5 @@
 import { clearWorkflow } from "../ai/workflow/workflowStore";
-import { resetFavorites } from "../app/favorite/favoriteSlice";
+import { resetFavorites } from "../app/favorite/favoriteStore";
 import {
   abortAllMessages,
   clearDialogState,
@@ -27,6 +27,6 @@ export const resetAuthScopedClientState = async (dispatch: any) => {
   dispatch(clearPendingUserInputQueue({ all: true }));
   dispatch(resetMsgs({ all: true }));
   clearWorkflow();
-  dispatch(resetFavorites());
+  resetFavorites();
   dispatch(resetSpace());
 };

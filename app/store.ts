@@ -17,7 +17,6 @@ export interface RootState {
   settings: any;
   space: any;
   table: any;
-  favorite: any;
 }
 
 export type AppExtra = {

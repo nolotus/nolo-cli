@@ -13,7 +13,7 @@ import { deleteDialog } from "../../chat/dialog/dialogSlice";
 import { deleteTable } from "../../render/table/tableSlice";
 import { deleteContentFromSpace } from "../../create/space/spaceSlice";
 import { read, remove, selectById } from "../../database/dbSlice";
-import { removeFavoriteLocally } from "../favorite/favoriteSlice";
+import { removeFavoriteLocally } from "../favorite/favoriteStore";
 import { resolveDeletedFavoriteProjectionRemoval } from "../favorite/deletedFavoriteProjection";
 import { asNonEmptyStringArray } from "../../core/stringArray";
 import type { AppDispatch } from "../store";
@@ -323,7 +323,7 @@ export const deleteDbKey =
                 const favoriteProjectionRemoval =
                     resolveDeletedFavoriteProjectionRemoval(contentKey);
                 if (favoriteProjectionRemoval) {
-                    dispatch(removeFavoriteLocally(favoriteProjectionRemoval));
+                    removeFavoriteLocally(favoriteProjectionRemoval);
                 }
 
                 if (typeof window !== "undefined") {

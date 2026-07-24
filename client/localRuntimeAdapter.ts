@@ -241,6 +241,19 @@ function ensureHeavyCliLocalRuntimeModules() {
 
 const TRANSIENT_FETCH_MAX_ATTEMPTS = 3;
 const TRANSIENT_FETCH_RETRY_BASE_DELAY_MS = 250;
+// Max wait for remote dialog-evidence sync fetches (POST write / GET read)
+// before aborting, so an unreachable/hung server cannot stall a turn.
+const REMOTE_DIALOG_SYNC_TIMEOUT_MS = 10000;
+// Test-only override for the sync fetch timeout so suites can exercise the
+// abort path without waiting the real timeout. Reset to undefined to restore.
+let remoteDialogSyncTimeoutMsForTest: number | undefined;
+/** Test-only: shorten the remote sync fetch timeout. */
+export function setRemoteDialogSyncTimeoutForTest(ms?: number) {
+  remoteDialogSyncTimeoutMsForTest = ms;
+}
+function remoteDialogSyncTimeout(): number {
+  return remoteDialogSyncTimeoutMsForTest ?? REMOTE_DIALOG_SYNC_TIMEOUT_MS;
+}
 const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
 export const BUILTIN_NOLO_AGENT_KEY = NOLO_DEFAULT_AGENT_KEY;
 const SOURCE_CLI_DIR = dirname(fileURLToPath(import.meta.url));
@@ -1037,6 +1050,7 @@ export async function postRemoteRecord(args: {
       userId: args.userId,
       data: prepareRemoteDialogEvidenceRecord(args.key, args.data),
     }),
+    signal: AbortSignal.timeout(remoteDialogSyncTimeout()),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -1059,6 +1073,7 @@ async function readRemoteRecord(args: {
       headers: {
         Authorization: `Bearer ${args.authToken}`,
       },
+      signal: AbortSignal.timeout(remoteDialogSyncTimeout()),
     },
   );
   if (!response.ok) return null;

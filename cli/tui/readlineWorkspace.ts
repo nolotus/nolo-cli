@@ -1661,6 +1661,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     return chatQueueBinding;
   };
 
+  const emitCommandOutput = (text: string) => {
+    if (!text) return;
+    if (!isInteractiveInput(input)) {
+      output.write(`${text}\n`);
+      return;
+    }
+    history.followBottom = true;
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, text);
+    finalizeCurrentTurn(history);
+    renderHistoryToOutput();
+    if (fixedInput.active) fixedInput.repaint(buffer);
+  };
+
   const runSubmittedLine = async (
     line: string,
     actionGateHandler: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>,
@@ -1676,19 +1690,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // composer repaint (\x1b[J), which made /context et al invisible. Route
     // command echo + output through history instead.
     const interactive = isInteractiveInput(input);
-    const emitCommandOutput = (text: string) => {
-      if (!text) return;
-      if (!interactive) {
-        output.write(`${text}\n`);
-        return;
-      }
-      history.followBottom = true;
-      startTurn(history, "assistant");
-      appendToCurrentTurn(history, text);
-      finalizeCurrentTurn(history);
-      renderHistoryToOutput();
-      if (fixedInput.active) fixedInput.repaint(buffer);
-    };
 
     if (interactive && result.action?.type !== "chat") {
       history.followBottom = true;
@@ -2198,6 +2199,29 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           // once the turn ends). The draft is cleared only on a successful
           // enqueue.
           const submittedText = result.submit;
+          const trimmedText = submittedText.trim();
+          if (trimmedText === "/context" || trimmedText === "/ctx") {
+            // Busy /context is a read-only probe, executed locally right now.
+            // It MUST NOT touch the shared history state machine: while a
+            // turn runs the assistant stream owns currentRole/currentContent,
+            // and calling startTurn("user") here would prematurely finalize
+            // the half-streamed reply; the tail chunks would then land under
+            // currentRole===null and be silently dropped by
+            // finalizeCurrentTurn, losing the end of the answer from the
+            // transcript permanently. It also shouldn't persist into history
+            // as a conversation turn (it's not one).
+            // Route through a transient render channel: write straight to the
+            // output stream. The next streaming repaint will overwrite it,
+            // which is the desired behavior for an ephemeral query.
+            const res = handleTuiInput(submittedText, state);
+            state = res.nextState;
+            if (res.output) {
+              output.write(`${res.output}\n`);
+            }
+            buffer = "";
+            if (fixedInput.active) fixedInput.repaint(buffer);
+            return;
+          }
           const binding = ensureChatQueueBinding(
             async (gate) => {
               actionGateWaiting = true;

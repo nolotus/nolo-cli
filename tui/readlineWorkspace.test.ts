@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 
 import {
   ANSI_ESCAPE_REGEX,
@@ -18,6 +19,7 @@ import {
   renderHistory,
   splitRawInput,
   startTurn,
+  startTuiWorkspace,
   stripAnsi,
   takeDisplayWidth,
   truncateAnsi,
@@ -923,5 +925,120 @@ describe("scroll-aware history", () => {
   test("splitRawInput keeps SGR mouse wheel sequences intact", () => {
     expect(splitRawInput("\x1b[<64;35;10M")).toEqual(["\x1b[<64;35;10M"]);
     expect(splitRawInput("\x1b[<65;1;1M")).toEqual(["\x1b[<65;1;1M"]);
+  });
+
+  test("executes /context locally during busy turn without enqueuing, while normal text remains queued", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    let resolveFirstTurn: (() => void) | null = null;
+    const firstTurnPromise = new Promise<void>((resolve) => {
+      resolveFirstTurn = resolve;
+    });
+
+    let turnCount = 0;
+    const turnsProcessed: string[] = [];
+
+    // The agent runner streams its reply to opt.output in multiple chunks,
+    // yielding between them so the busy /context submit can interleave. This
+    // is what actually exercises the startTurn/currentRole race: the assistant
+    // turn is mid-flight (currentRole==="assistant", partial content buffered)
+    // when /context is handled.
+    const HEAD = "HEAD-part-of-the-reply";
+    const TAIL = "TAIL-part-of-the-reply";
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        turnsProcessed.push(opt.message);
+        if (turnCount === 1) {
+          // Stream the head of the reply, then pause mid-turn so the test can
+          // submit /context while the assistant stream is still in flight.
+          opt.output.write(HEAD);
+          await new Promise((r) => setTimeout(r, 30));
+          await firstTurnPromise;
+          // After /context has been handled, stream the tail. With the fix the
+          // whole reply (HEAD + TAIL) lives in one assistant turn; with the old
+          // startTurn path the tail would be dropped.
+          opt.output.write(TAIL);
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    // Send first user input to start turn 1 and enter busy state
+    input.write("start turn 1\r");
+
+    // Wait until agentRunner is executing turn 1 (HEAD already streamed)
+    while (turnCount < 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // Let the HEAD chunk + its repaint settle.
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Now workspace is busy mid-stream. Submit /context while busy.
+    input.write("/context\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // /context must be executed locally and rendered to the user immediately,
+    // via the transient channel (never enqueued as a chat turn).
+    const outputTextAfterContext = Buffer.concat(chunks).toString("utf8");
+    expect(outputTextAfterContext).toContain("Workspace context");
+
+    // Submit normal text while busy -> this SHOULD be enqueued for after turn
+    input.write("normal queued text\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Finish first turn (releases TAIL streaming + finalization)
+    resolveFirstTurn!();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Give time for the queued text turn to run
+    while (turnCount < 2) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    input.write("/exit\r");
+    input.end();
+
+    await Promise.race([
+      workspacePromise,
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
+
+    // /context was NOT enqueued as a chat turn: only the real user messages
+    // reached the agent runner. This is the real queue-state verification
+    // (the head-of-queue drain produced exactly "normal queued text").
+    expect(turnsProcessed).toEqual(["start turn 1", "normal queued text"]);
+
+    // The in-flight assistant reply must be preserved in full in the
+    // transcript: both the pre-/context head and the post-/context tail
+    // appear in the rendered output. With the old startTurn path the tail
+    // would be dropped, failing this assertion.
+    const fullOutput = Buffer.concat(chunks).toString("utf8");
+    expect(fullOutput).toContain(HEAD);
+    expect(fullOutput).toContain(TAIL);
   });
 });

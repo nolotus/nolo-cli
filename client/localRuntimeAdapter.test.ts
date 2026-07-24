@@ -9,6 +9,8 @@ import type { PermissionRequest } from "../agent-runtime/actionGate";
 import {
   clearCliLocalRuntimePreparedAgentCache,
   createCliLocalRuntimeAdapter,
+  postRemoteRecord,
+  setRemoteDialogSyncTimeoutForTest,
 } from "./localRuntimeAdapter";
 import { LOCAL_CODEX_AGENT_KEY } from "../agentAliases";
 
@@ -3792,6 +3794,120 @@ describe("CLI local runtime adapter", () => {
       expect(readFileSync(join(workspaceRoot, "src/app.ts"), "utf8")).toBe("export const cliValue = 1;\n");
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("CLI local runtime adapter remote sync fetch timeout", () => {
+  test("postRemoteRecord aborts a hung fetch via AbortSignal.timeout (TimeoutError)", async () => {
+    // Shorten the timeout via the test-only hook so this never waits the real
+    // 10s. A hung/unreachable server is simulated by a fetchImpl that never
+    // resolves on its own; it can only be aborted by the signal we attach.
+    setRemoteDialogSyncTimeoutForTest(15);
+    try {
+      let receivedSignal: AbortSignal | undefined;
+      // Simulate a hung server the way real fetch would behave: the socket
+      // never answers, but the request still rejects when the abort signal
+      // fires. A fake that ignores the signal would hang the test forever —
+      // AbortSignal only aborts listeners, it cannot reject a promise that
+      // never observes it.
+      const hungFetch = async (_url: any, init?: any) => {
+        receivedSignal = init?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal.reason),
+          );
+        });
+      };
+
+      const promise = postRemoteRecord({
+        authToken: "token-1",
+        data: { hello: "world" },
+        fetchImpl: hungFetch as any,
+        key: "dialog-timeout-test",
+        serverUrl: "https://us.nolo.chat",
+        userId: "user-1",
+      });
+
+      // AbortSignal.timeout(...) rejects with a DOMException named
+      // "TimeoutError" once the timeout elapses.
+      await expect(promise).rejects.toMatchObject({ name: "TimeoutError" });
+      // The abort signal must be passed into the fetch call; otherwise a hung
+      // server would hang the turn for undici's default (minutes).
+      expect(receivedSignal).toBeInstanceOf(AbortSignal);
+      expect(receivedSignal?.aborted).toBe(true);
+    } finally {
+      setRemoteDialogSyncTimeoutForTest(undefined);
+    }
+  });
+
+  test("normal-turn remote sync surface warns on timeout instead of throwing", async () => {
+    // A subjectRef-less turn must treat the abort/timeout as non-fatal: the
+    // sync fetch aborts but the turn still completes with a warning.
+    setRemoteDialogSyncTimeoutForTest(15);
+    try {
+      const store = new Map<string, any>([
+        ["agent-user-1-frontend", {
+          dbKey: "agent-user-1-frontend",
+          id: "frontend",
+          name: "Frontend",
+          prompt: "You are the frontend implementer.",
+          apiSource: "cli",
+          cliProvider: "agy",
+        }],
+      ]);
+      const warnings: string[] = [];
+      const adapter = createAdapter({
+        env: {
+          NOLO_LOCAL_USER_ID: "user-1",
+          NOLO_SERVER: "https://us.nolo.chat",
+          AUTH_TOKEN: "token-1",
+        },
+        db: {
+          get: async (key) => {
+            if (!store.has(key)) throw new Error(`not found: ${key}`);
+            return store.get(key);
+          },
+          put: async (key, value) => {
+            store.set(key, value);
+          },
+          batch: async (ops) => {
+            for (const op of ops) {
+              if (op.type === "put") store.set(op.key, op.value);
+            }
+          },
+          iterator: () => (async function* () {})(),
+        },
+        createId: () => "01ABORT",
+        fetchImpl: async (_url: any, init?: any) => {
+          // Agent-config loading reads the agent record from the server first
+          // (hybrid store) — answer those so the turn can proceed. Only the
+          // dialog-evidence sync writes hang, abort-aware like real fetch
+          // (see the postRemoteRecord timeout test above for why this matters).
+          if (String(_url).includes("/api/v1/db/read/")) {
+            return Response.json({ data: store.get("agent-user-1-frontend") });
+          }
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(init.signal.reason),
+            );
+          });
+        },
+        executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
+        output: { write: (chunk: string) => warnings.push(chunk) },
+      } as any);
+
+      const result = await runLocalAgentTurn({
+        adapter,
+        agentRef: "frontend",
+        input: "hello",
+      });
+
+      // Turn completes despite the hung remote sync.
+      expect(result.dialogId).toBe("01ABORT");
+      expect(warnings.some((w) => w.includes("Remote dialog evidence sync failed"))).toBe(true);
+    } finally {
+      setRemoteDialogSyncTimeoutForTest(undefined);
     }
   });
 });

@@ -1,15 +1,13 @@
-import { useSyncExternalStore } from "react";
-
 import type {
   WorkflowStepState,
   WorkflowExecutionStats,
 } from "./workflowTypes";
 
-// Module store for workflow UI/progress state — peeled out of Redux.
+// Module store for workflow progress state — peeled out of Redux.
 // Mirrors packages/app/appInspector/appInspectorStore.ts:
 //   - listeners Set + version counter
 //   - notify/bump with try/catch around each listener
-//   - hooks call useSyncExternalStore(subscribe, getSnapshot) then return getters
+// No React hooks today (no UI consumers); subscribe/getSnapshot kept for tests.
 
 interface WorkflowStoreState {
   title: string | null;
@@ -124,21 +122,6 @@ export function subscribe(listener: () => void): () => void {
 
 export function getSnapshot(): number {
   return version;
-}
-
-export function useWorkflowSteps(): WorkflowStepState[] {
-  useSyncExternalStore(subscribe, getSnapshot);
-  return getWorkflowSteps();
-}
-
-export function useWorkflowTitle(): string | null {
-  useSyncExternalStore(subscribe, getSnapshot);
-  return getWorkflowTitle();
-}
-
-export function useWorkflowStats(): WorkflowExecutionStats {
-  useSyncExternalStore(subscribe, getSnapshot);
-  return getWorkflowStats();
 }
 
 export function resetWorkflowStoreForTests(): void {

@@ -567,22 +567,6 @@ export function isContentFavorited(contentKey: string): boolean {
     return state.contentIds.includes(contentKey);
 }
 
-// Thin select* wrappers (ignore Redux state) for gradual migration / mocks.
-// UI must prefer hooks below — useAppSelector(select*) will NOT re-render on
-// store changes because Redux state no longer holds favorite.
-export const selectFavoriteAgentIds = (_state?: any) => getFavoriteAgentIds();
-export const selectFavoriteContentIds = (_state?: any) => getFavoriteContentIds();
-export const selectFavoriteFavoritedAtById = (_state?: any) =>
-    getFavoriteFavoritedAtById();
-export const selectFavoritesLoading = (_state?: any) => getFavoritesLoading();
-export const selectFavoritesInitialized = (_state?: any) =>
-    getFavoritesInitialized();
-export const selectFavoritesError = (_state?: any) => getFavoritesError();
-export const selectIsAgentFavorited = (_state: any, agentKey: string) =>
-    isAgentFavorited(agentKey);
-export const selectIsContentFavorited = (_state: any, contentKey: string) =>
-    isContentFavorited(contentKey);
-
 // ===== useSyncExternalStore =====
 
 export function subscribe(listener: () => void): () => void {

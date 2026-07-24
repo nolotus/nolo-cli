@@ -118,6 +118,10 @@ const STRINGS = {
     en: "Stopped this reply.",
     zh: "已停止本次回复。",
   },
+  turnFailed: {
+    en: "This reply failed. Queued messages are kept — press Enter to resend.",
+    zh: "本次回复出错。已排队的消息仍保留，按 Enter 可重新发送。",
+  },
   copiedLastReply: {
     en: "Copied the last reply to the clipboard.",
     zh: "已复制最后一条回复到剪贴板。",

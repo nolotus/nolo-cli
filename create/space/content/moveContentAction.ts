@@ -276,15 +276,6 @@ export const moveContentAction = async (
       error: overallError, // 如果过程中有错误，则传递错误信息
     };
 
-    // 如果在主 try 块中捕获到错误，重新抛出，让 Thunk 进入 rejected 状态
-    // 否则，返回成功结果（即使最终读取失败，操作本身可能成功）
-    if (overallError) {
-      // 可以选择性地返回部分成功的数据，或者直接抛出错误
-      // throw new Error(overallError); // 这会使 Thunk rejected
-      // 或者，像现在这样，在返回对象中包含错误信息，让 reducer 处理 fulfilled 状态
-      return result;
-    }
-
     return result;
   }
 };

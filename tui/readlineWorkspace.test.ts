@@ -213,6 +213,68 @@ describe("createFixedInput", () => {
     expect(stdout).toContain(`\x1b[${cursorRow1};${cursorCol1}H`);
   });
 
+  test("renders queued preview lines above the input and shifts the cursor down", () => {
+    const tty = mockTty();
+    const queueLines = ["  ⤷ 1. first queued", "  ⤷ 2. second queued"];
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "nolo > test",
+      getQueueLines: () => queueLines,
+    });
+
+    input.init();
+    input.repaint("draft");
+
+    // Queue lines add rows to the composer so it re-docks with the right height.
+    expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES + queueLines.length);
+    const lines = input.getInputLines();
+    const composerStart = TERM_ROWS - lines + 1;
+    // top rule + status + 2 queued lines = 4 header rows before the input row.
+    // Without counting queueLines in headerRows the cursor would land on a
+    // queued preview line instead of the input line.
+    const headerRows = 2 + queueLines.length;
+    const promptWidth = displayWidth(t("promptLabel"));
+    const cursorCol = promptWidth + displayWidth("draft") + 1;
+    const cursorRow = composerStart + headerRows;
+
+    const stdout = tty.stdout();
+    expect(stdout).toContain("first queued");
+    expect(stdout).toContain("second queued");
+    expect(stdout).toContain(`\x1b[${cursorRow};${cursorCol}H`);
+  });
+
+  test("collapses newlines in a queued preview entry to keep it one physical row", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "nolo > test",
+      // A queued multi-line paste: the entry must not inject extra physical
+      // rows, or headerRows (which counts entries) undercounts and the cursor
+      // drifts up.
+      getQueueLines: () => ["one\ntwo"],
+    });
+
+    input.init();
+    input.repaint("draft");
+
+    const stdout = tty.stdout();
+    expect(stdout).toContain("one two");
+    expect(stdout).not.toContain("one\ntwo");
+    // One entry stays one composer row.
+    expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES + 1);
+  });
+
+  test("omits queued preview lines when getQueueLines returns empty", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "nolo > test",
+      getQueueLines: () => [],
+    });
+
+    input.init();
+    input.repaint("");
+
+    expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES);
+  });
+
   test("keeps the docked composer when entering output mode", () => {
     const tty = mockTty();
     const input = createFixedInput(tty.output, {

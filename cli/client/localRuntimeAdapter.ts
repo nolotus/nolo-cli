@@ -15,6 +15,10 @@ import type {
   AgentRuntimeToolResult,
 } from "../../agent-runtime";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
+import {
+  readDialogFromLocalDb,
+  type LocalDialogReadResult,
+} from "../../agent-runtime/localDialogRead";
 import type {
   LocalAgentTurnInput,
   LocalAgentTurnResult,
@@ -1014,7 +1018,7 @@ function buildLocalParentWakeMessage(args: {
   ].join("\n");
 }
 
-async function postRemoteRecord(args: {
+export async function postRemoteRecord(args: {
   authToken: string;
   data: any;
   fetchImpl: CliFetchImpl;
@@ -1848,32 +1852,41 @@ async function writeDialog(args: {
     ...(titleOverride ? { titleOverride } : {}),
   });
   await args.store.batch(plan.ops);
-  const shouldSyncRemoteEvidence = localTurnHasSubjectRefs(args.input);
-  try {
-    const syncResult = shouldSyncRemoteEvidence
-      ? await syncLocalDialogEvidenceToRemote({
-          env: args.env,
-          fetchImpl: args.fetchImpl,
-          input: args.input,
-          ops: plan.ops,
-          output: args.output,
-          userId: args.userId,
-        })
-      : { attempted: false as const };
-    if (shouldSyncRemoteEvidence && !syncResult.attempted) {
+
+  // Sync all local turns to the configured server, unless the user is "local"
+  // (device-local hard boundary — server write routes reject userId "local").
+  const hasSubjectRefs = localTurnHasSubjectRefs(args.input);
+  const isLocalUser = args.userId === "local";
+  if (!isLocalUser) {
+    try {
+      const syncResult = await syncLocalDialogEvidenceToRemote({
+        env: args.env,
+        fetchImpl: args.fetchImpl,
+        input: args.input,
+        ops: plan.ops,
+        output: args.output,
+        userId: args.userId,
+      });
+      if (!syncResult.attempted) {
+        if (hasSubjectRefs) {
+          args.output?.write(
+            "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n",
+          );
+        }
+        // Non-subjectRefs turns: no output when no server/token is configured.
+      }
+    } catch (error) {
+      if (hasSubjectRefs) {
+        // SubjectRefs evidence contract: failure must propagate.
+        throw error;
+      }
+      // Normal turn: sync failure is non-fatal, just warn.
       args.output?.write(
-        "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n",
+        `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(
+          error,
+        )}\n`,
       );
     }
-  } catch (error) {
-    if (shouldSyncRemoteEvidence) {
-      throw error;
-    }
-    args.output?.write(
-      `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(
-        error,
-      )}\n`,
-    );
   }
   return { dialogId: plan.dialogId };
 }
@@ -2468,4 +2481,153 @@ export function createCliLocalRuntimeAdapter(
       };
     },
   };
+}
+
+export async function pushLocalDialogToRemote(args: {
+  authToken: string;
+  continueDialogId: string;
+  env: EnvLike;
+  fetchImpl?: CliFetchImpl;
+  output?: { write(chunk: string): unknown };
+  serverUrl?: string;
+  userId: string;
+}): Promise<{ ok: boolean; exitCode?: number }> {
+  const serverUrl =
+    (args.serverUrl && args.serverUrl.trim() ? args.serverUrl.trim() : undefined) ||
+    resolveRuntimeServerUrl(args.env);
+  if (!serverUrl) {
+    args.output?.write(
+      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (server URL missing). Please check your network or authentication, or start a new dialog.\n`,
+    );
+    return { ok: false, exitCode: 1 };
+  }
+  const fetchImpl =
+    args.fetchImpl ?? (globalThis.fetch as unknown as CliFetchImpl);
+  const dialogKey = `dialog-${args.userId}-${args.continueDialogId}`;
+
+  let localData: LocalDialogReadResult;
+  try {
+    localData = await readDialogFromLocalDb({
+      dialogKey,
+      dialogId: args.continueDialogId,
+      limit: 0,
+    });
+  } catch (err) {
+    args.output?.write(
+      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (${toErrorMessage(err)}). Please check your network or authentication, or start a new dialog.\n`,
+    );
+    return { ok: false, exitCode: 1 };
+  }
+
+  if (!localData || !localData.meta) {
+    args.output?.write(
+      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (local dialog record not found). Please check your network or authentication, or start a new dialog.\n`,
+    );
+    return { ok: false, exitCode: 1 };
+  }
+
+  try {
+    for (const msg of localData.msgs || []) {
+      const msgKey =
+        msg._key ||
+        msg.dbKey ||
+        `dialog-msg-${args.continueDialogId}-${msg.id}`;
+      await postRemoteRecord({
+        authToken: args.authToken,
+        data: msg,
+        fetchImpl,
+        key: msgKey,
+        serverUrl,
+        userId: args.userId,
+      });
+    }
+
+    await postRemoteRecord({
+      authToken: args.authToken,
+      data: localData.meta,
+      fetchImpl,
+      key: dialogKey,
+      serverUrl,
+      userId: args.userId,
+    });
+  } catch (err) {
+    args.output?.write(
+      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (${toErrorMessage(err)}). Please check your network or authentication, or start a new dialog.\n`,
+    );
+    return { ok: false, exitCode: 1 };
+  }
+
+  return { ok: true };
+}
+
+export async function ensureDialogSyncedForServerFallback(
+  options: {
+    continueDialogId?: string;
+    env: EnvLike;
+    fetchImpl?: CliFetchImpl;
+    output?: { write(chunk: string): unknown };
+    serverUrl?: string;
+  },
+  authToken: string,
+): Promise<{ ok: boolean; exitCode?: number }> {
+  const continueDialogId = options.continueDialogId
+    ? String(options.continueDialogId).trim()
+    : "";
+  if (!continueDialogId) {
+    return { ok: true };
+  }
+
+  const userId = parseUserIdFromAuthToken(authToken);
+  if (!userId || userId === "local") {
+    return { ok: true };
+  }
+
+  const serverUrl =
+    resolveRuntimeServerUrl(options.env) ||
+    (options.serverUrl && options.serverUrl.trim() ? options.serverUrl.trim() : undefined);
+  if (!serverUrl) {
+    return { ok: true };
+  }
+  const fetchImpl =
+    options.fetchImpl ?? (globalThis.fetch as unknown as CliFetchImpl);
+  const dialogKey = `dialog-${userId}-${continueDialogId}`;
+
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${serverUrl}/api/v1/db/read/${encodeURIComponent(dialogKey)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      },
+    );
+  } catch (err) {
+    options.output?.write(
+      `[nolo] Warning: Failed to check remote dialog status (${toErrorMessage(err)}); continuing fallback.\n`,
+    );
+    return { ok: true };
+  }
+
+  if (response.ok) {
+    return { ok: true };
+  }
+
+  if (response.status === 404) {
+    return pushLocalDialogToRemote({
+      authToken,
+      continueDialogId,
+      env: options.env,
+      fetchImpl,
+      output: options.output,
+      serverUrl,
+      userId,
+    });
+  }
+
+  options.output?.write(
+    `[nolo] Warning: Failed to check remote dialog status (HTTP ${response.status}); continuing fallback.\n`,
+  );
+  return { ok: true };
 }

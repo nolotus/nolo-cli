@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { Writable } from "node:stream";
 
 import { expectNoRetiredTaskOrchestrationTerms } from "../../../scripts/helpers/retiredTaskOrchestrationTerms";
@@ -2295,5 +2295,332 @@ describe("cli agent run client", () => {
     });
     expect(outputHide.text()).not.toContain("Thinking only...");
     expect(outputHide.text()).toContain("(no text response)");
+  });
+
+  describe("auto runtime dialog fallback precheck and push", () => {
+    const TEST_TOKEN =
+      "header." +
+      Buffer.from(JSON.stringify({ userId: "user-taskb-123" })).toString("base64") +
+      ".sig";
+
+    test("server 已有 dialog -> 不补推，直接 fallback", async () => {
+      const output = new CaptureOutput();
+      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
+
+      const localRuntimeAdapter = {
+        host: "cli" as const,
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef: string) => ({
+          key: agentRef,
+          name: "Local",
+          apiSource: "custom" as const,
+          customProviderUrl: "http://127.0.0.1:11434/v1",
+          model: "local-model",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-exists-123" }),
+        resolveProvider: async () => ({
+          model: "local-model",
+          complete: async () => {
+            throw new Error("local provider offline");
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools");
+        },
+      };
+
+      const result = await runAgentTurn({
+        agentName: "nolo",
+        agentKey: "agent-pub-test",
+        serverUrl: "https://nolo.chat",
+        message: "hello",
+        scriptDir: "C:/missing/scripts",
+        env: { AUTH_TOKEN: TEST_TOKEN },
+        runtimeMode: "auto",
+        continueDialogId: "dialog-exists-123",
+        output,
+        localRuntimeAdapter,
+        fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = String(input);
+          const method = init?.method ?? "GET";
+          let body: any = null;
+          if (init?.body) {
+            try {
+              body = JSON.parse(String(init.body));
+            } catch {}
+          }
+          fetchCalls.push({ url: urlStr, method, body });
+
+          if (urlStr.includes("/api/v1/db/read/dialog-user-taskb-123-dialog-exists-123")) {
+            return Response.json({
+              data: { id: "dialog-exists-123", userId: "user-taskb-123" },
+            });
+          }
+          if (urlStr.includes("/api/agent/run")) {
+            return Response.json({
+              content: "server response",
+              dialogId: "dialog-exists-123",
+            });
+          }
+          return Response.json({ error: "not found" }, { status: 404 });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const getCalls = fetchCalls.filter((c) => c.method === "GET");
+      expect(getCalls.length).toBe(1);
+      expect(getCalls[0].url).toContain("dialog-user-taskb-123-dialog-exists-123");
+      const writeCalls = fetchCalls.filter((c) => c.url.includes("/api/v1/db/write/"));
+      expect(writeCalls.length).toBe(0);
+      const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
+      expect(runCalls.length).toBe(1);
+    });
+
+    test("server 404 + 本地有 -> 先补推（dialog+消息全部 POST），成功后发起 server run", async () => {
+      const output = new CaptureOutput();
+      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
+
+      const localRuntimeAdapter = {
+        host: "cli" as const,
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef: string) => ({
+          key: agentRef,
+          name: "Local",
+          apiSource: "custom" as const,
+          customProviderUrl: "http://127.0.0.1:11434/v1",
+          model: "local-model",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-sync-404" }),
+        resolveProvider: async () => ({
+          model: "local-model",
+          complete: async () => {
+            throw new Error("local provider offline");
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools");
+        },
+      };
+
+      const realLocalDialogRead = await import("../agent-runtime/localDialogRead");
+      mock.module("../../agent-runtime/localDialogRead", () => ({
+        readDialogFromLocalDb: async (args: { dialogKey: string; dialogId: string; limit: number }) => {
+          if (args.dialogId === "dialog-sync-404") {
+            return {
+              meta: { id: "dialog-sync-404", userId: "user-taskb-123", agentKey: "nolo" },
+              msgs: [
+                {
+                  id: "msg-1",
+                  _key: "dialog-msg-dialog-sync-404-msg-1",
+                  content: "local msg 1",
+                },
+              ],
+            };
+          }
+          return realLocalDialogRead.readDialogFromLocalDb(args);
+        },
+      }));
+
+      const result = await runAgentTurn({
+        agentName: "nolo",
+        agentKey: "agent-pub-test",
+        serverUrl: "https://nolo.chat",
+        message: "hello",
+        scriptDir: "C:/missing/scripts",
+        env: { AUTH_TOKEN: TEST_TOKEN },
+        runtimeMode: "auto",
+        continueDialogId: "dialog-sync-404",
+        output,
+        localRuntimeAdapter,
+        fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = String(input);
+          const method = init?.method ?? "GET";
+          let body: any = null;
+          if (init?.body) {
+            try {
+              body = JSON.parse(String(init.body));
+            } catch {}
+          }
+          fetchCalls.push({ url: urlStr, method, body });
+
+          if (urlStr.includes("/api/v1/db/read/dialog-user-taskb-123-dialog-sync-404")) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          if (urlStr.includes("/api/v1/db/write/")) {
+            return Response.json({ ok: true });
+          }
+          if (urlStr.includes("/api/agent/run")) {
+            return Response.json({
+              content: "server response",
+              dialogId: "dialog-sync-404",
+            });
+          }
+          return Response.json({ error: "not found" }, { status: 404 });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const getCalls = fetchCalls.filter((c) => c.method === "GET");
+      expect(getCalls.length).toBe(1);
+      const writeCalls = fetchCalls.filter((c) => c.url.includes("/api/v1/db/write/"));
+      expect(writeCalls.length).toBe(2);
+      expect(writeCalls.some((c) => c.body?.customKey === "dialog-msg-dialog-sync-404-msg-1")).toBe(true);
+      expect(writeCalls.some((c) => c.body?.customKey === "dialog-user-taskb-123-dialog-sync-404")).toBe(true);
+      const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
+      expect(runCalls.length).toBe(1);
+    });
+
+    test("补推失败 -> 阻断，exitCode 1，有明确错误输出，且未发起 run 请求", async () => {
+      const output = new CaptureOutput();
+      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
+
+      const localRuntimeAdapter = {
+        host: "cli" as const,
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef: string) => ({
+          key: agentRef,
+          name: "Local",
+          apiSource: "custom" as const,
+          customProviderUrl: "http://127.0.0.1:11434/v1",
+          model: "local-model",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-sync-fail" }),
+        resolveProvider: async () => ({
+          model: "local-model",
+          complete: async () => {
+            throw new Error("local provider offline");
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools");
+        },
+      };
+
+      const realLocalDialogRead = await import("../agent-runtime/localDialogRead");
+      mock.module("../../agent-runtime/localDialogRead", () => ({
+        readDialogFromLocalDb: async (args: { dialogKey: string; dialogId: string; limit: number }) => {
+          if (args.dialogId === "dialog-sync-fail") {
+            return {
+              meta: { id: "dialog-sync-fail", userId: "user-taskb-123", agentKey: "nolo" },
+              msgs: [],
+            };
+          }
+          return realLocalDialogRead.readDialogFromLocalDb(args);
+        },
+      }));
+
+      const result = await runAgentTurn({
+        agentName: "nolo",
+        agentKey: "agent-pub-test",
+        serverUrl: "https://nolo.chat",
+        message: "hello",
+        scriptDir: "C:/missing/scripts",
+        env: { AUTH_TOKEN: TEST_TOKEN },
+        runtimeMode: "auto",
+        continueDialogId: "dialog-sync-fail",
+        output,
+        localRuntimeAdapter,
+        fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = String(input);
+          const method = init?.method ?? "GET";
+          let body: any = null;
+          if (init?.body) {
+            try {
+              body = JSON.parse(String(init.body));
+            } catch {}
+          }
+          fetchCalls.push({ url: urlStr, method, body });
+
+          if (urlStr.includes("/api/v1/db/read/dialog-user-taskb-123-dialog-sync-fail")) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          if (urlStr.includes("/api/v1/db/write/")) {
+            return Response.json({ error: "write failed" }, { status: 500 });
+          }
+          if (urlStr.includes("/api/agent/run")) {
+            return Response.json({
+              content: "server response",
+              dialogId: "dialog-sync-fail",
+            });
+          }
+          return Response.json({ error: "not found" }, { status: 404 });
+        },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(output.text()).toContain("exists only locally and failed to sync to server");
+      const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
+      expect(runCalls.length).toBe(0);
+    });
+
+    test("无 continueDialogId -> fallback 前无任何预检请求", async () => {
+      const output = new CaptureOutput();
+      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
+
+      const localRuntimeAdapter = {
+        host: "cli" as const,
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef: string) => ({
+          key: agentRef,
+          name: "Local",
+          apiSource: "custom" as const,
+          customProviderUrl: "http://127.0.0.1:11434/v1",
+          model: "local-model",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "new-dialog-id" }),
+        resolveProvider: async () => ({
+          model: "local-model",
+          complete: async () => {
+            throw new Error("local provider offline");
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools");
+        },
+      };
+
+      const result = await runAgentTurn({
+        agentName: "nolo",
+        agentKey: "agent-pub-test",
+        serverUrl: "https://nolo.chat",
+        message: "hello",
+        scriptDir: "C:/missing/scripts",
+        env: { AUTH_TOKEN: TEST_TOKEN },
+        runtimeMode: "auto",
+        output,
+        localRuntimeAdapter,
+        fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = String(input);
+          const method = init?.method ?? "GET";
+          let body: any = null;
+          if (init?.body) {
+            try {
+              body = JSON.parse(String(init.body));
+            } catch {}
+          }
+          fetchCalls.push({ url: urlStr, method, body });
+
+          if (urlStr.includes("/api/agent/run")) {
+            return Response.json({
+              content: "server response",
+              dialogId: "new-dialog-id",
+            });
+          }
+          return Response.json({ error: "not found" }, { status: 404 });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const getCalls = fetchCalls.filter((c) => c.method === "GET");
+      expect(getCalls.length).toBe(0);
+      const writeCalls = fetchCalls.filter((c) => c.url.includes("/api/v1/db/write/"));
+      expect(writeCalls.length).toBe(0);
+      const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
+      expect(runCalls.length).toBe(1);
+    });
   });
 });

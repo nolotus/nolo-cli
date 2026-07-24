@@ -623,6 +623,178 @@ describe("CLI local runtime adapter", () => {
     })).rejects.toThrow("remote dialog evidence write failed");
   });
 
+  test("syncs a normal turn (no subjectRefs) to the configured server when serverUrl+authToken are set", async () => {
+    const remoteWrites: Array<{ url: string; body: any }> = [];
+    const store = new Map<string, any>([
+      ["agent-user-1-frontend", {
+        dbKey: "agent-user-1-frontend",
+        id: "frontend",
+        name: "Frontend",
+        prompt: "You are the frontend implementer.",
+        apiSource: "cli",
+        cliProvider: "agy",
+      }],
+    ]);
+    const adapter = createAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      createId: () => "01NORMAL",
+      fetchImpl: async (url, init) => {
+        remoteWrites.push({
+          url: String(url),
+          body: JSON.parse(String(init?.body)),
+        });
+        return Response.json({ ok: true });
+      },
+      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
+    } as any);
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "frontend",
+      input: "hello",
+    });
+
+    expect(result.dialogId).toBe("01NORMAL");
+    // All plan.ops should be POSTed to /api/v1/db/write/
+    expect(remoteWrites.length).toBeGreaterThan(0);
+    for (const write of remoteWrites) {
+      expect(write.url).toBe("https://us.nolo.chat/api/v1/db/write/");
+    }
+  });
+
+  test("does not push any write requests when userId is local (even with subjectRefs)", async () => {
+    const remoteWrites: Array<{ url: string }> = [];
+    const store = new Map<string, any>([
+      ["agent-local-frontend", {
+        dbKey: "agent-local-frontend",
+        id: "frontend",
+        name: "Frontend",
+        prompt: "You are the frontend implementer.",
+        apiSource: "cli",
+        cliProvider: "agy",
+      }],
+    ]);
+    const adapter = createAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "local",
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      createId: () => "01LOCALUSER",
+      fetchImpl: async (url) => {
+        remoteWrites.push({ url: String(url) });
+        return Response.json({ ok: true });
+      },
+      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
+    } as any);
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "frontend",
+      input: "hello",
+      runtimeContext: {
+        subjectRefs: [{ kind: "table-row", id: "row-local-board-task", role: "task" }],
+      },
+    });
+
+    expect(result.dialogId).toBe("01LOCALUSER");
+    // No write requests should be made when userId is "local"
+    const writeRequests = remoteWrites.filter((r) => r.url.includes("/api/v1/db/write/"));
+    expect(writeRequests).toEqual([]);
+  });
+
+  test("write push HTTP failure on a normal turn does not affect turn result", async () => {
+    const remoteWrites: Array<{ url: string }> = [];
+    const store = new Map<string, any>([
+      ["agent-user-1-frontend", {
+        dbKey: "agent-user-1-frontend",
+        id: "frontend",
+        name: "Frontend",
+        prompt: "You are the frontend implementer.",
+        apiSource: "cli",
+        cliProvider: "agy",
+      }],
+    ]);
+    const adapter = createAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      createId: () => "01WRITEFAIL",
+      fetchImpl: async (url) => {
+        const target = String(url);
+        if (target.includes("/api/v1/db/write/")) {
+          remoteWrites.push({ url: target });
+          throw new Error("Server unreachable");
+        }
+        return Response.json({ ok: true });
+      },
+      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
+    } as any);
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "frontend",
+      input: "hello",
+    });
+
+    // Turn result must be unaffected by write failure
+    expect(result.content).toBe("cli ok");
+    expect(result.dialogId).toBe("01WRITEFAIL");
+    // Verify that write requests were actually attempted (proves sync happened)
+    expect(remoteWrites.length).toBeGreaterThan(0);
+  });
+
   test("fails cli-provider local runs clearly when the requested local CLI is unavailable", async () => {
     const adapter = createAdapter({
       env: {
@@ -1005,6 +1177,9 @@ describe("CLI local runtime adapter", () => {
             choices: [{ message: { content: "cluster cache ok" } }],
           });
         }
+        if (target.includes("/api/v1/db/write/")) {
+          return Response.json({ ok: true });
+        }
         return new Response(null, { status: 404 });
       },
     });
@@ -1020,6 +1195,9 @@ describe("CLI local runtime adapter", () => {
       "http://127.0.0.1:38123/api/v1/db/read/agent-user-1-cluster",
       "https://nolo.chat/api/v1/db/read/agent-user-1-cluster",
       "http://127.0.0.1:11434/v1/chat/completions",
+      "http://127.0.0.1:38123/api/v1/db/write/",
+      "http://127.0.0.1:38123/api/v1/db/write/",
+      "http://127.0.0.1:38123/api/v1/db/write/",
     ]);
     expect(memory.get("agent-user-1-cluster")).toMatchObject({
       name: "Cluster cached",
@@ -1350,7 +1528,11 @@ describe("CLI local runtime adapter", () => {
         },
         iterator: () => (async function* () {})(),
       },
-      fetchImpl: async () => {
+      fetchImpl: async (url) => {
+        const target = String(url);
+        if (target.includes("/api/v1/db/write/")) {
+          return Response.json({ ok: true });
+        }
         attempts += 1;
         if (attempts <= 2) {
           throw new Error("unknown certificate verification error");
@@ -1407,7 +1589,11 @@ describe("CLI local runtime adapter", () => {
         },
         iterator: () => (async function* () {})(),
       },
-      fetchImpl: async () => {
+      fetchImpl: async (url) => {
+        const target = String(url);
+        if (target.includes("/api/v1/db/write/")) {
+          return Response.json({ ok: true });
+        }
         attempts += 1;
         if (attempts <= 3) {
           throw new Error("unknown certificate verification error");

@@ -22,6 +22,7 @@ import type {
 import {
   createCliCallAgentToolExecutor,
   createCliLocalRuntimeAdapter,
+  ensureDialogSyncedForServerFallback,
   isBuiltinNoloAgentRef,
 } from "./localRuntimeAdapter";
 import type {
@@ -1324,6 +1325,13 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
         options.output.write(
           `[nolo] auto runtime: local run unavailable (${toErrorMessage(localResult.localError)}); falling back to server.\n`,
         );
+      }
+      const syncResult = await ensureDialogSyncedForServerFallback(
+        options,
+        authToken,
+      );
+      if (!syncResult.ok) {
+        return { exitCode: syncResult.exitCode ?? 1 };
       }
     }
   }

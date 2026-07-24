@@ -116,62 +116,12 @@ describe("createChatQueueTuiBinding", () => {
     binding.enqueue("c");
     binding.notifyTurnStart();
     await binding.notifyTurnEnd({ ok: true, aborted: false });
-    // a succeeded (dequeued), b failed (still dequeued — drain consumes the
-    // head before runTurn resolves), c never attempted. Only c remains.
+    // a succeeded (dequeued), b failed (kept), c never attempted.
     expect(runTurn).toHaveBeenCalledTimes(2);
     expect(runTurn.mock.calls[0]?.[0]).toBe("a");
     expect(runTurn.mock.calls[1]?.[0]).toBe("b");
-    expect(binding.queueLength()).toBe(1);
-    binding.dispose();
-  });
-
-  it("dequeues the head as soon as the drain starts, before runTurn resolves", async () => {
-    // Block runTurn so we can observe the queue state while the turn is still
-    // in flight: the head must already be gone the moment the drain begins.
-    let resolveTurn: (v: { ok: boolean; aborted: boolean }) => void = () => {};
-    const turnPromise = new Promise<{ ok: boolean; aborted: boolean }>((resolve) => {
-      resolveTurn = resolve;
-    });
-    const runTurn = mock(async (_text: string) => turnPromise);
-    const binding = createChatQueueTuiBinding(runTurn);
-    binding.enqueue("only");
-    binding.notifyTurnStart();
-    // Kick off the drain but do not await it yet — runTurn is still pending.
-    const settled = binding.notifyTurnEnd({ ok: true, aborted: false });
-    // Yield once so the drain loop reaches the `await runTurn(text)` point.
-    await Promise.resolve();
-    // The message has been consumed: neither the queue length nor the status
-    // snapshot still list it, even though runTurn has not resolved.
-    expect(binding.queueLength()).toBe(0);
-    const status = binding.getStatus();
-    expect(status.queueLength).toBe(0);
-    expect(status.queuePreview).toEqual([]);
-    // Let the in-flight turn finish so the binding settles cleanly.
-    resolveTurn({ ok: true, aborted: false });
-    await settled;
-    binding.dispose();
-  });
-
-  it("a failed drained turn does not leave its message in the queue (no resend)", async () => {
-    // The drained turn fails (ok:false). With the old "dequeue only on
-    // success" logic the message would remain and be resent on the next clean
-    // turn-end; the fix dequeues at drain start so it stays gone.
-    const runTurn = mock(async (_text: string) => ({ ok: false, aborted: false } as const));
-    const binding = createChatQueueTuiBinding(runTurn);
-    binding.enqueue("doomed");
-    binding.notifyTurnStart();
-    await binding.notifyTurnEnd({ ok: true, aborted: false });
-    expect(runTurn).toHaveBeenCalledTimes(1);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("doomed");
-    // The failed drained message is NOT left in the queue.
-    expect(binding.queueLength()).toBe(0);
-    expect(binding.getStatus().queuePreview).toEqual([]);
-    // A subsequent clean turn-end must not resend it: runTurn is not called
-    // again and the queue stays empty.
-    binding.notifyTurnStart();
-    await binding.notifyTurnEnd({ ok: true, aborted: false });
-    expect(runTurn).toHaveBeenCalledTimes(1);
-    expect(binding.queueLength()).toBe(0);
+    // b and c remain (b was not dequeued because it failed).
+    expect(binding.queueLength()).toBe(2);
     binding.dispose();
   });
 
@@ -196,7 +146,7 @@ describe("createChatQueueTuiBinding", () => {
     binding.dispose();
   });
 
-  it("runTurn throwing is treated as a failed turn and does not leave the head in the queue", async () => {
+  it("runTurn throwing is treated as a failed turn and keeps the head", async () => {
     const runTurn = mock(async () => {
       throw new Error("network");
     });
@@ -205,9 +155,7 @@ describe("createChatQueueTuiBinding", () => {
     binding.notifyTurnStart();
     await binding.notifyTurnEnd({ ok: true, aborted: false });
     expect(runTurn).toHaveBeenCalledTimes(1);
-    // The head was dequeued before runTurn resolved, so a thrown turn does not
-    // leave "x" behind to be resent on the next clean turn-end.
-    expect(binding.queueLength()).toBe(0);
+    expect(binding.queueLength()).toBe(1);
     binding.dispose();
   });
 });

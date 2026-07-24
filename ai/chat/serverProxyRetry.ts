@@ -6,8 +6,7 @@ import {
 
 const RETRYABLE_SERVER_PROXY_STATUSES = new Set([502, 503, 504]);
 const DEFAULT_SERVER_PROXY_RETRY_AFTER_MS = 1_500;
-const MAX_SERVER_PROXY_RETRIES = 2;
-const MAX_STATUS_RETRIES = 1;
+const MAX_SERVER_PROXY_RETRIES = 1;
 
 const resolveServerProxyRetryAfterMs = (response: Response) =>
   parseRetryAfterHeaderMs(response.headers.get("Retry-After")) ??
@@ -63,7 +62,7 @@ export const performServerProxyFetchWithRetry = async ({
     try {
       const response = await execute();
       if (
-        attempt < MAX_STATUS_RETRIES &&
+        attempt < MAX_SERVER_PROXY_RETRIES &&
         RETRYABLE_SERVER_PROXY_STATUSES.has(response.status)
       ) {
         const retryAfterMs = resolveServerProxyRetryAfterMs(response);
@@ -79,12 +78,11 @@ export const performServerProxyFetchWithRetry = async ({
         attempt < MAX_SERVER_PROXY_RETRIES &&
         isRetryableServerProxyFetchError(error)
       ) {
-        const retryDelay = (attempt + 1) * 1000;
         console.warn(
-          `${logPrefix} 检测到网络瞬断，${retryDelay}ms后重试(第${attempt + 1}次)...`,
+          `${logPrefix} 检测到网络瞬断，${DEFAULT_SERVER_PROXY_RETRY_AFTER_MS}ms后重试一次...`,
           error
         );
-        await waitForServerProxyRetry(retryDelay, signal);
+        await waitForServerProxyRetry(DEFAULT_SERVER_PROXY_RETRY_AFTER_MS, signal);
         continue;
       }
       throw error;

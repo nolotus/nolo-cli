@@ -118,11 +118,6 @@ function buildDialogMessageWriteOps(args: {
           dialogId: args.dialogId,
           role: message.role,
           content: message.content ?? "",
-          // 持久化思维链(reasoning):空轮/异常排查的关键证据,
-          // 回读由 dialogMessageRecordToAgentRuntimeMessage 还原。
-          ...(typeof message.reasoning_content === "string"
-            ? { reasoning_content: message.reasoning_content }
-            : {}),
           ...(message.role === "user" ? { userId: args.userId } : {}),
           ...(message.role === "assistant" ? {
             agentKey: args.input.agentKey,

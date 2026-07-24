@@ -10,9 +10,6 @@ export function dialogMessageRecordToAgentRuntimeMessage(
   return {
     role: record.role,
     content: record.content ?? null,
-    ...(typeof record.reasoning_content === "string"
-      ? { reasoning_content: record.reasoning_content }
-      : {}),
     ...(typeof record.toolCallId === "string" ? { tool_call_id: record.toolCallId } : {}),
     ...(Array.isArray(record.tool_calls) ? { tool_calls: record.tool_calls } : {}),
   };

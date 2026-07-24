@@ -119,7 +119,6 @@ function normalizeDesktopAgentRuntimeTurnError(data: any) {
 
 export type DesktopStreamEvent =
   | { type: "delta"; text: string }
-  | { type: "thinking"; content: string }
   | { type: "tool"; event: LocalAgentToolEvent }
   | { type: "done"; result: LocalAgentTurnResult }
   | { type: "error"; error: string };

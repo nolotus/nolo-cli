@@ -5,7 +5,7 @@ import {
   getProviderByModelName,
 } from "./providers";
 
-export type AgentCapabilityConfig = {
+type AgentCapabilityConfig = {
   apiSource?: string | null;
   provider?: string | null;
   model?: string | null;

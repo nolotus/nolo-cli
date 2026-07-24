@@ -95,12 +95,11 @@ export async function updateDocFunc(
         if (stateAfterWrite?.doc?.pageKey === id) {
             const { docSlice } = await import("../../render/page/docSlice");
             (dispatch as any)(
-                (docSlice.actions as any).applyExternalDocUpdate({
+                docSlice.actions.applyExternalDocUpdate({
                     slateData: finalSlateData,
                     content: parsedProtocol.content,
                     title: originalData.title,
                     tools,
-                    savedAt: updatedPageData.updated_at,
                     ...(parsedProtocol.meta ? { meta: parsedProtocol.meta } : {}),
                 }),
             );

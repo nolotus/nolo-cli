@@ -9,8 +9,6 @@ import type { PermissionRequest } from "../agent-runtime/actionGate";
 import {
   clearCliLocalRuntimePreparedAgentCache,
   createCliLocalRuntimeAdapter,
-  postRemoteRecord,
-  setRemoteDialogSyncTimeoutForTest,
 } from "./localRuntimeAdapter";
 import { LOCAL_CODEX_AGENT_KEY } from "../agentAliases";
 
@@ -625,178 +623,6 @@ describe("CLI local runtime adapter", () => {
     })).rejects.toThrow("remote dialog evidence write failed");
   });
 
-  test("syncs a normal turn (no subjectRefs) to the configured server when serverUrl+authToken are set", async () => {
-    const remoteWrites: Array<{ url: string; body: any }> = [];
-    const store = new Map<string, any>([
-      ["agent-user-1-frontend", {
-        dbKey: "agent-user-1-frontend",
-        id: "frontend",
-        name: "Frontend",
-        prompt: "You are the frontend implementer.",
-        apiSource: "cli",
-        cliProvider: "agy",
-      }],
-    ]);
-    const adapter = createAdapter({
-      env: {
-        NOLO_LOCAL_USER_ID: "user-1",
-        NOLO_SERVER: "https://us.nolo.chat",
-        AUTH_TOKEN: "token-1",
-      },
-      db: {
-        get: async (key) => {
-          if (!store.has(key)) throw new Error(`not found: ${key}`);
-          return store.get(key);
-        },
-        put: async (key, value) => {
-          store.set(key, value);
-        },
-        batch: async (ops) => {
-          for (const op of ops) {
-            if (op.type === "put") store.set(op.key, op.value);
-          }
-        },
-        iterator: () => (async function* () {})(),
-      },
-      createId: () => "01NORMAL",
-      fetchImpl: async (url, init) => {
-        remoteWrites.push({
-          url: String(url),
-          body: JSON.parse(String(init?.body)),
-        });
-        return Response.json({ ok: true });
-      },
-      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
-    } as any);
-
-    const result = await runLocalAgentTurn({
-      adapter,
-      agentRef: "frontend",
-      input: "hello",
-    });
-
-    expect(result.dialogId).toBe("01NORMAL");
-    // All plan.ops should be POSTed to /api/v1/db/write/
-    expect(remoteWrites.length).toBeGreaterThan(0);
-    for (const write of remoteWrites) {
-      expect(write.url).toBe("https://us.nolo.chat/api/v1/db/write/");
-    }
-  });
-
-  test("does not push any write requests when userId is local (even with subjectRefs)", async () => {
-    const remoteWrites: Array<{ url: string }> = [];
-    const store = new Map<string, any>([
-      ["agent-local-frontend", {
-        dbKey: "agent-local-frontend",
-        id: "frontend",
-        name: "Frontend",
-        prompt: "You are the frontend implementer.",
-        apiSource: "cli",
-        cliProvider: "agy",
-      }],
-    ]);
-    const adapter = createAdapter({
-      env: {
-        NOLO_LOCAL_USER_ID: "local",
-        NOLO_SERVER: "https://us.nolo.chat",
-        AUTH_TOKEN: "token-1",
-      },
-      db: {
-        get: async (key) => {
-          if (!store.has(key)) throw new Error(`not found: ${key}`);
-          return store.get(key);
-        },
-        put: async (key, value) => {
-          store.set(key, value);
-        },
-        batch: async (ops) => {
-          for (const op of ops) {
-            if (op.type === "put") store.set(op.key, op.value);
-          }
-        },
-        iterator: () => (async function* () {})(),
-      },
-      createId: () => "01LOCALUSER",
-      fetchImpl: async (url) => {
-        remoteWrites.push({ url: String(url) });
-        return Response.json({ ok: true });
-      },
-      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
-    } as any);
-
-    const result = await runLocalAgentTurn({
-      adapter,
-      agentRef: "frontend",
-      input: "hello",
-      runtimeContext: {
-        subjectRefs: [{ kind: "table-row", id: "row-local-board-task", role: "task" }],
-      },
-    });
-
-    expect(result.dialogId).toBe("01LOCALUSER");
-    // No write requests should be made when userId is "local"
-    const writeRequests = remoteWrites.filter((r) => r.url.includes("/api/v1/db/write/"));
-    expect(writeRequests).toEqual([]);
-  });
-
-  test("write push HTTP failure on a normal turn does not affect turn result", async () => {
-    const remoteWrites: Array<{ url: string }> = [];
-    const store = new Map<string, any>([
-      ["agent-user-1-frontend", {
-        dbKey: "agent-user-1-frontend",
-        id: "frontend",
-        name: "Frontend",
-        prompt: "You are the frontend implementer.",
-        apiSource: "cli",
-        cliProvider: "agy",
-      }],
-    ]);
-    const adapter = createAdapter({
-      env: {
-        NOLO_LOCAL_USER_ID: "user-1",
-        NOLO_SERVER: "https://us.nolo.chat",
-        AUTH_TOKEN: "token-1",
-      },
-      db: {
-        get: async (key) => {
-          if (!store.has(key)) throw new Error(`not found: ${key}`);
-          return store.get(key);
-        },
-        put: async (key, value) => {
-          store.set(key, value);
-        },
-        batch: async (ops) => {
-          for (const op of ops) {
-            if (op.type === "put") store.set(op.key, op.value);
-          }
-        },
-        iterator: () => (async function* () {})(),
-      },
-      createId: () => "01WRITEFAIL",
-      fetchImpl: async (url) => {
-        const target = String(url);
-        if (target.includes("/api/v1/db/write/")) {
-          remoteWrites.push({ url: target });
-          throw new Error("Server unreachable");
-        }
-        return Response.json({ ok: true });
-      },
-      executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
-    } as any);
-
-    const result = await runLocalAgentTurn({
-      adapter,
-      agentRef: "frontend",
-      input: "hello",
-    });
-
-    // Turn result must be unaffected by write failure
-    expect(result.content).toBe("cli ok");
-    expect(result.dialogId).toBe("01WRITEFAIL");
-    // Verify that write requests were actually attempted (proves sync happened)
-    expect(remoteWrites.length).toBeGreaterThan(0);
-  });
-
   test("fails cli-provider local runs clearly when the requested local CLI is unavailable", async () => {
     const adapter = createAdapter({
       env: {
@@ -1179,9 +1005,6 @@ describe("CLI local runtime adapter", () => {
             choices: [{ message: { content: "cluster cache ok" } }],
           });
         }
-        if (target.includes("/api/v1/db/write/")) {
-          return Response.json({ ok: true });
-        }
         return new Response(null, { status: 404 });
       },
     });
@@ -1197,9 +1020,6 @@ describe("CLI local runtime adapter", () => {
       "http://127.0.0.1:38123/api/v1/db/read/agent-user-1-cluster",
       "https://nolo.chat/api/v1/db/read/agent-user-1-cluster",
       "http://127.0.0.1:11434/v1/chat/completions",
-      "http://127.0.0.1:38123/api/v1/db/write/",
-      "http://127.0.0.1:38123/api/v1/db/write/",
-      "http://127.0.0.1:38123/api/v1/db/write/",
     ]);
     expect(memory.get("agent-user-1-cluster")).toMatchObject({
       name: "Cluster cached",
@@ -1530,11 +1350,7 @@ describe("CLI local runtime adapter", () => {
         },
         iterator: () => (async function* () {})(),
       },
-      fetchImpl: async (url) => {
-        const target = String(url);
-        if (target.includes("/api/v1/db/write/")) {
-          return Response.json({ ok: true });
-        }
+      fetchImpl: async () => {
         attempts += 1;
         if (attempts <= 2) {
           throw new Error("unknown certificate verification error");
@@ -1591,11 +1407,7 @@ describe("CLI local runtime adapter", () => {
         },
         iterator: () => (async function* () {})(),
       },
-      fetchImpl: async (url) => {
-        const target = String(url);
-        if (target.includes("/api/v1/db/write/")) {
-          return Response.json({ ok: true });
-        }
+      fetchImpl: async () => {
         attempts += 1;
         if (attempts <= 3) {
           throw new Error("unknown certificate verification error");
@@ -3794,120 +3606,6 @@ describe("CLI local runtime adapter", () => {
       expect(readFileSync(join(workspaceRoot, "src/app.ts"), "utf8")).toBe("export const cliValue = 1;\n");
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("CLI local runtime adapter remote sync fetch timeout", () => {
-  test("postRemoteRecord aborts a hung fetch via AbortSignal.timeout (TimeoutError)", async () => {
-    // Shorten the timeout via the test-only hook so this never waits the real
-    // 10s. A hung/unreachable server is simulated by a fetchImpl that never
-    // resolves on its own; it can only be aborted by the signal we attach.
-    setRemoteDialogSyncTimeoutForTest(15);
-    try {
-      let receivedSignal: AbortSignal | undefined;
-      // Simulate a hung server the way real fetch would behave: the socket
-      // never answers, but the request still rejects when the abort signal
-      // fires. A fake that ignores the signal would hang the test forever —
-      // AbortSignal only aborts listeners, it cannot reject a promise that
-      // never observes it.
-      const hungFetch = async (_url: any, init?: any) => {
-        receivedSignal = init?.signal;
-        return new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () =>
-            reject(init.signal.reason),
-          );
-        });
-      };
-
-      const promise = postRemoteRecord({
-        authToken: "token-1",
-        data: { hello: "world" },
-        fetchImpl: hungFetch as any,
-        key: "dialog-timeout-test",
-        serverUrl: "https://us.nolo.chat",
-        userId: "user-1",
-      });
-
-      // AbortSignal.timeout(...) rejects with a DOMException named
-      // "TimeoutError" once the timeout elapses.
-      await expect(promise).rejects.toMatchObject({ name: "TimeoutError" });
-      // The abort signal must be passed into the fetch call; otherwise a hung
-      // server would hang the turn for undici's default (minutes).
-      expect(receivedSignal).toBeInstanceOf(AbortSignal);
-      expect(receivedSignal?.aborted).toBe(true);
-    } finally {
-      setRemoteDialogSyncTimeoutForTest(undefined);
-    }
-  });
-
-  test("normal-turn remote sync surface warns on timeout instead of throwing", async () => {
-    // A subjectRef-less turn must treat the abort/timeout as non-fatal: the
-    // sync fetch aborts but the turn still completes with a warning.
-    setRemoteDialogSyncTimeoutForTest(15);
-    try {
-      const store = new Map<string, any>([
-        ["agent-user-1-frontend", {
-          dbKey: "agent-user-1-frontend",
-          id: "frontend",
-          name: "Frontend",
-          prompt: "You are the frontend implementer.",
-          apiSource: "cli",
-          cliProvider: "agy",
-        }],
-      ]);
-      const warnings: string[] = [];
-      const adapter = createAdapter({
-        env: {
-          NOLO_LOCAL_USER_ID: "user-1",
-          NOLO_SERVER: "https://us.nolo.chat",
-          AUTH_TOKEN: "token-1",
-        },
-        db: {
-          get: async (key) => {
-            if (!store.has(key)) throw new Error(`not found: ${key}`);
-            return store.get(key);
-          },
-          put: async (key, value) => {
-            store.set(key, value);
-          },
-          batch: async (ops) => {
-            for (const op of ops) {
-              if (op.type === "put") store.set(op.key, op.value);
-            }
-          },
-          iterator: () => (async function* () {})(),
-        },
-        createId: () => "01ABORT",
-        fetchImpl: async (_url: any, init?: any) => {
-          // Agent-config loading reads the agent record from the server first
-          // (hybrid store) — answer those so the turn can proceed. Only the
-          // dialog-evidence sync writes hang, abort-aware like real fetch
-          // (see the postRemoteRecord timeout test above for why this matters).
-          if (String(_url).includes("/api/v1/db/read/")) {
-            return Response.json({ data: store.get("agent-user-1-frontend") });
-          }
-          return new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () =>
-              reject(init.signal.reason),
-            );
-          });
-        },
-        executeCli: async () => ({ text: "cli ok", raw: "cli ok", elapsed: 1 }),
-        output: { write: (chunk: string) => warnings.push(chunk) },
-      } as any);
-
-      const result = await runLocalAgentTurn({
-        adapter,
-        agentRef: "frontend",
-        input: "hello",
-      });
-
-      // Turn completes despite the hung remote sync.
-      expect(result.dialogId).toBe("01ABORT");
-      expect(warnings.some((w) => w.includes("Remote dialog evidence sync failed"))).toBe(true);
-    } finally {
-      setRemoteDialogSyncTimeoutForTest(undefined);
     }
   });
 });

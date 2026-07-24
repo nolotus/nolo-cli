@@ -269,7 +269,7 @@ describe("isLikelySlashCommand", () => {
   test("recognizes known slash commands", () => {
     expect(isLikelySlashCommand("/help")).toBe(true);
     expect(isLikelySlashCommand("/new")).toBe(true);
-    expect(isLikelySlashCommand("/switch list")).toBe(true);
+    expect(isLikelySlashCommand("/agent list")).toBe(true);
     expect(isLikelySlashCommand("/runtime local")).toBe(true);
     expect(isLikelySlashCommand("/customize")).toBe(true);
   });
@@ -305,9 +305,9 @@ describe("completeSlashCommand", () => {
   });
 
   test("returns all commands starting with the prefix", () => {
-    const matches = completeSlashCommand("/s");
-    expect(matches).toContain("/switch");
-    expect(matches).toContain("/stop");
+    const matches = completeSlashCommand("/a");
+    expect(matches).toContain("/agent");
+    expect(matches).toContain("/agents");
   });
 
   test("excludes exact match from completions", () => {
@@ -321,7 +321,7 @@ describe("completeSlashCommand", () => {
   });
 
   test("returns empty when buffer has spaces", () => {
-    expect(completeSlashCommand("/switch list")).toEqual([]);
+    expect(completeSlashCommand("/agent list")).toEqual([]);
     expect(completeSlashCommand("/runtime local")).toEqual([]);
   });
 
@@ -331,33 +331,6 @@ describe("completeSlashCommand", () => {
     expect(matches).toContain("/ctx");
     expect(matches).toContain("/compact");
     expect(matches).toContain("/customize");
-  });
-});
-
-describe("handleTuiInput - /switch, /agent, /tasks, /jobs aliases", () => {
-  test("handles /switch and /agent without arguments to open agent picker", () => {
-    const state = createInitialTuiState({});
-    const switchRes = handleTuiInput("/switch", state);
-    expect(switchRes.action).toEqual({ type: "pick-agent" });
-
-    const agentRes = handleTuiInput("/agent", state);
-    expect(agentRes.action).toEqual({ type: "pick-agent" });
-  });
-
-  test("handles /switch list and /agent list", () => {
-    const state = createInitialTuiState({});
-    const switchListRes = handleTuiInput("/switch list", state);
-    expect(switchListRes.action).toEqual({ type: "list-agents" });
-
-    const agentListRes = handleTuiInput("/agent list", state);
-    expect(agentListRes.action).toEqual({ type: "list-agents" });
-  });
-
-  test("handles /tasks, /jobs, /procs interchangeably for process registry", () => {
-    const state = createInitialTuiState({});
-    expect(handleTuiInput("/tasks", state).output).toBe("No processes.");
-    expect(handleTuiInput("/jobs", state).output).toBe("No processes.");
-    expect(handleTuiInput("/procs", state).output).toBe("No processes.");
   });
 });
 

@@ -1479,10 +1479,6 @@ export const streamAgentChatTurnHandler = async (
             let assistantMessageKeys: { key: string; messageId: string } | null = null;
             let streamResult: any = null;
             let streamError: string | null = null;
-            // 累计桌面 SSE 的 thinking 事件内容（reasoning_content），供
-            // messageStreamEnd 持久化为 thinkContent（见 messageSlice）。
-            // 兜底用 streamResult.reasoning_content（provider 在 SSE 流内累计）。
-            let reasoningBuffer = "";
             const activeToolMessages = new Map<string, any>();
             const ensureAssistantMessageKeys = () => {
                 if (!assistantMessageKeys) {
@@ -1566,13 +1562,6 @@ export const streamAgentChatTurnHandler = async (
                     }
                     if (event.type === "delta") {
                         streamDesktopAssistantText(event.text);
-                    } else if (event.type === "thinking") {
-                        // B1 已在 localLoop/service/handler 链路打通 onReasoningDelta
-                        // → SSE {type:"thinking",content}。这里累计进 reasoningBuffer，
-                        // 在 messageStreamEnd 时传给 messageSlice 落成 thinkContent。
-                        if (typeof event.content === "string") {
-                            reasoningBuffer += event.content;
-                        }
                     } else if (event.type === "tool") {
                         const toolEvent = event.event;
                         const callId = toolEvent.toolCallId;
@@ -1845,9 +1834,7 @@ export const streamAgentChatTurnHandler = async (
                 agentConfig,
                 dialogId,
                 dialogKey,
-                // 优先用本 turn 累计的 thinking SSE；为空时兜底 streamResult.reasoning_content
-                // （provider 在 SSE 流内累计返回的 reasoning_content）。
-                reasoningBuffer: reasoningBuffer || (typeof streamResult?.reasoning_content === "string" ? streamResult.reasoning_content : ""),
+                reasoningBuffer: "",
                 toolCalls: extractDesktopRuntimeToolCallsForUi(desktopTurnMessages),
                 messageMetadata: desktopMessageMetadata,
             })).unwrap();

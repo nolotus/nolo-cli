@@ -72,7 +72,7 @@ describe("toolOutput", () => {
     ).toContain("✓");
   });
 
-  test("compact mode drops elapsed time and output size from successful lines", () => {
+  test("compact mode drops elapsed time and generic output size from successful lines", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
@@ -84,9 +84,60 @@ describe("toolOutput", () => {
       "compact",
       false
     );
+    // No metadata → no read-range hint; stays the plain compact line.
     expect(line).toBe("  ▸ Read README.md  ✓\n");
     expect(line).not.toContain("ms");
-    expect(line).not.toContain("lines");
+  });
+
+  test("compact mode shows readFile read range when the file was sliced", () => {
+    // Full read (not truncated, 1..N/N) — no range hint, would be noise.
+    expect(
+      formatToolEventForCli(
+        toolEvent({
+          type: "tool-result",
+          toolName: "readFile",
+          argumentsPreview: "small.ts",
+          metadata: { startLine: 1, endLine: 40, totalLines: 40, truncated: false },
+        }),
+        "compact",
+        false
+      )
+    ).toBe("  ▸ Read small.ts  ✓\n");
+
+    // Sliced read — show the range so the user can spot disjoint paging.
+    expect(
+      formatToolEventForCli(
+        toolEvent({
+          type: "tool-result",
+          toolName: "readFile",
+          argumentsPreview: "big.ts",
+          metadata: { startLine: 1000, endLine: 1300, totalLines: 2560, truncated: true },
+        }),
+        "compact",
+        false
+      )
+    ).toBe("  ▸ Read big.ts  ✓ 1000-1300/2560\n");
+  });
+
+  test("compact mode shows editFile added/removed snippets", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "app.ts",
+        metadata: {
+          path: "app.ts",
+          replacements: 1,
+          oldSnippet: "const a = 1;",
+          newSnippet: "const a = 2;",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(line).toContain("▸ Edit app.ts  ✓");
+    expect(line).toContain("- const a = 1;");
+    expect(line).toContain("+ const a = 2;");
   });
 
   test("compact labels follow the active locale, unknown tools keep their raw name", () => {

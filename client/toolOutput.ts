@@ -61,25 +61,89 @@ export function formatActiveToolLabel(
 /**
  * Trailing status for a finished tool.
  *
- * Only states the user can act on survive here — a pending confirmation, a
- * timeout, a non-zero exit. Output size (line counts) is deliberately dropped:
- * it padded every successful line without telling the user anything.
+ * Two kinds of signal survive here:
+ *  1. states the user can act on — a pending confirmation, a timeout, a
+ *     non-zero exit;
+ *  2. content visibility for file tools — readFile's read range (so the user
+ *     can spot an agent paging a large file in disjoint chunks and ask it to
+ *     split the work) and editFile's actual added/removed snippets.
+ *
+ * Generic output size (line counts on every successful tool) is still dropped:
+ * it padded every line without telling the user anything actionable.
  */
-function compactResultHint(event: LocalAgentToolEvent) {
+function compactResultHint(event: LocalAgentToolEvent): { inline: string; detail?: string } {
   const gate = readActionGate(event.metadata?.actionGate);
   if (gate) {
     const commandPayload = gate.kind === "handoff" ? readCommandActionGatePayload(gate.payload) : null;
     const command = commandPayload?.displayCommand ?? commandPayload?.command.join(" ") ?? "";
     const detail = command.trim() ? command : gate.title;
-    return `${t("toolNeedsAction")}: ${clip(detail, 120)}`;
+    return { inline: `${t("toolNeedsAction")}: ${clip(detail, 120)}` };
   }
-  if (event.metadata?.timedOut) return t("toolTimedOut");
+  if (event.metadata?.timedOut) return { inline: t("toolTimedOut") };
+
+  // readFile: show the read range only when the file was sliced, not when read
+  // in full (1..N/N would be noise on every ordinary read).
+  if (event.toolName === "readFile" && event.metadata) {
+    const range = readReadFileRange(event.metadata);
+    if (range) return { inline: range };
+  }
+
+  // editFile: show the actual added/removed snippet so the user can see what
+  // changed without opening the file.
+  if (event.toolName === "editFile" && event.metadata) {
+    const detail = formatEditFileSnippet(event.metadata);
+    if (detail) return { inline: "", detail };
+  }
 
   const summary = event.summary;
-  if (!summary) return "";
+  if (!summary) return { inline: "" };
   const exitMatch = summary.match(/exit=(\d+)/);
-  if (exitMatch && exitMatch[1] !== "0") return `${t("toolExitCode")} ${exitMatch[1]}`;
-  return "";
+  if (exitMatch && exitMatch[1] !== "0") return { inline: `${t("toolExitCode")} ${exitMatch[1]}` };
+  return { inline: "" };
+}
+
+function readReadFileRange(metadata: Record<string, unknown>): string | undefined {
+  const startLine = metadata.startLine;
+  const endLine = metadata.endLine;
+  const totalLines = metadata.totalLines;
+  const truncated = metadata.truncated;
+  if (
+    typeof startLine !== "number" ||
+    typeof endLine !== "number" ||
+    typeof totalLines !== "number"
+  ) {
+    return undefined;
+  }
+  // Only surface when the read was a slice of a larger file. A full read
+  // (startLine 1, endLine === totalLines, not truncated) is the common case and
+  // showing "1-2560/2560" on every read would be noise.
+  if (!truncated && startLine === 1 && endLine === totalLines) return undefined;
+  return `${startLine}-${endLine}/${totalLines}`;
+}
+
+const EDIT_SNIPPET_MAX_LINES = 5;
+const EDIT_SNIPPET_MAX_WIDTH = 96;
+
+function formatEditFileSnippet(metadata: Record<string, unknown>): string | undefined {
+  const oldSnippet = typeof metadata.oldSnippet === "string" ? metadata.oldSnippet : undefined;
+  const newSnippet = typeof metadata.newSnippet === "string" ? metadata.newSnippet : undefined;
+  if (!oldSnippet && !newSnippet) return undefined;
+  const lines: string[] = [];
+  if (oldSnippet) {
+    for (const line of snippetLines(oldSnippet)) lines.push(`- ${line}`);
+  }
+  if (newSnippet) {
+    for (const line of snippetLines(newSnippet)) lines.push(`+ ${line}`);
+  }
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+function snippetLines(snippet: string): string[] {
+  const lines = snippet.split(/\r?\n/).filter((line) => line.length > 0);
+  const shown = lines.slice(0, EDIT_SNIPPET_MAX_LINES);
+  return shown.map((line) => (line.length > EDIT_SNIPPET_MAX_WIDTH
+    ? `${line.slice(0, EDIT_SNIPPET_MAX_WIDTH)}…`
+    : line));
 }
 
 function isFailedToolResult(event: LocalAgentToolEvent) {
@@ -142,11 +206,31 @@ function formatCompactToolLine(
   const hint = compactResultHint(event);
   // Plain space, not " · ": the dot existed to separate the elapsed time from
   // the hint, and with timing gone it would dangle off the status marker.
-  const suffix = hint ? ` ${hint}` : "";
+  const suffix = hint.inline ? ` ${hint.inline}` : "";
   const failed = isFailedToolResult(event);
   const marker = failed ? "✗" : isNeedsActionToolResult(event) ? "!" : "✓";
   const accent = failed ? "error" : "none";
-  return formatToolTraceLine(`  ▸ ${label}  ${marker}${suffix}`, colorEnabled, accent);
+  const mainLine = formatToolTraceLine(`  ▸ ${label}  ${marker}${suffix}`, colorEnabled, accent);
+  if (!hint.detail) return mainLine;
+  // editFile added/removed snippet: render as dim trailing lines, with the
+  // `-`/`+` markers colored red/green when color is on.
+  const detailLines = hint.detail
+    .split("\n")
+    .map((line) => formatEditDetailLine(line, colorEnabled))
+    .join("");
+  return `${mainLine}${detailLines}`;
+}
+
+function formatEditDetailLine(line: string, colorEnabled: boolean): string {
+  const marker = line.slice(0, 2);
+  const rest = line.slice(2);
+  if (colorEnabled) {
+    const color = marker === "- " ? "red" : marker === "+ " ? "green" : undefined;
+    if (color) {
+      return `    ${styleCliText(marker, color, true)}${dimCliText(rest, true)}\n`;
+    }
+  }
+  return `    ${dimCliText(line, colorEnabled)}\n`;
 }
 
 export function formatToolEventForCli(

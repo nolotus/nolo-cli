@@ -1241,6 +1241,23 @@ function pluralizeReplacement(count: number) {
   return count === 1 ? "replacement" : "replacements";
 }
 
+/**
+ * Clip an editFile oldText/newText payload into a short preview snippet for the
+ * TUI trace. Keeps the first EDIT_SNIPPET_MAX_LINES non-empty lines, each
+ * capped at EDIT_SNIPPET_WIDTH chars, so the user can see what actually changed
+ * without the full (potentially huge) text flooding the trace.
+ */
+const EDIT_SNIPPET_MAX_LINES = 5;
+const EDIT_SNIPPET_WIDTH = 96;
+
+function clipEditSnippet(text: string): string {
+  const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
+  return lines
+    .slice(0, EDIT_SNIPPET_MAX_LINES)
+    .map((line) => (line.length > EDIT_SNIPPET_WIDTH ? `${line.slice(0, EDIT_SNIPPET_WIDTH)}…` : line))
+    .join("\n");
+}
+
 function requireWorkspaceSearchQuery(args: WorkspaceFileArgs) {
   const query = asTrimmedString(args.query);
   if (!query) throw new Error("searchFiles requires a non-empty query.");
@@ -1798,6 +1815,8 @@ async function editFileTool(args: {
       path: relativePath,
       replacements: replacementCount,
       bytes: Buffer.byteLength(nextContent),
+      oldSnippet: clipEditSnippet(oldText),
+      newSnippet: clipEditSnippet(newText),
       ...(activity ? { activity } : {}),
     },
   };

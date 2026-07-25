@@ -1,11 +1,10 @@
 import { clearWorkflow } from "../ai/workflow/workflowStore";
 import { resetFavorites } from "../app/favorite/favoriteStore";
+import { abortAllMessages, clearDialogState } from "../chat/dialog/dialogSlice";
 import {
-  abortAllMessages,
-  clearDialogState,
   clearPendingAttachments,
   clearPendingUserInputQueue,
-} from "../chat/dialog/dialogSlice";
+} from "../chat/dialog/dialogRuntimeStore";
 import { resetMsgs } from "../chat/messages/messageSlice";
 import { resetSpace } from "../create/space/spaceSlice";
 import { cancelAllSyncJobs } from "../database/sync/syncJobRegistry";
@@ -20,11 +19,11 @@ export const resetAuthScopedClientState = async (dispatch: any) => {
   // original account is active again (ensureSyncMappingsHydrated).
   clearSyncMappings();
   await dispatch(abortAllMessages({ all: true })).unwrap();
-  // The remaining clears are synchronous slice reducers, so inline dispatch
-  // order is sufficient and intentionally not modeled as async work.
-  dispatch(clearPendingAttachments({ all: true }));
+  // Runtime clears are module-store mutators; clearDialogState still clears
+  // Redux currentDialogKey (and leaves runtime via applyClearDialogStateRuntime).
+  clearPendingAttachments({ all: true });
   dispatch(clearDialogState());
-  dispatch(clearPendingUserInputQueue({ all: true }));
+  clearPendingUserInputQueue({ all: true });
   dispatch(resetMsgs({ all: true }));
   clearWorkflow();
   resetFavorites();

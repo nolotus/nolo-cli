@@ -1,7 +1,8 @@
 // 文件路径: chat/dialog/dialogSlice.ts
+// Wave9: dialogRuntimeByKey 已剥到 dialogRuntimeStore.ts。
+// 本 slice 只保留 currentDialogKey / configError / isUpdatingMode 与 CRUD/send thunks。
 
 import {
-  type PayloadAction,
   asyncThunkCreator,
   buildCreateSlice,
   createSelector,
@@ -9,7 +10,6 @@ import {
 import type { DialogConfig } from "../../app/types";
 import { isAbortError } from "../../core/abortError";
 import { getRuntimeServerContext } from "../../database/runtimeServerContext";
-import type { Descendant } from "slate";
 import { clearAllStreaming } from "../messages/messageSlice";
 import { read, selectById } from "../../database/dbSlice";
 
@@ -20,6 +20,56 @@ import { updateTokensAction } from "./actions/updateTokensAction";
 import { mergeDialogTokenStats } from "./dialogTokenStats";
 import { getDialogAgentIds, getPrimaryDialogAgentId } from "./dialogAgents";
 import { deleteDialogThunk } from "./deleteDialogOrchestration";
+import type { CreatePagePayload, PendingFile } from "./dialogRuntimeTypes";
+import {
+  abortActiveControllers,
+  addPageReferenceToRuntime,
+  applyClearDialogStateRuntime,
+  applyUpdateTokensFulfilled,
+  clearActiveControllers,
+  clearPendingAttachments,
+  deleteDialogRuntime,
+  getDialogRuntimeTokens,
+  resetDialogRuntimeSessionState,
+  setActiveDialogKey,
+} from "./dialogRuntimeStore";
+
+// Re-export runtime mutators/selectors/types so existing import paths keep working.
+export type {
+  CreatePagePayload,
+  LoopStopReason,
+  PendingFile,
+  PendingRawData,
+  TokenStats,
+} from "./dialogRuntimeTypes";
+export { GLOBAL_DIALOG_RUNTIME_KEY } from "./dialogRuntimeTypes";
+export {
+  addPendingFile,
+  removePendingFile,
+  clearPendingAttachments,
+  clearDialogRuntimeState,
+  addActiveController,
+  removeActiveController,
+  clearActiveControllers,
+  tokenUsageLiveUpdate,
+  setLoopStopReason,
+  enqueueUserInput,
+  dequeueUserInput,
+  clearPendingUserInputQueue,
+  selectDialogRuntimeByKey,
+  selectPendingFiles,
+  selectActiveControllers,
+  selectPendingRawData,
+  selectDialogRuntimeTokens,
+  selectPendingRawDataByPageKey,
+  selectPendingUserInputQueue,
+  selectLoopStopReason,
+  usePendingFiles,
+  useActiveControllers,
+  usePendingUserInputQueue,
+  useLoopStopReason,
+  useDialogRuntimeTokens,
+} from "./dialogRuntimeStore";
 
 const createSliceWithThunks = buildCreateSlice({
   creators: { asyncThunk: asyncThunkCreator },
@@ -65,179 +115,22 @@ const runHandleSendMessageAction = async (args: any, thunkApi: any) => {
   return handleSendMessageAction(args, thunkApi);
 };
 
-// --- Interfaces ---
-
-export interface PendingFile {
-  id: string;
-  name: string;
-  /** Source content key included in the message attachment. */
-  pageKey?: string;
-  /** Source dialog key included in the message attachment. Prefer sourceDialogKey in new code. */
-  dialogKey?: string;
-  sourceDialogKey?: string;
-  /** Target dialog runtime that should receive this pending attachment. */
-  targetDialogKey?: string;
-  /** @deprecated Use targetDialogKey. Kept for older pending attachment payloads. */
-  runtimeDialogKey?: string;
-  type:
-    | "excel"
-    | "docx"
-    | "pdf"
-    | "page"
-    | "txt"
-    | "dialog"
-    | "table"
-    | "image"
-    | "file"
-    | "agent"
-    | "app"
-    | "ocr_text";
-  groupId?: string;
-  ocrText?: string;  // ← 新增：OCR 识别结果
-  /** 关联到文件处理状态（如 useMessageInputFiles 的 fileStatus）的跟踪 id。 */
-  trackingId?: string;
-}
-
-export interface CreatePagePayload {
-  slateData: Descendant[];
-  jsonData?: Record<string, any>[];
-  title: string;
-  type: "excel" | "docx" | "pdf" | "txt" | "table";
-  fileId: string;
-  size: number;
-  groupId?: string;
-  dialogKey?: string;
-}
-
-export interface PendingRawData {
-  pageKey: string;
-  jsonData: Record<string, any>[];
-}
-
-export interface TokenStats {
-  inputTokens: number;
-  outputTokens: number;
-  totalCost: number;
-}
-
-type LiveTokenUsagePayload = {
-  input_tokens: number;
-  output_tokens: number;
-  cost?: number;
-  dialogKey?: string;
-};
-
-export type LoopStopReason =
-  | "done"         // 模型主动结束，无工具调用
-  | "handoff"      // 移交给子 Agent
-  | "pending"      // 等待用户确认
-  | "timeout"      // 超时
-  | "error";       // 异常
-
-interface DialogState {
-  currentDialogKey: string | null;
-  /**
-   * 多对话运行态桶：
-   * - 现阶段先服务“网页端切换对话不停止”
-   * - token / controller / queue /附件等按 dialogKey 隔离
-   * - 未来桌面端若支持多窗口/多 tab，还需要补跨窗口 stop 语义与同步策略
-   */
-  dialogRuntimeByKey: Record<string, DialogRuntimeState>;
-  isUpdatingMode: boolean;
-}
-
-interface DialogRuntimeState {
-  tokens: TokenStats;
-  pendingFiles: PendingFile[];
-  activeControllers: Record<string, AbortController>;
-  pendingRawData: Record<string, PendingRawData>;
-  loopStopReason: LoopStopReason | null;
-  /** 用户在 agent loop 运行期间发送的消息队列，loop 每轮结束后依次注入 */
-  pendingUserInputQueue: string[];
-}
-
-// --- Initial State ---
-
-export const GLOBAL_DIALOG_RUNTIME_KEY = "__global__";
-
-const createEmptyTokenStats = (): TokenStats => ({
-  inputTokens: 0,
-  outputTokens: 0,
-  totalCost: 0,
-});
-
-const createEmptyDialogRuntimeState = (): DialogRuntimeState => ({
-  tokens: createEmptyTokenStats(),
-  pendingFiles: [],
-  activeControllers: {},
-  pendingRawData: {},
-  loopStopReason: null,
-  pendingUserInputQueue: [],
-});
-
 interface DialogState {
   currentDialogKey: string | null;
   configError: string | null;
-  dialogRuntimeByKey: Record<string, DialogRuntimeState>;
   isUpdatingMode: boolean;
 }
 
 const initialState: DialogState = {
   currentDialogKey: null,
   configError: null,
-  dialogRuntimeByKey: {
-    [GLOBAL_DIALOG_RUNTIME_KEY]: createEmptyDialogRuntimeState(),
-  },
   isUpdatingMode: false,
 };
-
-const resolveDialogRuntimeKey = (
-  state: Pick<DialogState, "currentDialogKey">,
-  dialogKey?: string | null
-) => dialogKey ?? state.currentDialogKey ?? GLOBAL_DIALOG_RUNTIME_KEY;
-
-const ensureDialogRuntimeState = (
-  state: DialogState,
-  dialogKey?: string | null
-): DialogRuntimeState => {
-  const runtimeKey = resolveDialogRuntimeKey(state, dialogKey);
-  if (!state.dialogRuntimeByKey[runtimeKey]) {
-    state.dialogRuntimeByKey[runtimeKey] = createEmptyDialogRuntimeState();
-  }
-  return state.dialogRuntimeByKey[runtimeKey];
-};
-
-const getDialogRuntimeState = (
-  state: DialogState,
-  dialogKey?: string | null
-): DialogRuntimeState =>
-  state.dialogRuntimeByKey[resolveDialogRuntimeKey(state, dialogKey)] ??
-  createEmptyDialogRuntimeState();
-
-/**
- * Reset per-session runtime state for a dialog runtime. Called when a dialog is
- * (re)initialized so stale loop/queue state from a previous visit does not leak
- * into the fresh load.
- *
- * Resets: tokens, loopStopReason, pendingUserInputQueue.
- * Preserves: activeControllers (an in-flight stream must not be aborted by a
- * page reload of the same dialog), pendingFiles, pendingRawData (user-added
- * attachments that should survive a dialog reload).
- */
-const resetDialogRuntimeSessionState = (runtime: DialogRuntimeState): void => {
-  runtime.tokens = createEmptyTokenStats();
-  runtime.loopStopReason = null;
-  runtime.pendingUserInputQueue = [];
-};
-
-
-// --- Slice Definition ---
 
 const dialogSlice = createSliceWithThunks({
   name: "dialog",
   initialState,
   reducers: (create) => ({
-    // --- Thunks ---
     createPageAndAddReference: create.asyncThunk(
       async (payload: CreatePagePayload, { dispatch, rejectWithValue }) => {
         const { slateData, jsonData, title, type, fileId, groupId, dialogKey } = payload;
@@ -264,32 +157,29 @@ const dialogSlice = createSliceWithThunks({
         }
       },
       {
-        fulfilled: (state, action) => {
-          const runtime = ensureDialogRuntimeState(
-            state,
-            action.payload.dialogKey ?? action.meta.arg.dialogKey
-          );
-          runtime.pendingFiles.push(action.payload.reference);
-          if (action.payload.rawData && action.payload.rawData.pageKey) {
-            runtime.pendingRawData[action.payload.rawData.pageKey] =
-              action.payload.rawData;
-          }
+        fulfilled: (_state, action) => {
+          addPageReferenceToRuntime({
+            reference: action.payload.reference,
+            rawData: action.payload.rawData,
+            dialogKey: action.payload.dialogKey ?? action.meta.arg.dialogKey,
+          });
         },
       }
     ),
 
     deleteDialog: create.asyncThunk(deleteDialogThunk, {
       fulfilled: (state, action) => {
-        delete state.dialogRuntimeByKey[action.payload.dialogKey];
+        deleteDialogRuntime(action.payload.dialogKey);
         if (action.payload.isCurrentDialog) {
           state.currentDialogKey = null;
+          setActiveDialogKey(null);
         }
       },
     }),
 
     initDialog: create.asyncThunk(
       async (id: string, { dispatch, signal, getState }) => {
-        dispatch(dialogSlice.actions.clearPendingAttachments());
+        clearPendingAttachments();
         clearWorkflow();
         const { currentServer: preferredServerOrigin } = getRuntimeServerContext(
           getState() as any
@@ -306,8 +196,8 @@ const dialogSlice = createSliceWithThunks({
         pending: (state, action) => {
           state.currentDialogKey = action.meta.arg;
           state.configError = null;
-          const runtime = ensureDialogRuntimeState(state, action.meta.arg);
-          resetDialogRuntimeSessionState(runtime);
+          setActiveDialogKey(action.meta.arg);
+          resetDialogRuntimeSessionState(action.meta.arg);
         },
         fulfilled: (state, action) => {
           if (state.currentDialogKey === action.meta.arg) {
@@ -333,7 +223,7 @@ const dialogSlice = createSliceWithThunks({
     abortAllMessages: create.asyncThunk(
       async (
         args: { dialogKey?: string; all?: boolean } | undefined,
-        { getState, dispatch }
+        { dispatch }
       ) => {
         /**
          * 产品约束说明：
@@ -341,42 +231,22 @@ const dialogSlice = createSliceWithThunks({
          * - `all: true` 仅用于 logout / 全局 reset 这类明确的系统级清理
          * - 未来桌面端若要支持“从任务中心停任意 dialog”，应在 UI 层显式传 dialogKey
          */
-        const dialogState = (getState() as any).dialog;
-        const runtimeStates: any[] = args?.all
-          ? Object.values(dialogState.dialogRuntimeByKey)
-          : [getDialogRuntimeState(dialogState, args?.dialogKey)];
-
-        runtimeStates.forEach((runtimeState) => {
-          (Object.values(runtimeState.activeControllers) as any[]).forEach((controller) =>
-            controller.abort()
-          );
-        });
+        abortActiveControllers(args);
         dispatch(clearAllStreaming(args));
-        dispatch(dialogSlice.actions.clearActiveControllers(args));
+        clearActiveControllers(args);
       }
     ),
 
-    // Passthrough thunks for external actions
     updateTokens: create.asyncThunk(updateTokensAction, {
-      fulfilled: (state, action) => {
+      fulfilled: (_state, action) => {
         const dialogKey = action.meta.arg.dialogKey;
         if (!dialogKey) return;
-
-        const runtime = state.dialogRuntimeByKey[dialogKey];
-        if (!runtime) return;
-
-        runtime.tokens.inputTokens = Math.max(
-          0,
-          runtime.tokens.inputTokens - (action.payload.input_tokens ?? 0)
-        );
-        runtime.tokens.outputTokens = Math.max(
-          0,
-          runtime.tokens.outputTokens - (action.payload.output_tokens ?? 0)
-        );
-        runtime.tokens.totalCost = Math.max(
-          0,
-          runtime.tokens.totalCost - (action.payload.cost ?? 0)
-        );
+        applyUpdateTokensFulfilled({
+          dialogKey,
+          input_tokens: action.payload.input_tokens,
+          output_tokens: action.payload.output_tokens,
+          cost: action.payload.cost,
+        });
       },
     }),
 
@@ -388,206 +258,20 @@ const dialogSlice = createSliceWithThunks({
     setPrimaryDialogAgent: create.asyncThunk(runSetPrimaryDialogAgentAction),
     setDialogExtraReferences: create.asyncThunk(runSetDialogExtraReferencesAction),
 
-    // --- Reducers ---
-    addPendingFile: create.reducer(
-      (state, action: PayloadAction<PendingFile>) => {
-        const targetRuntimeKey =
-          action.payload.targetDialogKey ??
-          action.payload.runtimeDialogKey ??
-          (action.payload.type === "dialog" ? state.currentDialogKey : action.payload.dialogKey);
-        const runtime = ensureDialogRuntimeState(state, targetRuntimeKey);
-        if (!runtime.pendingFiles.some((f) => f.id === action.payload.id)) {
-          runtime.pendingFiles.push(action.payload);
-        }
-      }
-    ),
-
-    removePendingFile: create.reducer(
-      (state, action: PayloadAction<string>) => {
-        const runtime = ensureDialogRuntimeState(state);
-        const fileToRemove = runtime.pendingFiles.find(
-          (f) => f.id === action.payload
-        );
-        if (fileToRemove) {
-          if (fileToRemove.pageKey) {
-            delete runtime.pendingRawData[fileToRemove.pageKey];
-          }
-          runtime.pendingFiles = runtime.pendingFiles.filter(
-            (file) => file.id !== action.payload
-          );
-        }
-      }
-    ),
-
-    clearPendingAttachments: create.reducer(
-      (state, action: PayloadAction<{ dialogKey?: string; all?: boolean } | undefined>) => {
-        if (action.payload?.all) {
-          Object.values(state.dialogRuntimeByKey).forEach((runtime) => {
-            runtime.pendingFiles = [];
-            runtime.pendingRawData = {};
-          });
-          return;
-        }
-        const runtime = ensureDialogRuntimeState(state, action.payload?.dialogKey);
-        runtime.pendingFiles = [];
-        runtime.pendingRawData = {};
-      }
-    ),
-
-    setLoopStopReason: create.reducer(
-      (
-        state,
-        action: PayloadAction<{ reason: LoopStopReason | null; dialogKey?: string }>
-      ) => {
-        const runtime = ensureDialogRuntimeState(state, action.payload.dialogKey);
-        runtime.loopStopReason = action.payload.reason;
-      }
-    ),
-
-    clearDialogRuntimeState: create.reducer(
-      (state, action: PayloadAction<{ dialogKey: string }>) => {
-        delete state.dialogRuntimeByKey[action.payload.dialogKey];
-      }
-    ),
-
-
-    addActiveController: create.reducer(
-      (
-        state,
-        action: PayloadAction<{
-          messageId: string;
-          controller: AbortController;
-          dialogKey?: string;
-        }>
-      ) => {
-        const runtime = ensureDialogRuntimeState(state, action.payload.dialogKey);
-        runtime.activeControllers[action.payload.messageId] =
-          action.payload.controller;
-      }
-    ),
-
-    removeActiveController: create.reducer(
-      (
-        state,
-        action: PayloadAction<{ messageId: string; dialogKey?: string } | string>
-      ) => {
-        const payload =
-          typeof action.payload === "string"
-            ? { messageId: action.payload }
-            : action.payload;
-        const runtime = ensureDialogRuntimeState(state, payload.dialogKey);
-        delete runtime.activeControllers[payload.messageId];
-      }
-    ),
-
-    clearActiveControllers: create.reducer(
-      (state, action: PayloadAction<{ dialogKey?: string; all?: boolean } | undefined>) => {
-        if (action.payload?.all) {
-          Object.values(state.dialogRuntimeByKey).forEach((runtime) => {
-            runtime.activeControllers = {};
-          });
-          return;
-        }
-        const runtime = ensureDialogRuntimeState(state, action.payload?.dialogKey);
-        runtime.activeControllers = {};
-      }
-    ),
-
-    enqueueUserInput: create.reducer(
-      (state, action: PayloadAction<string | { text: string; dialogKey?: string }>) => {
-        const payload =
-          typeof action.payload === "string"
-            ? { text: action.payload }
-            : action.payload;
-        const runtime = ensureDialogRuntimeState(state, payload.dialogKey);
-        runtime.pendingUserInputQueue.push(payload.text);
-      }
-    ),
-
-    dequeueUserInput: create.reducer(
-      (state, action: PayloadAction<{ dialogKey?: string } | undefined>) => {
-        const runtime = ensureDialogRuntimeState(state, action.payload?.dialogKey);
-        runtime.pendingUserInputQueue.shift();
-      }
-    ),
-
-    clearPendingUserInputQueue: create.reducer(
-      (state, action: PayloadAction<{ dialogKey?: string; all?: boolean } | undefined>) => {
-        if (action.payload?.all) {
-          Object.values(state.dialogRuntimeByKey).forEach((runtime) => {
-            runtime.pendingUserInputQueue = [];
-          });
-          return;
-        }
-        const runtime = ensureDialogRuntimeState(state, action.payload?.dialogKey);
-        runtime.pendingUserInputQueue = [];
-      }
-    ),
-
-    tokenUsageLiveUpdate: create.reducer(
-      (
-        state,
-        action: PayloadAction<LiveTokenUsagePayload>
-      ) => {
-        const runtime = ensureDialogRuntimeState(state, action.payload.dialogKey);
-        runtime.tokens.inputTokens += action.payload.input_tokens;
-        runtime.tokens.outputTokens += action.payload.output_tokens;
-        runtime.tokens.totalCost += action.payload.cost ?? 0;
-      }
-    ),
-
+    /** Clears currentDialogKey; runtime leave semantics live in the store. */
     clearDialogState: create.reducer((state) => {
-      const previousDialogKey = state.currentDialogKey;
-      const previousRuntime = previousDialogKey
-        ? state.dialogRuntimeByKey[previousDialogKey]
-        : null;
-      const globalRuntime = ensureDialogRuntimeState(state, GLOBAL_DIALOG_RUNTIME_KEY);
-
-      if (previousRuntime) {
-        if (previousRuntime.pendingFiles.length > 0) {
-          globalRuntime.pendingFiles = previousRuntime.pendingFiles;
-          previousRuntime.pendingFiles = [];
-        }
-        previousRuntime.pendingRawData = {};
-        previousRuntime.pendingUserInputQueue = [];
-      }
+      applyClearDialogStateRuntime();
       state.currentDialogKey = null;
-      globalRuntime.pendingRawData = {};
-      globalRuntime.pendingUserInputQueue = [];
     }),
   }),
   selectors: {
     selectCurrentDialogKey: (state) => state.currentDialogKey,
     selectConfigError: (state) => state.configError,
-    selectDialogRuntimeByKey: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey),
-    selectPendingFiles: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).pendingFiles,
-    selectActiveControllers: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).activeControllers,
-    selectPendingRawData: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).pendingRawData,
-    selectDialogRuntimeTokens: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).tokens,
-    selectTotalDialogTokens: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).tokens,
-    selectPendingRawDataByPageKey: (state, pageKey: string) =>
-      getDialogRuntimeState(state).pendingRawData[pageKey],
-    selectPendingUserInputQueue: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).pendingUserInputQueue,
-    selectLoopStopReason: (state, dialogKey?: string) =>
-      getDialogRuntimeState(state, dialogKey).loopStopReason,
   },
 });
 
-// --- Actions and Reducer Exports ---
-// cast: buildCreateSlice async thunks 会推断成 void|AsyncThunk|ActionCreator 联合
 export const {
   createPageAndAddReference,
-  addPendingFile,
-  removePendingFile,
-  clearPendingAttachments,
-  clearDialogRuntimeState,
   initDialog,
   deleteDialog,
   updateTokens,
@@ -600,32 +284,13 @@ export const {
   setPrimaryDialogAgent,
   setDialogExtraReferences,
   handleSendMessage,
-  addActiveController,
-  removeActiveController,
   abortAllMessages,
-  clearActiveControllers,
-  tokenUsageLiveUpdate,
-  setLoopStopReason,
-  enqueueUserInput,
-  dequeueUserInput,
-  clearPendingUserInputQueue,
 } = dialogSlice.actions as any;
 
 export default dialogSlice.reducer;
 
-// --- Selectors Exports ---
-export const {
-  selectCurrentDialogKey,
-  selectConfigError,
-  selectPendingFiles,
-  selectActiveControllers,
-  selectDialogRuntimeByKey,
-  selectLoopStopReason,
-  selectPendingRawData,
-  selectDialogRuntimeTokens,
-  selectPendingRawDataByPageKey,
-  selectPendingUserInputQueue,
-} = dialogSlice.selectors;
+export const { selectCurrentDialogKey, selectConfigError } =
+  dialogSlice.selectors;
 
 export const selectCurrentDialogConfig = createSelector(
   (state: any) => state,
@@ -656,18 +321,21 @@ export const selectDialogConfigByKey = createSelector(
 export const selectCurrentDialogTokens = createSelector(
   (state: any) => state,
   selectCurrentDialogConfig,
-  (state: any) => selectDialogRuntimeTokens(state),
   (_state: any, dialogKey?: string) => dialogKey,
-  (state, currentDialog, currentRuntimeTokens, dialogKey) => {
+  (state, currentDialog, dialogKey) => {
     if (dialogKey) {
       const dialogConfig = selectById(state, dialogKey) as DialogConfig | null;
-      const runtimeTokens = selectDialogRuntimeTokens(state, dialogKey);
-      return mergeDialogTokenStats(dialogConfig, runtimeTokens);
+      return mergeDialogTokenStats(
+        dialogConfig,
+        getDialogRuntimeTokens(dialogKey)
+      );
     }
 
-    return mergeDialogTokenStats(currentDialog, currentRuntimeTokens);
+    return mergeDialogTokenStats(
+      currentDialog,
+      getDialogRuntimeTokens()
+    );
   }
 );
 
 export const selectTotalDialogTokens = selectCurrentDialogTokens;
-

@@ -21,7 +21,14 @@
 
 import type { Dispatch, Store } from "@reduxjs/toolkit";
 
-import { clearPendingUserInputQueue, dequeueUserInput, enqueueUserInput, selectLoopStopReason, selectPendingUserInputQueue, handleSendMessage } from "../dialog/dialogSlice";
+import { handleSendMessage } from "../dialog/dialogSlice";
+import {
+  clearPendingUserInputQueue,
+  dequeueUserInput,
+  enqueueUserInput,
+  getLoopStopReason,
+  getPendingUserInputQueue,
+} from "../dialog/dialogRuntimeStore";
 import { createChatQueueRuntime, type ChatQueueRuntime } from "./chatQueueRuntime";
 import type { ChatQueueState } from "./chatQueueMachine";
 
@@ -36,14 +43,6 @@ export type ChatQueueReduxAdapterOptions = {
     text: string;
     dispatch: Dispatch;
   }) => Promise<void> | void;
-};
-
-type DialogState = {
-  dialogRuntimeByKey: Record<string, any>;
-};
-
-type MinimalRootState = {
-  dialog: DialogState;
 };
 
 /**
@@ -65,22 +64,18 @@ export class ChatQueueReduxAdapter {
 
   /**
    * Get (or lazily create) the runtime for a dialog. The runtime is seeded from
-   * the current Redux `pendingUserInputQueue` so we don't lose queued items that
-   * were written by the legacy reducer path before the adapter existed.
+   * dialogRuntimeStore `pendingUserInputQueue` so we don't lose queued items
+   * written before the adapter existed.
    */
   getRuntime(dialogKey: string): ChatQueueRuntime {
     let rt = this.runtimes.get(dialogKey);
     if (rt) return rt;
 
-    const state = this.store.getState() as MinimalRootState;
-    const legacyQueue = selectPendingUserInputQueue(
-      { dialog: state.dialog } as any,
-      dialogKey
-    );
+    const legacyQueue = getPendingUserInputQueue(dialogKey);
     const seed: ChatQueueState = {
       running: false,
       queue: Array.isArray(legacyQueue) ? [...legacyQueue] : [],
-      drainPaused: selectLoopStopReason({ dialog: state.dialog } as any, dialogKey) === "pending",
+      drainPaused: getLoopStopReason(dialogKey) === "pending",
       lastDrainError: null,
     };
     rt = createChatQueueRuntime(seed);
@@ -91,7 +86,7 @@ export class ChatQueueReduxAdapter {
     // Order: send first, dequeue only on success. If the send throws (balance,
     // network, aborted-by-user), the head stays in the queue so a later retry
     // or re-drain can re-attempt it. The core is told about the failure via
-    // `drain-error`; the Redux shadow is only shifted once we commit.
+    // `drain-error`; the runtime shadow is only shifted once we commit.
     //
     // The drain is async but the runtime emits drain-ready synchronously inside
     // `send({type:"turn-end"})`. We stash the resulting promise so callers
@@ -113,9 +108,9 @@ export class ChatQueueReduxAdapter {
               }) as any
             );
           }
-          // Commit: remove the head from both core and the Redux shadow.
+          // Commit: remove the head from both core and the runtime-store shadow.
           runtime.send({ type: "dequeue" });
-          dispatch(dequeueUserInput({ dialogKey }));
+          dequeueUserInput({ dialogKey });
         } catch (error) {
           const message =
             error instanceof Error
@@ -154,7 +149,7 @@ export class ChatQueueReduxAdapter {
    * Call when an agent turn ends for this dialog.
    * `ok` false without `aborted` keeps the queue (failure stop); `aborted`
    * clears the queue (user abandoned follow-ups) both in the core and in the
-   * legacy Redux shadow.
+   * dialogRuntimeStore shadow.
    *
    * Returns a promise that resolves once any drain triggered by this turn-end
    * has committed (sent + dequeued) or failed. Callers that need to assert on
@@ -168,8 +163,8 @@ export class ChatQueueReduxAdapter {
     rt.send({ type: "turn-end", ...outcome });
 
     if (outcome.aborted) {
-      // Mirror the core's "clear queue on abort" into the Redux shadow.
-      this.store.dispatch(clearPendingUserInputQueue({ dialogKey }));
+      // Mirror the core's "clear queue on abort" into the runtime-store shadow.
+      clearPendingUserInputQueue({ dialogKey });
     }
 
     const pending = this.pendingDrains.get(dialogKey);
@@ -178,17 +173,17 @@ export class ChatQueueReduxAdapter {
 
   /**
    * Enqueue a user input through the adapter. This writes to both the core
-   * runtime and the legacy Redux queue so existing UI selectors keep working
+   * runtime and the dialogRuntimeStore queue so existing UI hooks keep working
    * during the migration.
    *
    * Order matters: we touch the runtime first (creating it if needed, seeded
-   * from the *current* Redux shadow) and then mirror into Redux. Doing it the
-   * other way around would let the seed read back the value we just wrote and
-   * double-count it.
+   * from the *current* store shadow) and then mirror into the store. Doing it
+   * the other way around would let the seed read back the value we just wrote
+   * and double-count it.
    */
   enqueue(dialogKey: string, text: string): void {
     this.getRuntime(dialogKey).send({ type: "enqueue", text });
-    this.store.dispatch(enqueueUserInput({ text, dialogKey }));
+    enqueueUserInput({ text, dialogKey });
   }
 
   /** Current queue snapshot (from the core runtime). */
@@ -198,10 +193,7 @@ export class ChatQueueReduxAdapter {
 
   /** Reflect `loopStopReason === "pending"` into the runtime's pause flag. */
   syncDrainPause(dialogKey: string): void {
-    const state = this.store.getState() as MinimalRootState;
-    const paused =
-      selectLoopStopReason({ dialog: state.dialog } as any, dialogKey) ===
-      "pending";
+    const paused = getLoopStopReason(dialogKey) === "pending";
     const rt = this.getRuntime(dialogKey);
     if (paused) rt.send({ type: "pause-drain" });
     else rt.send({ type: "resume-drain" });

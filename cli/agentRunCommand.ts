@@ -481,6 +481,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(activityTracker ? { onLoopEvent: activityTracker.onLoopEvent } : {}),
     background: parsed.background,
     noStream: parsed.noStream,
+    ephemeral: parsed.ephemeral,
     ...(typeof parsed.timeoutMs === "number" ? { timeoutMs: parsed.timeoutMs } : {}),
     traceTools: parsed.traceTools,
     ...(parsed.eventsMode ? { eventsMode: parsed.eventsMode } : {}),

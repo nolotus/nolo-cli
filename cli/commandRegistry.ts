@@ -66,7 +66,7 @@ export function renderHelpText() {
     "  nolo agent pull agent-pub-01APPBUILDER00000001YAII3I",
   "  nolo agent read agent-pub-01APPBUILDER00000001YAII3I",
   '  nolo agent run frontend-implementer --msg "polish notifications"',
-    '  nolo agent run agent-0e95801d90-kimi-code --msg "Reply PONG only" --local --bg --timeout-ms 120000',
+    '  nolo agent run agent-0e95801d90-kimi-code --msg "Reply PONG only" --local --ephemeral',
     "  nolo agent ps",
     "  nolo agent status <runId>",
     "  nolo agent logs <runId> --tail 20",

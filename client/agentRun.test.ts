@@ -107,6 +107,28 @@ describe("cli agent run client", () => {
     expect(output.text()).not.toContain("tokens=");
   });
 
+  test("warns that --ephemeral is ignored when running directly on the server", async () => {
+    const output = new CaptureOutput();
+
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      ephemeral: true,
+      output,
+      fetchImpl: async () =>
+        Response.json({ content: "hi", dialogId: "dialog-1" }),
+    });
+
+    expect(output.text()).toContain(
+      "--ephemeral/--memory-only is only effective with the local runtime",
+    );
+  });
+
   test("prints agent run error details from failed HTTP responses", async () => {
     const output = new CaptureOutput();
 
@@ -476,6 +498,64 @@ describe("cli agent run client", () => {
     expect(result).toEqual({ exitCode: 0, dialogId: "dialog-local" });
     expect(output.text()).toContain("frontend -> working locally");
     expect(output.text()).toContain("frontend > local:polish notifications");
+  });
+
+  test("ephemeral mode skips persistence: adapter.saveTurn is never called", async () => {
+    const output = new CaptureOutput();
+    const saveTurnCalls: any[] = [];
+    const loadHistoryCalls: string[] = [];
+
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "ping",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      ephemeral: true,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "leveldb-persistence"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+        }),
+        loadDialogHistory: async (dialogId) => {
+          loadHistoryCalls.push(dialogId);
+          return [];
+        },
+        saveTurn: async (input) => {
+          saveTurnCalls.push(input);
+          return { dialogId: "should-not-be-used" };
+        },
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => ({ content: "pong", model: "fake-local" }),
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("HTTP should not be called for forced local runs");
+      },
+    });
+
+    // The ephemeral wrapper replaces saveTurn with an in-memory no-op, so the
+    // injected adapter's saveTurn must never be called — nothing is persisted.
+    expect(saveTurnCalls).toEqual([]);
+    // loadDialogHistory is also short-circuited to [] in ephemeral mode.
+    expect(loadHistoryCalls).toEqual([]);
+    expect(result.exitCode).toBe(0);
+    // dialogId is the in-memory ephemeral id (the turn's transient ulid),
+    // never the persistence adapter's "should-not-be-used".
+    expect(typeof result.dialogId).toBe("string");
+    expect(result.dialogId).not.toBe("should-not-be-used");
+    expect(output.text()).toContain("frontend > pong");
   });
 
   test("persists task evidence subjectRefs on forced local turns", async () => {
@@ -2048,6 +2128,55 @@ describe("cli agent run client", () => {
     expect(fetchCalls).toBe(0);
     expect(output.text()).toContain("server fallback is disabled");
     expect(output.text()).not.toContain("falling back to server");
+  });
+
+  test("auto mode warns --ephemeral is ignored when it falls back to server", async () => {
+    const output = new CaptureOutput();
+
+    const result = await runAgentTurn({
+      agentName: "local-bot",
+      agentKey: "agent-local-01AGENT",
+      serverUrl: "https://nolo.chat",
+      message: "hello local",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "auto",
+      ephemeral: true,
+      output,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Local",
+          apiSource: "custom",
+          customProviderUrl: "http://127.0.0.1:11434/v1",
+          model: "local-model",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-local" }),
+        resolveProvider: async () => ({
+          model: "local-model",
+          complete: async () => {
+            throw new Error("local provider offline");
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () =>
+        Response.json({ content: "server reply", dialogId: "dialog-server" }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.dialogId).toBe("dialog-server");
+    // auto fallback to server happened
+    expect(output.text()).toContain("falling back to server");
+    // ephemeral warning must surface because the run reached the server path
+    expect(output.text()).toContain(
+      "--ephemeral/--memory-only is only effective with the local runtime",
+    );
   });
 
   test("prints a friendly connection hint instead of crashing on transport errors", async () => {

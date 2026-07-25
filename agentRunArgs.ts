@@ -49,6 +49,13 @@ export type ParsedAgentRunArgs = {
   blockedToolNames?: string[];
   background: boolean;
   noStream: boolean;
+  /**
+   * Ephemeral / memory-only mode: dialog & messages stay in process memory,
+   * never written to LevelDB or synced to a remote server. Intended for
+   * liveness probes (e.g. nolo-plan探活) where persistence is pure overhead.
+   * Only meaningful with the local runtime (`--local`); ignored otherwise.
+   */
+  ephemeral: boolean;
   cwd?: string;
   timeoutMs?: number;
   traceTools: boolean;
@@ -126,6 +133,8 @@ const VALUELESS_FLAGS: Record<string, true> = {
   "--bg": true,
   "--no-stream": true,
   "--debug": true,
+  "--ephemeral": true,
+  "--memory-only": true,
 };
 
 function isValuelessFlag(arg: string): boolean {
@@ -218,7 +227,7 @@ export function writeUsage(
     return;
   }
   output.write(
-    "Usage: nolo agent run <agent> <message> [--local|--server|--auto] [--continue <dialogId>] [--cwd <path>]\n" +
+    "Usage: nolo agent run <agent> <message> [--local|--server|--auto] [--ephemeral|--memory-only] [--continue <dialogId>] [--cwd <path>]\n" +
       "       nolo agent run --agent <agent> (--msg <message>|--msg-file <path>) [--image <url-or-path>] [--space <spaceId>] [--category <name>] [--inherit-from-dialog <dialog>] [--parent-dialog <dialog>] [--subject-dialog <dialog>] [--subject-ref <kind:id[:role]>] [--task-row-dbkey <key>] [--allowed-child-agent <agent>] [--fallback-agent <agent>] (suggestions for agent to decide on quota) [--allowed-tool <tool>] [--blocked-tool <tool>] [--bg] [--timeout-ms <n>] [--events jsonl] [--no-stream] [--skill <dbKey-or-md-path>]\n"
   );
 }
@@ -285,6 +294,8 @@ export function parseAgentRunArgs(
   ];
   const fullstackLocalWorkspaceDefault =
     isFullstackCodingAgentRef(rawAgentKey, agentKey) && runtimeMode !== "server";
+  const ephemeral =
+    args.includes("--ephemeral") || args.includes("--memory-only");
   const workflowRef = readFlagValue(args, "--workflow");
   const skillRefs = readRepeatedFlagValues(args, "--skill")
     .map((v) => v.trim())
@@ -300,6 +311,7 @@ export function parseAgentRunArgs(
     imageUrls,
     allowShell: args.includes("--dangerously-allow-shell") || fullstackLocalWorkspaceDefault || explicitLocalCliAgentDefault,
     traceTools: args.includes("--trace-tools"),
+    ephemeral,
     ...(eventsMode ? { eventsMode } : {}),
     injectFeatureWorktreeInstruction: fullstackLocalWorkspaceDefault,
     ...(workflowRef ? { workflowRef } : {}),

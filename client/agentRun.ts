@@ -109,6 +109,19 @@ export type RunAgentTurnOptions = {
   allowedToolNames?: string[];
   background?: boolean;
   noStream?: boolean;
+  /**
+   * Memory-only / ephemeral mode: skip all dialog & message persistence
+   * (LevelDB writes and remote server sync). The turn runs in-process and
+   * its result is discarded once the run returns. Intended for liveness
+   * probes (e.g. nolo-plan探活). Only effective with the local runtime.
+   *
+   * Note: this covers `adapter.saveTurn` (dialog + messages) and
+   * `adapter.loadDialogHistory`. The `callAgent` sub-agent path writes its
+   * own pending/failed child-dialog records directly to the store and is NOT
+   * suppressed — but a liveness probe (a single short reply, no tool calls)
+   * never reaches that path, so in practice nothing is persisted.
+   */
+  ephemeral?: boolean;
   scriptDir: string;
   env: EnvLike;
   output: OutputLike;
@@ -461,6 +474,37 @@ function resolveLocalRuntimeAdapter(options: RunAgentTurnOptions) {
     }) ||
     buildDefaultLocalRuntimeAdapter(options)
   );
+}
+
+/**
+ * Ephemeral / memory-only adapter wrapper. Replaces `saveTurn` with an
+ * in-memory no-op (returns the turn's dialogId without writing to any store
+ * or syncing to a remote server) and `loadDialogHistory` with an empty
+ * history (ephemeral dialogs are never persisted, so they have no history to
+ * load). Capabilities are intentionally left untouched — persistence
+ * *capability* is descriptive host metadata consumed by runtime decision
+ * logic (runtimeFacts/runtimeDecision); ephemeral changes *behavior* on
+ * this turn, not the host's capability set. Everything else (agent config,
+ * provider, tools) is unchanged so a liveness probe still exercises the real
+ * runtime path — only persistence is stripped out.
+ */
+function wrapAdapterEphemeral(
+  adapter: AgentRuntimeHostAdapter,
+): AgentRuntimeHostAdapter {
+  return {
+    ...adapter,
+    loadDialogHistory: async () => [],
+    saveTurn: async (input) => ({
+      dialogId: input.continueDialogId ?? "ephemeral",
+    }),
+  };
+}
+
+function applyEphemeralIfRequested(
+  options: RunAgentTurnOptions,
+  adapter: AgentRuntimeHostAdapter,
+): AgentRuntimeHostAdapter {
+  return options.ephemeral ? wrapAdapterEphemeral(adapter) : adapter;
 }
 
 /**
@@ -938,14 +982,18 @@ async function runLocalAgentTurnForCli(
   settings: { reportFailure: boolean },
 ) {
   const resolvedBaseAdapter = resolveLocalRuntimeAdapter(options);
-  const baseAdapter =
-    resolvedBaseAdapter && options.modelOverride
-      ? wrapLoadAgentConfigWithModelOverride(
-          resolvedBaseAdapter,
-          options.agentKey,
-          options.modelOverride,
-        )
-      : resolvedBaseAdapter;
+  const baseAdapter = (() => {
+    let adapter =
+      resolvedBaseAdapter && options.modelOverride
+        ? wrapLoadAgentConfigWithModelOverride(
+            resolvedBaseAdapter,
+            options.agentKey,
+            options.modelOverride,
+          )
+        : resolvedBaseAdapter;
+    if (adapter) adapter = applyEphemeralIfRequested(options, adapter);
+    return adapter;
+  })();
   if (!baseAdapter) {
     options.output.write(
       "[nolo] Local runtime was requested but no local runtime adapter is available.\n",
@@ -991,10 +1039,13 @@ async function runLocalAgentTurnForCli(
     return runLocalAgentTurn(input);
   };
 
-  const createFreshChildBaseAdapter = () =>
-    options.localRuntimeAdapterFactory?.(options.env, {
-      cwd: options.localRuntimeCwd,
-    }) ?? buildDefaultLocalRuntimeAdapter(options);
+  const createFreshChildBaseAdapter = () => {
+    const fresh =
+      options.localRuntimeAdapterFactory?.(options.env, {
+        cwd: options.localRuntimeCwd,
+      }) ?? buildDefaultLocalRuntimeAdapter(options);
+    return applyEphemeralIfRequested(options, fresh);
+  };
 
   const withLocalDelegation = (args: {
     base: AgentRuntimeHostAdapter;
@@ -1357,6 +1408,15 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
         "Run `nolo login`, or set AUTH_TOKEN / NOLO_SERVER for non-interactive runs.\n",
     );
     return { exitCode: 1 };
+  }
+
+  // Reaching the HTTP/server path means the run will be persisted by the
+  // server. --ephemeral/--memory-only only suppresses *local* persistence, so
+  // warn whether the user asked for --server explicitly or auto fell back here.
+  if (options.ephemeral) {
+    options.output.write(
+      "[nolo] --ephemeral/--memory-only is only effective with the local runtime (--local); the server stores dialogs on its own and cannot run memory-only.\n",
+    );
   }
 
   return runHttpAgentTurn(options, authToken);

@@ -1,7 +1,8 @@
 // File: chat/dialog/dialogRuntimeStore.ts
-// Module store for per-dialog session runtime — peeled out of Redux (Wave9).
+// Module store for per-dialog session runtime — peeled out of Redux (Wave9/13).
 // Holds tokens / pendingFiles / controllers / pendingRawData / loopStopReason /
-// pendingUserInputQueue. dialogSlice keeps currentDialogKey + CRUD/send thunks.
+// pendingUserInputQueue + activeDialogKey / configError. dialogSlice keeps
+// CRUD/send thunks on an empty reducer shell.
 //
 // Sync mutators return a lightweight action object so existing
 // `dispatch(addPendingFile(...))` call sites keep working (mutator runs on
@@ -53,6 +54,12 @@ const createEmptyDialogRuntimeState = (): DialogRuntimeState => ({
 });
 
 let activeDialogKey: string | null = null;
+// Wave13: dialog session flash (active key + configError) moved here from
+// Redux `dialogSlice` state so React UI re-renders via useSyncExternalStore
+// and non-React callers read a single source of truth. Cleared together
+// with the active key on setActiveDialogKey / clear paths (matches the old
+// initDialog.pending write of currentDialogKey + configError=null).
+let configError: string | null = null;
 const runtimeByKey: Record<string, DialogRuntimeState> = {
   [GLOBAL_DIALOG_RUNTIME_KEY]: createEmptyDialogRuntimeState(),
 };
@@ -76,11 +83,28 @@ const action = <T,>(type: string, payload?: T) =>
 
 export function setActiveDialogKey(key: string | null): void {
   activeDialogKey = key;
+  // Mirror the legacy initDialog.pending contract: writing a key clears the
+  // previous load error so a re-init never surfaces a stale configError.
+  configError = null;
   notify();
 }
 
 export function getActiveDialogKey(): string | null {
   return activeDialogKey;
+}
+
+export function setDialogConfigError(error: string | null): void {
+  configError = error;
+  notify();
+}
+
+export function clearDialogConfigError(): void {
+  configError = null;
+  notify();
+}
+
+export function getDialogConfigError(): string | null {
+  return configError;
 }
 
 const resolveDialogRuntimeKey = (dialogKey?: string | null): string =>
@@ -310,6 +334,7 @@ export function applyClearDialogStateRuntime(): void {
     previousRuntime.pendingUserInputQueue = [];
   }
   activeDialogKey = null;
+  configError = null;
   globalRuntime.pendingRawData = {};
   globalRuntime.pendingUserInputQueue = [];
   notify();
@@ -405,6 +430,17 @@ export const selectPendingUserInputQueue = (
 export const selectLoopStopReason = (_state: any, dialogKey?: string) =>
   getLoopStopReason(dialogKey);
 
+// ===== Wave13: dialog session flash (active key + configError) =====
+// Selectors ignore Redux state and read the module store so non-React
+// call sites (thunks, tools) keep a single source of truth. Hooks below
+// re-render React components on key/error changes.
+/** Non-React / thunks: reads the module store. Prefer `useCurrentDialogKey()` in React. */
+export const selectCurrentDialogKey = (_state?: any): string | null =>
+  getActiveDialogKey();
+/** Non-React / thunks: reads the module store. Prefer `useDialogConfigError()` in React. */
+export const selectConfigError = (_state?: any): string | null =>
+  getDialogConfigError();
+
 // ===== useSyncExternalStore =====
 
 export function subscribe(listener: () => void): () => void {
@@ -451,8 +487,19 @@ export function useDialogRuntimeTokens(
   return getDialogRuntimeTokens(dialogKey);
 }
 
+export function useCurrentDialogKey(): string | null {
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return getActiveDialogKey();
+}
+
+export function useDialogConfigError(): string | null {
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return getDialogConfigError();
+}
+
 export function resetDialogRuntimeStoreForTests(): void {
   activeDialogKey = null;
+  configError = null;
   for (const key of Object.keys(runtimeByKey)) {
     delete runtimeByKey[key];
   }

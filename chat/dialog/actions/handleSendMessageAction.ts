@@ -12,6 +12,7 @@ import type { DialogConfig } from "../../../app/types";
 import { createDialogMessageKeyAndId } from "../../../database/keys";
 import { extractCustomId } from "../../../core/prefix";
 import { resolveHandleSendMessageContext } from "./handleSendMessageResolver";
+import { getActiveDialogKey } from "../dialogRuntimeStore";
 
 export interface HandleSendMessageArgs {
     userInput: string | any[];
@@ -32,7 +33,7 @@ const getDialogConfig = (
     state: RootState,
     dialogKey?: string
 ): DialogConfig | null => {
-    const resolvedDialogKey = dialogKey ?? state.dialog?.currentDialogKey;
+    const resolvedDialogKey = dialogKey ?? getActiveDialogKey();
     if (!resolvedDialogKey) return null;
 
     const dialog = selectById(state, resolvedDialogKey) as DialogConfig | null;
@@ -45,7 +46,7 @@ const ensureDialogConfig = async (
     dialogKey?: string
 ): Promise<DialogConfig | null> => {
     const state = getState();
-    const resolvedDialogKey = dialogKey ?? state.dialog?.currentDialogKey;
+    const resolvedDialogKey = dialogKey ?? getActiveDialogKey();
     if (!resolvedDialogKey) return null;
 
     try {

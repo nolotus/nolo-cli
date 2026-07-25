@@ -237,6 +237,26 @@ export const selectHasStreamingMessage = (
   dialogId?: string | null
 ) => getHasStreamingMessage(dialogId);
 
+/**
+ * Wave12 — `currentDialogId` peeled out of Redux. The active dialog id now
+ * lives solely in this module store (`activeDialogId`). This selector ignores
+ * the Redux state argument entirely so legacy `selectCurrentDialogId(state)`
+ * call sites keep compiling; the optional `_state` is accepted only for the
+ * single-arg compat shape.
+ */
+export const selectCurrentDialogId = (_state?: any): string | null =>
+  getActiveMessageDialogId();
+
+/**
+ * Wave12 — React hook for the active dialog id, reading the session store via
+ * useSyncExternalStore (three-arg form, SSR-safe) so `setActiveMessageDialogId`
+ * triggers re-render without Redux.
+ */
+export function useCurrentMessageDialogId(): string | null {
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return getActiveMessageDialogId();
+}
+
 // ===== useSyncExternalStore =====
 
 export function subscribe(listener: () => void): () => void {

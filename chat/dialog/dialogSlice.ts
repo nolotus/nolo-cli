@@ -1,6 +1,7 @@
 // 文件路径: chat/dialog/dialogSlice.ts
 // Wave9: dialogRuntimeByKey 已剥到 dialogRuntimeStore.ts。
-// 本 slice 只保留 currentDialogKey / configError / isUpdatingMode 与 CRUD/send thunks。
+// Wave13: currentDialogKey / configError / isUpdatingMode 也剥到 dialogRuntimeStore.ts;
+//   本 slice 只保留 CRUD/send thunks,session flash 通过 store 读写。
 
 import {
   asyncThunkCreator,
@@ -28,9 +29,11 @@ import {
   applyUpdateTokensFulfilled,
   clearActiveControllers,
   deleteDialogRuntime,
+  getActiveDialogKey,
   getDialogRuntimeTokens,
   resetDialogRuntimeSessionState,
   setActiveDialogKey,
+  setDialogConfigError,
 } from "./dialogRuntimeStore";
 
 // Re-export runtime mutators/selectors/types so existing import paths keep working.
@@ -114,17 +117,11 @@ const runHandleSendMessageAction = async (args: any, thunkApi: any) => {
   return handleSendMessageAction(args, thunkApi);
 };
 
-interface DialogState {
-  currentDialogKey: string | null;
-  configError: string | null;
-  isUpdatingMode: boolean;
-}
+// Wave13: dialog session flash (currentDialogKey/configError) lives in
+// dialogRuntimeStore; this slice carries no Redux state of its own.
+interface DialogState {}
 
-const initialState: DialogState = {
-  currentDialogKey: null,
-  configError: null,
-  isUpdatingMode: false,
-};
+const initialState: DialogState = {};
 
 const dialogSlice = createSliceWithThunks({
   name: "dialog",
@@ -167,10 +164,9 @@ const dialogSlice = createSliceWithThunks({
     ),
 
     deleteDialog: create.asyncThunk(deleteDialogThunk, {
-      fulfilled: (state, action) => {
+      fulfilled: (_state, action) => {
         deleteDialogRuntime(action.payload.dialogKey);
         if (action.payload.isCurrentDialog) {
-          state.currentDialogKey = null;
           setActiveDialogKey(null);
         }
       },
@@ -194,25 +190,24 @@ const dialogSlice = createSliceWithThunks({
         ).unwrap();
       },
       {
-        pending: (state, action) => {
-          state.currentDialogKey = action.meta.arg;
-          state.configError = null;
+        pending: (_state, action) => {
+          // Wave13: write key + clear error in the store; slice carries no state.
           setActiveDialogKey(action.meta.arg);
           resetDialogRuntimeSessionState(action.meta.arg);
         },
-        fulfilled: (state, action) => {
-          if (state.currentDialogKey === action.meta.arg) {
-            // No-op
-          }
+        fulfilled: (_state, _action) => {
+          // Config is loaded into the db slice; active key already set in pending.
         },
-        rejected: (state, action) => {
+        rejected: (_state, action) => {
           const isAborted =
             isAbortError(action.error) ||
             action.error.message === "Aborted";
-          const isCurrentDialog = state.currentDialogKey === action.meta.arg;
+          const isCurrentDialog = getActiveDialogKey() === action.meta.arg;
 
           if (!isAborted && isCurrentDialog) {
-            state.configError = action.error.message || "Failed to load dialog";
+            setDialogConfigError(
+              action.error.message || "Failed to load dialog"
+            );
             console.info("Failed to load dialog config:", action.error.message);
           }
         },
@@ -260,15 +255,11 @@ const dialogSlice = createSliceWithThunks({
     setDialogExtraReferences: create.asyncThunk(runSetDialogExtraReferencesAction),
 
     /** Clears currentDialogKey; runtime leave semantics live in the store. */
-    clearDialogState: create.reducer((state) => {
+    clearDialogState: create.reducer((_state) => {
       applyClearDialogStateRuntime();
-      state.currentDialogKey = null;
     }),
   }),
-  selectors: {
-    selectCurrentDialogKey: (state) => state.currentDialogKey,
-    selectConfigError: (state) => state.configError,
-  },
+  // Wave13: slice carries no state; selectors re-exported from dialogRuntimeStore.
 });
 
 export const {
@@ -290,25 +281,26 @@ export const {
 
 export default dialogSlice.reducer;
 
-export const { selectCurrentDialogKey, selectConfigError } =
-  dialogSlice.selectors;
-
-export const selectCurrentDialogConfig = createSelector(
-  (state: any) => state,
+// Wave13: dialog key/error selectors & hooks now come from dialogRuntimeStore.
+export {
   selectCurrentDialogKey,
-  (state, currentDialogKey) =>
-    currentDialogKey
-      ? (selectById(state, currentDialogKey) as DialogConfig | null)
-      : null
-);
+  selectConfigError,
+  useCurrentDialogKey,
+  useDialogConfigError,
+} from "./dialogRuntimeStore";
+
+export function selectCurrentDialogConfig(state: any): DialogConfig | null {
+  const key = getActiveDialogKey();
+  return key ? (selectById(state, key) as DialogConfig | null) : null;
+}
 
 export const selectCurrentDialogAgentIds = createSelector(
-  selectCurrentDialogConfig,
+  (state: any) => selectCurrentDialogConfig(state),
   (dialogConfig) => getDialogAgentIds(dialogConfig)
 );
 
 export const selectCurrentPrimaryAgentId = createSelector(
-  selectCurrentDialogConfig,
+  (state: any) => selectCurrentDialogConfig(state),
   (dialogConfig) => getPrimaryDialogAgentId(dialogConfig)
 );
 

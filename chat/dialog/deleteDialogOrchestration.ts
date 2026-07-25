@@ -21,6 +21,7 @@ import {
 } from "./dialogAttachmentCleanup";
 import { cleanupCliSessionForDialog } from "./actions/cleanupCliSession";
 import { buildDialogAgentListIndexDeleteOps, createKey } from "../../database/keys";
+import { getActiveDialogKey } from "./dialogRuntimeStore";
 
 // --- Helpers used only by deleteDialog ---
 
@@ -150,7 +151,7 @@ export const deleteDialogThunk = async (
   const { db } = extra;
   const state = getState() as any;
   const { currentServer, syncServers } = getRuntimeServerContext(state);
-  const currentDialogKey = state.dialog.currentDialogKey;
+  const currentDialogKey = getActiveDialogKey();
   const currentDialogId = currentDialogKey
     ? extractCustomId(currentDialogKey)
     : null;

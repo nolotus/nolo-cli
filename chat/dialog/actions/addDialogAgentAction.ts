@@ -3,6 +3,7 @@ import { formatISO } from "date-fns";
 import type { RootState } from "../../../app/store";
 import type { DialogConfig } from "../../../app/types";
 import { addDialogAgentIds } from "../dialogAgents";
+import { getActiveDialogKey } from "../dialogRuntimeStore";
 
 export const addDialogAgentAction = async (
   agentIds: string | string[],
@@ -10,7 +11,7 @@ export const addDialogAgentAction = async (
 ) => {
   const { dispatch, getState } = thunkApi;
   const state = getState() as RootState;
-  const currentDialogKey = state.dialog?.currentDialogKey;
+  const currentDialogKey = getActiveDialogKey();
 
   if (!currentDialogKey) {
     throw new Error("No current dialog selected");

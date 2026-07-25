@@ -16,6 +16,7 @@ import { compactWhitespace } from "../../core/compactWhitespace";
 import { isRecord } from "../../core/isRecord";
 import { extractCustomId } from "../../core/prefix";
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+import { getActiveDialogKey } from "../../chat/dialog/dialogRuntimeStore";
 
 // ─────────────────────────────────────────────
 // 基础提取：从 Redux state 中获取服务器配置
@@ -56,8 +57,8 @@ const selectCurrentServerFromState = (state: any): string =>
 const selectCurrentTokenFromState = (state: any): string | null =>
     typeof state?.auth?.currentToken === "string" ? state.auth.currentToken : null;
 
-const selectCurrentDialogKeyFromState = (state: any): string | null =>
-    typeof state?.dialog?.currentDialogKey === "string" ? state.dialog.currentDialogKey : null;
+const selectCurrentDialogKeyFromState = (_state: any): string | null =>
+    getActiveDialogKey();
 
 export const resolveToolBaseUrl = (currentServer?: string | null): string => {
     const _window = (globalThis as any).window;

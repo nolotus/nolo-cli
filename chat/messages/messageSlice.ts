@@ -19,14 +19,14 @@ import { DataType } from "../../create/types";
 import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import { remove, write, patch, selectById as selectDbRecordById } from "../../database/dbSlice";
 import type { Message } from "./types";
+import { buildEditedMessageContent } from "./messageEditContent";
 import { selectIdentityUserId } from "identity/selectors";
 import { fetchAndCacheMessages, fetchAndCacheMessagesLocalFirst } from "./fetchAndCacheMessages";
-import { createDialogMessageKeyAndId } from "../../database/keys";
 import { toErrorMessage } from "../../core/errorMessage";
 import { extractCustomId } from "../../core/prefix";
 import { asTrimmedString } from "../../core/trimmedString";
 import type { DialogConfig } from "../../app/types";
-import { updateDialogTitle, updateTokens } from "../dialog/dialogSlice";
+import { selectCurrentDialogKey, updateDialogTitle, updateTokens } from "../dialog/dialogSlice";
 import { updateDialogSummaryAction } from "../dialog/actions/updateDialogSummaryAction";
 import {
   normalizeAssistantContentBuffer,
@@ -46,12 +46,15 @@ import {
 } from "../../ai/token/openaiImageGenerationUsage";
 import { resolveHandleSendMessageContext } from "../dialog/actions/handleSendMessageResolver";
 import { resolveMessageOwner } from "./resolveMessageOwner";
+import { assemblePersistedUserMessage } from "./messageUserPersistAssemble";
 import { assembleFinalAssistantMessage } from "./messageStreamEndAssemble";
 import { applyMessageStreamingUpsert } from "./messageStreamApply";
 import {
   GLOBAL_MESSAGE_DIALOG_ID,
   deleteMessageSession,
   ensureMessageSession,
+  getActiveMessageDialogId,
+  getHasStreamingMessage,
   getMessageSession,
   markMessageStreamActivity,
   patchMessageSession,
@@ -60,6 +63,7 @@ import {
   setStreamingMessageId,
 } from "./messageSessionStore";
 
+export { buildEditedMessageContent } from "./messageEditContent";
 export { resolveMessageOwner } from "./resolveMessageOwner";
 export {
   GLOBAL_MESSAGE_DIALOG_ID,
@@ -71,6 +75,8 @@ export {
   selectLastStreamTimestamp,
   selectMessagesLoadingState,
   selectHasStreamingMessage,
+  selectCurrentDialogId,
+  useCurrentMessageDialogId,
   useFirstStreamProcessed,
   useIsLoadingInitial,
   useIsLoadingOlder,
@@ -87,7 +93,6 @@ const isValidMessage = (msg: unknown): msg is Message =>
   !!msg && typeof msg === "object" && typeof (msg as Message).id === "string";
 
 export interface MessageSliceState {
-  currentDialogId: string | null;
   dialogStateById: Record<string, MessageDialogState>;
 }
 
@@ -110,7 +115,6 @@ const createEmptyMessageDialogState = (): MessageDialogState => ({
 });
 
 const initialState: MessageSliceState = {
-  currentDialogId: null,
   dialogStateById: {
     [GLOBAL_MESSAGE_DIALOG_ID]: createEmptyMessageDialogState(),
   },
@@ -209,13 +213,13 @@ export const captureUnderstandingFromCompletedUiTurn = async (input: {
 };
 
 const resolveMessageDialogId = (
-  state: Pick<MessageSliceState, "currentDialogId">,
+  _state: unknown,
   dialogId?: string | null,
   dialogKey?: string | null
 ) =>
   dialogId ??
   (dialogKey ? extractCustomId(dialogKey) : null) ??
-  state.currentDialogId ??
+  getActiveMessageDialogId() ??
   GLOBAL_MESSAGE_DIALOG_ID;
 
 const ensureMessageDialogState = (
@@ -265,31 +269,6 @@ const inferDialogIdFromDbKey = (dbKey?: string): string | null => {
 const inferDialogIdFromMessage = (
   message: Partial<Message> & { dialogId?: string }
 ): string | null => message.dialogId ?? inferDialogIdFromDbKey(message.dbKey);
-
-export const buildEditedMessageContent = (
-  originalContent: Message["content"],
-  nextText: string
-): Message["content"] => {
-  const trimmedText = nextText.trim();
-
-  if (typeof originalContent === "string") {
-    return trimmedText;
-  }
-
-  if (Array.isArray(originalContent)) {
-    const nextParts = originalContent.filter(
-      (part) => part && typeof part === "object" && part.type !== "text"
-    );
-
-    if (trimmedText) {
-      nextParts.unshift({ type: "text", text: trimmedText } as any);
-    }
-
-    return nextParts;
-  }
-
-  return trimmedText;
-};
 
 const findDialogIdByMessageId = (
   state: MessageSliceState,
@@ -403,7 +382,6 @@ export const messageSlice = createSliceWithThunks({
         state.dialogStateById = {
           [GLOBAL_MESSAGE_DIALOG_ID]: createEmptyMessageDialogState(),
         };
-        state.currentDialogId = null;
         resetAllMessageSessions();
         return;
       }
@@ -416,8 +394,8 @@ export const messageSlice = createSliceWithThunks({
       delete state.dialogStateById[dialogId];
       deleteMessageSession(dialogId);
 
-      if (dialogId === state.currentDialogId) {
-        state.currentDialogId = null;
+      if (dialogId === getActiveMessageDialogId()) {
+        setActiveMessageDialogId(null);
       }
 
       if (!state.dialogStateById[GLOBAL_MESSAGE_DIALOG_ID]) {
@@ -585,22 +563,16 @@ export const messageSlice = createSliceWithThunks({
           (selectIdentityUserId(state) as string | null | undefined) ?? null;
         const dialogConfigUserId = (dialogConfig as { userId?: unknown })
           .userId;
-        const userId = resolveMessageOwner({
-          dialogConfigUserId:
-            typeof dialogConfigUserId === "string" ? dialogConfigUserId : null,
+
+        const { fullMessage } = assemblePersistedUserMessage({
+          message,
+          dialogId,
           dialogKey,
           currentAccountUserId,
+          dialogConfigUserId:
+            typeof dialogConfigUserId === "string" ? dialogConfigUserId : null,
         });
-
-        const { key: messageDbKey, messageId } =
-          createDialogMessageKeyAndId(dialogId);
-
-        const fullMessage: Message = {
-          ...message,
-          id: messageId,
-          dbKey: messageDbKey,
-          userId,
-        };
+        const userId = fullMessage.userId;
 
         // 提取并保存引用 keys（fire-and-forget；保留既有顺序）
         dispatch(
@@ -768,7 +740,6 @@ export const messageSlice = createSliceWithThunks({
           }
 
           ensureMessageSession(dialogId);
-          state.currentDialogId = dialogId;
           setActiveMessageDialogId(dialogId);
           patchMessageSession(dialogId, {
             firstStreamProcessed: false,
@@ -801,7 +772,14 @@ export const messageSlice = createSliceWithThunks({
           });
           // Same policy as setMessages: new dialogs merge (stream/optimistic rows
           // may already exist); established dialogs replace from authoritative fetch.
-          if (action.meta.arg.isNew) {
+          // Exception: leave/re-enter while a turn is still streaming — DB snapshot
+          // lags the in-memory bucket, so replace would wipe the live reply ("从0").
+          const hasLocalStreaming =
+            getHasStreamingMessage(dialogId) ||
+            Object.values(dialogState.msgs.entities).some(
+              (message) => message?.isStreaming
+            );
+          if (action.meta.arg.isNew || hasLocalStreaming) {
             upsertManyMessages(dialogState, action.payload);
           } else {
             setAllMessages(dialogState, action.payload);
@@ -1272,7 +1250,7 @@ export const messageSlice = createSliceWithThunks({
 
         try {
           const state = getState() as any;
-          const dialogKey = args.dialogKey ?? state.dialog?.currentDialogKey;
+          const dialogKey = args.dialogKey ?? selectCurrentDialogKey(state);
           if (!dialogKey) {
             throw new Error("editUserMessageAndReplay: dialogKey is required.");
           }
@@ -1381,9 +1359,7 @@ export const messageSlice = createSliceWithThunks({
       }
     ),
   }),
-  selectors: {
-    selectCurrentDialogId: (state) => state.currentDialogId,
-  },
+  selectors: {},
 });
 
 messageActions = messageSlice.actions;
@@ -1391,8 +1367,6 @@ messageActions = messageSlice.actions;
 const dialogMessageSelectors = messagesAdapter.getSelectors<MessageDialogState>(
   (dialogState) => dialogState.msgs
 );
-
-export const { selectCurrentDialogId } = messageSlice.selectors;
 
 export const selectMessageState = (state: any) => state.message;
 

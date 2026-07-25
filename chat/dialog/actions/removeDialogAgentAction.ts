@@ -7,6 +7,7 @@ import {
   removeDialogAgentId,
 } from "../dialogAgents";
 import { cleanupCliSessionForDialog } from "./cleanupCliSession";
+import { getActiveDialogKey } from "../dialogRuntimeStore";
 
 export const removeDialogAgentAction = async (
   agentId: string,
@@ -14,7 +15,7 @@ export const removeDialogAgentAction = async (
 ) => {
   const { dispatch, getState } = thunkApi;
   const state = getState() as RootState;
-  const currentDialogKey = state.dialog?.currentDialogKey;
+  const currentDialogKey = getActiveDialogKey();
 
   if (!currentDialogKey) {
     throw new Error("No current dialog selected");

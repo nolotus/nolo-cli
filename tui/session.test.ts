@@ -14,8 +14,10 @@ import {
 import {
   renderContextPanel,
   renderKnownAgents,
+  renderTuiHelp,
   renderWelcome,
 } from "./sessionRender";
+import { getCliLocale, setCliLocale, t, type CliLocale } from "./i18n";
 import { displayWidth, stripAnsi } from "./readlineWorkspace";
 import { detectImagePaths } from "./pasteImage";
 import {
@@ -23,6 +25,7 @@ import {
   getActiveDensity,
   setActiveThemeName,
   setActiveDensity,
+  themeColorSequence,
   type TuiDensity,
 } from "./theme";
 import { getProcessRegistry } from "../agent-runtime/processRegistry";
@@ -706,6 +709,20 @@ describe("themed render surfaces", () => {
       const plain = renderWelcome(createInitialTuiState({}));
       expect(plain).toContain("▀▀▀▀");
       expect(plain).not.toContain("\x1b");
+      // The mountain is half the brand lockup — the status line uses the same
+      // mark (🏔), and it was silently lost once when the banner was reworked.
+      // Pin both slopes so a future banner edit has to be deliberate about it.
+      expect(plain).toContain("╱╲");
+      expect(plain).toContain("╲▂▁▁");
+      // The wordmark is padded to a fixed width so the ridge sits in its own
+      // column band; the slopes themselves step outward row by row, which is
+      // what makes it read as a peak. Assert the band, not the glyphs.
+      const ridgeRows = plain
+        .split("\n")
+        .slice(0, 3)
+        .map((row) => row.slice(0, 22));
+      expect(new Set(ridgeRows.map((row) => row.length)).size).toBe(1);
+      for (const row of ridgeRows) expect(row).not.toMatch(/[╱╲]/);
 
       process.env.NOLO_CLI_COLOR = "1";
       const colored = renderWelcome(createInitialTuiState({}));
@@ -722,7 +739,7 @@ describe("themed render surfaces", () => {
     expect(plain).not.toContain("-----");
     // Piped / NO_COLOR output has no bold title to separate the heading from
     // the fields, so it must still get a rule — just not an ASCII one.
-    expect(plain.split("\n")[1]).toBe("─".repeat(17));
+    expect(plain.split("\n")[1]).toBe("─".repeat(displayWidth(t("contextTitle"))));
     // Color mode leans on the accent+bold title instead of a rule.
     expect(renderContextPanel(createInitialTuiState({}), true)).not.toContain(
       "─".repeat(17),
@@ -751,7 +768,68 @@ describe("themed render surfaces", () => {
   test("renderKnownAgents themes the title instead of emitting plain text", () => {
     const plain = renderKnownAgents(false);
     expect(plain).not.toContain("\x1b");
-    expect(plain).toContain("Agents:");
+    expect(plain).toContain(t("agentsTitle"));
     expect(renderKnownAgents(true)).toContain("\x1b");
+  });
+});
+
+describe("Task D - i18n & help theme tests", () => {
+  let savedLocale: CliLocale;
+
+  beforeEach(() => {
+    savedLocale = getCliLocale();
+  });
+
+  afterEach(() => {
+    setCliLocale(savedLocale);
+  });
+
+  test("1. setCliLocale('en') renderContextPanel output has no CJK characters", () => {
+    setCliLocale("en");
+    const output = renderContextPanel(createInitialTuiState({}), true);
+    expect(output).not.toMatch(/[\u4e00-\u9fa5]/);
+  });
+
+  test("2. setCliLocale('zh') renderContextPanel contains 工作区上下文 and not Workspace context", () => {
+    setCliLocale("zh");
+    const output = renderContextPanel(createInitialTuiState({}), true);
+    expect(output).toContain("工作区上下文");
+    expect(output).not.toContain("Workspace context");
+  });
+
+  test("3. aligned field value column offset across locales", () => {
+    for (const locale of ["en", "zh"] as const) {
+      setCliLocale(locale);
+      const output = renderContextPanel(createInitialTuiState({}), true);
+      const rows = output
+        .split("\n")
+        .slice(1)
+        .filter((row) => row !== "")
+        .slice(0, 11)
+        .map(stripAnsi);
+      expect(rows).toHaveLength(11);
+      const labelWidths = rows.map((row) => {
+        const label = row.match(/^\S+\s+/)?.[0] ?? "";
+        return displayWidth(label);
+      });
+      expect(new Set(labelWidths)).toEqual(new Set([9]));
+    }
+  });
+
+  test("4. renderTuiHelp(false) strictly matches t('helpText')", () => {
+    for (const locale of ["en", "zh"] as const) {
+      setCliLocale(locale);
+      expect(renderTuiHelp(false)).toBe(t("helpText"));
+    }
+  });
+
+  test("5. renderTuiHelp(true) themes command with accent and description with muted", () => {
+    setCliLocale("en");
+    const output = renderTuiHelp(true);
+    const lines = output.split("\n");
+    const helpLine = lines.find((l) => l.includes("/help"));
+    expect(helpLine).toBeDefined();
+    expect(helpLine).toContain(themeColorSequence("accent"));
+    expect(helpLine).toContain(themeColorSequence("muted"));
   });
 });

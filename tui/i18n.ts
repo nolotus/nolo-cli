@@ -259,6 +259,82 @@ const STRINGS = {
     en: "abort the operation",
     zh: "中止操作",
   },
+  contextTitle: {
+    en: "Workspace context",
+    zh: "工作区上下文",
+  },
+  contextNext: {
+    en: "Next:",
+    zh: "下一步：",
+  },
+  contextFieldAgent: {
+    en: "agent",
+    zh: "智能体",
+  },
+  contextFieldTokens: {
+    en: "tokens",
+    zh: "令牌",
+  },
+  contextFieldDialog: {
+    en: "dialog",
+    zh: "对话",
+  },
+  contextFieldDocs: {
+    en: "docs",
+    zh: "文档",
+  },
+  contextFieldSkills: {
+    en: "skills",
+    zh: "技能",
+  },
+  contextFieldProfile: {
+    en: "profile",
+    zh: "配置",
+  },
+  contextFieldRuntime: {
+    en: "runtime",
+    zh: "运行时",
+  },
+  contextFieldTools: {
+    en: "tools",
+    zh: "工具",
+  },
+  contextFieldThinking: {
+    en: "thinking",
+    zh: "思考",
+  },
+  contextFieldRender: {
+    en: "render",
+    zh: "渲染",
+  },
+  contextFieldServer: {
+    en: "server",
+    zh: "服务端",
+  },
+  contextNextAgents: {
+    en: "see specialist shortcuts",
+    zh: "查看专用智能体快捷方式",
+  },
+  contextNextDoc: {
+    en: "add working context",
+    zh: "添加工作上下文",
+  },
+  contextNextSkill: {
+    en: "attach a skill to this workspace",
+    zh: "为该工作区挂载技能",
+  },
+  contextNextNew: {
+    en: "start a clean dialog",
+    zh: "开始一个干净的对话",
+  },
+  agentsTitle: {
+    en: "Agents:",
+    zh: "智能体：",
+  },
+  agentsTip: {
+    en: "Tip: run /switch for the full picker, or /switch list for your private agents too.",
+    zh: "提示：用 /switch 打开完整选择器，或 /switch list 连你的私有智能体一起列出。",
+  },
   helpText: {
     en: [
       "Commands:",

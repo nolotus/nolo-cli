@@ -1,4 +1,5 @@
 import { clipCompactText } from "../../core/clipCompactText";
+import { compactWhitespace } from "../../core/compactWhitespace";
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../../agent-runtime/actionGate";
@@ -50,11 +51,65 @@ function clip(value: string, max = 72) {
   return clipCompactText(value, max, "…");
 }
 
+/**
+ * Path-aware clip: keeps the leading segment and the filename, eliding the
+ * middle, so a long path stays identifiable. Non-path values fall back to the
+ * shared tail clip.
+ *
+ * The path branch is for posix-style tool args (this repo's tool args are
+ * always posix); Windows backslash paths are intentionally not special-cased.
+ * Shares compact-then-clip preconditions with `clipCompactText` so short
+ * values behave byte-identically.
+ */
+export function clipPathAware(value: string, max = 72): string {
+  const compact = compactWhitespace(value);
+  if (compact.length <= max) return compact;
+
+  // "Looks like a path" = no spaces after compaction and contains "/".
+  // Otherwise (commands with args, prose, etc.) keep the shared tail clip so
+  // non-path output is byte-identical to before.
+  if (compact.includes(" ") || !compact.includes("/")) {
+    return clipCompactText(value, max, "…");
+  }
+
+  const segments = compact.split("/");
+  const filename = segments[segments.length - 1];
+
+  // Filename alone already meets/exceeds budget — can't keep a prefix, fall
+  // back to the shared tail clip.
+  if (filename.length >= max) {
+    return clipCompactText(value, max, "…");
+  }
+
+  // Keep as many leading segments as the budget allows. Retaining only the
+  // first one is nearly worthless in a monorepo, where every path starts with
+  // the same top-level directory ("packages/…/foo.ts" says almost nothing);
+  // "packages/cli/tui/…/foo.ts" actually locates the file.
+  const ELISION = "/…/";
+  // Rebuild from the slice rather than appending to `prefix`: an absolute path
+  // starts with an empty first segment, and an empty accumulator is falsy, so
+  // append-style logic silently drops the leading "/" and renders "/Users/x/y"
+  // as the relative-looking "Users/x/y".
+  let prefix = "";
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const candidate = segments.slice(0, i + 1).join("/");
+    if (candidate.length + ELISION.length + filename.length > max) break;
+    prefix = candidate;
+  }
+  if (prefix) return `${prefix}${ELISION}${filename}`;
+
+  // Drop the leading segment, keep only the ellipsis + filename.
+  const filenameOnly = `…/${filename}`;
+  if (filenameOnly.length <= max) return filenameOnly;
+
+  return clipCompactText(value, max, "…");
+}
+
 export function formatActiveToolLabel(
   event: Pick<LocalAgentToolEvent, "toolName" | "argumentsPreview">
 ) {
   const toolName = event.toolName || "tool";
-  const args = clip(event.argumentsPreview ?? "");
+  const args = clipPathAware(event.argumentsPreview ?? "");
   const label = toolLabel(toolName);
   return args ? `${label} ${args}` : label;
 }
@@ -194,7 +249,7 @@ function formatCompactToolLine(
   colorEnabled: boolean
 ) {
   const toolName = event.toolName || pending?.toolName || "tool";
-  const rawArgs = clip(event.argumentsPreview || pending?.argumentsPreview || "", 72);
+  const rawArgs = clipPathAware(event.argumentsPreview || pending?.argumentsPreview || "", 72);
   const rawLabel = toolLabel(toolName);
   const label = rawArgs ? `${rawLabel} ${rawArgs}` : rawLabel;
 

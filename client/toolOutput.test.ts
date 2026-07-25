@@ -6,6 +6,7 @@ import {
   createToolEventFormatter,
   formatActiveToolLabel,
   formatToolEventForCli,
+  clipPathAware,
   normalizeToolDisplayMode,
   resolveToolDisplayMode,
   shouldEmitToolEvents,
@@ -292,5 +293,92 @@ describe("toolOutput", () => {
     expect(line).toContain("- const oldVal = 1;");
     expect(line).toContain("+ const newVal = 2;");
     expect(line).not.toContain("\x1b");
+  });
+
+  test("clipPathAware elides the middle of a long path, keeping leading dirs and the filename", () => {
+    // > 72 chars: a deep path whose tail (filename) is the most identifying part.
+    const longPath =
+      "packages/cli/tui/readlineWorkspacePromptBuffer/module/deepNest/readlineWorkspace.ts";
+    const out = clipPathAware(longPath);
+    expect(out.length).toBeLessThanOrEqual(72);
+    expect(out).toContain("…");
+    // Full filename survives — that is the whole point of eliding the middle.
+    expect(out.endsWith("readlineWorkspace.ts")).toBe(true);
+    // More than the first segment survives when the budget allows it. Keeping
+    // only "packages/…" would be nearly useless in a monorepo where every path
+    // starts with the same top-level directory.
+    expect(out.startsWith("packages/cli/tui/")).toBe(true);
+  });
+
+  test("clipPathAware keeps the leading slash of an absolute path", () => {
+    // An absolute path splits into an empty first segment. Accumulator-style
+    // prefix building treats that empty string as falsy and drops the leading
+    // "/", rendering an absolute path as a relative-looking one.
+    const absolute =
+      "/Users/nolotus/bun-nolo/packages/cli/tui/deeply/nested/readlineWorkspace.ts";
+    const out = clipPathAware(absolute);
+    expect(out.length).toBeLessThanOrEqual(72);
+    expect(out).toContain("…");
+    expect(out.startsWith("/Users/nolotus/")).toBe(true);
+    expect(out.endsWith("readlineWorkspace.ts")).toBe(true);
+  });
+
+  test("clipPathAware drops leading dirs that do not fit the budget", () => {
+    // Deep enough that the greedy prefix cannot keep every leading segment.
+    const deeper =
+      "packages/agent-runtime/deeply/nested/module/tree/with/many/levels/localWorkspaceToolExecutors.ts";
+    const out = clipPathAware(deeper);
+    expect(out.length).toBeLessThanOrEqual(72);
+    expect(out.endsWith("localWorkspaceToolExecutors.ts")).toBe(true);
+    expect(out.startsWith("packages/agent-runtime/")).toBe(true);
+    // The segments that did not fit are gone, replaced by the elision.
+    expect(out).toContain("…");
+    expect(out).not.toContain("/levels/");
+  });
+
+  test("clipPathAware leaves a short path untouched", () => {
+    const shortPath = "packages/cli/tui/theme.ts";
+    const out = clipPathAware(shortPath);
+    expect(out).toBe(shortPath);
+    expect(out).not.toContain("…");
+  });
+
+  test("clipPathAware falls back to tail clip for non-path (spaced) values", () => {
+    // Contains a space → not a path → shared tail clip, ends with ellipsis.
+    // Must exceed max (72) so clipping actually triggers.
+    const cmd = "bun test packages/cli/tui packages/cli/client --filter some-very-long-tag-name-that-pushes-past-limit-xyz";
+    expect(cmd.length).toBeGreaterThan(72);
+    const out = clipPathAware(cmd);
+    expect(out.endsWith("…")).toBe(true);
+    // Should not be a middle elision (no "/…/" pattern).
+    expect(out).not.toContain("/…/");
+  });
+
+  test("clipPathAware falls back to tail clip when the filename alone meets the budget", () => {
+    // A single segment (no slash) is not a path; a single-segment filename
+    // that itself exceeds max must fall back to the shared tail clip.
+    const hugeFile = "x".repeat(100);
+    const out = clipPathAware(hugeFile);
+    expect(out.endsWith("…")).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(72);
+  });
+
+  test("formatToolEventForCli shows the full filename for a long-path readFile event with color disabled", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "readFile",
+        argumentsPreview:
+          "packages/agent-runtime/deeply/nested/module/tree/with/many/levels/localWorkspaceToolExecutors.ts",
+        summary: "64 lines 1630 chars",
+      }),
+      "compact",
+      false
+    );
+    // The full filename must be visible even though the path was clipped.
+    expect(line).toContain("localWorkspaceToolExecutors.ts");
+    expect(line).toContain("…");
+    // The segments that did not fit the budget are elided away.
+    expect(line).not.toContain("/levels/");
   });
 });

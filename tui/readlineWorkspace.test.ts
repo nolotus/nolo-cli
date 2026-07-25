@@ -1107,7 +1107,10 @@ describe("scroll-aware history", () => {
     // /context must be executed locally and rendered to the user immediately,
     // via the transient channel (never enqueued as a chat turn).
     const outputTextAfterContext = Buffer.concat(chunks).toString("utf8");
-    expect(outputTextAfterContext).toContain("Workspace context");
+    // Assert the panel rendered, not that it rendered in English: the labels
+    // are localized now, so a hardcoded English title only passes when the
+    // ambient locale happens to be en.
+    expect(outputTextAfterContext).toContain(t("contextTitle"));
 
     // Submit normal text while busy -> this SHOULD be enqueued for after turn
     input.write("normal queued text\r");
@@ -1293,6 +1296,7 @@ describe("scroll-aware history", () => {
     (output as unknown as { isTTY?: boolean; rows?: number; columns?: number }).rows = 24;
     (output as unknown as { isTTY?: boolean; rows?: number; columns?: number }).columns = 120;
 
+    let runnerReturned = false;
     const workspacePromise = startTuiWorkspace({
       scriptDir: "",
       input,
@@ -1301,20 +1305,40 @@ describe("scroll-aware history", () => {
       agentRunner: async (opt) => {
         opt.activityReporter?.("thinking...");
         await new Promise((r) => setTimeout(r, 50));
+        runnerReturned = true;
         return { exitCode: 0, dialogId: "test-dialog" };
       },
     });
 
     input.write("hello\r");
-    await new Promise((r) => setTimeout(r, 200));
 
-    // Turn is finished now. Record chunk count.
+    // Wait for the runner to actually return rather than guessing a duration:
+    // a fixed sleep here recorded the baseline mid-turn on a loaded machine and
+    // made this test flake.
+    const deadline = Date.now() + 3000;
+    while (!runnerReturned && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(runnerReturned).toBe(true);
+
+    // Now wait for output to go quiet. If the activity timer leaked it repaints
+    // every 150ms forever, so this never settles — which is itself the failure
+    // this test exists to catch.
+    const TICK = 150;
+    let stable = 0;
+    let previous = -1;
+    const quietDeadline = Date.now() + 3000;
+    while (stable < 2 && Date.now() < quietDeadline) {
+      previous = chunks.length;
+      await new Promise((r) => setTimeout(r, TICK + 50));
+      stable = chunks.length === previous ? stable + 1 : 0;
+    }
+    expect(stable).toBeGreaterThanOrEqual(2);
+
+    // Output has been quiet across two full tick windows. Confirm it stays that
+    // way for two more, so a slow first tick can't be mistaken for a clean stop.
     const chunkCountAfterTurn = chunks.length;
-
-    // Wait > 2 timer ticks (150ms * 2 = 300ms)
-    await new Promise((r) => setTimeout(r, 350));
-
-    // Assert that no new repaint chunks were written after turn completion
+    await new Promise((r) => setTimeout(r, TICK * 2 + 50));
     expect(chunks.length).toBe(chunkCountAfterTurn);
 
     input.write("/exit\r");

@@ -7,6 +7,7 @@ import {
 import { DEFAULT_TUI_AGENT_KEY, resolveCatalogPlatformAgents } from "./agentCatalog";
 import { renderDialogTitle } from "./dialogFrame";
 import { t } from "./i18n";
+import { displayWidth } from "./readlineWorkspace";
 import {
   themeText,
   themeColorSequence,
@@ -120,20 +121,35 @@ export function renderStatusLine(state: TuiState) {
 export function renderWelcome(state: TuiState) {
   const colorEnabled = resolveCliColorEnabled();
 
-  // Block-character "nolo" wordmark. Three-tier gradient: line 1 bold accent,
-  // line 2 accent, line 3 chrome. Uses only U+2580–U+259F block elements so it
-  // renders on any monospace terminal without a patched Nerd Font.
-  const logoLine1 = "█▄ █ ▄▀▀▄ █    ▄▀▀▄";
-  const logoLine2 = "█ ▀█ █  █ █    █  █";
-  const logoLine3 = "▀  ▀  ▀▀  ▀▀▀▀  ▀▀";
-
-  const logoArt = colorEnabled
-    ? [
-        `\x1b[1m${themeColorSequence("accent")}${logoLine1}\x1b[0m`,
-        themeText(logoLine2, "accent", colorEnabled),
-        themeText(logoLine3, "chrome", colorEnabled),
-      ].join("\n")
-    : [logoLine1, logoLine2, logoLine3].join("\n");
+  // Brand lockup: block-character "nolo" wordmark with the mountain rising
+  // beside it. The mountain is the mark the status line already uses (🏔), so
+  // dropping it from the first screen cost the two surfaces their shared
+  // identity — setting it alongside the wordmark keeps both without making the
+  // banner taller than the three rows the wordmark needs.
+  //
+  // Wordmark uses only U+2580–U+259F block elements and the mountain only
+  // U+2571/U+2572 slashes plus U+2581/U+2582 lower blocks, so the whole lockup
+  // renders on any monospace terminal — no patched Nerd Font, no private-use
+  // codepoints that would show as tofu.
+  const logoRows = [
+    { mark: "█▄ █ ▄▀▀▄ █    ▄▀▀▄", ridge: "  ╱╲", token: "accent" as const, bold: true },
+    { mark: "█ ▀█ █  █ █    █  █", ridge: " ╱  ╲", token: "accent" as const, bold: false },
+    { mark: "▀  ▀  ▀▀  ▀▀▀▀  ▀▀", ridge: "╱    ╲▂▁▁", token: "chrome" as const, bold: false },
+  ];
+  // Pad the wordmark to a fixed width so the ridge starts at the same column on
+  // every row regardless of the mark's own trailing glyphs.
+  const MARK_WIDTH = 19;
+  const GUTTER = "   ";
+  const logoArt = logoRows
+    .map(({ mark, ridge, token, bold }) => {
+      const padded = mark.padEnd(MARK_WIDTH);
+      if (!colorEnabled) return `${padded}${GUTTER}${ridge}`;
+      const markText = bold
+        ? `\x1b[1m${themeColorSequence(token)}${padded}\x1b[0m`
+        : themeText(padded, token, colorEnabled);
+      return `${markText}${GUTTER}${themeText(ridge, "chrome", colorEnabled)}`;
+    })
+    .join("\n");
 
   // Brand name in accent within the version line — no extra line needed.
   const versionLine = colorEnabled
@@ -154,8 +170,30 @@ export function renderPrompt(_state: TuiState) {
 
 // ─── Info panels ────────────────────────────────────────────────────────────
 
-export function renderTuiHelp() {
-  return t("helpText");
+export function renderTuiHelp(colorEnabled = resolveCliColorEnabled()) {
+  const text = t("helpText");
+  if (!colorEnabled) {
+    return text;
+  }
+  const lines = text.split("\n");
+  const commandRegex = /^(\s+)(\/\S+(?:\s+\S+)*?)(\s{2,})(.+)$/;
+  const sectionRegex = /^\S.+[:：]$/;
+  return lines
+    .map((line) => {
+      if (!line.trim()) {
+        return line;
+      }
+      if (sectionRegex.test(line)) {
+        return renderDialogTitle(line, colorEnabled);
+      }
+      const match = line.match(commandRegex);
+      if (match) {
+        const [, indent, cmd, spacing, desc] = match;
+        return `${indent}${themeText(cmd, "accent", colorEnabled)}${spacing}${themeText(desc, "muted", colorEnabled)}`;
+      }
+      return themeText(line, "muted", colorEnabled);
+    })
+    .join("\n");
 }
 
 /**
@@ -178,50 +216,71 @@ export function renderContextPanel(
   const skills = state.attachedSkills.length
     ? state.attachedSkills.join(", ")
     : "none";
-  // Every label pads to display width 9 so the values line up in one column.
-  // `skills` used to carry two spaces instead of three, which shunted its value
-  // one column left of the other ten rows. `配置` is two CJK cells (width 4)
-  // plus five spaces, which is why it looks shorter in source than it renders.
-  const field = (label: string, value: string) =>
-    `${themeText(label, "muted", colorEnabled)}${value}`;
+
+  const labels = [
+    t("contextFieldAgent"),
+    t("contextFieldTokens"),
+    t("contextFieldDialog"),
+    t("contextFieldDocs"),
+    t("contextFieldSkills"),
+    t("contextFieldProfile"),
+    t("contextFieldRuntime"),
+    t("contextFieldTools"),
+    t("contextFieldThinking"),
+    t("contextFieldRender"),
+    t("contextFieldServer"),
+  ];
+
+  let maxW = 0;
+  for (const l of labels) {
+    const w = displayWidth(l);
+    if (w > maxW) maxW = w;
+  }
+  const targetWidth = maxW >= 9 ? maxW + 1 : 9;
+
+  const padLabel = (raw: string) => {
+    const w = displayWidth(raw);
+    const padding = " ".repeat(Math.max(0, targetWidth - w));
+    return raw + padding;
+  };
+
+  const field = (rawLabel: string, value: string) =>
+    `${themeText(padLabel(rawLabel), "muted", colorEnabled)}${value}`;
   const next = (command: string, description: string) =>
     `  ${themeText(command, "accent", colorEnabled)}${themeText(description, "muted", colorEnabled)}`;
-  // In color mode the accent+bold title asserts the panel boundary on its own,
-  // so the old ASCII rule is gone. Piped / NO_COLOR output has no bold to lean
-  // on, though, and dropping the rule there left the title running straight
-  // into the fields — so plain mode keeps a rule, drawn with box-drawing rather
-  // than hyphens to match the rest of the TUI's chrome.
+
+  const titleText = t("contextTitle");
   const heading = colorEnabled
-    ? [renderDialogTitle("Workspace context", true)]
-    : ["Workspace context", "─".repeat(17)];
+    ? [renderDialogTitle(titleText, true)]
+    : [titleText, "─".repeat(displayWidth(titleText))];
   return [
     ...heading,
-    field("agent    ", `${state.agentName} (${state.agentKey})`),
-    field("tokens   ", renderTokenStatus(state.turnTokens)),
+    field(labels[0], `${state.agentName} (${state.agentKey})`),
+    field(labels[1], renderTokenStatus(state.turnTokens)),
     field(
-      "dialog   ",
+      labels[2],
       state.dialogKey ?? (state.dialogId ? "unavailable" : state.dialogLabel),
     ),
-    field("docs     ", docs),
-    field("skills   ", skills),
-    field("配置     ", state.profileName),
-    field("runtime  ", state.runtimeMode),
-    field("tools    ", state.toolDisplay),
-    field("thinking ", state.thinkingDisplay),
-    field("render   ", state.renderDisplay),
-    field("server   ", state.serverUrl),
+    field(labels[3], docs),
+    field(labels[4], skills),
+    field(labels[5], state.profileName),
+    field(labels[6], state.runtimeMode),
+    field(labels[7], state.toolDisplay),
+    field(labels[8], state.thinkingDisplay),
+    field(labels[9], state.renderDisplay),
+    field(labels[10], state.serverUrl),
     "",
-    themeText("Next:", "chrome", colorEnabled),
-    next("/agents            ", "  see specialist shortcuts"),
-    next("/doc attach <doc>  ", "  add working context"),
-    next("/skill attach <ref>", "  attach a skill to this workspace"),
-    next("/new               ", "  start a clean dialog"),
+    themeText(t("contextNext"), "chrome", colorEnabled),
+    next("/agents            ", `  ${t("contextNextAgents")}`),
+    next("/doc attach <doc>  ", `  ${t("contextNextDoc")}`),
+    next("/skill attach <ref>", `  ${t("contextNextSkill")}`),
+    next("/new               ", `  ${t("contextNextNew")}`),
   ].join("\n");
 }
 
 export function renderKnownAgents(colorEnabled = resolveCliColorEnabled()) {
   return [
-    renderDialogTitle("Agents:", colorEnabled),
+    renderDialogTitle(t("agentsTitle"), colorEnabled),
     ...resolveCatalogPlatformAgents().map(
       (agent, index) =>
         `  ${themeText(String(index + 1), "chrome", colorEnabled)}  ${themeText(
@@ -232,7 +291,7 @@ export function renderKnownAgents(colorEnabled = resolveCliColorEnabled()) {
     ),
     "",
     themeText(
-      "Tip: run /switch for the full picker, or /switch list for your private agents too.",
+      t("agentsTip"),
       "muted",
       colorEnabled,
     ),

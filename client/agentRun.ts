@@ -50,6 +50,7 @@ import {
   resolveToolDisplayMode,
   shouldEmitToolEvents,
 } from "./toolOutput";
+import { themeColorSequence } from "../tui/theme";
 import {
   type DispatchPlan,
   resolveAuthToken,
@@ -160,6 +161,11 @@ export type RunAgentTurnOptions = {
    * user message) preserves LLM prefix-cache hits on the system+history prefix.
    */
   extraContextBlocks?: string[];
+  /**
+   * 当前活动标签的外部接收者（TUI 用来在 composer 上方画 docked 活动行）。
+   * 传入时 Spinner 不再向 output 写帧，避免两个 live 指示重复。
+   */
+  activityReporter?: (label: string | null) => void;
 };
 
 export type RunAgentTurnResult = {
@@ -180,6 +186,7 @@ class Spinner {
   constructor(
     private output: OutputLike,
     private text: string,
+    private silent = false,
   ) {
     // Prefer the stream's own TTY flag. History capture streams set isTTY so
     // \\r in-place updates are interpreted; falling back only when unset keeps
@@ -190,6 +197,11 @@ class Spinner {
   }
 
   start() {
+    if (this.silent) {
+      this.startTime = Date.now();
+      return;
+    }
+
     if (!this.isTTY) {
       this.output.write(`\n${this.text}\n`);
       return;
@@ -220,6 +232,8 @@ class Spinner {
       this.timer = null;
     }
 
+    if (this.silent) return;
+
     if (this.isTTY) {
       this.output.write("\r\x1b[K");
       this.output.write("\x1b[?25h");
@@ -228,6 +242,12 @@ class Spinner {
 
   show(text: string) {
     this.text = text;
+    if (this.silent) {
+      if (!this.startTime) {
+        this.startTime = Date.now();
+      }
+      return;
+    }
     if (!this.isTTY) return;
     if (!this.timer) {
       this.start();
@@ -243,7 +263,7 @@ class Spinner {
       0,
       Math.floor((Date.now() - this.startTime) / 1000),
     );
-    return `\x1b[36m${frame}\x1b[39m ${this.text} (${formatElapsed(elapsedSeconds)})`;
+    return `${themeColorSequence("accent")}${frame}\x1b[39m ${this.text} (${formatElapsed(elapsedSeconds)})`;
   }
 }
 
@@ -266,7 +286,9 @@ interface CliTurnOutputOptions {
 function createCliTurnOutput(params: CliTurnOutputOptions) {
   const { options } = params;
   const workingLabel = params.workingLabel ?? `${options.agentName} -> working`;
-  const spinner = params.spinner ?? new Spinner(options.output, workingLabel);
+  const spinner =
+    params.spinner ??
+    new Spinner(options.output, workingLabel, Boolean(options.activityReporter));
 
   const toolDisplayMode = resolveToolDisplayMode(options.env);
   const traceLocalTools = shouldEmitToolEvents(toolDisplayMode);
@@ -286,6 +308,7 @@ function createCliTurnOutput(params: CliTurnOutputOptions) {
   const writeVisibleAssistantChunk = (chunk: string) => {
     if (!chunk) return;
     spinner.stop();
+    options.activityReporter?.(null);
     if (!printedAssistantLabel) {
       options.output.write(`\n${options.agentName} > `);
       printedAssistantLabel = true;
@@ -301,6 +324,7 @@ function createCliTurnOutput(params: CliTurnOutputOptions) {
 
   const thinkingSink = createThinkingEventSink((chunk) => {
     spinner.stop();
+    options.activityReporter?.(null);
     options.output.write(chunk);
   }, thinkingMode);
 
@@ -326,15 +350,20 @@ function createCliTurnOutput(params: CliTurnOutputOptions) {
       toolDisplayMode === "compact" &&
       event.type === "tool-call"
     ) {
-      spinner.show(formatActiveToolLabel(event));
+      const activeLabel = formatActiveToolLabel(event);
+      spinner.show(activeLabel);
+      options.activityReporter?.(activeLabel);
       return;
     }
 
     if (!chunk) return;
     spinner.stop();
+    options.activityReporter?.(null);
     options.output.write(chunk);
     if (event.type === "tool-call") {
-      spinner.show(formatActiveToolLabel(event));
+      const activeLabel = formatActiveToolLabel(event);
+      spinner.show(activeLabel);
+      options.activityReporter?.(activeLabel);
     }
   };
 
@@ -352,10 +381,13 @@ function createCliTurnOutput(params: CliTurnOutputOptions) {
     },
     handleToolEvent,
     showWorking(label?: string) {
-      spinner.show(label ?? workingLabel);
+      const activeLabel = label ?? workingLabel;
+      spinner.show(activeLabel);
+      options.activityReporter?.(activeLabel);
     },
     finish(fallbackContent?: string) {
       spinner.stop();
+      options.activityReporter?.(null);
       if (streamedAssistantText) {
         thinkingFilter.flush();
         renderWriter.flush();

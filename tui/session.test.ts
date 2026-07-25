@@ -11,6 +11,12 @@ import {
   isLikelySlashCommand,
   stripImageTokens,
 } from "./session";
+import {
+  renderContextPanel,
+  renderKnownAgents,
+  renderWelcome,
+} from "./sessionRender";
+import { displayWidth, stripAnsi } from "./readlineWorkspace";
 import { detectImagePaths } from "./pasteImage";
 import {
   getActiveThemeName,
@@ -684,5 +690,68 @@ describe("handleTuiInput - /skill", () => {
   test("completeSlashCommand includes /skill", () => {
     const completions = completeSlashCommand("/sk");
     expect(completions).toContain("/skill");
+  });
+});
+
+describe("themed render surfaces", () => {
+  // renderWelcome reads resolveCliColorEnabled() off process.env directly, so
+  // both branches have to be driven through NOLO_CLI_COLOR rather than an
+  // argument. Without pinning it the "no escapes" assertion would pass merely
+  // because the test runner is not a TTY, and would keep passing if the
+  // plain-text branch regressed.
+  test("renderWelcome draws the block-character wordmark, plain when color is off", () => {
+    const previous = process.env.NOLO_CLI_COLOR;
+    try {
+      process.env.NOLO_CLI_COLOR = "0";
+      const plain = renderWelcome(createInitialTuiState({}));
+      expect(plain).toContain("▀▀▀▀");
+      expect(plain).not.toContain("\x1b");
+
+      process.env.NOLO_CLI_COLOR = "1";
+      const colored = renderWelcome(createInitialTuiState({}));
+      expect(colored).toContain("▀▀▀▀");
+      expect(colored).toContain("\x1b");
+    } finally {
+      if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
+      else process.env.NOLO_CLI_COLOR = previous;
+    }
+  });
+
+  test("renderContextPanel drops the ASCII rule but keeps a plain-mode divider", () => {
+    const plain = renderContextPanel(createInitialTuiState({}), false);
+    expect(plain).not.toContain("-----");
+    // Piped / NO_COLOR output has no bold title to separate the heading from
+    // the fields, so it must still get a rule — just not an ASCII one.
+    expect(plain.split("\n")[1]).toBe("─".repeat(17));
+    // Color mode leans on the accent+bold title instead of a rule.
+    expect(renderContextPanel(createInitialTuiState({}), true)).not.toContain(
+      "─".repeat(17),
+    );
+  });
+
+  test("renderContextPanel aligns every field value in one column", () => {
+    const output = renderContextPanel(createInitialTuiState({}), true);
+    // The field rows are the ones between the title and the blank line before
+    // "Next:". Each label pads to display width 9, so every value must start
+    // at the same column once the color codes are stripped.
+    const rows = output
+      .split("\n")
+      .slice(1)
+      .filter((row) => row !== "")
+      .slice(0, 11)
+      .map(stripAnsi);
+    expect(rows).toHaveLength(11);
+    const labelWidths = rows.map((row) => {
+      const label = row.match(/^\S+\s+/)?.[0] ?? "";
+      return displayWidth(label);
+    });
+    expect(new Set(labelWidths)).toEqual(new Set([9]));
+  });
+
+  test("renderKnownAgents themes the title instead of emitting plain text", () => {
+    const plain = renderKnownAgents(false);
+    expect(plain).not.toContain("\x1b");
+    expect(plain).toContain("Agents:");
+    expect(renderKnownAgents(true)).toContain("\x1b");
   });
 });

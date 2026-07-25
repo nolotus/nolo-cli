@@ -274,4 +274,23 @@ describe("toolOutput", () => {
       round: 1,
     });
   });
+
+  test("formatEditDetailLine plain text output (colorEnabled=false) contains no escape codes", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "file.ts",
+        metadata: {
+          oldSnippet: "const oldVal = 1;",
+          newSnippet: "const newVal = 2;",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(line).toContain("- const oldVal = 1;");
+    expect(line).toContain("+ const newVal = 2;");
+    expect(line).not.toContain("\x1b");
+  });
 });

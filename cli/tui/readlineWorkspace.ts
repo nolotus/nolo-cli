@@ -37,6 +37,7 @@ import {
   completeSlashCommand,
   createInitialTuiState,
   handleTuiInput,
+  formatElapsedSeconds,
   renderPrompt,
   renderStatusLine,
   renderWelcome,
@@ -44,7 +45,7 @@ import {
   PASTE_TOKEN_PREFIX,
   type TuiState,
 } from "./session";
-import { dimCliText, resolveCliColorEnabled, styleCliText } from "../client/terminalStyles";
+import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
 import {
   themeColorSequence,
   themeText,
@@ -378,6 +379,7 @@ async function runAgentChat(
     /** True when the user just explicitly switched agent (via /agent or /switch).
      *  Suppresses the cached auto-route so the chosen agent actually runs. */
     explicitAgentSwitch?: boolean;
+    activityReporter?: (label: string | null) => void;
   } = {}
 ) {
   let effectiveAgentKey = state.agentKey;
@@ -538,6 +540,7 @@ async function runAgentChat(
       ? { confirmDestructiveAction: options.confirmDestructiveAction }
       : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    ...(options.activityReporter ? { activityReporter: options.activityReporter } : {}),
     ...(modelOverride ? { modelOverride } : {}),
     ...(skillAllowedTools !== undefined
       ? { allowedToolNames: skillAllowedTools }
@@ -706,13 +709,6 @@ function persistAgentSelection(
 function isInteractiveInput(input: NodeJS.ReadableStream): input is RawModeInput & { isTTY: true } {
   const candidate = input as RawModeInput & { isTTY?: boolean };
   return Boolean(candidate.isTTY) && typeof candidate.setRawMode === "function";
-}
-
-function renderInput(buffer: string) {
-  const lines = buffer.split("\n");
-  return lines
-    .map((line) => line)
-    .join("\n");
 }
 
 export function displayWidth(str: string): number {
@@ -999,11 +995,19 @@ function buildHistoryLines(history: TurnHistory, contentWidth: number): string[]
       return `${accent}❯${reset} ${content}`;
     }
     const highlighted = highlightMarkdown(content, colorEnabled);
-    if (!colorEnabled) return highlighted;
-    return highlighted
-      .split("\n")
-      .map((line) => (line.startsWith("[nolo]") ? themeText(line, "chrome", true) : line))
-      .join("\n");
+    const rawLines = highlighted.split("\n");
+    const styledLines = rawLines.map((line, idx) => {
+      if (idx === 0 && !line.startsWith("[nolo]")) {
+        const anchorPrefix = colorEnabled
+          ? `${themeColorSequence("chrome")}◈\x1b[39m `
+          : "◈ ";
+        return `${anchorPrefix}${line}`;
+      }
+      return line.startsWith("[nolo]") && colorEnabled
+        ? themeText(line, "chrome", true)
+        : line;
+    });
+    return styledLines.join("\n");
   };
   const lines: string[] = [];
   const pushTurn = (role: TurnRole, content: string) => {
@@ -1149,22 +1153,6 @@ export function applyScrollAction(
   }
 }
 
-function repaintInput(output: NodeJS.WritableStream, buffer: string, renderedLines = 1) {
-  const text = renderInput(buffer);
-  const columns = (output as { columns?: number }).columns ?? 80;
-  const physicalLines = countPhysicalLines(text, columns);
-  if ((output as { isTTY?: boolean }).isTTY) {
-    for (let index = 0; index < renderedLines; index += 1) {
-      output.write("\r\x1b[2K");
-      if (index < renderedLines - 1) output.write("\x1b[1A");
-    }
-  } else {
-    output.write("\n");
-  }
-  output.write(text);
-  return physicalLines;
-}
-
 export type FixedInputController = {
   active: boolean;
   init(): void;
@@ -1212,6 +1200,8 @@ export function createNoopFixedInput(): FixedInputController {
 
 type FixedInputConfig = {
   getStatusLine: () => string;
+  /** turn 进行中的活动行；无活动时返回 null。 */
+  getActivityLine?: () => string | null;
   /**
    * Optional extra lines rendered above the composer (below the status line),
    * e.g. a preview of queued follow-up messages. Each entry is one line.
@@ -1235,7 +1225,6 @@ export function createFixedInput(
     write(`\x1b[1;${bottom}r`);
   };
   const saveCursor = () => write("\x1b7");
-  const restoreCursor = () => write("\x1b8");
   const resetScrollRegion = () => write("\x1b[r");
   // Wheel reporting: SGR format (1006) + basic tracking (1000). Without these
   // the terminal never delivers wheel events, so the transcript could not be
@@ -1274,6 +1263,11 @@ export function createFixedInput(
       : "─".repeat(cols);
     sections.push(rule);
     sections.push(fitAnsiLine(config.getStatusLine(), cols));
+
+    const activityLine = config.getActivityLine?.() ?? null;
+    if (activityLine) {
+      sections.push(fitAnsiLine(activityLine.replace(/\r?\n/g, " "), cols));
+    }
 
     // Queued follow-up preview lines sit between the status line and the input
     // prompt so the user sees the actual staged text, not just a count.
@@ -1318,12 +1312,13 @@ export function createFixedInput(
       }
     }
 
-    sections.push(rule);
-
     const text = sections.join("\n");
     const lines = sections.length;
     const headerRows =
-      (completions.length > 0 ? 1 : 0) + 2 + queueLines.length; // completion? + top rule + status + queued preview
+      (completions.length > 0 ? 1 : 0) +
+      2 +
+      (activityLine ? 1 : 0) +
+      queueLines.length; // completion? + top rule + status + activity + queued preview
     return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 
@@ -1619,6 +1614,41 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   let buffer = "";
   // Cooperative stop for the in-flight agent turn (Esc while busy).
   let activeTurnAbort: AbortController | null = null;
+  let activityLabel: string | null = null;
+  let activityStartedAt = 0;
+  let activityFrameIndex = 0;
+  let activityTimer: ReturnType<typeof setInterval> | null = null;
+
+  const stopActivity = () => {
+    if (activityTimer !== null) {
+      clearInterval(activityTimer);
+      activityTimer = null;
+    }
+    activityLabel = null;
+    activityStartedAt = 0;
+  };
+
+  const activityReporter = (label: string | null) => {
+    if (label !== null) {
+      activityLabel = label;
+      if (activityStartedAt === 0) {
+        activityStartedAt = Date.now();
+      }
+      if (activityTimer === null) {
+        activityTimer = setInterval(() => {
+          activityFrameIndex += 1;
+          if (fixedInput.active && !fixedInput.isPaused()) {
+            fixedInput.repaint(buffer);
+          }
+        }, 150);
+      }
+    } else {
+      stopActivity();
+      if (fixedInput.active && !fixedInput.isPaused()) {
+        fixedInput.repaint(buffer);
+      }
+    }
+  };
   // True after the user explicitly switches agent via /agent or /switch.
   // autoRouteByDialog caches the first-turn router decision per dialog and
   // would otherwise keep replaying the (possibly 429'd) original agent on
@@ -1715,67 +1745,74 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           }
         })
       : output;
-    activeTurnAbort = new AbortController();
-    const runResult = await runAgentChat(
-      options.scriptDir,
-      state,
-      message,
-      options.env ?? process.env,
-      agentOutput,
-      options.agentRunner,
-      {
-        ...(imageUrls.length > 0 ? { imageUrls } : {}),
-        actionGateHandler,
-        ...(confirmDestructiveAction ? { confirmDestructiveAction } : {}),
-        abortSignal: activeTurnAbort.signal,
-        explicitAgentSwitch,
+    try {
+      activeTurnAbort = new AbortController();
+      const runResult = await runAgentChat(
+        options.scriptDir,
+        state,
+        message,
+        options.env ?? process.env,
+        agentOutput,
+        options.agentRunner,
+        {
+          ...(imageUrls.length > 0 ? { imageUrls } : {}),
+          actionGateHandler,
+          ...(confirmDestructiveAction ? { confirmDestructiveAction } : {}),
+          abortSignal: activeTurnAbort.signal,
+          explicitAgentSwitch,
+          activityReporter,
+        }
+      );
+      const wasAborted = activeTurnAbort.signal.aborted;
+      activeTurnAbort = null;
+      // An explicit switch only needs to suppress the cached route for the
+      // turn it was issued on; once run, normal per-dialog caching resumes.
+      explicitAgentSwitch = false;
+      if (isInteractiveInput(input)) {
+        finalizeCurrentTurn(history);
+        renderHistoryToOutput();
+        if (fixedInput.active) fixedInput.repaint(buffer);
       }
-    );
-    const wasAborted = activeTurnAbort.signal.aborted;
-    activeTurnAbort = null;
-    // An explicit switch only needs to suppress the cached route for the
-    // turn it was issued on; once run, normal per-dialog caching resumes.
-    explicitAgentSwitch = false;
-    if (isInteractiveInput(input)) {
-      finalizeCurrentTurn(history);
-      renderHistoryToOutput();
-      if (fixedInput.active) fixedInput.repaint(buffer);
+      if (wasAborted) {
+        emitCommandOutput(t("turnStopped"));
+      }
+      if (runResult.dialogId || runResult.turnTokens) {
+        const nextDialogKey = runResult.dialogId
+          ? runResult.dialogId === state.dialogId && state.dialogKey
+            ? state.dialogKey
+            : state.dialogOwnerId
+              ? `dialog-${state.dialogOwnerId}-${runResult.dialogId}`
+              : undefined
+          : state.dialogKey;
+        state = {
+          ...state,
+          ...(runResult.dialogId
+            ? {
+                dialogId: runResult.dialogId,
+                dialogKey: nextDialogKey,
+                dialogLabel: runResult.dialogId,
+              }
+            : {}),
+          ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
+        };
+      }
+      // 把 429/额度耗尽这类错误单独识别出来，给一句人话提示 + 可操作的下一步，
+      // 而不是把原始报错留在 transcript 里让用户自己去猜「现在该怎么办」。
+      // localError 来自本地 runtime（exitCode 1 + localError）；server runtime 的
+      // 429 文本已被 agentRun 直接写进 agentOutput，这里只在 localError 可用时复检。
+      if (
+        !wasAborted &&
+        runResult.exitCode !== 0 &&
+        isQuotaExhaustedError(runResult.localError)
+      ) {
+        emitCommandOutput(t("quotaExhaustedHint"));
+      }
+      return { ok: !wasAborted, aborted: wasAborted };
+    } finally {
+      stopActivity();
+      activeTurnAbort = null;
+      explicitAgentSwitch = false;
     }
-    if (wasAborted) {
-      emitCommandOutput(t("turnStopped"));
-    }
-    if (runResult.dialogId || runResult.turnTokens) {
-      const nextDialogKey = runResult.dialogId
-        ? runResult.dialogId === state.dialogId && state.dialogKey
-          ? state.dialogKey
-          : state.dialogOwnerId
-            ? `dialog-${state.dialogOwnerId}-${runResult.dialogId}`
-            : undefined
-        : state.dialogKey;
-      state = {
-        ...state,
-        ...(runResult.dialogId
-          ? {
-              dialogId: runResult.dialogId,
-              dialogKey: nextDialogKey,
-              dialogLabel: runResult.dialogId,
-            }
-          : {}),
-        ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
-      };
-    }
-    // 把 429/额度耗尽这类错误单独识别出来，给一句人话提示 + 可操作的下一步，
-    // 而不是把原始报错留在 transcript 里让用户自己去猜「现在该怎么办」。
-    // localError 来自本地 runtime（exitCode 1 + localError）；server runtime 的
-    // 429 文本已被 agentRun 直接写进 agentOutput，这里只在 localError 可用时复检。
-    if (
-      !wasAborted &&
-      runResult.exitCode !== 0 &&
-      isQuotaExhaustedError(runResult.localError)
-    ) {
-      emitCommandOutput(t("quotaExhaustedHint"));
-    }
-    return { ok: !wasAborted, aborted: wasAborted };
   };
 
   // The TUI chat queue binding drives drain via runOneAgentTurn. It is created
@@ -2199,9 +2236,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     let actionGateWaiting = false;
     fixedInput = createFixedInput(output, {
       getStatusLine: () => {
-        let base = busy
-          ? `${renderStatusLine(state)}${dimCliText(` · ${t("stopHint")}`, resolveCliColorEnabled())}`
-          : renderStatusLine(state);
+        let base = renderStatusLine(state);
         // Show the queued-input count while a turn is running so the user can
         // see their follow-ups are staged, not lost. Mirrors the Web/RN
         // queue badge via the shared projectChatQueueStatus contract.
@@ -2218,6 +2253,28 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           base += dimCliText(` · ↕ ${scrollHints.join("/")}`, resolveCliColorEnabled());
         }
         return base;
+      },
+      getActivityLine: () => {
+        if (activityLabel === null) return null;
+        const colorEnabled = resolveCliColorEnabled();
+        const FRAMES = ["·", "~", "≈", "∿", "≈", "~"];
+        const frame = FRAMES[activityFrameIndex % FRAMES.length];
+        const elapsedSec =
+          activityStartedAt > 0
+            ? Math.max(0, Math.floor((Date.now() - activityStartedAt) / 1000))
+            : 0;
+        const elapsed = formatElapsedSeconds(elapsedSec);
+        const stopHint = t("stopHint");
+        if (!colorEnabled) {
+          return `${frame} ${activityLabel} (${elapsed}) · ${stopHint}`;
+        }
+        return (
+          themeText(frame, "accent") +
+          " " +
+          themeText(activityLabel, "muted") +
+          themeText(` (${elapsed})`, "chrome") +
+          themeText(` · ${stopHint}`, "chrome")
+        );
       },
       getQueueLines: () => {
         if (!chatQueueBinding || chatQueueBinding.queueLength() === 0) return [];

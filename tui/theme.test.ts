@@ -4,6 +4,9 @@ import {
   themeColorSequence,
   themeText,
   highlightMarkdown,
+  blendHex,
+  diffLineSequences,
+  setActiveThemeName,
 } from "./theme";
 
 describe("tui theme", () => {
@@ -89,6 +92,52 @@ describe("tui theme", () => {
       expect(formatted).toContain("└───");
       expect(formatted).toContain(themeText("│", "chrome", true, env));
       expect(formatted).toContain("const x = 1;");
+    });
+  });
+
+  describe("blendHex & diffLineSequences", () => {
+    test("blendHex calculates weighted color mix correctly", () => {
+      expect(blendHex("FFFFFF", "000000", 0)).toBe("000000");
+      expect(blendHex("FFFFFF", "000000", 1)).toBe("FFFFFF");
+      expect(blendHex("FFFFFF", "000000", 0.5)).toBe("808080");
+    });
+
+    test("blendHex clamps out-of-range weights instead of extrapolating", () => {
+      expect(blendHex("FFFFFF", "000000", -1)).toBe("000000");
+      expect(blendHex("FFFFFF", "000000", 4)).toBe("FFFFFF");
+    });
+
+    test("blendHex falls back to base on malformed hex, never emitting NaN", () => {
+      // "ABC" would slice into an empty blue channel and round to NaN, whose
+      // hex string is the literal "NaN" — that would ship \x1b[48;2;…NaN…m.
+      for (const bad of ["ABC", "", "GGGGGG", "12345"]) {
+        const result = blendHex(bad, "102030", 0.5);
+        expect(result).toBe("102030");
+        expect(result).not.toContain("NaN");
+      }
+      expect(blendHex("FFFFFF", "xyz", 0.5)).toBe("XYZ");
+    });
+
+    test("diff background sequences never contain NaN channels", () => {
+      const diff = diffLineSequences({ COLORTERM: "truecolor" }, "dark");
+      expect(diff).not.toBeNull();
+      expect(diff!.added.bg).toMatch(/^\x1b\[48;2;\d+;\d+;\d+m$/);
+      expect(diff!.removed.bg).toMatch(/^\x1b\[48;2;\d+;\d+;\d+m$/);
+    });
+
+    test("diffLineSequences returns null when truecolor is not supported", () => {
+      expect(diffLineSequences({}, "dark")).toBeNull();
+    });
+
+    test("diffLineSequences updates when active theme changes", () => {
+      try {
+        const trailDiff = diffLineSequences({ COLORTERM: "truecolor" }, "dark");
+        setActiveThemeName("rose");
+        const roseDiff = diffLineSequences({ COLORTERM: "truecolor" }, "dark");
+        expect(roseDiff?.added.fg).not.toBe(trailDiff?.added.fg);
+      } finally {
+        setActiveThemeName("trail");
+      }
     });
   });
 });

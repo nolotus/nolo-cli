@@ -22,7 +22,11 @@ export function renderDialogTitle(
   title: string,
   colorEnabled = resolveCliColorEnabled(),
 ): string {
-  return themeText(title, "chrome", colorEnabled);
+  if (!colorEnabled) return title;
+  // Accent + bold: dialog titles need to be immediately scannable as the
+  // header of a modal overlay. The old chrome-only treatment was too close
+  // to the row detail text and didn't assert the frame boundary.
+  return `\x1b[1m${themeColorSequence("accent")}${title}\x1b[0m`;
 }
 
 /**

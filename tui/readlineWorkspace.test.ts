@@ -31,10 +31,10 @@ import { getCliLocale, setCliLocale, t } from "./i18n";
 
 const TERM_ROWS = 24;
 const TERM_COLS = 120;
-/** Empty OMP composer: top rule + status + input + bottom rule. */
-const EMPTY_COMPOSER_LINES = 4;
-/** With slash completions: completion + top + status + input + bottom. */
-const COMPLETION_COMPOSER_LINES = 5;
+/** Empty OMP composer: top rule + status + input. */
+const EMPTY_COMPOSER_LINES = 3;
+/** With slash completions: completion + top + status + input. */
+const COMPLETION_COMPOSER_LINES = 4;
 describe("displayWidth", () => {
   test("returns 0 for empty string", () => {
     expect(displayWidth("")).toBe(0);
@@ -159,6 +159,68 @@ function mockTty(rows = TERM_ROWS, columns = TERM_COLS) {
 }
 
 describe("createFixedInput", () => {
+  test("bottom rule is removed so the last section is not a divider line", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status",
+    });
+    input.repaint("");
+    const stdout = tty.stdout();
+    // Splitting by newline from repaint stdout or checking last section content
+    const renderedLines = stdout.split("\n");
+    const lastLine = renderedLines[renderedLines.length - 1] ?? "";
+    const isFullRule = lastLine.replace(/\x1b\[[0-9;]*m/g, "").replace(/─/g, "").length === 0 && lastLine.includes("─");
+    expect(isFullRule).toBe(false);
+  });
+
+  test("empty buffer positions cursor on placeholder row (headerRows)", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status",
+    });
+    input.repaint("");
+    // headerRows is 2 for empty input (top rule + status)
+    // composerStart is TERM_ROWS - EMPTY_COMPOSER_LINES + 1 = 24 - 3 + 1 = 22
+    // headerRows = 2, cursorRow = composerStart + headerRows = 24
+    const composerStart = TERM_ROWS - EMPTY_COMPOSER_LINES + 1;
+    const headerRows = 2;
+    const expectedCursorRow = composerStart + headerRows;
+    const promptWidth = displayWidth(t("promptLabel"));
+    const expectedCursorCol = promptWidth + 1;
+    expect(tty.stdout()).toContain(`\x1b[${expectedCursorRow};${expectedCursorCol}H`);
+  });
+
+  test("activity line increases cursorRow and lines count by 1", () => {
+    let activeLine: string | null = null;
+    const tty1 = mockTty();
+    const input1 = createFixedInput(tty1.output, {
+      getStatusLine: () => "status",
+      getActivityLine: () => activeLine,
+    });
+    input1.repaint("hello");
+    const lines1 = input1.getInputLines();
+
+    activeLine = "· thinking (2s) · Esc to stop";
+    const tty2 = mockTty();
+    const input2 = createFixedInput(tty2.output, {
+      getStatusLine: () => "status",
+      getActivityLine: () => activeLine,
+    });
+    input2.repaint("hello");
+    const lines2 = input2.getInputLines();
+
+    expect(lines2 - lines1).toBe(1);
+
+    // Parse cursor row positions relative to composer top (startRow)
+    const getCursorRowAbsolute = (stdout: string) => {
+      const match = stdout.match(/\x1b\[(\d+);\d+H(?:[^\x1b]|$)*$/);
+      return match ? parseInt(match[1]!, 10) : 0;
+    };
+    const relativeCursorRow1 = getCursorRowAbsolute(tty1.stdout()) - (TERM_ROWS - lines1 + 1);
+    const relativeCursorRow2 = getCursorRowAbsolute(tty2.stdout()) - (TERM_ROWS - lines2 + 1);
+    expect(relativeCursorRow2 - relativeCursorRow1).toBe(1);
+  });
+
   test("anchors an OMP-style composer to the terminal bottom", () => {
     const tty = mockTty();
     const input = createFixedInput(tty.output, {
@@ -548,8 +610,34 @@ describe("renderHistory", () => {
     expect(stdout).not.toContain("\x1b[J");
     expect(stdout).toContain("❯"); // user marker (theme-colored)
     expect(stdout).toContain("hello"); // user content
+    expect(stdout).toContain("◈ "); // assistant anchor marker
     expect(stdout).toContain("hi there");
     expect(stdout).toContain("\x1b[22;1H");
+  });
+
+  test("adds assistant anchor marker ◈ only on the first line and skips [nolo] notices", () => {
+    const chunks: string[] = [];
+    const output = {
+      isTTY: true,
+      rows: 24,
+      columns: 120,
+      write(chunk: string) {
+        chunks.push(chunk);
+        return true;
+      },
+    } as unknown as NodeJS.WritableStream;
+
+    const history = createTurnHistory();
+    history.turns.push({ role: "assistant", content: "line 1\nline 2" });
+    history.turns.push({ role: "assistant", content: "[nolo] system status\nline after system" });
+    renderHistory(output, history, 2);
+
+    const stdout = chunks.join("");
+    // First turn line 1 should have anchor, line 2 should not
+    expect(stdout).toContain("◈ line 1");
+    expect(stdout).not.toContain("◈ line 2");
+    // System notice line should not have anchor
+    expect(stdout).not.toContain("◈ [nolo]");
   });
 
   test("renders the current streaming turn", () => {
@@ -1192,5 +1280,49 @@ describe("scroll-aware history", () => {
     // The friendly hint is emitted (zh is the default locale).
     expect(fullOutput).toContain("429");
     expect(fullOutput).toContain("/agent");
+  });
+
+  test("timer does not leak: stopActivity prevents repaint calls after turn finishes", async () => {
+    const input = new PassThrough();
+    const chunks: Buffer[] = [];
+    const output = new PassThrough();
+    output.on("data", (chunk: Buffer) => chunks.push(chunk));
+    (input as unknown as { isTTY?: boolean; setRawMode?: () => void }).isTTY = true;
+    (input as unknown as { isTTY?: boolean; setRawMode?: () => void }).setRawMode = () => {};
+    (output as unknown as { isTTY?: boolean; rows?: number; columns?: number }).isTTY = true;
+    (output as unknown as { isTTY?: boolean; rows?: number; columns?: number }).rows = 24;
+    (output as unknown as { isTTY?: boolean; rows?: number; columns?: number }).columns = 120;
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        opt.activityReporter?.("thinking...");
+        await new Promise((r) => setTimeout(r, 50));
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    input.write("hello\r");
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Turn is finished now. Record chunk count.
+    const chunkCountAfterTurn = chunks.length;
+
+    // Wait > 2 timer ticks (150ms * 2 = 300ms)
+    await new Promise((r) => setTimeout(r, 350));
+
+    // Assert that no new repaint chunks were written after turn completion
+    expect(chunks.length).toBe(chunkCountAfterTurn);
+
+    input.write("/exit\r");
+    input.end();
+
+    await Promise.race([
+      workspacePromise,
+      new Promise((r) => setTimeout(r, 1000)),
+    ]);
   });
 });

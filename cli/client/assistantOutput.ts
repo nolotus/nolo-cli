@@ -208,15 +208,42 @@ function styleInlineMarkdown(line: string, mode: RenderDisplayMode, brightness: 
 function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
   const heading = line.match(/^(#{1,3})\s+(.+)$/);
   if (heading) {
+    const level = heading[1].length;
     const title = heading[2];
-    // All three levels share warning + bold. Splitting them across bold-only
-    // (h1/h2) and info (h3) gave the deepest heading the *most* color, which
-    // inverted the hierarchy; a single amber treatment plus the blank lines
-    // added in polishAssistantStructure is what actually separates sections.
-    return `${STYLE.bold}${colorSeq("warning", brightness)}${title}${STYLE.reset}`;
+    // Three-tier heading hierarchy for scannable structure:
+    //   H1 → accent + bold + underline (strongest visual anchor, section breaks)
+    //   H2 → warning + bold (warm amber, subsection headers)
+    //   H3 → info + bold (lighter, paragraph-level labels)
+    // The old "all warning" approach made every heading look identical; the
+    // even older "h3 = info, h1/h2 = bold-only" inverted hierarchy by giving
+    // the deepest level the most color. This ordering is monotonically
+    // decreasing in visual weight: accent > warning > info.
+    if (level === 1) {
+      return `${STYLE.bold}\x1b[4m${colorSeq("accent", brightness)}${title}${STYLE.reset}`;
+    }
+    if (level === 2) {
+      return `${STYLE.bold}${colorSeq("warning", brightness)}${title}${STYLE.reset}`;
+    }
+    return `${STYLE.bold}${colorSeq("info", brightness)}${title}${STYLE.reset}`;
   }
+  // Blockquote: "> text" → chrome left border + dimmed content, visually
+  // distinct from body text without competing with headings or code.
+  const blockquote = line.match(/^>\s?(.*)$/);
+  if (blockquote) {
+    const border = colorSeq("chrome", brightness);
+    const content = blockquote[1];
+    return `${border}│${STYLE.reset} ${STYLE.dim}${content}${STYLE.reset}`;
+  }
+  // Horizontal rule: use chrome-colored line instead of barely-visible dim.
   if (/^---+$/.test(line.trim())) {
-    return `${STYLE.dim}${line}${STYLE.reset}`;
+    return `${colorSeq("chrome", brightness)}${"─".repeat(Math.min(line.trim().length, 40))}${STYLE.reset}`;
+  }
+  // List bullets: color the marker for visual rhythm without coloring the
+  // entire line (which would fight inline markdown highlighting).
+  const bullet = line.match(/^(\s*)(•)\s(.+)$/);
+  if (bullet) {
+    const styled = styleInlineMarkdown(bullet[3], "rich", brightness);
+    return `${bullet[1]}${colorSeq("accent", brightness)}•${STYLE.reset} ${styled}`;
   }
   return styleInlineMarkdown(line, "rich", brightness);
 }
@@ -236,7 +263,12 @@ export function formatAssistantDisplay(
         inFence = !inFence;
         return mode === "plain" ? line : `${STYLE.dim}${line}${STYLE.reset}`;
       }
-      if (inFence) return line;
+      if (inFence) {
+        // Color code content with the info token so streaming output matches
+        // the history replay (highlightMarkdown in theme.ts uses info for code).
+        if (mode === "plain") return line;
+        return `${colorSeq("info", brightness)}${line}${STYLE.reset}`;
+      }
       if (mode === "plain") return styleInlineMarkdown(line, "plain", brightness);
       return styleRichMarkdownLine(line, brightness);
     })
@@ -282,8 +314,9 @@ export function createRenderAwareStreamWriter(args: {
         continue;
       }
       if (inFence) {
-        // Code lines pass through untouched: no trim, no table conversion.
-        args.write(`${firstLine}\n`);
+        // Code lines get info color to match formatAssistantDisplay and the
+        // history replay (highlightMarkdown). No trim, no table conversion.
+        args.write(`${colorSeq("info", brightness)}${firstLine}${STYLE.reset}\n`);
         buffer = lines.slice(1).join("\n");
         continue;
       }

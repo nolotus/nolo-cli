@@ -168,7 +168,9 @@ describe("assistantOutput", () => {
     writer.flush();
 
     const output = chunks.join("");
-    expect(output).toContain("  • 97220 — native host");
+    // Bullet marker is now accent-colored; check content is present and pipes gone.
+    expect(output).toContain("97220 — native host");
+    expect(output).toContain("•");
     expect(output).not.toContain("| pid |");
   });
 
@@ -183,8 +185,10 @@ describe("assistantOutput", () => {
     writer.flush();
 
     const output = chunks.join("");
-    expect(output).toContain("  const x = 1;\n");
-    expect(output).toContain("| not a table |\n");
+    // Code content is now info-colored; verify indentation is preserved inside
+    // the color wrapper and table-like lines inside fences are not converted.
+    expect(output).toContain("  const x = 1;");
+    expect(output).toContain("| not a table |");
   });
 
   test("render-aware stream writer applies rich formatting while streaming", () => {

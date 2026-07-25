@@ -3,6 +3,7 @@ import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
+import { diffLineSequences, themeText } from "../tui/theme";
 import { t, toolLabel } from "../tui/i18n";
 
 
@@ -160,7 +161,7 @@ function isNeedsActionToolResult(event: LocalAgentToolEvent) {
 function formatToolTraceLine(text: string, colorEnabled: boolean, accent: "none" | "error" = "none") {
   if (!colorEnabled) return `${text}\n`;
   if (accent === "error") {
-    return `${styleCliText(text, "red", true)}\n`;
+    return `${themeText(text, "danger", true)}\n`;
   }
   return `${dimCliText(text, true)}\n`;
 }
@@ -193,10 +194,9 @@ function formatCompactToolLine(
   colorEnabled: boolean
 ) {
   const toolName = event.toolName || pending?.toolName || "tool";
-  const label = formatActiveToolLabel({
-    toolName,
-    argumentsPreview: event.argumentsPreview || pending?.argumentsPreview,
-  });
+  const rawArgs = clip(event.argumentsPreview || pending?.argumentsPreview || "", 72);
+  const rawLabel = toolLabel(toolName);
+  const label = rawArgs ? `${rawLabel} ${rawArgs}` : rawLabel;
 
   if (event.type === "tool-error") {
     const message = clip(event.message ?? t("toolFailed"), 96);
@@ -204,16 +204,27 @@ function formatCompactToolLine(
   }
 
   const hint = compactResultHint(event);
-  // Plain space, not " · ": the dot existed to separate the elapsed time from
-  // the hint, and with timing gone it would dangle off the status marker.
   const suffix = hint.inline ? ` ${hint.inline}` : "";
   const failed = isFailedToolResult(event);
   const marker = failed ? "✗" : isNeedsActionToolResult(event) ? "!" : "✓";
-  const accent = failed ? "error" : "none";
-  const mainLine = formatToolTraceLine(`  ▸ ${label}  ${marker}${suffix}`, colorEnabled, accent);
+
+  let mainLine: string;
+  if (!colorEnabled) {
+    mainLine = `  ▸ ${label}  ${marker}${suffix}\n`;
+  } else {
+    const chromePointer = themeText("▸", "chrome", true);
+    const mutedLabel = themeText(rawLabel, "muted", true);
+    const argsPart = rawArgs ? ` ${dimCliText(rawArgs, true)}` : "";
+    const statusToken = failed
+      ? themeText("✗", "danger", true)
+      : isNeedsActionToolResult(event)
+        ? themeText("!", "warning", true)
+        : themeText("✓", "success", true);
+    const suffixPart = hint.inline ? ` ${dimCliText(hint.inline, true)}` : "";
+    mainLine = `  ${chromePointer} ${mutedLabel}${argsPart}  ${statusToken}${suffixPart}\n`;
+  }
+
   if (!hint.detail) return mainLine;
-  // editFile added/removed snippet: render as dim trailing lines, with the
-  // `-`/`+` markers colored red/green when color is on.
   const detailLines = hint.detail
     .split("\n")
     .map((line) => formatEditDetailLine(line, colorEnabled))
@@ -224,13 +235,28 @@ function formatCompactToolLine(
 function formatEditDetailLine(line: string, colorEnabled: boolean): string {
   const marker = line.slice(0, 2);
   const rest = line.slice(2);
-  if (colorEnabled) {
+  if (!colorEnabled) return `    ${line}\n`;
+
+  const diff = diffLineSequences();
+  if (!diff) {
     const color = marker === "- " ? "red" : marker === "+ " ? "green" : undefined;
     if (color) {
       return `    ${styleCliText(marker, color, true)}${dimCliText(rest, true)}\n`;
     }
+    return `    ${dimCliText(line, true)}\n`;
   }
-  return `    ${dimCliText(line, colorEnabled)}\n`;
+
+  const RESET = "\x1b[0m";
+
+  if (marker === "- ") {
+    return `    ${diff.removed.bg}${diff.removed.fg}- ${rest}${RESET}\n`;
+  }
+
+  if (marker === "+ ") {
+    return `    ${diff.added.bg}${diff.added.fg}+ ${rest}${RESET}\n`;
+  }
+
+  return `    ${dimCliText(line, true)}\n`;
 }
 
 export function formatToolEventForCli(

@@ -261,6 +261,85 @@ const SURFACE_HEX: Record<string, Record<TuiBrightness, string>> = {
   mono: { light: "E8EAED", dark: "2A2A2A" },
 };
 
+const TERMINAL_BASE: Record<TuiBrightness, string> = {
+  dark: "1E1E2E",
+  light: "FFFFFF",
+};
+
+/** Parse a 6-digit hex channel triple, or null when the input isn't one. */
+function readHexChannels(hex: string): [number, number, number] | null {
+  if (!/^[0-9A-F]{6}$/.test(hex)) return null;
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+/** `\x1b[48;2;…m` background SGR for a 6-digit hex, or "" if it isn't one. */
+function hexToBgSgr(hex: string): string {
+  const channels = readHexChannels(hex.replace(/^#/, "").toUpperCase());
+  if (!channels) return "";
+  const [r, g, b] = channels;
+  return `\x1b[48;2;${r};${g};${b}m`;
+}
+
+/**
+ * 把 fg 按 weight(0..1) 混合到 base 上，返回 6 位大写 hex（不带 #）。
+ *
+ * Malformed input falls back to `base` rather than producing channel NaNs: this
+ * is exported, and `Math.round(NaN).toString(16)` yields the literal "NaN",
+ * which would silently ship an `\x1b[48;2;NaN;…m` sequence to the terminal.
+ */
+export function blendHex(fg: string, base: string, weight: number): string {
+  const w = Math.min(1, Math.max(0, weight));
+  const normFg = fg.replace(/^#/, "").toUpperCase();
+  const normBase = base.replace(/^#/, "").toUpperCase();
+  if (w === 0) return normBase;
+  if (w === 1) return normFg;
+  if (!readHexChannels(normFg) || !readHexChannels(normBase)) return normBase;
+  const fgR = Number.parseInt(normFg.slice(0, 2), 16);
+  const fgG = Number.parseInt(normFg.slice(2, 4), 16);
+  const fgB = Number.parseInt(normFg.slice(4, 6), 16);
+  const baseR = Number.parseInt(normBase.slice(0, 2), 16);
+  const baseG = Number.parseInt(normBase.slice(2, 4), 16);
+  const baseB = Number.parseInt(normBase.slice(4, 6), 16);
+  const r = Math.round(baseR + (fgR - baseR) * w).toString(16).padStart(2, "0").toUpperCase();
+  const g = Math.round(baseG + (fgG - baseG) * w).toString(16).padStart(2, "0").toUpperCase();
+  const b = Math.round(baseB + (fgB - baseB) * w).toString(16).padStart(2, "0").toUpperCase();
+  return `${r}${g}${b}`;
+}
+
+export type DiffLineSequence = { fg: string; bg: string };
+
+export function diffLineSequences(
+  env: Record<string, string | undefined> = process.env,
+  brightness: TuiBrightness = resolveTuiBrightness(env),
+): { added: DiffLineSequence; removed: DiffLineSequence } | null {
+  if (!supportsTruecolor(env)) return null;
+
+  const palette = THEME_PALETTES[activeThemeName] ?? THEME_PALETTES.trail;
+  const successHex = palette[brightness].success.hex;
+  const dangerHex = palette[brightness].danger.hex;
+
+  const weight = brightness === "dark" ? 0.14 : 0.10;
+  const baseHex = TERMINAL_BASE[brightness];
+
+  const addedBgHex = blendHex(successHex, baseHex, weight);
+  const removedBgHex = blendHex(dangerHex, baseHex, weight);
+
+  return {
+    added: {
+      fg: hexToSgr(successHex),
+      bg: hexToBgSgr(addedBgHex),
+    },
+    removed: {
+      fg: hexToSgr(dangerHex),
+      bg: hexToBgSgr(removedBgHex),
+    },
+  };
+}
+
 /**
  * Background SGR for the status chip, or "" when the terminal cannot render it
  * faithfully. ANSI-16 has no safe subtle background — the nearest options are
@@ -272,11 +351,7 @@ export function surfaceBackgroundSequence(
   brightness: TuiBrightness = resolveTuiBrightness(env),
 ): string {
   if (!supportsTruecolor(env)) return "";
-  const hex = (SURFACE_HEX[activeThemeName] ?? SURFACE_HEX.trail)[brightness];
-  const r = Number.parseInt(hex.slice(0, 2), 16);
-  const g = Number.parseInt(hex.slice(2, 4), 16);
-  const b = Number.parseInt(hex.slice(4, 6), 16);
-  return `\x1b[48;2;${r};${g};${b}m`;
+  return hexToBgSgr((SURFACE_HEX[activeThemeName] ?? SURFACE_HEX.trail)[brightness]);
 }
 
 export function themeColorSequence(
@@ -322,10 +397,34 @@ export function highlightMarkdown(
     return ` ${themeText("┌───", "chrome", true, env)}\n${formattedCode}\n ${themeText("└───", "chrome", true, env)}`;
   });
 
-  // 2. Bold text: **bold** -> \x1b[1mbold\x1b[22m
+  // 2. Headings: three-tier hierarchy matching the streaming renderer
+  // (assistantOutput.ts styleRichMarkdownLine). Must run before bold/inline
+  // so heading text isn't partially consumed by those patterns.
+  //   H1 → accent + bold + underline
+  //   H2 → warning + bold
+  //   H3 → info + bold
+  result = result.replace(/^(#{1,3})\s+(.+)$/gm, (match, hashes, title) => {
+    const level = hashes.length;
+    const reset = "\x1b[0m";
+    if (level === 1) {
+      return `\x1b[1m\x1b[4m${themeColorSequence("accent", env)}${title}${reset}`;
+    }
+    if (level === 2) {
+      return `\x1b[1m${themeColorSequence("warning", env)}${title}${reset}`;
+    }
+    return `\x1b[1m${themeColorSequence("info", env)}${title}${reset}`;
+  });
+
+  // 3. Blockquotes: "> text" → chrome left border + dimmed content
+  result = result.replace(/^>\s?(.*)$/gm, (match, content) => {
+    const border = themeColorSequence("chrome", env);
+    return `${border}│\x1b[39m \x1b[2m${content}\x1b[22m`;
+  });
+
+  // 4. Bold text: **bold** -> \x1b[1mbold\x1b[22m
   result = result.replace(/\*\*([\s\S]*?)\*\*/g, "\x1b[1m$1\x1b[22m");
 
-  // 3. Inline code: `code` -> muted, not info. Sharing the info hue with code
+  // 5. Inline code: `code` -> muted, not info. Sharing the info hue with code
   // blocks made prose read as a wall of bright cyan; muted keeps identifiers
   // distinguishable while the block border carries the stronger accent.
   const mutedColor = themeColorSequence("muted", env);

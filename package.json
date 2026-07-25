@@ -760,6 +760,7 @@
     "chat/messages/messageEditReplayPlan.ts",
     "chat/messages/messageFinalizeOnError.ts",
     "chat/messages/messageInitMsgsPolicy.ts",
+    "chat/messages/messageInitMsgsSummaryResume.ts",
     "chat/messages/messageValidation.ts",
     "chat/dialog/actions/updateDialogSummaryAction.ts",
     "chat/messages/messageContract.ts",

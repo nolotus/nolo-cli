@@ -27,6 +27,7 @@ import {
   resolveInitMsgsFulfilledWriteMode,
   resolveInitMsgsHasMoreOlder,
 } from "./messageInitMsgsPolicy";
+import { resolveInitMsgsSummaryResume } from "./messageInitMsgsSummaryResume";
 import { isValidMessage } from "./messageValidation";
 import { selectIdentityUserId } from "identity/selectors";
 import { fetchAndCacheMessages, fetchAndCacheMessagesLocalFirst } from "./fetchAndCacheMessages";
@@ -636,27 +637,19 @@ export const messageSlice = createSliceWithThunks({
         const finalMessages = (await remotePromise).filter(isValidMessage);
 
         // --- Post-fetch check: Resume suspended summary tasks ---
+        // Wave21: dialog 查找 + summaryPending/dbKey 判定抽到
+        // `messageInitMsgsSummaryResume`（Redux-free core，可独立单测）。
         try {
           const rootState = getState() as any;
-          const { entities } = rootState.db;
-
-          const dialogConfig = Object.values(entities).find(
-            (entity): entity is DialogConfig => {
-              if (!entity || typeof entity !== "object") return false;
-              const value = entity as { type?: unknown; id?: unknown };
-              return value.type === DataType.DIALOG && value.id === dialogId;
-            }
-          );
-
-          if (dialogConfig && dialogConfig.summaryPending && dialogConfig.dbKey) {
-            console.log("[initMsgs] Found suspended summary task, resuming...", dialogConfig.dbKey);
-            thunkApi.dispatch(patch({
-              dbKey: dialogConfig.dbKey,
-              changes: { summaryPending: false }
-            }));
-
+          const decision = resolveInitMsgsSummaryResume({
+            entities: rootState.db?.entities,
+            dialogId,
+          });
+          if (decision.resume) {
+            console.log("[initMsgs] Found suspended summary task, resuming...", decision.dialogKey);
+            thunkApi.dispatch(patch({ dbKey: decision.dialogKey, changes: { summaryPending: false } }));
             updateDialogSummaryAction(
-              { dialogKey: dialogConfig.dbKey, preFetchedMessages: finalMessages },
+              { dialogKey: decision.dialogKey, preFetchedMessages: finalMessages },
               thunkApi
             ).catch((err) => console.error("Resume summary failed:", err));
           }

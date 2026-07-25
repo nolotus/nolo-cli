@@ -769,6 +769,7 @@
     "chat/messages/messageStreamEndBilling.ts",
     "chat/messages/messageStreamEndFinalMetadata.ts",
     "chat/messages/messageStreamEndPostWritePolicy.ts",
+    "chat/messages/messageStreamEndPersistPrep.ts",
     "chat/messages/messageUnderstandingCapture.ts",
     "chat/messages/messageSessionStore.ts",
     "chat/messages/activityCompletion.ts",

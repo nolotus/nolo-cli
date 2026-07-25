@@ -49,6 +49,7 @@ import { applyMessageStreamingUpsert } from "./messageStreamApply";
 import { resolveStreamEndBillingUsages } from "./messageStreamEndBilling";
 import { resolveStreamEndFinalMetadata } from "./messageStreamEndFinalMetadata";
 import { resolveStreamEndPostWritePolicy } from "./messageStreamEndPostWritePolicy";
+import { prepareStreamEndPersistInputs } from "./messageStreamEndPersistPrep";
 import {
   captureUnderstandingFromCompletedUiTurn as captureUnderstandingFromCompletedUiTurnCore,
 } from "./messageUnderstandingCapture";
@@ -883,11 +884,6 @@ export const messageSlice = createSliceWithThunks({
           spaceId ? { spaceId, agentName: rawAgentName || undefined } : undefined
         );
 
-        const finalUsageData =
-          totalUsage && totalUsage.completion_tokens != null
-            ? { completion_tokens: totalUsage.completion_tokens }
-            : undefined;
-
         const {
           thinkContent,
           textContent,
@@ -908,15 +904,21 @@ export const messageSlice = createSliceWithThunks({
           finalVisibleContent,
         });
 
-        // 从 Agent 配置里提取名称，写入消息（供后续多 Agent 视角使用）
-        const rawName = asTrimmedString(agentConfig?.name);
-        const agentName = rawName || undefined;
-        const { imageGenerationState: _transientImageGenerationState, ...persistedMessageMetadata } =
-          payload.messageMetadata ?? {};
+        // Wave20: persist prep (usage / agentName / metadata split) extracted to
+        // a Redux-free core. `rawAgentName` above is kept separate for normalize's
+        // upload agentName so normalize input behavior is unchanged; the
+        // agentName here is the one fed to `assemble`, equivalent to the former
+        // second `asTrimmedString(agentConfig?.name)`.
         const {
-          metadata: persistedMetadata,
-          ...otherPersistedMessageMetadata
-        } = persistedMessageMetadata;
+          finalUsageData,
+          agentName,
+          persistedMetadata,
+          otherPersistedMessageMetadata,
+        } = prepareStreamEndPersistInputs({
+          totalUsage,
+          agentConfig,
+          messageMetadata: payload.messageMetadata,
+        });
         const { finalMetadata } = resolveStreamEndFinalMetadata({
           persistedMetadata,
           toolCalls,

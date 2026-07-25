@@ -958,7 +958,11 @@ export default {
         filterImageGeneration: "Image generation",
       },
 
-      explorePlaza: "Explore the AI Plaza",
+      explorePlaza: "Explore",
+      explorePage: {
+        title: "Explore",
+        subtitle: "Discover and explore more AI",
+      },
       downloadAndroid: "Download for Android",
       downloadWindows: "Download for Windows",
       downloadLinux: "Download for Linux",
@@ -2182,7 +2186,11 @@ export default {
         filterImageGeneration: "可生成图片",
       },
 
-      explorePlaza: "探索 AI 广场",
+      explorePlaza: "探索",
+      explorePage: {
+        title: "探索",
+        subtitle: "发现并探索更多 AI",
+      },
       downloadAndroid: "下载 Android 版",
       downloadWindows: "下载 Windows 版",
       downloadLinux: "下载 Linux 版",
@@ -3404,7 +3412,11 @@ quickChat: {
         filterImageGeneration: "可生成圖片",
       },
 
-      explorePlaza: "探索 AI 廣場",
+      explorePlaza: "探索",
+      explorePage: {
+        title: "探索",
+        subtitle: "發現並探索更多 AI",
+      },
       downloadAndroid: "下載 Android 版",
       downloadWindows: "下載 Windows 版",
       downloadLinux: "下載 Linux 版",
@@ -4566,7 +4578,11 @@ quickChat: {
         filterImageGeneration: "画像生成",
       },
 
-      explorePlaza: "AIプラザを探索",
+      explorePlaza: "探索",
+      explorePage: {
+        title: "探索",
+        subtitle: "AIを発見して探索",
+      },
       downloadAndroid: "Android版をダウンロード",
       downloadWindows: "Windows版をダウンロード",
       downloadLinux: "Linux版をダウンロード",

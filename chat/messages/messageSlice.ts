@@ -21,6 +21,7 @@ import { remove, write, patch, selectById as selectDbRecordById } from "../../da
 import type { Message } from "./types";
 import { buildEditedMessageContent } from "./messageEditContent";
 import { planDeleteMessageCascade } from "./messageDeleteCascade";
+import { planEditUserMessageAndReplay } from "./messageEditReplayPlan";
 import { resolveFinalizeTransientOnError } from "./messageFinalizeOnError";
 import {
   resolveInitMsgsFulfilledWriteMode,
@@ -40,13 +41,14 @@ import {
   appendSaveFailureToContent,
   finalizeAssistantMessageContent,
 } from "./messageContract";
-import { inferAssistantActivityCompletionMetadata } from "./activityCompletion";
 import { resolveHandleSendMessageContext } from "../dialog/actions/handleSendMessageResolver";
 import { resolveMessageOwner } from "./resolveMessageOwner";
 import { assemblePersistedUserMessage } from "./messageUserPersistAssemble";
 import { assembleFinalAssistantMessage } from "./messageStreamEndAssemble";
 import { applyMessageStreamingUpsert } from "./messageStreamApply";
 import { resolveStreamEndBillingUsages } from "./messageStreamEndBilling";
+import { resolveStreamEndFinalMetadata } from "./messageStreamEndFinalMetadata";
+import { resolveStreamEndPostWritePolicy } from "./messageStreamEndPostWritePolicy";
 import {
   captureUnderstandingFromCompletedUiTurn as captureUnderstandingFromCompletedUiTurnCore,
 } from "./messageUnderstandingCapture";
@@ -915,19 +917,12 @@ export const messageSlice = createSliceWithThunks({
           metadata: persistedMetadata,
           ...otherPersistedMessageMetadata
         } = persistedMessageMetadata;
-        const shouldInferActivityCompletion =
-          !(persistedMetadata as Record<string, unknown> | undefined)?.activity &&
-          (!toolCalls || toolCalls.length === 0);
-        const inferredActivityCompletionMetadata = shouldInferActivityCompletion
-          ? inferAssistantActivityCompletionMetadata({
-              messages: selectAllMsgs(getState() as any, dialogId) as any,
-              finalContent: finalVisibleContent,
-            })
-          : undefined;
-        const finalMetadata =
-          inferredActivityCompletionMetadata
-            ? { ...(persistedMetadata ?? {}), ...inferredActivityCompletionMetadata }
-            : persistedMetadata;
+        const { finalMetadata } = resolveStreamEndFinalMetadata({
+          persistedMetadata,
+          toolCalls,
+          messages: selectAllMsgs(getState() as any, dialogId) as any,
+          finalContent: finalVisibleContent,
+        });
 
         // Same owner authority as prepareAndPersistMessage: dialogConfig.userId
         // → dialog key (dialog-local-*) → logged-in account → "local".
@@ -977,7 +972,23 @@ export const messageSlice = createSliceWithThunks({
           })
         ).unwrap();
 
-        if (hasReportedUsage) {
+        // Wave18: post-write dispatch policy (Redux-free pure decision).
+        const {
+          billingMode,
+          updateTitle,
+          updateSummary,
+          summaryForce,
+          summaryReason,
+          addRefs,
+        } = resolveStreamEndPostWritePolicy({
+          hasReportedUsage,
+          agentProvider: agentConfig?.provider,
+          titleEligible,
+          textContent,
+          toolCalls,
+        });
+
+        if (billingMode === "reported") {
           dispatch(
             (updateTokens as any)({
               dialogId,
@@ -986,7 +997,7 @@ export const messageSlice = createSliceWithThunks({
               agentConfig,
             })
           );
-        } else if (agentConfig?.provider && agentConfig.provider !== "custom") {
+        } else if (billingMode === "estimated") {
           dispatch(
             (updateTokens as any)({
               dialogId,
@@ -1004,11 +1015,11 @@ export const messageSlice = createSliceWithThunks({
           });
         }
 
-        if (titleEligible) {
+        if (updateTitle) {
           dispatch((updateDialogTitle as any)({ dialogKey, agentConfig }));
         }
 
-        if (textContent.trim() !== "") {
+        if (updateSummary) {
           const messagesForSummary = [
             ...selectAllMsgs(getState() as any, dialogId),
             finalMessage,
@@ -1019,21 +1030,20 @@ export const messageSlice = createSliceWithThunks({
             {
               dialogKey,
               preFetchedMessages: messagesForSummary,
-              force: !toolCalls || toolCalls.length === 0,
-              reason:
-                !toolCalls || toolCalls.length === 0
-                  ? "task_completed"
-                  : "context_budget",
+              force: summaryForce,
+              reason: summaryReason,
             },
             { dispatch, getState }
           )
             .catch(err => console.error("Summary update failed:", err));
 
-          // 提取并保存引用 keys (Assistant)
-          dispatch(addReferenceKeysAction({
-            content: finalVisibleContent,
-            dialogKey
-          })).catch((err: unknown) => console.error("Failed to add assistant refs:", err));
+          if (addRefs) {
+            // 提取并保存引用 keys (Assistant)
+            dispatch(addReferenceKeysAction({
+              content: finalVisibleContent,
+              dialogKey
+            })).catch((err: unknown) => console.error("Failed to add assistant refs:", err));
+          }
         }
 
         await captureUnderstandingFromCompletedUiTurn({
@@ -1177,25 +1187,17 @@ export const messageSlice = createSliceWithThunks({
 
           const dialogId = dialogConfig.id ?? extractCustomId(dialogKey);
           const messages = selectAllMsgs(state, dialogId);
-          const targetIndex = messages.findIndex((message) => message.id === args.messageId);
-          if (targetIndex < 0) {
-            throw new Error("editUserMessageAndReplay: target message not found.");
+          const plan = planEditUserMessageAndReplay({
+            messages,
+            messageId: args.messageId,
+            originalContent: args.originalContent,
+            nextText: args.nextText,
+          });
+          if (!plan.ok) {
+            throw new Error(plan.message);
           }
 
-          const targetMessage = messages[targetIndex];
-          if (!targetMessage || targetMessage.role !== "user") {
-            throw new Error("只能编辑用户消息。");
-          }
-
-          if (messages.some((message) => message.isStreaming)) {
-            throw new Error("请等待当前回复完成后再编辑历史消息。");
-          }
-
-          const nextContent = buildEditedMessageContent(
-            args.originalContent ?? targetMessage.content,
-            args.nextText
-          );
-          const trailingMessages = messages.slice(targetIndex + 1);
+          const { targetMessage, nextContent, trailingMessages } = plan;
 
           dispatch(
             messageActions.updateToolMessage({

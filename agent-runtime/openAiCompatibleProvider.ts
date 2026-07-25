@@ -6,8 +6,13 @@ import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
 import { buildProviderAuthHeaders } from "./providerResolution";
 import { buildKimiCodeHeaders, isKimiCodeEndpoint } from "./kimiHeaders";
 import { parseSseDataLineJson } from "./sseDataLine";
-import { createThinkParserState, extractThinkContent, flushThinkParser, processThinkChunk } from "./thinkTagParser";
-import type { ThinkParseState } from "./thinkTagParser";
+import { extractThinkContent, createThinkParserState } from "./thinkTagParser";
+import {
+  applyChatCompletionDelta,
+  flushChatCompletionStream,
+  type ChatCompletionStreamState,
+} from "./processChatCompletionDelta";
+import { finalizeAccumulatedToolCalls, type AccumulatedToolCall } from "./toolCallAccumulator";
 
 export type OpenAiCompatibleProviderConfig = {
   model: string;
@@ -19,15 +24,6 @@ export type OpenAiCompatibleProviderConfig = {
 };
 
 type OpenAiCompatibleTool = Record<string, unknown>;
-
-type AccumulatedToolCall = {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-};
 
 export function buildOpenAiCompatibleChatCompletionRequest(args: {
   providerConfig: OpenAiCompatibleProviderConfig;
@@ -90,85 +86,14 @@ export function parseOpenAiCompatibleChatCompletionResponse(args: {
   };
 }
 
-function accumulateToolCallDelta(
-  accumulated: Record<number, AccumulatedToolCall>,
-  deltas: Array<Record<string, unknown>>
-) {
-  for (const delta of deltas) {
-    const index = typeof delta.index === "number" ? delta.index : 0;
-    const current = accumulated[index] ?? {
-      id: "",
-      type: "function" as const,
-      function: { name: "", arguments: "" },
-    };
-    if (typeof delta.id === "string" && delta.id) current.id = delta.id;
-    const fn = delta.function;
-    if (fn && typeof fn === "object") {
-      const functionDelta = fn as { name?: string; arguments?: string };
-      if (typeof functionDelta.name === "string" && functionDelta.name) {
-        current.function.name += functionDelta.name;
-      }
-      if (typeof functionDelta.arguments === "string" && functionDelta.arguments) {
-        current.function.arguments += functionDelta.arguments;
-      }
-    }
-    accumulated[index] = current;
-  }
-}
-
-function finalizeAccumulatedToolCalls(accumulated: Record<number, AccumulatedToolCall>) {
-  return Object.keys(accumulated)
-    .map((key) => accumulated[Number(key)])
-    .filter((call) => call?.function?.name);
-}
-
-
 function processOpenAiCompatibleSseEvent(
   event: string,
-  state: {
-    content: string;
-    reasoning: string;
-    usage?: Record<string, unknown>;
-    accumulatedToolCalls: Record<number, AccumulatedToolCall>;
-    onTextDelta?: (chunk: string) => void;
-    thinkState: ThinkParseState;
-  }
+  state: ChatCompletionStreamState,
 ) {
   for (const line of event.split("\n")) {
     const parsed = parseSseDataLineJson(line) as any;
     if (parsed == null) continue;
-
-    if (parsed?.usage && typeof parsed.usage === "object") {
-      state.usage = parsed.usage;
-    }
-
-    const delta = parsed?.choices?.[0]?.delta;
-    if (!delta || typeof delta !== "object") continue;
-
-    const reasoningChunk =
-      typeof delta.reasoning_content === "string"
-        ? delta.reasoning_content
-        : typeof delta.reasoning === "string"
-          ? delta.reasoning
-          : "";
-    if (reasoningChunk) state.reasoning += reasoningChunk;
-
-    if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
-      accumulateToolCallDelta(state.accumulatedToolCalls, delta.tool_calls);
-    }
-
-    const textChunk = typeof delta.content === "string" ? delta.content : "";
-    if (textChunk) {
-      const parsed = processThinkChunk(textChunk, state.thinkState);
-      state.thinkState = parsed.state;
-      if (parsed.content) {
-        state.content += parsed.content;
-        state.onTextDelta?.(parsed.content);
-      }
-      if (parsed.reasoning) {
-        state.reasoning += parsed.reasoning;
-      }
-    }
+    applyChatCompletionDelta(parsed, state);
   }
 }
 
@@ -183,13 +108,13 @@ export async function readOpenAiCompatibleSseCompletion(args: {
 
   const decoder = new TextDecoder();
   let buffer = "";
-  const state = {
+  const state: ChatCompletionStreamState = {
     content: "",
     reasoning: "",
-    usage: undefined as Record<string, unknown> | undefined,
-    accumulatedToolCalls: {} as Record<number, AccumulatedToolCall>,
-    onTextDelta: args.onTextDelta,
+    usage: undefined,
+    accumulatedToolCalls: {},
     thinkState: createThinkParserState(),
+    onTextDelta: args.onTextDelta,
   };
 
   while (true) {
@@ -210,15 +135,7 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     processOpenAiCompatibleSseEvent(buffer, state);
   }
 
-  const flushed = flushThinkParser(state.thinkState);
-  state.thinkState = flushed.state;
-  if (flushed.content) {
-    state.content += flushed.content;
-    state.onTextDelta?.(flushed.content);
-  }
-  if (flushed.reasoning) {
-    state.reasoning += flushed.reasoning;
-  }
+  flushChatCompletionStream(state);
 
   const tool_calls = finalizeAccumulatedToolCalls(state.accumulatedToolCalls);
   return {

@@ -23,6 +23,20 @@ import {
   resolveProviderTransportDecision,
   type ApiKeyRefResolver,
 } from "./providerResolution";
+import {
+  createThinkParserState,
+  extractThinkContent,
+} from "./thinkTagParser";
+import type { ThinkParseState } from "./thinkTagParser";
+import {
+  applyChatCompletionDelta,
+  flushChatCompletionStream,
+  type ChatCompletionStreamState,
+} from "./processChatCompletionDelta";
+import {
+  finalizeAccumulatedToolCalls,
+  type AccumulatedToolCall,
+} from "./toolCallAccumulator";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -42,55 +56,6 @@ export type PlatformChatProviderConfig = {
 };
 
 type PlatformChatTool = Record<string, unknown>;
-
-type AccumulatedToolCall = {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-};
-
-/**
- * Merge a streamed `delta.tool_calls` chunk into the per-index accumulator.
- *
- * OpenAI chat.completions streaming fragments tool calls across many chunks:
- * each carries `{ index, id?, type?, function: { name?, arguments? } }`. The
- * `id`/`function.name` appear at most once (take the first non-empty value),
- * while `function.arguments` arrives as a sequence of string slices that must
- * be concatenated in order. Multiple concurrent calls are disambiguated by
- * `index`.
- */
-function accumulateToolCallDelta(
-  accumulated: Record<number, AccumulatedToolCall>,
-  deltas: Array<Record<string, unknown>>,
-) {
-  for (const delta of deltas) {
-    const index = typeof delta.index === "number" ? delta.index : 0;
-    const current =
-      accumulated[index] ?? {
-        id: "",
-        type: "function" as const,
-        function: { name: "", arguments: "" },
-      };
-    if (typeof delta.id === "string" && delta.id) current.id = delta.id;
-    const fn = delta.function;
-    if (fn && typeof fn === "object") {
-      const functionDelta = fn as { name?: string; arguments?: string };
-      if (typeof functionDelta.name === "string" && functionDelta.name) {
-        current.function.name = current.function.name || functionDelta.name;
-      }
-      if (typeof functionDelta.arguments === "string" && functionDelta.arguments) {
-        current.function.arguments += functionDelta.arguments;
-      }
-    }
-    accumulated[index] = current;
-  }
-}
-
-function finalizeAccumulatedToolCalls(accumulated: Record<number, AccumulatedToolCall>) {
-  return Object.keys(accumulated)
-    .map((key) => accumulated[Number(key)])
-    .filter((call) => call?.function?.name);
-}
 
 function shouldDisableThinking(providerConfig: PlatformChatProviderConfig) {
   return (
@@ -289,14 +254,18 @@ export function parsePlatformChatCompletionResponse(args: {
   }
 
   const choiceMessage = args.data?.choices?.[0]?.message ?? {};
+  const rawContent = String(choiceMessage?.content ?? "");
+  const { content, reasoning } = extractThinkContent(rawContent);
   return {
-    content: String(choiceMessage?.content ?? ""),
+    content,
     model: args.providerConfig.model,
     provider: args.providerConfig.provider,
     ...(Array.isArray(choiceMessage?.tool_calls) ? { tool_calls: choiceMessage.tool_calls } : {}),
-    ...(typeof choiceMessage?.reasoning_content === "string" && choiceMessage.reasoning_content
-      ? { reasoning_content: choiceMessage.reasoning_content }
-      : {}),
+    ...(reasoning
+      ? { reasoning_content: reasoning }
+      : typeof choiceMessage?.reasoning_content === "string" && choiceMessage.reasoning_content
+        ? { reasoning_content: choiceMessage.reasoning_content }
+        : {}),
     usage: args.data?.usage,
     trace: args.trace,
   };
@@ -314,15 +283,9 @@ export function parsePlatformChatCompletionResponse(args: {
  */
 function processPlatformChatSseEvent(
   event: string,
-  state: {
-    content: string;
-    reasoning: string;
-    usage?: Record<string, unknown>;
+  state: ChatCompletionStreamState & {
     usesResponsesApi: boolean;
-    onTextDelta?: (chunk: string) => void;
-    onReasoningDelta?: (chunk: string) => void;
     completedResponsesPayload?: any;
-    accumulatedToolCalls: Record<number, AccumulatedToolCall>;
   },
 ) {
   for (const line of event.split("\n")) {
@@ -342,26 +305,7 @@ function processPlatformChatSseEvent(
     }
 
     if (!state.usesResponsesApi) {
-      const delta = parsed?.choices?.[0]?.delta;
-      if (!delta || typeof delta !== "object") continue;
-      const reasoningChunk =
-        typeof delta.reasoning_content === "string"
-          ? delta.reasoning_content
-          : typeof delta.reasoning === "string"
-            ? delta.reasoning
-            : "";
-      if (reasoningChunk) {
-        state.reasoning += reasoningChunk;
-        state.onReasoningDelta?.(reasoningChunk);
-      }
-      if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
-        accumulateToolCallDelta(state.accumulatedToolCalls, delta.tool_calls);
-      }
-      const textChunk = typeof delta.content === "string" ? delta.content : "";
-      if (textChunk) {
-        state.content += textChunk;
-        state.onTextDelta?.(textChunk);
-      }
+      applyChatCompletionDelta(parsed, state);
       continue;
     }
 
@@ -410,6 +354,7 @@ export async function readPlatformChatSseCompletion(args: {
     onReasoningDelta: args.onReasoningDelta,
     completedResponsesPayload: undefined as any,
     accumulatedToolCalls: {} as Record<number, AccumulatedToolCall>,
+    thinkState: createThinkParserState(),
   };
 
   while (true) {
@@ -427,6 +372,11 @@ export async function readPlatformChatSseCompletion(args: {
   if (buffer.trim()) {
     processPlatformChatSseEvent(buffer, state);
   }
+
+  // Flush any think-tag parser state held across chunk boundaries (mirrors
+  // readOpenAiCompatibleSseCompletion). No-op for the Responses-API branch
+  // since its events carry complete text deltas, not inline <think> tags.
+  flushChatCompletionStream(state);
 
   if (state.usesResponsesApi && state.completedResponsesPayload) {
     const response = state.completedResponsesPayload;

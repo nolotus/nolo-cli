@@ -1,10 +1,14 @@
 // Pure message construction and workflow reference resolution helpers for
 // `nolo agent run`. Extracted from agentRunCommand.ts.
 
-import { existsSync, readFileSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, extname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 
-import { parseSkillDocProtocol, type WorkflowReferenceConfig } from "./ai/skills/skillDocProtocol";
+import {
+  parseExternalSkillMarkdown,
+  parseSkillDocProtocol,
+  type WorkflowReferenceConfig,
+} from "./ai/skills/skillDocProtocol";
 
 export type ResolvedWorkflowReference = {
   ref: string;
@@ -17,6 +21,10 @@ export type ResolvedSkillReference = {
   content: string;
   name?: string;
   promptPatch?: string;
+  /** Tools declared via SKILL.md frontmatter `allowed-tools`. Empty when absent. */
+  allowedTools?: string[];
+  /** Absolute path to the skill directory (for resolving relative refs in body). */
+  skillDir?: string;
 };
 
 export function workflowRefToCandidatePath(cwd: string, ref: string) {
@@ -30,6 +38,27 @@ export function workflowRefToCandidatePath(cwd: string, ref: string) {
   return resolve(cwd, "docs", "workflows", `${fileName}.md`);
 }
 
+/**
+ * Conventional skill directories scanned in priority order.
+ * - `.agents/skills/` is the SKILL.md standard directory layout
+ *   (`<name>/SKILL.md`), the public open standard adopted by Cursor,
+ *   Claude Code, Codex, Goose, Roo Code and others.
+ * - `docs/skills/` is the bun-nolo flat layout (`<name>.md`), kept as
+ *   legacy fallback.
+ */
+const SKILL_SEARCH_DIRS = [
+  ".agents/skills",
+  "docs/skills",
+] as const;
+
+/**
+ * Resolve a skill ref to a file path. Search order:
+ * 1. Direct path (when ref contains `/`, `\`, or ends with `.md`)
+ * 2. `.agents/skills/<name>/SKILL.md` (public standard)
+ * 3. `docs/skills/<name>.md` (legacy flat layout, fallback)
+ * Returns the first existing path, or the legacy flat path as last resort
+ * (so the caller gets a meaningful "not found" message).
+ */
 export function skillRefToCandidatePath(cwd: string, ref: string) {
   const normalized = ref.trim();
   if (!normalized) return "";
@@ -38,6 +67,18 @@ export function skillRefToCandidatePath(cwd: string, ref: string) {
     if (existsSync(directPath)) return directPath;
   }
   const fileName = normalized.replace(/[^a-zA-Z0-9一-鿿]+/g, "-").replace(/^-+|-+$/g, "");
+  for (const dir of SKILL_SEARCH_DIRS) {
+    if (dir === "docs/skills") {
+      // Legacy flat layout: docs/skills/<name>.md
+      const flatPath = resolve(cwd, dir, `${fileName}.md`);
+      if (existsSync(flatPath)) return flatPath;
+    } else {
+      // SKILL.md standard: <dir>/<name>/SKILL.md
+      const skillMdPath = resolve(cwd, dir, fileName, "SKILL.md");
+      if (existsSync(skillMdPath)) return skillMdPath;
+    }
+  }
+  // Last resort: legacy flat path (may not exist — caller gets "not found")
   return resolve(cwd, "docs", "skills", `${fileName}.md`);
 }
 
@@ -58,6 +99,46 @@ export async function resolveWorkflowReference(
   };
 }
 
+/**
+ * Resolve relative Markdown links (`./references/xxx.md`) inside a skill body
+ * by inlining the referenced file content. Only files within the skill
+ * directory are inlined — paths escaping the directory are skipped.
+ */
+function inlineRelativeRefs(body: string, skillDir: string): string {
+  const refPattern = /\[([^\]]+)\]\((\.\/[^)]+|[^)]+\/[^)]+)\)/g;
+  const normalizedSkillDir = resolve(skillDir) + sep;
+  return body.replace(refPattern, (match, label, relPath) => {
+    const cleaned = relPath.trim();
+    if (!cleaned.startsWith("./") && !cleaned.startsWith("../")) return match;
+    const absPath = resolve(skillDir, cleaned);
+    // Security: only inline files inside the skill directory.
+    // Use path.relative to detect escape — prefix matching is vulnerable
+    // to sibling directories with shared name prefixes (e.g. /foo vs /foo-secrets).
+    const relative = relativePath(normalizedSkillDir, absPath);
+    if (relative.startsWith("..") || isAbsolute(relative)) return match;
+    if (!existsSync(absPath) || !absPath.endsWith(".md")) return match;
+    const refContent = readFileSync(absPath, "utf8");
+    return `\n\n### ${label}\n\n${refContent}\n\n`;
+  });
+}
+
+/**
+ * List `scripts/` subdirectory entries (if present) as a hint block appended
+ * to the skill body. The agent can then use `execShell` / `readFile` to access
+ * them on demand — scripts are not auto-injected into the prompt.
+ */
+function listSkillScripts(skillDir: string): string | null {
+  const scriptsDir = join(skillDir, "scripts");
+  if (!existsSync(scriptsDir) || !statSync(scriptsDir).isDirectory()) return null;
+  const entries = readdirSync(scriptsDir).filter((e) => !e.startsWith("."));
+  if (entries.length === 0) return null;
+  return [
+    "",
+    "--- Available scripts (use execShell/readFile to access) ---",
+    ...entries.map((e) => `- scripts/${e}`),
+  ].join("\n");
+}
+
 export async function resolveSkillReference(
   ref: string,
   options: {
@@ -67,6 +148,8 @@ export async function resolveSkillReference(
 ): Promise<ResolvedSkillReference> {
   const isDbKey = /^(page|doc)-[0-9a-z]+-/i.test(ref);
   let markdown = "";
+  let skillDir: string | undefined;
+  let filePath: string | undefined;
   if (isDbKey) {
     if (!options.readDbRecord) {
       throw new Error("skill dbKey requires server access");
@@ -84,38 +167,67 @@ export async function resolveSkillReference(
       throw new Error(`Skill reference not found: ${ref}`);
     }
     markdown = readFileSync(path, "utf8");
+    filePath = path;
+    skillDir = dirname(path);
   }
 
+  // Parse with bun-nolo's skill-config protocol (handles both nolo-native
+  // skill-config comment blocks and standard SKILL.md frontmatter).
   const parsed = parseSkillDocProtocol(markdown);
-  // parsed.meta?.skillConfig contains name, promptPatch.
   const name = parsed.meta?.skillConfig?.name;
   const promptPatch = parsed.meta?.skillConfig?.promptPatch;
 
+  // Also parse standard SKILL.md frontmatter for allowed-tools (P3).
+  // parseExternalSkillMarkdown extracts the `allowed-tools` field that
+  // parseSkillDocProtocol does not surface.
+  const externalParsed = parseExternalSkillMarkdown(markdown);
+  const allowedTools = externalParsed.allowedTools;
+  // Use frontmatter name as fallback when skill-config name is absent
+  const effectiveName = name ?? externalParsed.name;
+
+  // P1: inline relative path references and list scripts for directory skills
+  let effectiveContent = parsed.content;
+  if (skillDir) {
+    effectiveContent = inlineRelativeRefs(effectiveContent, skillDir);
+    const scriptsHint = listSkillScripts(skillDir);
+    if (scriptsHint) effectiveContent += scriptsHint;
+  }
+
   return {
     ref,
-    content: parsed.content,
-    ...(name ? { name } : {}),
+    content: effectiveContent,
+    ...(effectiveName ? { name: effectiveName } : {}),
     ...(promptPatch ? { promptPatch } : {}),
+    ...(allowedTools && allowedTools.length > 0 ? { allowedTools } : {}),
+    ...(skillDir ? { skillDir } : {}),
   };
 }
 
-export function prependSkillReferencesPrompt(
-  message: string,
+
+/**
+ * Build skill content blocks for injection as system context blocks
+ * (instead of prepending to the user message). Each block is a self-contained
+ * section with the skill's header, prompt patch, and body.
+ *
+ * Cache-friendly: placing these in the system message (via extraContextBlocks)
+ * preserves LLM prefix-cache on the system+history prefix across turns,
+ * whereas prepending to the user message would invalidate the cache every turn.
+ */
+export function buildSkillContextBlocks(
   skills?: ResolvedSkillReference[]
-): string {
-  if (!skills || !skills.length) return message;
-  const skillBlocks = skills.map((skill) => {
-    const header = `## ${skill.name ?? skill.ref}`;
+): string[] {
+  if (!skills || !skills.length) return [];
+  const seen = new Set<string>();
+  const blocks: string[] = [];
+  for (const skill of skills) {
+    const dedupKey = skill.name ?? skill.ref;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    const header = `## ${dedupKey}`;
     const patch = skill.promptPatch ? `${skill.promptPatch}\n` : "";
-    return `${header}\n${patch}${skill.content}`;
-  });
-  return [
-    "Temporary skill references (attached for this run only):",
-    ...skillBlocks,
-    "",
-    "User task:",
-    message,
-  ].join("\n");
+    blocks.push(`${header}\n${patch}${skill.content}`);
+  }
+  return blocks;
 }
 
 export function prependWorkflowReferencePrompt(

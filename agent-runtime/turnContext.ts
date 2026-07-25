@@ -26,12 +26,16 @@ export interface TurnContextLayer {
   id:
     | "space-context"
     | "workspace-context"
+    | "skill-discovery"
+    | "agents-md"
+    | "skill-content"
     | "user-global-prompt"
     | "memory-overlay"
     | "dialog-summary"
     | "proactive-summary";
   owner: "runtime";
-  cacheScope: "turn";
+  /** session = stable across turns in the same dialog; turn = may change each turn. */
+  cacheScope: "turn" | "session";
   content: string;
 }
 
@@ -49,7 +53,8 @@ export const spaceRecordKey = (spaceId: string): string =>
 const makeLayer = (
   id: TurnContextLayer["id"],
   content: string,
-): TurnContextLayer => ({ id, owner: "runtime", cacheScope: "turn", content });
+  cacheScope: TurnContextLayer["cacheScope"] = "turn",
+): TurnContextLayer => ({ id, owner: "runtime", cacheScope, content });
 
 interface SpaceCategoryLike {
   name?: unknown;
@@ -226,6 +231,76 @@ export const buildWorkspaceContextLayer = (
   return makeLayer("workspace-context", lines.join("\n"));
 };
 
+export interface DiscoveredSkill {
+  name: string;
+  description: string;
+  /** Relative path from the bound folder root, e.g. `.agents/skills/deployment/SKILL.md` */
+  relativePath: string;
+}
+
+/**
+ * Skill discovery layer: lists SKILL.md files found in conventional skill
+ * directories inside the bound folder. The model sees what skills are
+ * available and can read them on-demand via readFile/listFiles tools.
+ *
+ * Null when no skills were discovered (the caller scanned and found nothing).
+ */
+export const buildSkillDiscoveryLayer = (
+  skills: DiscoveredSkill[],
+  boundFolder: string,
+): TurnContextLayer | null => {
+  if (skills.length === 0) return null;
+  const lines = [
+    "--- 可用技能（Skills）---",
+    `工作区 ${boundFolder} 中发现了 ${skills.length} 个技能（SKILL.md）：`,
+    "模型可按需用 readFile 读取以下文件获取详细指令：",
+    "",
+    ...skills.map(
+      (s) =>
+        `- ${s.name}: ${s.description}\n  path: ${s.relativePath}`,
+    ),
+  ];
+  return makeLayer("skill-discovery", lines.join("\n"));
+};
+
+/**
+ * AGENTS.md project context layer: injects the project-level instructions
+ * from `AGENTS.md` (or `CLAUDE.md` as fallback) found in the workspace root.
+ *
+ * This is a **session-scope** layer: the file content doesn't change between
+ * turns in the same dialog, so it sits before turn-scope layers in the prompt
+ * to maximize LLM prefix cache hits.
+ *
+ * Null when no AGENTS.md file was found.
+ */
+export const buildAgentsMdLayer = (content: string): TurnContextLayer | null => {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+  return makeLayer(
+    "agents-md",
+    `--- 项目指令（AGENTS.md）---\n${trimmed}`,
+    "session",
+  );
+};
+
+/**
+ * Skill content layer: injected skill bodies (from /skill attach or
+ * --skill flag). Placed after workspace/skill-discovery layers but before
+ * memory/summary layers, so stable parts of the system prompt remain cacheable.
+ *
+ * Turn-scope because the user can attach/detach skills between turns.
+ */
+export const buildSkillContentLayer = (
+  skillBlocks: string,
+): TurnContextLayer | null => {
+  const trimmed = skillBlocks.trim();
+  if (!trimmed) return null;
+  return makeLayer(
+    "skill-content",
+    `--- 挂载技能（Skills）---\n${trimmed}`,
+  );
+};
+
 export interface BuildLinkedSpacesSectionArgs {
   source: TurnContextSource;
   /** Agent-declared linked space ids (bare or `space-` prefixed). */
@@ -276,7 +351,12 @@ export const buildLinkedSpacesSection = async (
   ].join("\n");
 };
 
-/** Renders layers into the plain-text blocks appended to a system prompt. */
+/**
+ * Renders layers into the plain-text blocks appended to a system prompt.
+ * Preserves caller-supplied order — does NOT auto-sort by cacheScope.
+ * Callers must arrange layers cache-friendly: session-scope first, then
+ * turn-scope, so the stable prefix maximizes LLM prefix-cache hits.
+ */
 export const renderTurnContextBlocks = (
   layers: Array<TurnContextLayer | null | undefined>,
 ): string[] =>

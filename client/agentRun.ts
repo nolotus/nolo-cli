@@ -140,6 +140,13 @@ export type RunAgentTurnOptions = {
    * local 模式在 adapter 读出 tier 配置后本地应用。
    */
   modelOverride?: ModelLayerOverride | null;
+  /**
+   * Extra context blocks appended to the system prompt after the agent's own
+   * prompt, before the user message. Used for skill content and AGENTS.md
+   * project instructions — placing them here (instead of prepending to the
+   * user message) preserves LLM prefix-cache hits on the system+history prefix.
+   */
+  extraContextBlocks?: string[];
 };
 
 export type RunAgentTurnResult = {
@@ -766,7 +773,12 @@ async function runHttpAgentTurn(
   const buildRequestBody = (stream: boolean) =>
     JSON.stringify({
       agentKey: options.agentKey,
-      userInput: buildUserInputContent(options.message, options.imageUrls),
+      userInput: buildUserInputContent(
+        options.extraContextBlocks?.length
+          ? [...options.extraContextBlocks, "", options.message].join("\n")
+          : options.message,
+        options.imageUrls,
+      ),
       runtimeContext: {
         surface: "cli",
         host: "terminal",
@@ -1050,6 +1062,9 @@ async function runLocalAgentTurnForCli(
       background: options.background,
       noStream: options.noStream,
       ...(runtimeContext ? { runtimeContext } : {}),
+      ...(options.extraContextBlocks?.length
+        ? { contextBlocks: options.extraContextBlocks }
+        : {}),
       ...(typeof options.timeoutMs === "number"
         ? { timeoutMs: options.timeoutMs }
         : {}),

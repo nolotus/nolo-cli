@@ -568,3 +568,101 @@ describe("handleTuiInput - /procs and /stop", () => {
     expect(result.action).toBeUndefined();
   });
 });
+
+describe("handleTuiInput - /skill", () => {
+  test("/skill with no args shows empty state and usage", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/skill", state);
+    expect(result.output).toContain("No skills attached");
+    expect(result.output).toContain("/skill attach");
+    expect(result.nextState.attachedSkills).toEqual([]);
+  });
+
+  test("/skill attach adds a skill ref", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/skill attach nolo-plan", state);
+    expect(result.output).toBe("Attached skill: nolo-plan");
+    expect(result.nextState.attachedSkills).toEqual(["nolo-plan"]);
+  });
+
+  test("/skill attach is idempotent (no duplicates)", () => {
+    const state = { ...createInitialTuiState({}), attachedSkills: ["nolo-plan"] };
+    const result = handleTuiInput("/skill attach nolo-plan", state);
+    expect(result.nextState.attachedSkills).toEqual(["nolo-plan"]);
+  });
+
+  test("/skill attach with dbKey", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/skill attach page-0e95801d90-01SKPLAN", state);
+    expect(result.output).toBe("Attached skill: page-0e95801d90-01SKPLAN");
+    expect(result.nextState.attachedSkills).toEqual(["page-0e95801d90-01SKPLAN"]);
+  });
+
+  test("/skill attach without arg shows usage", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/skill attach", state);
+    expect(result.output).toBe("Usage: /skill attach <skill-ref>");
+  });
+
+  test("/skill with attached skills lists them", () => {
+    const state = { ...createInitialTuiState({}), attachedSkills: ["nolo-plan", "search-first"] };
+    const result = handleTuiInput("/skill", state);
+    expect(result.output).toContain("nolo-plan");
+    expect(result.output).toContain("search-first");
+    expect(result.output).toContain("/skill attach");
+  });
+
+  test("/skill detach removes a skill ref", () => {
+    const state = { ...createInitialTuiState({}), attachedSkills: ["nolo-plan", "search-first"] };
+    const result = handleTuiInput("/skill detach nolo-plan", state);
+    expect(result.output).toBe("Detached skill: nolo-plan");
+    expect(result.nextState.attachedSkills).toEqual(["search-first"]);
+  });
+
+  test("/skill detach non-attached skill shows notice", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/skill detach deployment", state);
+    expect(result.output).toContain("Skill not attached");
+  });
+
+  test("/skill detach without arg shows usage", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/skill detach", state);
+    expect(result.output).toBe("Usage: /skill detach <skill-ref>");
+  });
+
+  test("/skill clear removes all skills", () => {
+    const state = { ...createInitialTuiState({}), attachedSkills: ["nolo-plan", "search-first"] };
+    const result = handleTuiInput("/skill clear", state);
+    expect(result.output).toBe("Cleared 2 skill(s).");
+    expect(result.nextState.attachedSkills).toEqual([]);
+  });
+
+  test("/skill clear with no skills shows message", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/skill clear", state);
+    expect(result.output).toBe("No skills attached.");
+  });
+
+  test("/new clears attached skills", () => {
+    const state = { ...createInitialTuiState({}), attachedSkills: ["nolo-plan"] };
+    const result = handleTuiInput("/new", state);
+    expect(result.nextState.attachedSkills).toEqual([]);
+  });
+
+  test("/context shows attached skills", () => {
+    const state = { ...createInitialTuiState({}), attachedSkills: ["nolo-plan"] };
+    const result = handleTuiInput("/context", state);
+    expect(result.output).toContain("nolo-plan");
+  });
+
+  test("/skill is recognized as slash command", () => {
+    expect(isLikelySlashCommand("/skill")).toBe(true);
+    expect(isLikelySlashCommand("/skill attach nolo-plan")).toBe(true);
+  });
+
+  test("completeSlashCommand includes /skill", () => {
+    const completions = completeSlashCommand("/sk");
+    expect(completions).toContain("/skill");
+  });
+});

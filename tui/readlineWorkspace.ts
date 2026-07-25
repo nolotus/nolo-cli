@@ -1,8 +1,10 @@
 import { createInterface } from "node:readline";
 import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
+import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPrompts";
 import {
   classifyCliAutoRoute,
   CLI_AUTO_TIER_AGENT_KEY_TABLE,
@@ -53,6 +55,31 @@ import { toErrorMessage } from "../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
 import { createChatQueueTuiBinding, type ChatQueueTuiBinding } from "./chatQueueTuiBinding";
+
+/** Max bytes of AGENTS.md/CLAUDE.md to inject — prevents context window overflow. */
+const AGENTS_MD_MAX_BYTES = 8192;
+
+/**
+ * Read AGENTS.md (or CLAUDE.md fallback) from the workspace root.
+ * Returns a formatted context block string, or null when absent.
+ * Session-scope: stable across turns in the same workspace.
+ */
+function readAgentsMdBlock(cwd: string): string | null {
+  for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+    const filePath = join(cwd, name);
+    if (existsSync(filePath)) {
+      try {
+        let content = readFileSync(filePath, "utf8").trim();
+        if (!content) continue;
+        if (Buffer.byteLength(content, "utf8") > AGENTS_MD_MAX_BYTES) {
+          content = Buffer.from(content, "utf8").subarray(0, AGENTS_MD_MAX_BYTES).toString("utf8") + "\n\n<!-- AGENTS.md truncated -->";
+        }
+        return `--- 项目指令（${name}）---\n${content}`;
+      } catch { /* skip unreadable */ }
+    }
+  }
+  return null;
+}
 
 export type SelfUpdater = (
   output: NodeJS.WritableStream
@@ -427,11 +454,64 @@ async function runAgentChat(
       modelOverride = null;
     }
   }
+  // Resolve attached skill references (dbKey, .agents/skills/<name>/SKILL.md,
+  // or docs/skills/<name>.md) and inject as system context blocks — same
+  // mechanism as `nolo agent run --skill <ref>`.
+  let effectiveMessage = message;
+  let skillAllowedTools: string[] | undefined;
+  let skillContextBlocks: string[] | undefined;
+  if (state.attachedSkills.length > 0) {
+    const authToken =
+      env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
+    const resolvedSkills = [];
+    for (const ref of state.attachedSkills) {
+      try {
+        const resolved = await resolveSkillReference(ref, {
+          cwd: state.cwd,
+          readDbRecord: async (dbKey: string) => {
+            return readDbRecord({
+              dbKey,
+              authToken,
+              serverUrl: state.serverUrl,
+              fetchImpl: fetch,
+            });
+          },
+        });
+        resolvedSkills.push(resolved);
+      } catch (error) {
+        output.write(`[nolo] skill "${ref}" skipped: ${toErrorMessage(error)}\n`);
+      }
+    }
+    if (resolvedSkills.length > 0) {
+      // Build skill content as context blocks (system prompt) instead of
+      // prepending to user message — preserves LLM prefix-cache on the
+      // system+history prefix across turns.
+      skillContextBlocks = buildSkillContextBlocks(resolvedSkills);
+      // P3: collect allowed-tools from all skills and intersect
+      const toolLists = resolvedSkills
+        .map((s) => s.allowedTools)
+        .filter((t): t is string[] => !!t && t.length > 0);
+      if (toolLists.length > 0) {
+        skillAllowedTools = toolLists.reduce((acc, tools) =>
+          acc.filter((t) => tools.includes(t))
+        );
+        if (skillAllowedTools.length === 0) {
+          output.write(`[nolo] warning: attached skills declare incompatible allowed-tools; no tool restriction enforced\n`);
+        }
+      }
+    }
+  }
+  // Read AGENTS.md from cwd (project-level instructions, session-scope)
+  const agentsMdBlock = readAgentsMdBlock(state.cwd);
+  const extraContextBlocks = [
+    ...(agentsMdBlock ? [agentsMdBlock] : []),
+    ...(skillContextBlocks ?? []),
+  ];
   const result: RunAgentTurnResult = await agentRunner({
     agentName: effectiveAgentName,
     agentKey: effectiveAgentKey,
     serverUrl: state.serverUrl,
-    message,
+    message: effectiveMessage,
     continueDialogId: state.dialogId,
     runtimeMode: state.runtimeMode,
     localRuntimeCwd: process.cwd(),
@@ -452,6 +532,12 @@ async function runAgentChat(
       : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     ...(modelOverride ? { modelOverride } : {}),
+    ...(skillAllowedTools !== undefined
+      ? { allowedToolNames: skillAllowedTools }
+      : {}),
+    ...(extraContextBlocks.length > 0
+      ? { extraContextBlocks }
+      : {}),
   });
   // 首轮分类完成后按对话缓存，同一段对话的后续轮直接复用、不再分类。
   if (

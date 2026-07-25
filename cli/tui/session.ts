@@ -68,6 +68,15 @@ export type TuiState = {
   cwd: string;
   attachedDocs: string[];
   /**
+   * Skill refs attached to the workspace via /skill attach.
+   * Each entry is a dbKey (page-xxx) or a bare skill name resolved
+   * against .agents/skills/<name>/SKILL.md or docs/skills/<name>.md.
+   * Passed to buildSkillContextBlocks on every chat turn so the agent
+   * sees the skill content in system context blocks.
+   * /new clears these, same semantics as attachedDocs.
+   */
+  attachedSkills: string[];
+  /**
    * 暂存 / paste 行解析到的图片附件。
    * 提交 chat 时会消费这些,转成 imageUrls 一起送出去。
    * /new 时清空,跟 attachedDocs 同语义。
@@ -201,6 +210,7 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
     cliVersion: asOptionalTrimmedString(env.NOLO_CLI_VERSION),
     cwd,
     attachedDocs: [],
+    attachedSkills: [],
     attachedImages: [],
     runtimeMode,
     modeLabel:
@@ -463,6 +473,7 @@ export const SLASH_COMMANDS = [
   "/copy",
   "/mouse",
   "/doc",
+  "/skill",
   "/customize",
   "/login",
   "/profile",
@@ -491,6 +502,9 @@ export function renderContextPanel(state: TuiState) {
   const docs = state.attachedDocs.length
     ? state.attachedDocs.join(", ")
     : "none";
+  const skills = state.attachedSkills.length
+    ? state.attachedSkills.join(", ")
+    : "none";
   return [
     "Workspace context",
     "-----------------",
@@ -500,6 +514,7 @@ export function renderContextPanel(state: TuiState) {
       state.dialogKey ?? (state.dialogId ? "unavailable" : state.dialogLabel)
     }`,
     `docs     ${docs}`,
+    `skills  ${skills}`,
     `配置     ${state.profileName}`,
     `runtime  ${state.runtimeMode}`,
     `tools    ${state.toolDisplay}`,
@@ -510,6 +525,7 @@ export function renderContextPanel(state: TuiState) {
     "Next:",
     "  /agents              see specialist shortcuts",
     "  /doc attach <doc>    add working context",
+    "  /skill attach <ref>  attach a skill to this workspace",
     "  /new                 start a clean dialog",
   ].join("\n");
 }
@@ -840,6 +856,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           dialogKey: undefined,
           dialogLabel: t("newDialog"),
           attachedDocs: [],
+          attachedSkills: [],
           attachedImages: [],
           turnTokens: undefined,
         },
@@ -993,6 +1010,51 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           state.attachedDocs.length > 0
             ? `Attached docs: ${state.attachedDocs.join(", ")}`
             : "No docs attached. Use /doc attach <doc>.",
+      };
+    }
+    case "/skill": {
+      const sub = rest[0]?.trim();
+      if (sub === "attach") {
+        const skillRef = rest.slice(1).join(" ").trim();
+        if (!skillRef) {
+          return { nextState: state, output: "Usage: /skill attach <skill-ref>" };
+        }
+        const attachedSkills = state.attachedSkills.includes(skillRef)
+          ? state.attachedSkills
+          : [...state.attachedSkills, skillRef];
+        return {
+          nextState: { ...state, attachedSkills },
+          output: `Attached skill: ${skillRef}`,
+        };
+      }
+      if (sub === "detach") {
+        const skillRef = rest.slice(1).join(" ").trim();
+        if (!skillRef) {
+          return { nextState: state, output: "Usage: /skill detach <skill-ref>" };
+        }
+        const attachedSkills = state.attachedSkills.filter((s) => s !== skillRef);
+        return {
+          nextState: { ...state, attachedSkills },
+          output: state.attachedSkills.includes(skillRef)
+            ? `Detached skill: ${skillRef}`
+            : `Skill not attached: ${skillRef}`,
+        };
+      }
+      if (sub === "clear") {
+        if (state.attachedSkills.length === 0) {
+          return { nextState: state, output: "No skills attached." };
+        }
+        return {
+          nextState: { ...state, attachedSkills: [] },
+          output: `Cleared ${state.attachedSkills.length} skill(s).`,
+        };
+      }
+      return {
+        nextState: state,
+        output:
+          state.attachedSkills.length > 0
+            ? `Attached skills: ${state.attachedSkills.join(", ")}\nUsage: /skill attach <ref> | /skill detach <ref> | /skill clear`
+            : "No skills attached. Use /skill attach <skill-ref> to attach a skill.\nSkill refs can be a dbKey (page-xxx), a skill name (searched in .agents/skills/ then docs/skills/), or a direct path.",
       };
     }
     case "/customize":

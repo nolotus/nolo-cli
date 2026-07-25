@@ -6,6 +6,8 @@
 // for back-compat with existing callers.
 
 import { runAgentTurn, type RunAgentTurnOptions, type RunAgentTurnResult } from "./client/agentRun";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { classifyCliAutoRoute } from "./client/autoModelRouter";
 import {
   buildModelLayerOverride,
@@ -46,7 +48,7 @@ import {
   type ResolvedWorkflowReference,
   resolveSkillReference,
   type ResolvedSkillReference,
-  prependSkillReferencesPrompt,
+  buildSkillContextBlocks,
 } from "./agentRunPrompts";
 import {
   formatLocalRunSummary,
@@ -327,6 +329,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
 
   let skillReferences: ResolvedSkillReference[] | undefined;
+  let skillAllowedToolOverride: string[] | undefined;
   if (parsed.skillRefs?.length) {
     const skills: ResolvedSkillReference[] = [];
     const authToken = resolveAuthToken(args, env);
@@ -351,6 +354,22 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
       }
     }
     skillReferences = skills;
+    // P3: intersect allowed-tools from all skills with any CLI --allowed-tool
+    const skillToolLists = skills
+      .map((s) => s.allowedTools)
+      .filter((t): t is string[] => !!t && t.length > 0);
+    if (skillToolLists.length > 0) {
+      const skillAllowed = skillToolLists.reduce((acc, tools) =>
+        acc.filter((t) => tools.includes(t))
+      );
+      if (skillAllowed.length === 0) {
+        output.write(`[nolo] warning: attached skills declare incompatible allowed-tools; no tool restriction enforced\n`);
+      }
+      // Intersect with user-provided --allowed-tool (if any), else use skill set
+      skillAllowedToolOverride = parsed.allowedToolNames?.length
+        ? parsed.allowedToolNames.filter((t) => skillAllowed.includes(t))
+        : skillAllowed;
+    }
   }
   let localRuntimeCwd = parsed.cwd;
   if (!localRuntimeCwd && parsed.runtimeMode === "local") {
@@ -394,6 +413,30 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     return 0;
   }
 
+  // Build cache-friendly context blocks: AGENTS.md (session-scope) + skill
+ // content (turn-scope). Placed in the system message via extraContextBlocks
+ // instead of prepending to the user message, preserving LLM prefix-cache.
+  const cliCwd = parsed.cwd ?? process.cwd();
+  const extraContextBlocks: string[] = [];
+  // AGENTS.md project instructions
+  const AGENTS_MD_MAX = 8192;
+  for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+    const agentsMdPath = join(cliCwd, name);
+    if (existsSync(agentsMdPath)) {
+      try {
+        let mdContent = readFileSync(agentsMdPath, "utf8").trim();
+        if (!mdContent) continue;
+        if (Buffer.byteLength(mdContent, "utf8") > AGENTS_MD_MAX) {
+          mdContent = Buffer.from(mdContent, "utf8").subarray(0, AGENTS_MD_MAX).toString("utf8") + "\n\n<!-- AGENTS.md truncated -->";
+        }
+        extraContextBlocks.push(`--- 项目指令（${name}）---\n${mdContent}`);
+        break;
+      } catch { /* skip */ }
+    }
+  }
+  // Skill content blocks
+  extraContextBlocks.push(...buildSkillContextBlocks(skillReferences));
+
   // Build the runner options once; the same options (message, cwd,
   // subjectRefs, runtime mode, etc.) are reused for any quota fallback retry
   // so the fallback agent executes against an identical request surface.
@@ -401,18 +444,15 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     agentName: targetAgentKey,
     agentKey: targetAgentKey,
     serverUrl: resolveServerUrl(env),
-    message: prependSkillReferencesPrompt(
-      prependWorkflowReferencePrompt(
-        prependSubjectDialogMarker(
-          prependFeatureWorktreeInstruction(
-            effectiveMessage,
-            parsed.injectFeatureWorktreeInstruction
-          ),
-          parsed.subjectDialogKey
+    message: prependWorkflowReferencePrompt(
+      prependSubjectDialogMarker(
+        prependFeatureWorktreeInstruction(
+          effectiveMessage,
+          parsed.injectFeatureWorktreeInstruction
         ),
-        workflowReference
+        parsed.subjectDialogKey
       ),
-      skillReferences
+      workflowReference
     ),
     imageUrls: parsed.imageUrls.map(normalizeCliImageInput),
     scriptDir: deps.scriptDir,
@@ -432,7 +472,11 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(parsed.subjectDialogKey ? { subjectDialogKey: parsed.subjectDialogKey } : {}),
     ...(parsed.subjectRefs?.length ? { subjectRefs: parsed.subjectRefs } : {}),
     ...(parsed.allowedChildAgentKeys?.length ? { allowedChildAgentKeys: parsed.allowedChildAgentKeys } : {}),
-    ...(parsed.allowedToolNames?.length ? { allowedToolNames: parsed.allowedToolNames } : {}),
+    ...(skillAllowedToolOverride !== undefined
+      ? { allowedToolNames: skillAllowedToolOverride }
+      : parsed.allowedToolNames?.length
+        ? { allowedToolNames: parsed.allowedToolNames }
+        : {}),
     ...(parsed.blockedToolNames?.length ? { blockedToolNames: parsed.blockedToolNames } : {}),
     ...(activityTracker ? { onLoopEvent: activityTracker.onLoopEvent } : {}),
     background: parsed.background,
@@ -441,6 +485,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     traceTools: parsed.traceTools,
     ...(parsed.eventsMode ? { eventsMode: parsed.eventsMode } : {}),
     ...(parsed.taskEvidence ? { taskEvidence: parsed.taskEvidence } : {}),
+    ...(extraContextBlocks.length > 0 ? { extraContextBlocks } : {}),
   });
 
   let result: RunAgentTurnResult = await raceWithWatchdog(

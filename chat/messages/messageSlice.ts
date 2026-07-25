@@ -46,8 +46,40 @@ import {
 } from "../../ai/token/openaiImageGenerationUsage";
 import { resolveHandleSendMessageContext } from "../dialog/actions/handleSendMessageResolver";
 import { resolveMessageOwner } from "./resolveMessageOwner";
+import { assembleFinalAssistantMessage } from "./messageStreamEndAssemble";
+import { applyMessageStreamingUpsert } from "./messageStreamApply";
+import {
+  GLOBAL_MESSAGE_DIALOG_ID,
+  deleteMessageSession,
+  ensureMessageSession,
+  getMessageSession,
+  markMessageStreamActivity,
+  patchMessageSession,
+  resetAllMessageSessions,
+  setActiveMessageDialogId,
+  setStreamingMessageId,
+} from "./messageSessionStore";
 
 export { resolveMessageOwner } from "./resolveMessageOwner";
+export {
+  GLOBAL_MESSAGE_DIALOG_ID,
+  selectFirstStreamProcessed,
+  selectIsLoadingInitial,
+  selectIsLoadingOlder,
+  selectHasMoreOlder,
+  selectMessageError,
+  selectLastStreamTimestamp,
+  selectMessagesLoadingState,
+  selectHasStreamingMessage,
+  useFirstStreamProcessed,
+  useIsLoadingInitial,
+  useIsLoadingOlder,
+  useHasMoreOlder,
+  useMessageSessionError,
+  useLastStreamTimestamp,
+  useMessagesLoadingState,
+  useHasStreamingMessage,
+} from "./messageSessionStore";
 
 const OLDER_LOAD_LIMIT = 30;
 
@@ -59,16 +91,9 @@ export interface MessageSliceState {
   dialogStateById: Record<string, MessageDialogState>;
 }
 
+/** Wave10: session flash lives in messageSessionStore; only msgs remain here. */
 export interface MessageDialogState {
   msgs: EntityState<Message, string>;
-  firstStreamProcessed: boolean;
-  isLoadingInitial: boolean;
-  isLoadingOlder: boolean;
-  hasMoreOlder: boolean;
-  error: Error | null;
-  lastStreamTimestamp: number;
-  currentInitMsgsRequestId?: string;
-  currentLoadOlderRequestId?: string;
 }
 
 const createSliceWithThunks = buildCreateSlice({
@@ -80,18 +105,8 @@ const messagesAdapter = createEntityAdapter<Message, string>({
   sortComparer: (a, b) => a.id.localeCompare(b.id),
 });
 
-const GLOBAL_MESSAGE_DIALOG_ID = "__global__";
-
 const createEmptyMessageDialogState = (): MessageDialogState => ({
   msgs: messagesAdapter.getInitialState() as EntityState<Message, string>,
-  firstStreamProcessed: false,
-  isLoadingInitial: false,
-  isLoadingOlder: false,
-  hasMoreOlder: true,
-  error: null,
-  lastStreamTimestamp: 0,
-  currentInitMsgsRequestId: undefined,
-  currentLoadOlderRequestId: undefined,
 });
 
 const initialState: MessageSliceState = {
@@ -232,17 +247,7 @@ const getMessageDialogState = (
 
   const legacyMsgs = (state as any).msgs;
   if (legacyMsgs && typeof legacyMsgs === "object") {
-    return {
-      msgs: legacyMsgs,
-      firstStreamProcessed: (state as any).firstStreamProcessed ?? false,
-      isLoadingInitial: (state as any).isLoadingInitial ?? false,
-      isLoadingOlder: (state as any).isLoadingOlder ?? false,
-      hasMoreOlder: (state as any).hasMoreOlder ?? true,
-      error: (state as any).error ?? null,
-      lastStreamTimestamp: (state as any).lastStreamTimestamp ?? 0,
-      currentInitMsgsRequestId: (state as any).currentInitMsgsRequestId,
-      currentLoadOlderRequestId: (state as any).currentLoadOlderRequestId,
-    };
+    return { msgs: legacyMsgs };
   }
 
   return createEmptyMessageDialogState();
@@ -379,18 +384,17 @@ export const messageSlice = createSliceWithThunks({
     messageStreaming: create.reducer<DialogScopedStreamingMessage>(
       (state, action) => {
         const { dialogId, ...message } = action.payload;
-        const dialogState = ensureMessageDialogState(
-          state,
-          dialogId ?? inferDialogIdFromMessage(action.payload)
+        const resolvedDialogId =
+          dialogId ?? inferDialogIdFromMessage(action.payload);
+        const dialogState = ensureMessageDialogState(state, resolvedDialogId);
+        const existing = dialogState.msgs.entities[message.id];
+        upsertOneMessage(
+          dialogState,
+          applyMessageStreamingUpsert(existing, message as Partial<Message> & { id: string })
         );
-        upsertOneMessage(dialogState, {
-          isStreaming: true,
-          content: "",
-          thinkContent: "",
-          ...message,
-        } as Message);
-        dialogState.firstStreamProcessed = true;
-        dialogState.lastStreamTimestamp = Date.now();
+        // Wave11: keep the streaming index in lockstep with isStreaming.
+        setStreamingMessageId(resolvedDialogId, message.id);
+        markMessageStreamActivity(resolvedDialogId);
       }
     ),
 
@@ -400,6 +404,7 @@ export const messageSlice = createSliceWithThunks({
           [GLOBAL_MESSAGE_DIALOG_ID]: createEmptyMessageDialogState(),
         };
         state.currentDialogId = null;
+        resetAllMessageSessions();
         return;
       }
 
@@ -409,6 +414,7 @@ export const messageSlice = createSliceWithThunks({
         action.payload?.dialogKey
       );
       delete state.dialogStateById[dialogId];
+      deleteMessageSession(dialogId);
 
       if (dialogId === state.currentDialogId) {
         state.currentDialogId = null;
@@ -422,16 +428,25 @@ export const messageSlice = createSliceWithThunks({
 
     clearAllStreaming: create.reducer((state, action: PayloadAction<MessageScopePayload | undefined>) => {
       const targetStates = action.payload?.all
-        ? Object.values(state.dialogStateById)
-        : [getMessageDialogState(state, action.payload?.dialogId, action.payload?.dialogKey)];
+        ? Object.entries(state.dialogStateById)
+        : [[
+            resolveMessageDialogId(
+              state,
+              action.payload?.dialogId,
+              action.payload?.dialogKey
+            ),
+            getMessageDialogState(state, action.payload?.dialogId, action.payload?.dialogKey),
+          ] as [string, MessageDialogState]];
 
-      targetStates.forEach((dialogState) => {
+      targetStates.forEach(([dialogId, dialogState]) => {
         const updates = Object.values(dialogState.msgs.entities)
           .filter((m) => m?.isStreaming)
           .map((m) => ({ id: m!.id, changes: { isStreaming: false } }));
         if (updates.length > 0) {
           updateManyMessages(dialogState, updates);
         }
+        // Wave11: clear the streaming index for this dialog in lockstep.
+        setStreamingMessageId(dialogId, null);
       });
     }),
 
@@ -475,6 +490,8 @@ export const messageSlice = createSliceWithThunks({
             : Array.isArray(content) && content.length > 0;
         if (!hasContent) {
           removeOneMessage(dialogState, payload.id);
+          // Wave11: the streaming transient was removed; drop the index.
+          setStreamingMessageId(dialogId, null);
           return;
         }
         updateOneMessage(dialogState, {
@@ -488,6 +505,8 @@ export const messageSlice = createSliceWithThunks({
             },
           } as Partial<Message>,
         });
+        // Wave11: streaming stopped on this error path; clear the index.
+        setStreamingMessageId(dialogId, null);
       }
     ),
 
@@ -536,7 +555,9 @@ export const messageSlice = createSliceWithThunks({
         upsertManyMessages(dialogState, action.payload.messages);
       }
       if (action.payload.isLoadingInitial !== undefined) {
-        dialogState.isLoadingInitial = action.payload.isLoadingInitial;
+        patchMessageSession(action.payload.dialogId, {
+          isLoadingInitial: action.payload.isLoadingInitial,
+        });
       }
     }),
 
@@ -746,31 +767,38 @@ export const messageSlice = createSliceWithThunks({
             }
           }
 
-          dialogState.firstStreamProcessed = false;
-          dialogState.isLoadingInitial = true;
-          dialogState.isLoadingOlder = false;
-          // Full-history init: no older page. Partial limit still allows load-older.
-          dialogState.hasMoreOlder =
-            typeof limit === "number" && Number.isFinite(limit) && limit > 0;
-          dialogState.error = null;
-          dialogState.lastStreamTimestamp = 0;
+          ensureMessageSession(dialogId);
           state.currentDialogId = dialogId;
-          dialogState.currentInitMsgsRequestId = action.meta.requestId;
+          setActiveMessageDialogId(dialogId);
+          patchMessageSession(dialogId, {
+            firstStreamProcessed: false,
+            isLoadingInitial: true,
+            isLoadingOlder: false,
+            // Full-history init: no older page. Partial limit still allows load-older.
+            hasMoreOlder:
+              typeof limit === "number" && Number.isFinite(limit) && limit > 0,
+            error: null,
+            lastStreamTimestamp: 0,
+            currentInitMsgsRequestId: action.meta.requestId,
+          });
         },
         fulfilled: (state, action) => {
-          const dialogState = ensureMessageDialogState(state, action.meta.arg.dialogId);
-          if (dialogState.currentInitMsgsRequestId !== action.meta.requestId) {
+          const dialogId = action.meta.arg.dialogId;
+          const dialogState = ensureMessageDialogState(state, dialogId);
+          const session = getMessageSession(dialogId);
+          if (session.currentInitMsgsRequestId !== action.meta.requestId) {
             return;
           }
 
-          dialogState.currentInitMsgsRequestId = undefined;
-          dialogState.isLoadingInitial = false;
           const limit = action.meta.arg.limit;
-          if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
-            dialogState.hasMoreOlder = action.payload.length >= limit;
-          } else {
-            dialogState.hasMoreOlder = false;
-          }
+          patchMessageSession(dialogId, {
+            currentInitMsgsRequestId: undefined,
+            isLoadingInitial: false,
+            hasMoreOlder:
+              typeof limit === "number" && Number.isFinite(limit) && limit > 0
+                ? action.payload.length >= limit
+                : false,
+          });
           // Same policy as setMessages: new dialogs merge (stream/optimistic rows
           // may already exist); established dialogs replace from authoritative fetch.
           if (action.meta.arg.isNew) {
@@ -780,22 +808,29 @@ export const messageSlice = createSliceWithThunks({
           }
         },
         rejected: (state, action) => {
-          const dialogState = ensureMessageDialogState(state, action.meta.arg.dialogId);
-          if (dialogState.currentInitMsgsRequestId !== action.meta.requestId) {
+          const dialogId = action.meta.arg.dialogId;
+          ensureMessageDialogState(state, dialogId);
+          const session = getMessageSession(dialogId);
+          if (session.currentInitMsgsRequestId !== action.meta.requestId) {
             return;
           }
-
-          dialogState.currentInitMsgsRequestId = undefined;
-          dialogState.isLoadingInitial = false;
 
           if (action.meta?.aborted) {
+            patchMessageSession(dialogId, {
+              currentInitMsgsRequestId: undefined,
+              isLoadingInitial: false,
+            });
             return;
           }
 
-          dialogState.error =
-            action.error instanceof Error
-              ? action.error
-              : new Error(String(action.error));
+          patchMessageSession(dialogId, {
+            currentInitMsgsRequestId: undefined,
+            isLoadingInitial: false,
+            error:
+              action.error instanceof Error
+                ? action.error
+                : new Error(String(action.error)),
+          });
           console.error(`${action.type} failed:`, action.error);
         },
       }
@@ -837,43 +872,57 @@ export const messageSlice = createSliceWithThunks({
       },
       {
         pending: (state, action) => {
-          const dialogState = ensureMessageDialogState(state, action.meta.arg.dialogId);
-          dialogState.isLoadingOlder = true;
-          dialogState.error = null;
-          dialogState.currentLoadOlderRequestId = action.meta.requestId;
+          const dialogId = action.meta.arg.dialogId;
+          ensureMessageDialogState(state, dialogId);
+          patchMessageSession(dialogId, {
+            isLoadingOlder: true,
+            error: null,
+            currentLoadOlderRequestId: action.meta.requestId,
+          });
         },
         fulfilled: (state, action) => {
-          const dialogState = ensureMessageDialogState(state, action.meta.arg.dialogId);
-          if (dialogState.currentLoadOlderRequestId !== action.meta.requestId) {
+          const dialogId = action.meta.arg.dialogId;
+          const dialogState = ensureMessageDialogState(state, dialogId);
+          const session = getMessageSession(dialogId);
+          if (session.currentLoadOlderRequestId !== action.meta.requestId) {
             return;
           }
 
-          dialogState.isLoadingOlder = false;
           const { messages, limit } = action.payload;
+          patchMessageSession(dialogId, {
+            isLoadingOlder: false,
+            currentLoadOlderRequestId: undefined,
+            ...(messages.length < limit ? { hasMoreOlder: false } : {}),
+          });
 
           if (messages.length > 0) {
             upsertManyMessages(dialogState, messages);
           }
-          if (messages.length < limit) {
-            dialogState.hasMoreOlder = false;
-          }
         },
         rejected: (state, action) => {
-          const dialogState = ensureMessageDialogState(state, action.meta.arg.dialogId);
-          if (dialogState.currentLoadOlderRequestId !== action.meta.requestId) {
+          const dialogId = action.meta.arg.dialogId;
+          ensureMessageDialogState(state, dialogId);
+          const session = getMessageSession(dialogId);
+          if (session.currentLoadOlderRequestId !== action.meta.requestId) {
             return;
           }
-
-          dialogState.isLoadingOlder = false;
 
           if (action.meta?.aborted) {
+            patchMessageSession(dialogId, {
+              isLoadingOlder: false,
+              currentLoadOlderRequestId: undefined,
+            });
             return;
           }
 
-          dialogState.error =
-            action.error instanceof Error
-              ? action.error
-              : new Error(String(action.error));
+          patchMessageSession(dialogId, {
+            isLoadingOlder: false,
+            currentLoadOlderRequestId: undefined,
+            error:
+              action.error instanceof Error
+                ? action.error
+                : new Error(String(action.error)),
+          });
           console.error(`${action.type} failed:`, action.error);
         },
       }
@@ -980,25 +1029,20 @@ export const messageSlice = createSliceWithThunks({
           currentAccountUserId,
         });
 
-        const finalMessage: Message = {
-          id: messageId,
-          dbKey: msgKey,
-          content: finalVisibleContent,
+        const finalMessage: Message = assembleFinalAssistantMessage({
+          messageId,
+          msgKey,
+          finalVisibleContent,
           thinkContent,
-          role: "assistant",
-          agentKey: agentConfig.dbKey,
-          cybotKey: agentConfig.dbKey,
-          usage: finalUsageData,
-          isStreaming: false,
-          ...otherPersistedMessageMetadata,
-          ...(finalMetadata ? { metadata: finalMetadata } : {}),
-          ...(agentName ? { agentName } : {}),
-          ...(toolCalls && toolCalls.length > 0
-            ? { tool_calls: toolCalls }
-            : {}),
+          agentConfig,
+          finalUsageData,
+          toolCalls,
+          otherPersistedMessageMetadata,
+          finalMetadata,
+          agentName,
           // Authoritative owner last so metadata cannot overwrite it.
           userId,
-        };
+        });
 
         const { controller, ...messageToWrite } = finalMessage;
 
@@ -1113,6 +1157,8 @@ export const messageSlice = createSliceWithThunks({
             isStreaming: false,
             imageGenerationState: undefined,
           } as Message);
+          // Wave11: stream ended cleanly; clear the streaming index.
+          setStreamingMessageId(payload.dialogId, null);
         },
         rejected: (state, action) => {
           const arg = action.meta?.arg as MessageStreamEndPayload | undefined;
@@ -1132,6 +1178,10 @@ export const messageSlice = createSliceWithThunks({
                 ),
               },
             });
+          }
+          // Wave11: stream ended on error; clear the streaming index for this dialog.
+          if (dialogId) {
+            setStreamingMessageId(dialogId, null);
           }
         },
       }
@@ -1373,56 +1423,10 @@ export const selectMsgById = (
 export const selectTotalMsgs = (state: any, dialogId?: string | null) =>
   dialogMessageSelectors.selectTotal(selectMessageDialogState(state, dialogId));
 
-export const selectFirstStreamProcessed = (
-  state: any,
-  dialogId?: string | null
-) => selectMessageDialogState(state, dialogId).firstStreamProcessed;
-
-export const selectIsLoadingInitial = (
-  state: any,
-  dialogId?: string | null
-) => selectMessageDialogState(state, dialogId).isLoadingInitial;
-
-export const selectIsLoadingOlder = (
-  state: any,
-  dialogId?: string | null
-) => selectMessageDialogState(state, dialogId).isLoadingOlder;
-
-export const selectHasMoreOlder = (
-  state: any,
-  dialogId?: string | null
-) => selectMessageDialogState(state, dialogId).hasMoreOlder;
-
-export const selectMessageError = (
-  state: any,
-  dialogId?: string | null
-) => selectMessageDialogState(state, dialogId).error;
-
-export const selectLastStreamTimestamp = (
-  state: any,
-  dialogId?: string | null
-) => selectMessageDialogState(state, dialogId).lastStreamTimestamp;
-
-export const selectMessagesLoadingState = createSelector(
-  [
-    (state: any, dialogId?: string | null) =>
-      selectMessageDialogState(state, dialogId),
-  ],
-  (dialogState) => ({
-    isLoadingInitial: dialogState.isLoadingInitial,
-    isLoadingOlder: dialogState.isLoadingOlder,
-    hasMoreOlder: dialogState.hasMoreOlder,
-    error: dialogState.error,
-  })
-);
-
-/**
- * 是否存在正在流式生成的消息（用于标题 / 状态展示）
- */
-export const selectHasStreamingMessage = (
-  state: any,
-  dialogId?: string | null
-) => selectAllMsgs(state, dialogId).some((m) => m.isStreaming);
+// selectHasStreamingMessage is re-exported from ./messageSessionStore above
+// (Wave11): reads the session store's streamingMessageId index instead of
+// scanning Redux msgs. React UI should use useHasStreamingMessage so the
+// module-store mutation triggers re-render.
 
 /**
  * 最后一条 assistant 消息（用于通知）

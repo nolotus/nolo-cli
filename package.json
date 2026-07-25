@@ -626,6 +626,7 @@
     "create/space/content/contentThunks.ts",
     "create/space/member/memberThunks.ts",
     "create/space/spaceThunks.ts",
+    "create/space/spaceEventCore.ts",
     "create/space/addSpaceAction.ts",
     "create/space/deleteSpaceAction.ts",
     "create/space/fetchSpaceAction.ts",

@@ -8,6 +8,7 @@ import { createCategoryActions } from "./category/categoryActions";
 import { createContentThunks } from "./content/contentThunks";
 import { createMemberThunks } from "./member/memberThunks";
 import { createSpaceThunks } from "./spaceThunks";
+import { applySpaceEventCore, type SpaceEvent } from "./spaceEventCore";
 import { SpaceState, type SpaceViewMode } from "./types";
 import { UNCATEGORIZED_ID } from "./constants";
 
@@ -50,10 +51,6 @@ const initialState: SpaceState = {
 const getSpaceUpdatedAt = (space: any): number => {
   if (!space) return 0;
   return toTimestampMs(space.updatedAt);
-};
-
-const nextUpdatedAt = (prev?: number | string): number => {
-  return Math.max(Date.now(), toTimestampMs(prev) + 1);
 };
 
 const getMembershipUpdatedAt = (space: any): number => {
@@ -165,54 +162,10 @@ const spaceSlice = createSliceWithThunks({
       }
     ),
 
-    /** 处理来自 SSE 的 space 实时事件，直接 patch Redux state，无需 re-fetch */
-    applySpaceEvent: create.reducer<{
-      type: string;
-      dialogId?: string;
-      dialogKey?: string;
-      title?: string;
-      status?: string;
-    }>((state, action) => {
-      const ev = action.payload;
-
-      if (ev.type === "dialog.created" && ev.dialogKey && ev.dialogId && ev.title) {
-        // 追加到当前 space 的 contents（侧边栏立即可见）
-        const now = nextUpdatedAt(state.dialogEventTimestamps[ev.dialogId]);
-        if (state.currentSpace) {
-          if (!state.currentSpace.contents) {
-            state.currentSpace.contents = {};
-          }
-          state.currentSpace.contents[ev.dialogKey] = {
-            title: ev.title,
-            type: "dialog" as any,
-            contentKey: ev.dialogKey,
-            pinned: false,
-            createdAt: now,
-            updatedAt: now,
-          };
-          state.currentSpace.updatedAt = now;
-        }
-        state.dialogStatuses[ev.dialogId] = "running";
-        state.dialogEventTimestamps[ev.dialogId] = now;
-        state.dialogTitles[ev.dialogId] = ev.title;
-        delete state.unreadDialogIds[ev.dialogId];
-      }
-
-      if (ev.type === "dialog.done" && ev.dialogId) {
-        state.dialogStatuses[ev.dialogId] = "done";
-        state.dialogEventTimestamps[ev.dialogId] = nextUpdatedAt(
-          state.dialogEventTimestamps[ev.dialogId]
-        );
-        state.unreadDialogIds[ev.dialogId] = true;
-      }
-
-      if (ev.type === "dialog.failed" && ev.dialogId) {
-        state.dialogStatuses[ev.dialogId] = "failed";
-        state.dialogEventTimestamps[ev.dialogId] = nextUpdatedAt(
-          state.dialogEventTimestamps[ev.dialogId]
-        );
-        state.unreadDialogIds[ev.dialogId] = true;
-      }
+    /** 处理来自 SSE 的 space 实时事件，直接 patch Redux state，无需 re-fetch。
+     *  纯决策已剥至 spaceEventCore（Wave22），此处仅接线。 */
+    applySpaceEvent: create.reducer<SpaceEvent>((state, action) => {
+      applySpaceEventCore(state, action.payload);
     }),
   }),
 });

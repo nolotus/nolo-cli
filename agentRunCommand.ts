@@ -591,7 +591,7 @@ const QUOTA_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
   /CliProviderQuotaError/i,
 ];
 
-function isQuotaExhaustedError(error: unknown): boolean {
+export function isQuotaExhaustedError(error: unknown): boolean {
   if (!error) return false;
   if (error instanceof CliProviderQuotaError) return true;
   if (error instanceof Error) {

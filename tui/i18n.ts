@@ -122,6 +122,10 @@ const STRINGS = {
     en: "This reply failed. Queued messages are kept — press Enter to resend.",
     zh: "本次回复出错。已排队的消息仍保留，按 Enter 可重新发送。",
   },
+  quotaExhaustedHint: {
+    en: "[nolo] This agent seems to have hit a quota/rate limit (HTTP 429).\nUse /agent to switch to another agent and keep going — the dialog context is preserved.",
+    zh: "[nolo] 当前 agent 似乎额度/速率受限（429）。\n可以用 /agent 切换到其他 agent 后继续，同一对话会保留上下文。",
+  },
   copiedLastReply: {
     en: "Copied the last reply to the clipboard.",
     zh: "已复制最后一条回复到剪贴板。",

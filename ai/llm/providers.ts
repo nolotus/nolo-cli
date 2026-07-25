@@ -20,7 +20,7 @@ import {
 } from "./cloudflare";
 import { gmiModels, GMI_CHAT_COMPLETIONS_URL } from "./gmi";
 import { zaiModels } from "./zai";
-import { qwenModels } from "../../integrations/qwen/models";
+import { qwenModels, qwenTokenPlanModels } from "../../integrations/qwen/models";
 import { moonshotModels, kimiCodeModels } from "../../integrations/moonshot/models";
 import type { ModelPrice } from "./types";
 
@@ -31,6 +31,17 @@ import type { ModelPrice } from "./types";
  * agent 创建下拉用 registry 的 modelOptions（区分订阅/按量），不依赖此合并表。
  */
 const moonshotAllModels: Model[] = [...moonshotModels, ...kimiCodeModels];
+
+/**
+ * Qwen provider 统一模型表：DashScope 按量模型 + Token Plan 订阅模型。
+ * 两者模型范围/计费不同（Token Plan 含 qwen3.8-max-preview、GLM、DeepSeek、万相等，
+ * price 留 0 由 Credits 抵扣），但同属 qwen provider，合并进 MODEL_MAP 以便
+ * getModelConfig / 能力检测 / getProviderByModelName 覆盖 Token Plan 模型 ID。
+ * 与 moonshot 合并同理：agent 创建下拉用 registry 的 modelOptions（区分订阅/按量），
+ * 不依赖此合并表；qwen/models.ts 里「不要混用」指的是创建下拉，不是这里的能力目录。
+ * 两份清单模型 ID 不重名，合并不会产生计费错配。
+ */
+const qwenAllModels: Model[] = [...qwenModels, ...qwenTokenPlanModels];
 import {
   PLATFORM_HOSTED_KIMI_K26_MODEL,
   PLATFORM_HOSTED_KIMI_PROVIDER,
@@ -57,7 +68,7 @@ const MODEL_MAP = {
   cloudflare: cloudflareModels,
   gmi: gmiModels,
   zai: zaiModels,
-  qwen: qwenModels,
+  qwen: qwenAllModels,
   moonshot: moonshotAllModels,
 } as const;
 

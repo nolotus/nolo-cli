@@ -21,6 +21,7 @@ import { readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
 import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
+import { isQuotaExhaustedError } from "../agentRunCommand";
 import { saveProfileAgentSelection } from "../client/profileConfig";
 import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
@@ -374,6 +375,9 @@ async function runAgentChat(
     actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
     confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
     abortSignal?: AbortSignal;
+    /** True when the user just explicitly switched agent (via /agent or /switch).
+     *  Suppresses the cached auto-route so the chosen agent actually runs. */
+    explicitAgentSwitch?: boolean;
   } = {}
 ) {
   let effectiveAgentKey = state.agentKey;
@@ -382,8 +386,10 @@ async function runAgentChat(
   const continueId = state.dialogId;
   const cachedRoute = continueId ? autoRouteByDialog.get(continueId) : undefined;
 
-  if (cachedRoute) {
+  if (cachedRoute && !options.explicitAgentSwitch) {
     // 同一段对话的后续轮：复用首轮路由结果，不再分类。
+    // 但若用户刚刚显式 /agent 切换了 agent（例如原 agent 429 了），
+    // 必须尊重用户选择，否则缓存会把用户「切走」的 429 agent 又切回来。
     effectiveAgentKey = cachedRoute.agentKey;
     effectiveAgentName = cachedRoute.agentName;
     modelOverride = cachedRoute.modelOverride;
@@ -1613,6 +1619,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   let buffer = "";
   // Cooperative stop for the in-flight agent turn (Esc while busy).
   let activeTurnAbort: AbortController | null = null;
+  // True after the user explicitly switches agent via /agent or /switch.
+  // autoRouteByDialog caches the first-turn router decision per dialog and
+  // would otherwise keep replaying the (possibly 429'd) original agent on
+  // every follow-up turn, silently overriding the user's manual switch.
+  // This flag makes the next runAgentChat honor state.agentKey and drops the
+  // cached route, so "switch agent after a 429" actually takes effect.
+  let explicitAgentSwitch = false;
   let copyViewExitResolver: (() => void) | null = null;
   const history = createTurnHistory();
   // `fixedInput` is reassigned once the interactive composer is installed, so
@@ -1715,10 +1728,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         actionGateHandler,
         ...(confirmDestructiveAction ? { confirmDestructiveAction } : {}),
         abortSignal: activeTurnAbort.signal,
+        explicitAgentSwitch,
       }
     );
     const wasAborted = activeTurnAbort.signal.aborted;
     activeTurnAbort = null;
+    // An explicit switch only needs to suppress the cached route for the
+    // turn it was issued on; once run, normal per-dialog caching resumes.
+    explicitAgentSwitch = false;
     if (isInteractiveInput(input)) {
       finalizeCurrentTurn(history);
       renderHistoryToOutput();
@@ -1746,6 +1763,17 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           : {}),
         ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
       };
+    }
+    // 把 429/额度耗尽这类错误单独识别出来，给一句人话提示 + 可操作的下一步，
+    // 而不是把原始报错留在 transcript 里让用户自己去猜「现在该怎么办」。
+    // localError 来自本地 runtime（exitCode 1 + localError）；server runtime 的
+    // 429 文本已被 agentRun 直接写进 agentOutput，这里只在 localError 可用时复检。
+    if (
+      !wasAborted &&
+      runResult.exitCode !== 0 &&
+      isQuotaExhaustedError(runResult.localError)
+    ) {
+      emitCommandOutput(t("quotaExhaustedHint"));
     }
     return { ok: !wasAborted, aborted: wasAborted };
   };
@@ -1808,10 +1836,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       emitCommandOutput(result.output);
     }
 
-    if (
-      state.agentKey !== previousAgentKey &&
-      result.output?.startsWith("Switched to ")
-    ) {
+    if (state.agentKey !== previousAgentKey) {
+      // 用户显式切换 agent（/agent <name>、/switch <name> 或 picker）：
+      // 清掉这条对话首轮 auto-route 的缓存，否则下一轮会被缓存切回原
+      // agent（典型场景：原 agent 429 后想换一个）。判定只看 agentKey 是否
+      // 变化，不耦合 "Switched to " 这类输出文案——文案一旦 i18n 化或调整，
+      // 字符串前缀判定就会漏掉切换、导致缓存不清、切换「不生效」回归。
+      if (state.dialogId) autoRouteByDialog.delete(state.dialogId);
+      explicitAgentSwitch = true;
       persistAgentSelection(state, options.env ?? process.env);
     }
 
@@ -1890,6 +1922,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             agentName: pickResult.name,
             agentKey: pickResult.key,
           };
+          // 用户显式切换 agent：清掉这条对话首轮 auto-route 的缓存，否则
+          // 下一轮会被缓存切回原 agent（典型场景：原 agent 429 后想换一个）。
+          if (state.dialogId) autoRouteByDialog.delete(state.dialogId);
+          explicitAgentSwitch = true;
           persistAgentSelection(state, options.env ?? process.env);
           output.write(
             `${formatAgentSwitchMessage({

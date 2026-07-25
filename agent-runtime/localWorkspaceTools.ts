@@ -15,6 +15,7 @@ import type {
   AgentRuntimeToolCallInput,
   AgentRuntimeToolResult,
 } from "./hostAdapter";
+import type { PermissionRequest } from "./actionGate";
 import { createGlob, resolveExecutableOnPath } from "./runtimeCompat";
 import { getProcessRegistry } from "./processRegistry";
 
@@ -24,6 +25,21 @@ type LocalWorkspaceToolArgs = {
   commandOutputLimit?: number;
   commandPrefix?: string[];
   restrictShellToWorkspace?: boolean;
+  /**
+   * Optional confirmation callback for file tools that resolve to a path
+   * OUTSIDE the workspace root (e.g. a macOS screenshot under /var/folders).
+   *
+   * When provided (interactive TUI), an external-path read/edit/write/glob/
+   * list/search triggers this callback BEFORE execution; the action runs only
+   * if it returns true. When absent (non-interactive CLI / machine dispatch),
+   * external paths are ALLOWED to proceed — hard-blocking them with no
+   * confirmation channel only stalls the agent turn while the model retries
+   * the same path. This mirrors the destructive-shell guard's contract.
+   *
+   * Reuses the PermissionRequest shape; the confirm dialog renders title,
+   * body and command (the exact external path) verbatim.
+   */
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 };
 
 const EXEC_SHELL_TIMEOUT_ENV = "NOLO_EXEC_SHELL_TIMEOUT_MS";
@@ -1683,14 +1699,42 @@ async function runWorkspaceCommandLimitedLines(args: {
   };
 }
 
-export function resolveLocalWorkspaceToolPath(args: {
+export async function resolveLocalWorkspaceToolPath(args: {
   workspaceRoot: string;
   requestedPath: string;
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }) {
   const workspaceRoot = resolve(args.workspaceRoot);
   const targetPath = resolve(workspaceRoot, args.requestedPath);
   if (!isPathInsideWorkspace({ workspaceRoot, targetPath })) {
-    throw new Error(`Workspace tool path escapes workspace root: ${args.requestedPath}`);
+    // External path: ask the user once via the confirmation gate (when an
+    // interactive channel is available). Without a confirmation callback
+    // (non-interactive CLI / machine dispatch) we ALLOW the access — hard
+    // blocking here with no prompt only stalls the turn while the model
+    // retries the same path. Same contract as the destructive-shell guard.
+    if (args.confirmExternalFileAccess) {
+      const request: PermissionRequest = {
+        id: "permission-file-external-access",
+        tool: "fileTool",
+        action: "external_file_access",
+        title: "确认读取工作区外部文件",
+        body: "该路径位于当前工作区之外。确认后本次访问放行，否则拒绝。",
+        command: args.requestedPath,
+        suggestedRule: {
+          scope: "once",
+          pattern: { capability: "external_file_access", target: args.requestedPath },
+        },
+      };
+      const confirmed = await args.confirmExternalFileAccess(request);
+      if (!confirmed) {
+        const error = new Error(
+          `external file access blocked: user declined confirmation for ${args.requestedPath}`,
+        ) as Error & { code?: string; permissionRequest?: PermissionRequest };
+        error.code = "external_file_access_requires_confirmation";
+        error.permissionRequest = request;
+        throw error;
+      }
+    }
   }
   return targetPath;
 }
@@ -1698,13 +1742,17 @@ export function resolveLocalWorkspaceToolPath(args: {
 async function readFileTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const requestedPath = requireWorkspaceToolPath(parsed);
   const sliceArgs = readFileSliceArgs(parsed);
-  const absolutePath = resolveLocalWorkspaceToolPath({
+  const absolutePath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
+    ...(args.confirmExternalFileAccess
+      ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
+      : {}),
   });
   const content = await readFile(absolutePath, "utf8");
   const activity = extractActivity(parsed);
@@ -1735,13 +1783,17 @@ async function readFileTool(args: {
 async function writeFileTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const requestedPath = requireWorkspaceToolPath(parsed);
   const content = requireWorkspaceFileContent(parsed);
-  const absolutePath = resolveLocalWorkspaceToolPath({
+  const absolutePath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
+    ...(args.confirmExternalFileAccess
+      ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
+      : {}),
   });
   await mkdir(dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, content, "utf8");
@@ -1784,15 +1836,19 @@ async function writeFileTool(args: {
 async function editFileTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const requestedPath = requireWorkspaceToolPath(parsed);
   const oldText = requireWorkspaceOldText(parsed);
   const newText = requireWorkspaceNewText(parsed);
   const expectedReplacements = readExpectedReplacementCount(parsed);
-  const absolutePath = resolveLocalWorkspaceToolPath({
+  const absolutePath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
+    ...(args.confirmExternalFileAccess
+      ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
+      : {}),
   });
   const content = await readFile(absolutePath, "utf8");
   const replacementCount = countExactTextOccurrences({ content, oldText });
@@ -1891,15 +1947,19 @@ async function listWorkspaceEntries(args: {
 async function listFilesTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
   const maxDepth = readWorkspaceMaxDepth(parsed);
   const maxResults = readWorkspaceMaxResults(parsed);
   const entryType = readWorkspaceEntryType(parsed);
-  const dirPath = resolveLocalWorkspaceToolPath({
+  const dirPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
+    ...(args.confirmExternalFileAccess
+      ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
+      : {}),
   });
   const listed = await listWorkspaceEntries({
     workspaceRoot: args.workspaceRoot,
@@ -1927,6 +1987,7 @@ async function listFilesTool(args: {
 async function searchFilesTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const query = requireWorkspaceSearchQuery(parsed);
@@ -1937,9 +1998,12 @@ async function searchFilesTool(args: {
   const caseSensitive = parsed.caseSensitive === false ? false : true;
   const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
   const includeIgnored = parsed.includeIgnored === true;
-  const searchPath = resolveLocalWorkspaceToolPath({
+  const searchPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
+    ...(args.confirmExternalFileAccess
+      ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
+      : {}),
   });
   const relativeSearchPath = normalizeWorkspaceRelativePath({
     workspaceRoot: resolve(args.workspaceRoot),
@@ -2216,6 +2280,7 @@ async function scanWorkspaceTextMatches(args: {
 async function globFilesTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
+  confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const pattern = requireWorkspaceGlobPattern(parsed);
@@ -2223,9 +2288,12 @@ async function globFilesTool(args: {
   const maxResults = readWorkspaceMaxResults(parsed);
   const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
   const includeIgnored = parsed.includeIgnored === true;
-  const searchPath = resolveLocalWorkspaceToolPath({
+  const searchPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
+    ...(args.confirmExternalFileAccess
+      ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
+      : {}),
   });
   const relativeSearchPath = normalizeWorkspaceRelativePath({
     workspaceRoot: resolve(args.workspaceRoot),
@@ -2528,30 +2596,39 @@ async function listProcessesTool(args: {
 }
 
 export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) {
+  const fileAccess = args.confirmExternalFileAccess
+    ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
+    : {};
   return {
     editFile: (call: AgentRuntimeToolCallInput) => editFileTool({
       call,
       workspaceRoot: args.workspaceRoot,
+      ...fileAccess,
     }),
     globFiles: (call: AgentRuntimeToolCallInput) => globFilesTool({
       call,
       workspaceRoot: args.workspaceRoot,
+      ...fileAccess,
     }),
     listFiles: (call: AgentRuntimeToolCallInput) => listFilesTool({
       call,
       workspaceRoot: args.workspaceRoot,
+      ...fileAccess,
     }),
     readFile: (call: AgentRuntimeToolCallInput) => readFileTool({
       call,
       workspaceRoot: args.workspaceRoot,
+      ...fileAccess,
     }),
     writeFile: (call: AgentRuntimeToolCallInput) => writeFileTool({
       call,
       workspaceRoot: args.workspaceRoot,
+      ...fileAccess,
     }),
     searchFiles: (call: AgentRuntimeToolCallInput) => searchFilesTool({
       call,
       workspaceRoot: args.workspaceRoot,
+      ...fileAccess,
     }),
     captureVisualState: (call: AgentRuntimeToolCallInput) => captureVisualStateTool({
       call,

@@ -1619,12 +1619,17 @@ function buildLocalToolExecutors(args: {
   readXhsProfile?: CliLocalRuntimeAdapterDeps["readXhsProfile"];
   commandTimeoutMs?: number;
   commandOutputLimit?: number;
+  /** Reused for external-file-access prompts (same PermissionRequest shape). */
+  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
 }) {
   return {
     ...createLocalWorkspaceToolExecutors({
       workspaceRoot: args.workspaceRoot,
       commandTimeoutMs: args.commandTimeoutMs,
       commandOutputLimit: args.commandOutputLimit,
+      ...(args.confirmDestructiveAction
+        ? { confirmExternalFileAccess: args.confirmDestructiveAction }
+        : {}),
     }),
     ...buildServerPlatformToolExecutors({
       env: args.env,
@@ -1935,6 +1940,9 @@ export function createCliLocalRuntimeAdapter(
     localToolExecutors: deps.localToolExecutors,
     readXPost: deps.readXPost,
     readXhsProfile: deps.readXhsProfile,
+    ...(deps.confirmDestructiveAction
+      ? { confirmDestructiveAction: deps.confirmDestructiveAction }
+      : {}),
     ...runtimeToolExecutionLimits,
   });
 
@@ -1993,6 +2001,9 @@ export function createCliLocalRuntimeAdapter(
         localToolExecutors: deps.localToolExecutors,
         readXPost: deps.readXPost,
         readXhsProfile: deps.readXhsProfile,
+        ...(deps.confirmDestructiveAction
+          ? { confirmDestructiveAction: deps.confirmDestructiveAction }
+          : {}),
         ...runtimeToolExecutionLimits,
       });
       if (agentConfig) {

@@ -1055,4 +1055,142 @@ describe("scroll-aware history", () => {
     expect(fullOutput).toContain(HEAD);
     expect(fullOutput).toContain(TAIL);
   });
+
+  // Regression for "在 TUI 对话时 agent 429 后 /agent 切换不生效"。
+  // 根因：autoRouteByDialog 在首轮 auto-route 后按对话缓存 agent，后续轮直接复用
+  // 缓存、无视 state.agentKey，导致用户 /agent 切换的 agent 被缓存「切回」原 agent。
+  // 修复：显式 /agent 切换时清掉该 dialog 的缓存路由，并标记 explicitAgentSwitch 让
+  // runAgentChat 这一轮尊重 state.agentKey。
+  test("explicit /agent switch overrides the cached auto-route on the next turn", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    // Capture stdout so /agent "Switched to" echo and the quota hint are visible,
+    // but the assertion that matters is which agentKey the runner was called with.
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    // The first turn (no authToken) auto-routes to the fallback tier for a
+    // complex message → the GLM-5.2 (quality) tier agent key. That key gets
+    // cached against the dialog. The bug: the second turn reused that cached
+    // key even after the user switched agents.
+    const switchedAgentKey = "agent-pub-01APPBUILDER00000001YAII3I";
+
+    let turnCount = 0;
+    const seenAgentKeys: string[] = [];
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      // No authToken → classifyCliAutoRoute returns the fallback tier without
+      // any network call; the routed tier key is still cached per dialog.
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        seenAgentKeys.push(opt.agentKey);
+        opt.output.write(`turn ${turnCount}`);
+        return { exitCode: 0, dialogId: "switch-dialog" };
+      },
+    });
+
+    // Turn 1: a complex-ish message → fallback tier = "quality" (GLM-5.2).
+    input.write("implement a distributed transaction coordinator\r");
+    while (turnCount < 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Switch agent explicitly by key. /agent <key> resolves via the catalog
+    // (agent-pub-... prefix is accepted directly by findAgentCatalogEntry).
+    input.write(`/agent ${switchedAgentKey}\r`);
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Turn 2: must run on the user-chosen agent, NOT the cached quality tier.
+    input.write("follow up in the same dialog\r");
+    while (turnCount < 2) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+
+    // The second turn MUST run on the switched agent. Before the fix it ran on
+    // the cached first-turn (quality) key because autoRouteByDialog overrode
+    // the user's /agent switch.
+    expect(seenAgentKeys[1]).toBe(switchedAgentKey);
+    // And the switch was actually acknowledged to the user.
+    expect(Buffer.concat(chunks).toString("utf8")).toContain("Switched to");
+  });
+
+  // Regression for the "处理得好看点" half of the same bug: a 429 / quota error
+  // on a local run should produce a friendly, actionable hint pointing the
+  // user at /agent, instead of leaving only the raw error text in the transcript.
+  test("surfaces a friendly /agent hint when a local turn fails with a quota error", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      // Disable auto-route so the first turn goes straight to state.agentKey
+      // (the default platform agent) and doesn't cache a tier route — keeps
+      // the test focused on the quota-hint path, not routing.
+      env: { NOLO_AUTO_ROUTE: "0" },
+      agentRunner: async () => {
+        // Simulate a local provider quota error: exitCode 1 + localError whose
+        // message mentions 429, which isQuotaExhaustedError matches.
+        return {
+          exitCode: 1,
+          localError: new Error("HTTP 429 Too Many Requests: 额度已用尽"),
+        };
+      },
+    });
+
+    input.write("hi\r");
+    await new Promise((r) => setTimeout(r, 60));
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+
+    const fullOutput = Buffer.concat(chunks).toString("utf8");
+    // The friendly hint is emitted (zh is the default locale).
+    expect(fullOutput).toContain("429");
+    expect(fullOutput).toContain("/agent");
+  });
 });

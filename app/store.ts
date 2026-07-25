@@ -9,7 +9,6 @@ import type { Level } from "level";
 // module imports when resolving the reducer map at type-evaluation time.
 export interface RootState {
   auth: any;
-  dialog: any;
   plan: any;
   message: any;
   doc: any;

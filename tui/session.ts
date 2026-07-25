@@ -360,12 +360,19 @@ export type TuiInputKeyResult = {
   copyView?: boolean;
 };
 
+export const PASTE_TOKEN_PREFIX = "\x00PASTE\x00";
+
 export function applyTuiInputKey(
   buffer: string,
   sequence: string | undefined,
   key: TuiKeyInfo = {}
 ): TuiInputKeyResult {
   const seq = sequence ?? "";
+  if (seq.startsWith(PASTE_TOKEN_PREFIX)) {
+    const rawPayload = seq.slice(PASTE_TOKEN_PREFIX.length);
+    const normalized = rawPayload.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    return { buffer: `${buffer}${normalized}` };
+  }
   if (seq === "\u0003" || (key.ctrl && key.name === "c")) {
     return { buffer, abort: true };
   }

@@ -20,6 +20,13 @@ import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import { remove, write, patch, selectById as selectDbRecordById } from "../../database/dbSlice";
 import type { Message } from "./types";
 import { buildEditedMessageContent } from "./messageEditContent";
+import { planDeleteMessageCascade } from "./messageDeleteCascade";
+import { resolveFinalizeTransientOnError } from "./messageFinalizeOnError";
+import {
+  resolveInitMsgsFulfilledWriteMode,
+  resolveInitMsgsHasMoreOlder,
+} from "./messageInitMsgsPolicy";
+import { isValidMessage } from "./messageValidation";
 import { selectIdentityUserId } from "identity/selectors";
 import { fetchAndCacheMessages, fetchAndCacheMessagesLocalFirst } from "./fetchAndCacheMessages";
 import { toErrorMessage } from "../../core/errorMessage";
@@ -28,27 +35,21 @@ import { asTrimmedString } from "../../core/trimmedString";
 import type { DialogConfig } from "../../app/types";
 import { selectCurrentDialogKey, updateDialogTitle, updateTokens } from "../dialog/dialogSlice";
 import { updateDialogSummaryAction } from "../dialog/actions/updateDialogSummaryAction";
-import {
-  normalizeAssistantContentBuffer,
-  serializeMessageContent,
-} from "./messageContent";
+import { normalizeAssistantContentBuffer } from "./messageContent";
 import {
   appendSaveFailureToContent,
   finalizeAssistantMessageContent,
 } from "./messageContract";
 import { inferAssistantActivityCompletionMetadata } from "./activityCompletion";
-import { isAssistantToolStub } from "./web/assistantReplyPendingState";
-import { estimateMissingUsage } from "../../ai/token/missingUsageEstimate";
-import {
-  countImageGenerationOutputsInContent,
-  isOpenAIBuiltInImageGenerationAgent,
-  withImageGenerationCount,
-} from "../../ai/token/openaiImageGenerationUsage";
 import { resolveHandleSendMessageContext } from "../dialog/actions/handleSendMessageResolver";
 import { resolveMessageOwner } from "./resolveMessageOwner";
 import { assemblePersistedUserMessage } from "./messageUserPersistAssemble";
 import { assembleFinalAssistantMessage } from "./messageStreamEndAssemble";
 import { applyMessageStreamingUpsert } from "./messageStreamApply";
+import { resolveStreamEndBillingUsages } from "./messageStreamEndBilling";
+import {
+  captureUnderstandingFromCompletedUiTurn as captureUnderstandingFromCompletedUiTurnCore,
+} from "./messageUnderstandingCapture";
 import {
   GLOBAL_MESSAGE_DIALOG_ID,
   deleteMessageSession,
@@ -88,9 +89,6 @@ export {
 } from "./messageSessionStore";
 
 const OLDER_LOAD_LIMIT = 30;
-
-const isValidMessage = (msg: unknown): msg is Message =>
-  !!msg && typeof msg === "object" && typeof (msg as Message).id === "string";
 
 export interface MessageSliceState {
   dialogStateById: Record<string, MessageDialogState>;
@@ -150,29 +148,7 @@ type DialogScopedStreamingMessage = Partial<Message> & {
 
 type MessageScopePayload = { dialogId?: string; dialogKey?: string; all?: boolean };
 
-const getLatestUserInputForUnderstanding = (
-  state: any,
-  dialogId: string
-): string | null => {
-  const messages = selectAllMsgs(state, dialogId);
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || message.role !== "user") continue;
-    const serialized = serializeMessageContent(message.content, "[图片]")?.trim();
-    if (serialized) return serialized;
-  }
-  return null;
-};
-
-const getDialogSpaceIdForUnderstanding = (
-  state: any,
-  dialogKey?: string
-): string | undefined => {
-  if (!dialogKey) return undefined;
-  const dialog = selectDbRecordById(state, dialogKey) as DialogConfig | undefined;
-  return typeof dialog?.spaceId === "string" ? dialog.spaceId : undefined;
-};
-
+/** Thin adapter: fills `messages` from Redux so existing call sites stay stable. */
 export const captureUnderstandingFromCompletedUiTurn = async (input: {
   state: any;
   db?: any;
@@ -182,35 +158,14 @@ export const captureUnderstandingFromCompletedUiTurn = async (input: {
   spaceId?: string;
   assistantText: string;
   toolCalls?: MessageStreamEndPayload["toolCalls"];
-}): Promise<void> => {
-  if (input.assistantText.trim() === "") return;
-  if (input.toolCalls && input.toolCalls.length > 0) return;
-  if (!input.agentKey) return;
-
-  const latestUserInput = getLatestUserInputForUnderstanding(
-    input.state,
-    input.dialogId
-  );
-  if (!latestUserInput) return;
-
-  const { captureUnderstandingMemoryFromDialog } = await import("../../ai/memory/understanding");
-  await captureUnderstandingMemoryFromDialog({
-    db: input.db,
-    userId: selectIdentityUserId(input.state),
-    spaceId:
-      input.spaceId ??
-      getDialogSpaceIdForUnderstanding(input.state, input.dialogKey),
-    agentKey: input.agentKey,
-    dialogId: input.dialogId,
-    userInput: latestUserInput,
-    trace: [
-      {
-        role: "assistant",
-        content: input.assistantText,
-      } as any,
-    ],
+  messages?: Message[];
+}): Promise<void> =>
+  captureUnderstandingFromCompletedUiTurnCore({
+    ...input,
+    messages:
+      input.messages ??
+      (selectAllMsgs(input.state, input.dialogId) as Message[]),
   });
-};
 
 const resolveMessageDialogId = (
   _state: unknown,
@@ -442,9 +397,8 @@ export const messageSlice = createSliceWithThunks({
     ),
 
     // Error-path finalizer: keep whatever the transient message already shows
-    // instead of wiping the trace. Empty transients are removed (nothing to
-    // show); non-empty ones stop streaming and get an error marker so the UI
-    // renders the partial content alongside the error state.
+    // instead of wiping the trace. Decision rules live in messageFinalizeOnError
+    // (Wave15); this reducer applies them + clears the streaming index.
     finalizeTransientMessageOnError: create.reducer(
       (
         state,
@@ -460,30 +414,20 @@ export const messageSlice = createSliceWithThunks({
           payload.dialogId ?? findDialogIdByMessageId(state, payload.id);
         const dialogState = ensureMessageDialogState(state, dialogId);
         const existing = dialogState.msgs.entities[payload.id];
-        if (!existing) return;
-        const content = existing.content;
-        const hasContent =
-          typeof content === "string"
-            ? content.trim().length > 0
-            : Array.isArray(content) && content.length > 0;
-        if (!hasContent) {
+        const decision = resolveFinalizeTransientOnError(
+          existing,
+          payload.error
+        );
+        if (decision.kind === "noop") return;
+        if (decision.kind === "remove") {
           removeOneMessage(dialogState, payload.id);
-          // Wave11: the streaming transient was removed; drop the index.
           setStreamingMessageId(dialogId, null);
           return;
         }
         updateOneMessage(dialogState, {
           id: payload.id,
-          changes: {
-            isStreaming: false,
-            metadata: {
-              ...((existing as any).metadata ?? {}),
-              error: true,
-              ...(payload.error ? { message: payload.error } : {}),
-            },
-          } as Partial<Message>,
+          changes: decision.changes,
         });
-        // Wave11: streaming stopped on this error path; clear the index.
         setStreamingMessageId(dialogId, null);
       }
     ),
@@ -765,21 +709,23 @@ export const messageSlice = createSliceWithThunks({
           patchMessageSession(dialogId, {
             currentInitMsgsRequestId: undefined,
             isLoadingInitial: false,
-            hasMoreOlder:
-              typeof limit === "number" && Number.isFinite(limit) && limit > 0
-                ? action.payload.length >= limit
-                : false,
+            hasMoreOlder: resolveInitMsgsHasMoreOlder({
+              limit,
+              fetchedCount: action.payload.length,
+            }),
           });
-          // Same policy as setMessages: new dialogs merge (stream/optimistic rows
-          // may already exist); established dialogs replace from authoritative fetch.
-          // Exception: leave/re-enter while a turn is still streaming — DB snapshot
-          // lags the in-memory bucket, so replace would wipe the live reply ("从0").
+          // Write mode policy: messageInitMsgsPolicy (Wave16). Streaming /
+          // isNew → upsert so DB snapshot cannot wipe a live reply ("从0").
           const hasLocalStreaming =
             getHasStreamingMessage(dialogId) ||
             Object.values(dialogState.msgs.entities).some(
               (message) => message?.isStreaming
             );
-          if (action.meta.arg.isNew || hasLocalStreaming) {
+          const writeMode = resolveInitMsgsFulfilledWriteMode({
+            isNew: action.meta.arg.isNew,
+            hasLocalStreaming,
+          });
+          if (writeMode === "upsert") {
             upsertManyMessages(dialogState, action.payload);
           } else {
             setAllMessages(dialogState, action.payload);
@@ -949,20 +895,16 @@ export const messageSlice = createSliceWithThunks({
             normalizedContentBuffer,
             reasoningBuffer
           );
-        const imageGenerationCount = countImageGenerationOutputsInContent(
-          finalVisibleContent
-        );
-        const billedUsage =
-          isOpenAIBuiltInImageGenerationAgent(agentConfig)
-            ? withImageGenerationCount(totalUsage, imageGenerationCount)
-            : totalUsage;
-        const estimatedUsage = estimateMissingUsage({
-          content: finalVisibleContent,
+        const {
+          billedUsage,
+          billedEstimatedUsage,
+          hasReportedUsage,
+          titleEligible,
+        } = resolveStreamEndBillingUsages({
+          agentConfig,
+          totalUsage,
+          finalVisibleContent,
         });
-        const billedEstimatedUsage =
-          isOpenAIBuiltInImageGenerationAgent(agentConfig)
-            ? withImageGenerationCount(estimatedUsage, imageGenerationCount)
-            : estimatedUsage;
 
         // 从 Agent 配置里提取名称，写入消息（供后续多 Agent 视角使用）
         const rawName = asTrimmedString(agentConfig?.name);
@@ -1035,7 +977,7 @@ export const messageSlice = createSliceWithThunks({
           })
         ).unwrap();
 
-        if (totalUsage) {
+        if (hasReportedUsage) {
           dispatch(
             (updateTokens as any)({
               dialogId,
@@ -1062,10 +1004,7 @@ export const messageSlice = createSliceWithThunks({
           });
         }
 
-        const titleEligibleContent =
-          serializeMessageContent(finalVisibleContent, "[图片]") ?? "";
-
-        if (titleEligibleContent.trim() !== "") {
+        if (titleEligible) {
           dispatch((updateDialogTitle as any)({ dialogKey, agentConfig }));
         }
 
@@ -1176,33 +1115,9 @@ export const messageSlice = createSliceWithThunks({
 
         // 找到被删除的这条 message
         const msg = Object.values(entities).find((m) => m?.dbKey === dbKey);
-        const msgId = msg?.id;
-
-        // 默认只删除当前这条
-        let extraRemoveId: string | undefined;
-        let extraRemoveDbKey: string | undefined;
-
-        // 如果是工具消息，尝试一并清理对应的「assistant tool stub」
-        if (msg?.role === "tool" && msg.parentMessageId) {
-          const parent = entities[msg.parentMessageId];
-
-          if (parent && parent.role === "assistant") {
-            if (isAssistantToolStub(parent)) {
-              const hasOtherToolMsgs = Object.values(entities).some(
-                (m) =>
-                  m &&
-                  m.role === "tool" &&
-                  m.parentMessageId === msg.parentMessageId &&
-                  m.dbKey !== dbKey
-              );
-
-              if (!hasOtherToolMsgs) {
-                extraRemoveId = parent.id;
-                extraRemoveDbKey = parent.dbKey as string | undefined;
-              }
-            }
-          }
-        }
+        // Wave15: cascade plan (tool → orphan assistant stub) is Redux-free core.
+        const { id: msgId, extraRemoveId, extraRemoveDbKey } =
+          planDeleteMessageCascade(msg, entities);
 
         // 先删当前这条
         await dispatch(remove(dbKey));

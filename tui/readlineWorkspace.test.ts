@@ -692,6 +692,20 @@ describe("splitRawInput", () => {
     expect(splitRawInput("\x1b[27;2;8~")).toEqual(["\x1b[27;2;8~"]);
     expect(splitRawInput("\x1b[27;5;8~")).toEqual(["\x1b[27;5;8~"]);
   });
+
+  test("identifies bracketed paste sequences and returns payload as a single token with raw newlines intact", () => {
+    expect(splitRawInput("\x1b[?2004hline1\r\nline2\r\nline3\x1b[?2004l")).toEqual([
+      "\x00PASTE\x00line1\r\nline2\r\nline3",
+    ]);
+  });
+
+  test("splits normal characters outside bracketed paste as individual tokens", () => {
+    expect(splitRawInput("a\x1b[?2004hline1\r\nline2\x1b[?2004lb")).toEqual([
+      "a",
+      "\x00PASTE\x00line1\r\nline2",
+      "b",
+    ]);
+  });
 });
 
 describe("createRawInputDecoder", () => {

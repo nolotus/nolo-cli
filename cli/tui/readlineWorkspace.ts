@@ -40,6 +40,7 @@ import {
   renderStatusLine,
   renderWelcome,
   DEFAULT_TUI_AGENT_KEY,
+  PASTE_TOKEN_PREFIX,
   type TuiState,
 } from "./session";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "../client/terminalStyles";
@@ -1418,9 +1419,26 @@ function readCsiSequence(input: string, start: number): string | null {
   return null;
 }
 
+const PASTE_START = "\x1b[?2004h";
+const PASTE_END = "\x1b[?2004l";
+
 export function splitRawInput(input: string) {
   const chunks: string[] = [];
   for (let index = 0; index < input.length;) {
+    if (input.startsWith(PASTE_START, index)) {
+      const contentStart = index + PASTE_START.length;
+      const endPos = input.indexOf(PASTE_END, contentStart);
+      if (endPos !== -1) {
+        const payload = input.slice(contentStart, endPos);
+        chunks.push(`${PASTE_TOKEN_PREFIX}${payload}`);
+        index = endPos + PASTE_END.length;
+      } else {
+        const payload = input.slice(contentStart);
+        chunks.push(`${PASTE_TOKEN_PREFIX}${payload}`);
+        index = input.length;
+      }
+      continue;
+    }
     if (input.startsWith("\x1b[13;2~", index)) {
       chunks.push("\x1b[13;2~");
       index += "\x1b[13;2~".length;
@@ -2131,6 +2149,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
   if (isInteractiveInput(input)) {
     input.setRawMode(true);
+    output.write("\x1b[?2004h");
     let busy = false;
     let done = false;
     // True while a raw action gate is waiting for the user to press Enter.
@@ -2209,9 +2228,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     resizeTarget.on?.("resize", onResize);
     const finish = () => {
+      if (done) return;
       done = true;
       resizeTarget.off?.("resize", onResize);
       input.off("data", onData);
+      output.write("\x1b[?2004l");
       input.setRawMode?.(false);
     };
     const handleInputToken = async (sequence: string) => {
@@ -2404,16 +2425,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const onData = createRawInputDecoder((token) => {
       void handleInputToken(token);
     });
-    input.on("data", onData);
-    fixedInput.repaint(buffer);
-    await new Promise<void>((resolve) => {
-      const check = setInterval(() => {
-        if (done) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 10);
-    });
+    try {
+      input.on("data", onData);
+      fixedInput.repaint(buffer);
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          if (done) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 10);
+      });
+    } finally {
+      finish();
+    }
     return;
   }
 

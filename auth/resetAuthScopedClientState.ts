@@ -20,8 +20,7 @@ export const resetAuthScopedClientState = async (dispatch: any) => {
   // original account is active again (ensureSyncMappingsHydrated).
   clearSyncMappings();
   await dispatch(abortAllMessages({ all: true })).unwrap();
-  // Runtime clears are module-store mutators; clearDialogState still clears
-  // Redux currentDialogKey (and leaves runtime via applyClearDialogStateRuntime).
+  // Runtime clears are module-store mutators (Wave14: clearDialogState too).
   clearPendingAttachments({ all: true });
   clearAllComposerImageDrafts();
   dispatch(clearDialogState());

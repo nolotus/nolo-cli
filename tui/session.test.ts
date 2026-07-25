@@ -110,6 +110,26 @@ describe("applyTuiInputKey", () => {
     });
   });
 
+  test("handles paste payload token without submitting and normalizes CRLF/CR to LF", () => {
+    const pasteToken = "\x00PASTE\x00line1\r\nline2\rline3";
+    const res = applyTuiInputKey("prefix_", pasteToken);
+    expect(res.buffer).toBe("prefix_line1\nline2\nline3");
+    expect(res.submit).toBeUndefined();
+  });
+
+  test("submits full multiline buffer on subsequent real Enter press after paste", () => {
+    const pasteToken = "\x00PASTE\x00line1\r\nline2\r\nline3";
+    const pasteRes = applyTuiInputKey("", pasteToken);
+    expect(pasteRes.buffer).toBe("line1\nline2\nline3");
+    expect(pasteRes.submit).toBeUndefined();
+
+    const enterRes = applyTuiInputKey(pasteRes.buffer, "\r", { name: "enter" });
+    expect(enterRes).toEqual({
+      buffer: "",
+      submit: "line1\nline2\nline3",
+    });
+  });
+
   test("handles forward Delete key and modifier Delete/Backspace variants", () => {
     // Forward Delete (basic)
     expect(applyTuiInputKey("abc", "\x1b[3~").buffer).toBe("ab");

@@ -2,6 +2,7 @@ import { Language } from "../i18n/types";
 
 export const i18nBaseConfig = {
   defaultNS: "common",
+  fallbackNS: "common",
   ns: ["common", "space", "ai", "chat"],
   interpolation: { escapeValue: false },
   fallbackLng: {

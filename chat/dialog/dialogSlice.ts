@@ -27,7 +27,6 @@ import {
   applyClearDialogStateRuntime,
   applyUpdateTokensFulfilled,
   clearActiveControllers,
-  clearPendingAttachments,
   deleteDialogRuntime,
   getDialogRuntimeTokens,
   resetDialogRuntimeSessionState,
@@ -179,7 +178,9 @@ const dialogSlice = createSliceWithThunks({
 
     initDialog: create.asyncThunk(
       async (id: string, { dispatch, signal, getState }) => {
-        clearPendingAttachments();
+        // Do not clearPendingAttachments here: drafts are per-dialogKey and must
+        // survive leave/re-enter (resetDialogRuntimeSessionState already preserves
+        // pendingFiles). Send / auth-reset / delete paths clear when appropriate.
         clearWorkflow();
         const { currentServer: preferredServerOrigin } = getRuntimeServerContext(
           getState() as any

@@ -1,6 +1,7 @@
 import { clearWorkflow } from "../ai/workflow/workflowStore";
 import { resetFavorites } from "../app/favorite/favoriteStore";
 import { abortAllMessages, clearDialogState } from "../chat/dialog/dialogSlice";
+import { clearAllComposerImageDrafts } from "../chat/dialog/composerImageDraftStore";
 import {
   clearPendingAttachments,
   clearPendingUserInputQueue,
@@ -22,6 +23,7 @@ export const resetAuthScopedClientState = async (dispatch: any) => {
   // Runtime clears are module-store mutators; clearDialogState still clears
   // Redux currentDialogKey (and leaves runtime via applyClearDialogStateRuntime).
   clearPendingAttachments({ all: true });
+  clearAllComposerImageDrafts();
   dispatch(clearDialogState());
   clearPendingUserInputQueue({ all: true });
   dispatch(resetMsgs({ all: true }));

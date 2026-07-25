@@ -735,6 +735,7 @@
     "chat/queue/chatQueueLifecycleActions.ts",
     "chat/messages/persistToolMessage.ts",
     "chat/messages/messageAgent.ts",
+    "chat/dialog/composerImageDraftStore.ts",
     "chat/chat.locale.ts",
     "chat/messages/fetchAndCacheMessages.ts",
     "chat/messages/fetchMessages.ts",

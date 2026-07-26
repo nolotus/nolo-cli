@@ -69,8 +69,17 @@ export function getCliInstallChannel(serverUrl?: string | null): CliReleaseChann
   return "latest";
 }
 
+export function renderProgressBar(percent: number, width = 30): string {
+  const pct = Math.max(0, Math.min(100, percent));
+  const filledLen = Math.round((width * pct) / 100);
+  const emptyLen = width - filledLen;
+  const bar = "#".repeat(filledLen) + " ".repeat(emptyLen);
+  const pctText = pct.toFixed(1).padStart(5, " ");
+  return `[${bar}] ${pctText}%`;
+}
+
 export function buildNpmSelfUpdateCommand(channel: CliReleaseChannel = "latest") {
-  return ["npm", "install", "-g", `nolo-cli@${channel}`, "--force"];
+  return ["npm", "install", "-g", `nolo-cli@${channel}`, "--force", "--progress"];
 }
 
 export function readPackageInfo(): PackageInfo {
@@ -193,8 +202,13 @@ export async function runSelfUpdate(
   const env = options.env ?? process.env;
   const serverUrl = resolveSelfUpdateServerUrl(env, options.serverUrl);
 
-  const command = buildNpmSelfUpdateCommand(getCliInstallChannel(serverUrl));
-  output.write(`Updating nolo with: ${command.join(" ")}\n`);
+  const channel = getCliInstallChannel(serverUrl);
+  const command = buildNpmSelfUpdateCommand(channel);
+
+  output.write(`\nNolo Agent CLI Installer & Updater\n`);
+  output.write(`-----------------------------------------\n`);
+  output.write(`✓ Target channel: ${channel} (nolo-cli@${channel})\n`);
+  output.write(`▸ Downloading and installing package via npm...\n`);
 
   const useCustomSink = options.output !== undefined;
   const proc: SpawnedProcess = spawn({
@@ -206,7 +220,12 @@ export async function runSelfUpdate(
   });
 
   if (!useCustomSink) {
-    return await proc.exited;
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      output.write(`  ${renderProgressBar(100.0)}\n`);
+      output.write(`✓ Update completed successfully!\n\n`);
+    }
+    return exitCode;
   }
 
   const [exitCode] = await Promise.all([
@@ -214,6 +233,11 @@ export async function runSelfUpdate(
     forwardSpawnOutput(proc.stdout, output),
     forwardSpawnOutput(proc.stderr, output),
   ]);
+
+  if (exitCode === 0) {
+    output.write(`  ${renderProgressBar(100.0)}\n`);
+    output.write(`✓ Update completed successfully!\n\n`);
+  }
 
   return exitCode;
 }

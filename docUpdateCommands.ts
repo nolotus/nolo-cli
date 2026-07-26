@@ -73,6 +73,12 @@ Options:
   --json                                Print machine-readable JSON.
   --allow-secrets                       Allow bodies that look like credentials.
   --token <jwt>                         Auth token. Required for writes.
+
+Promotion:
+  If the target is a plain page whose body already contains a valid
+  <!-- skill-config ... --> block, this command adopts it: the block is parsed,
+  normalized and written back into record.meta (kind="skill" + skillConfig),
+  keeping the same dbKey. Use --dry-run first to preview.
 `);
 }
 
@@ -132,14 +138,30 @@ async function runUpdateCommand(
 
   const { record: existing } = await resolveExistingRecord({ authToken, dbKey, targets });
 
-  if (docKind === "page" && existing?.meta?.kind === "skill") {
+  // Body-level truth: a page whose content carries a valid `skill-config` block is
+  // already a skill doc for every runtime reader, even when record.meta was never
+  // promoted. Resolving here lets skill-doc update take over such a page and write
+  // the metadata back, instead of dead-locking on the raw meta.kind.
+  const existingSkillMeta = resolvePageSkillMetadata(existing);
+  const metaKindIsSkill = existing?.meta?.kind === "skill";
+  const bodyDeclaresSkill = Boolean(existingSkillMeta?.skillConfig);
+
+  // Symmetric with the skill branch below: a body-declared skill counts as a skill
+  // doc here too. Letting `doc update --body ...` through would silently overwrite
+  // the skill-config block and demote a mountable skill back to a plain page.
+  if (docKind === "page" && (metaKindIsSkill || bodyDeclaresSkill)) {
     throw new Error(`Target page is a skill doc. Use nolo skill-doc update --key ${dbKey}`);
   }
-  if (docKind === "skill" && existing?.meta?.kind !== "skill") {
-    throw new Error(`Target page is not a skill doc. Use nolo doc update --key ${dbKey}`);
+  if (docKind === "skill" && !metaKindIsSkill && !bodyDeclaresSkill) {
+    throw new Error(
+      `Target page is not a skill doc and its body has no valid skill-config block. Use nolo doc update --key ${dbKey}`
+    );
   }
 
-  const title = readTitle(args) ?? existing?.title;
+  const isPromotion = docKind === "skill" && !metaKindIsSkill && bodyDeclaresSkill;
+
+  const explicitTitle = readTitle(args);
+  const title = explicitTitle ?? existing?.title;
   if (!title) {
     throw new Error(`doc has no title and none was provided: ${dbKey}`);
   }
@@ -151,7 +173,7 @@ async function runUpdateCommand(
   let skillSummary: Record<string, any> | undefined;
 
   if (docKind === "skill") {
-    const meta = resolvePageSkillMetadata(existing);
+    const meta = existingSkillMeta;
     const currentConfig = meta?.skillConfig;
     if (!currentConfig) {
       throw new Error(`existing skill doc is missing skillConfig: ${dbKey}`);
@@ -173,7 +195,10 @@ async function runUpdateCommand(
 
     const mergedConfig = {
       ...currentConfig,
-      name: title,
+      // The skill's `name` is its identity (other docs reference it), while the
+      // page title is prose. They coincide for docs created via skill-doc create,
+      // but diverge when promoting a page, so only an explicit --title renames it.
+      name: explicitTitle ?? currentConfig.name ?? title,
       description,
       ...(parseJsonArg<string[]>(readOption(args, "--tools"), currentConfig.toolNames ?? []).length
         ? { toolNames: parseJsonArg<string[]>(readOption(args, "--tools"), currentConfig.toolNames ?? []) }
@@ -206,6 +231,8 @@ async function runUpdateCommand(
       spaceId,
       body,
       skillConfig: mergedConfig,
+      evalConfig: meta?.evalConfig,
+      workflowConfig: meta?.workflowConfig,
       existing,
     });
     skillSummary = buildSkillSummaryForRecord(record) ?? undefined;
@@ -238,6 +265,7 @@ async function runUpdateCommand(
   const summary = {
     dryRun: shouldDryRun,
     kind: docKind,
+    promotedFromPage: isPromotion,
     title,
     dbKey,
     userId,
@@ -265,7 +293,9 @@ async function runUpdateCommand(
   if (shouldOutputJson) {
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
   } else if (shouldDryRun) {
-    process.stdout.write(`dry-run ok: ${dbKey}\n`);
+    process.stdout.write(`dry-run ok${isPromotion ? " (promote page -> skill)" : ""}: ${dbKey}\n`);
+  } else if (isPromotion) {
+    process.stdout.write(`promoted page to skill: ${dbKey}\n`);
   } else {
     process.stdout.write(`updated ${docKind}: ${dbKey}\n`);
   }

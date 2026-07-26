@@ -28,6 +28,8 @@ import {
   wrapTranscriptLine,
 } from "./readlineWorkspace";
 import { getCliLocale, setCliLocale, t } from "./i18n";
+import type { ListedDialog } from "../dialogCommands";
+import type { DialogHistoryTurn } from "./dialogPicker";
 
 const TERM_ROWS = 24;
 const TERM_COLS = 120;
@@ -1348,5 +1350,133 @@ describe("scroll-aware history", () => {
       workspacePromise,
       new Promise((r) => setTimeout(r, 1000)),
     ]);
+  });
+});
+
+// Regression for "/resume 恢复历史对话后 markdown 样式降级"。
+// 根因：/resume 把数据库里的原始 markdown 直接 push 进 history，绕过和新回复
+// （流式）同一套完整渲染器（assistantOutput.ts），重绘时只有 theme.ts 的
+// highlightMarkdown 生效，它处理不了表格/列表/链接。修复：push 前对 assistant
+// turn 过一遍 formatAssistantDisplay，mode 取 state.renderDisplay。
+describe("/resume renders restored assistant turns through the full renderer", () => {
+  type FakeInput = PassThrough & {
+    isTTY?: boolean;
+    setRawMode?: (mode: boolean) => void;
+  };
+  type FakeOutput = PassThrough & {
+    isTTY?: boolean;
+    rows?: number;
+    columns?: number;
+  };
+
+  const makeDialog = (): ListedDialog => ({
+    id: "01JZZZZZZZZZZZZZZZZZZZZZZZ",
+    dbKey: "dialog-user-01JZZZZZZZZZZZZZZZZZZZZZZZ",
+    title: "test dialog",
+    status: null,
+    updatedAt: null,
+    createdAt: null,
+    spaceId: null,
+    triggerType: null,
+    primaryAgentKey: null,
+    cybots: [],
+  });
+
+  const makeStreams = () => {
+    const input = new PassThrough() as FakeInput;
+    const output = new PassThrough() as FakeOutput;
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    return { input, output, chunks };
+  };
+
+  // /history 触发 pick-dialog；用 mock picker 直接返回 selected，跳过真实
+  // 列表交互。注入 dialogHistoryLoader 返回固定原始 markdown，断言恢复后
+  // history 被渲染过的内容出现在输出里。
+  const runResume = async (
+    turns: DialogHistoryTurn[],
+    env: Record<string, string | undefined> = {},
+  ) => {
+    const { input, output, chunks } = makeStreams();
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env,
+      agentRunner: async () => ({ exitCode: 0, dialogId: "test-dialog" }),
+      dialogPickerRunner: async () => ({
+        kind: "selected" as const,
+        dialog: makeDialog(),
+      }),
+      dialogHistoryLoader: async () => turns,
+    });
+
+    // /history 和 /resume 都映射为 pick-dialog；发 /history 即可走恢复路径。
+    input.write("/history\r");
+    // 等 picker + loader + emitCommandOutput("Resumed dialog:") + 重绘落地。
+    await new Promise((r) => setTimeout(r, 120));
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([
+      workspacePromise,
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
+
+    return Buffer.concat(chunks).toString("utf8");
+  };
+
+  test("table is converted to bullets (no raw separator)", async () => {
+    const tableMarkdown =
+      "| 水果 | 颜色 |\n| --- | --- |\n| 苹果 | 红 |";
+    const out = await runResume([
+      { role: "assistant", content: tableMarkdown },
+    ]);
+    expect(out).toContain("•");
+    expect(out).not.toContain("| --- |");
+    // 表格行被转成 bullet：苹果 — 红。
+    expect(out).toContain("苹果");
+    expect(out).toContain("红");
+  });
+
+  test("unordered list marker is normalized to •", async () => {
+    const out = await runResume([
+      { role: "assistant", content: "- 第一项" },
+    ]);
+    expect(out).toContain("•");
+    expect(out).toContain("第一项");
+    // 行首的原始 "- " 不应再出现（已被规范化为 •）。
+    expect(out).not.toContain("- 第一项");
+  });
+
+  test("user turns are not rendered as assistant markdown", async () => {
+    // user turn 含表格语法也不应被渲染——它靠 ❯ 标记区分，buildHistoryLines
+    // 里 user 分支不走 markdown 渲染，应原样保留。
+    const out = await runResume([
+      { role: "user", content: "| a | b |" },
+    ]);
+    expect(out).toContain("| a | b |");
+    // 不应被转成 bullet。
+    expect(out).not.toContain("• a");
+  });
+
+  test("/render plain is respected: no ANSI color in restored assistant turn", async () => {
+    const out = await runResume(
+      [{ role: "assistant", content: "- 第一项" }],
+      { NOLO_CLI_RENDER: "plain" },
+    );
+    // plain 模式下 formatAssistantDisplay 走 styleInlineMarkdown("plain")，
+    // bullet 不会被颜色 SGR 包裹。rich 模式会把 • 渲染成
+    // \x1b[<color>m•\x1b[0m；plain 下绝不应出现这种颜色包裹的 bullet。
+    expect(out).toContain("•");
+    expect(out).toContain("第一项");
+    expect(out).not.toMatch(/\x1b\[\d+m•\x1b\[0m/);
   });
 });

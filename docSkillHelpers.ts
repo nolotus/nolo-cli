@@ -1,6 +1,8 @@
 import {
   buildSkillDocMarkdown,
   type SkillDocConfig,
+  type SkillEvalConfig,
+  type WorkflowReferenceConfig,
 } from "./ai/skills/skillDocProtocol";
 import { buildPageKey, buildPageRecord } from "./docPageHelpers";
 
@@ -37,9 +39,24 @@ export function buildSkillPageRecord(args: {
   spaceId: string | null;
   body: string;
   skillConfig: SkillDocConfig;
+  evalConfig?: SkillEvalConfig;
+  workflowConfig?: WorkflowReferenceConfig;
   existing?: Record<string, any> | null;
 }) {
-  const { dbKey, skillId, title, spaceId, body, skillConfig, existing } = args;
+  const {
+    dbKey,
+    skillId,
+    title,
+    spaceId,
+    body,
+    skillConfig,
+    evalConfig,
+    workflowConfig,
+    existing,
+  } = args;
+  // `body` arrives with every protocol block already stripped, so each block the
+  // caller wants to keep must be handed back here explicitly — anything omitted
+  // is dropped from both the markdown and meta.
   return {
     ...buildPageRecord({
       dbKey,
@@ -49,12 +66,16 @@ export function buildSkillPageRecord(args: {
       content: buildSkillDocMarkdown({
         body,
         skillConfig,
+        evalConfig,
+        workflowConfig,
       }),
       existing,
       meta: {
         ...(existing?.meta ?? {}),
         kind: "skill",
         skillConfig,
+        ...(evalConfig ? { evalConfig } : {}),
+        ...(workflowConfig ? { workflowConfig } : {}),
       },
       slateData: null,
     }),

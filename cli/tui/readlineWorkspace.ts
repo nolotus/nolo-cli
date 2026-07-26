@@ -21,6 +21,7 @@ import { readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
 import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
+import { formatAssistantDisplay } from "../client/assistantOutput";
 import { isQuotaExhaustedError } from "../agentRunCommand";
 import { saveProfileAgentSelection } from "../client/profileConfig";
 import { runSelfUpdate } from "../updateCommands";
@@ -1118,8 +1119,26 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             dialog: pickResult.dialog,
             env: options.env ?? process.env,
           });
+          // /resume 恢复的是数据库里的原始 markdown，必须经过和新回复（流式）
+          // 同一套完整渲染器，否则表格/列表/链接会降级成 highlightMarkdown 处理
+          // 不了的原始语法。只渲染 assistant turn：user turn 靠 ❯ 标记区分，
+          // buildHistoryLines 里 user 分支不走 markdown 渲染。mode 取
+          // state.renderDisplay 以尊重 /render plain；整段消息用默认 trimEdges。
+          const restored = loadedTurns
+            .slice(-MAX_TUI_HISTORY_TURNS)
+            .map((turn) =>
+              turn.role === "assistant"
+                ? {
+                    ...turn,
+                    content: formatAssistantDisplay(
+                      turn.content,
+                      state.renderDisplay,
+                    ),
+                  }
+                : turn,
+            );
           history.turns.length = 0;
-          history.turns.push(...loadedTurns.slice(-MAX_TUI_HISTORY_TURNS));
+          history.turns.push(...restored);
           history.currentRole = null;
           history.currentContent = "";
           history.scrollTop = 0;

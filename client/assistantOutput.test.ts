@@ -118,8 +118,14 @@ describe("assistantOutput", () => {
     ].join("\n");
     expect(convertMarkdownTablesForTerminal(text)).toBe(text);
     const rich = formatAssistantDisplay(text, "rich");
-    expect(rich).toContain("| a | b |");
-    expect(rich).toContain("  indented();");
+    // Code-block syntax highlighting now interleaves ANSI between characters,
+    // so a contiguous-content substring assertion is no longer possible. The
+    // intent these assertions guard (indentation preserved, table-like lines
+    // NOT converted to bullets) still holds — verify against the ANSI-stripped
+    // text instead of the raw colored output.
+    const stripped = rich.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(stripped).toContain("| a | b |");
+    expect(stripped).toContain("  indented();");
     expect(rich).toContain("\x1b[2m```ts\x1b[0m");
   });
 
@@ -185,10 +191,13 @@ describe("assistantOutput", () => {
     writer.flush();
 
     const output = chunks.join("");
-    // Code content is now info-colored; verify indentation is preserved inside
-    // the color wrapper and table-like lines inside fences are not converted.
-    expect(output).toContain("  const x = 1;");
-    expect(output).toContain("| not a table |");
+    // Code-block syntax highlighting now interleaves ANSI between characters,
+    // so a contiguous-content substring assertion is no longer possible. The
+    // intent (indentation preserved, table-like lines inside fences not
+    // converted) still holds — verify against ANSI-stripped output.
+    const stripped = output.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(stripped).toContain("  const x = 1;");
+    expect(stripped).toContain("| not a table |");
   });
 
   test("render-aware stream writer applies rich formatting while streaming", () => {
@@ -207,5 +216,67 @@ describe("assistantOutput", () => {
       `\x1b[1m${themeColorSequence("warning", process.env, resolveTuiBrightness())}Title\x1b[0m`
     );
     expect(output).toContain("\x1b[1mNolo\x1b[0m");
+  });
+});
+
+describe("code block syntax highlighting", () => {
+  const brightness = resolveTuiBrightness();
+  const seq = (token: "accent" | "success" | "chrome" | "warning" | "info") =>
+    themeColorSequence(token, process.env, brightness);
+  const fence = (lang: string, body: string) => ["```" + lang, body, "```"].join("\n");
+  /** The rendered line for `body`, i.e. everything between the fence rows. */
+  const codeLine = (lang: string, body: string) =>
+    formatAssistantDisplay(fence(lang, body), "rich").split("\n")[1] ?? "";
+
+  test("an unlabeled fence is left exactly as it was before highlighting", () => {
+    // Zero-regression guarantee: blocks with no language tag must keep the old
+    // single-color treatment, so nothing changes for the majority of replies
+    // that omit the tag.
+    const line = codeLine("", "const plain = 2;");
+    expect(line).toBe(`${seq("info")}const plain = 2;\x1b[0m`);
+  });
+
+  test("keywords are accented while identifiers stay in the base color", () => {
+    const line = codeLine("ts", "const answer = 1;");
+    expect(line).toContain(`${seq("accent")}const`);
+    // The identifier must not be keyword-colored.
+    expect(line).not.toContain(`${seq("accent")}answer`);
+    expect(line).toContain(`${seq("warning")}1`);
+  });
+
+  test("keywords inside a string are not highlighted as keywords", () => {
+    // The classic failure of a naive highlighter: matching keywords before
+    // carving out string regions paints "def" inside the quoted text.
+    const line = codeLine("py", 'x = "def not_a_keyword"');
+    expect(line).toContain(`${seq("success")}"def not_a_keyword"`);
+    expect(line).not.toContain(`${seq("accent")}def`);
+  });
+
+  test("trailing comments are dimmed chrome", () => {
+    const line = codeLine("sh", "echo hi # comment");
+    expect(line).toContain(`${seq("chrome")}\x1b[2m# comment`);
+  });
+
+  test("plain render mode emits no color inside code blocks", () => {
+    const out = formatAssistantDisplay(fence("ts", "const x = 1;"), "plain");
+    expect(out).not.toContain("\x1b");
+  });
+
+  test("streaming and whole-message rendering agree on code lines", () => {
+    // The two renderers have separate fence bookkeeping; if they drift, a reply
+    // looks different while streaming than it does after /resume replays it.
+    const source = fence("ts", "const x = 1; // note");
+    const chunks: string[] = [];
+    const writer = createRenderAwareStreamWriter({
+      write: (chunk) => chunks.push(chunk),
+      renderMode: "rich",
+    });
+    for (const char of source) writer.push(char);
+    writer.flush();
+    const streamedCode = chunks
+      .join("")
+      .split("\n")
+      .find((line) => line.includes("const"));
+    expect(streamedCode).toBe(codeLine("ts", "const x = 1; // note"));
   });
 });

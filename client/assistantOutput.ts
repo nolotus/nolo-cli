@@ -17,9 +17,11 @@ const STYLE = {
  * per call chain so a single assistant reply stays internally consistent.
  */
 function colorSeq(
-  token: "accent" | "chrome" | "info" | "muted" | "warning",
+  token: "accent" | "chrome" | "info" | "muted" | "success" | "warning",
   brightness: TuiBrightness
 ) {
+  // "success" is added for syntax-highlight string literals; themeColorSequence
+  // already supports it (it's a TuiThemeToken), so theme.ts needs no change.
   return themeColorSequence(token, process.env, brightness);
 }
 
@@ -73,6 +75,208 @@ function isPipeWrappedTableRow(line: string) {
 
 function isCodeFenceLine(line: string) {
   return /^\s*```/.test(line);
+}
+
+// ─── Code-block syntax highlighting (line-local) ───────────────────────────
+// The highlighter is deliberately LINE-LOCAL: it only ever looks at the single
+// line passed to it. The streaming path emits one line at a time and a line
+// can't be revised once written, so any cross-line state would desync under
+// streaming. Consequences (intentional trade-offs, NOT bugs to fix):
+//   - Multi-line `/* ... */` block comments: only the part after `/*` on the
+//     OPENING line is treated as a comment; middle/end lines are NOT.
+//   - Python `"""..."""` triple-quoted strings: same — only the opening line.
+// The only cross-line state allowed is the pre-existing `inFence` flag plus
+// the current fence's language, both maintained by the callers.
+
+/** ```ts / ```bash / ``` → "ts" / "bash" / "" (closing fence → ""). */
+function readFenceLanguage(line: string): string {
+  const m = line.match(/^\s*```\s*([a-zA-Z0-9+#_-]*)/);
+  return m ? (m[1] ?? "").toLowerCase() : "";
+}
+
+type CodeLang = "js" | "py" | "sh" | "json" | "unknown";
+
+/** Normalize a fence language hint into one of the supported highlight langs. */
+function normalizeCodeLang(raw: string): CodeLang {
+  switch (raw) {
+    case "js":
+    case "jsx":
+    case "ts":
+    case "tsx":
+    case "javascript":
+    case "typescript":
+      return "js";
+    case "py":
+    case "python":
+      return "py";
+    case "sh":
+    case "bash":
+    case "zsh":
+    case "shell":
+    case "console":
+      return "sh";
+    case "json":
+      return "json";
+    default:
+      return "unknown";
+  }
+}
+
+const KEYWORDS: Record<Exclude<CodeLang, "unknown">, ReadonlySet<string>> = {
+  js: new Set([
+    "const", "let", "var", "function", "return", "if", "else", "for", "while",
+    "class", "new", "await", "async", "import", "export", "from", "type",
+    "interface", "extends", "implements", "null", "undefined", "true", "false",
+  ]),
+  py: new Set([
+    "def", "class", "return", "if", "elif", "else", "for", "while", "import",
+    "from", "as", "with", "try", "except", "finally", "lambda", "None", "True",
+    "False", "self",
+  ]),
+  sh: new Set([
+    "if", "then", "else", "fi", "for", "do", "done", "while", "case", "esac",
+    "function", "export", "local", "return", "source", "echo", "cd",
+  ]),
+  json: new Set(["true", "false", "null"]),
+};
+
+// A single "segment" is a maximal run of plain (non-string, non-comment) text
+// between string/comment regions. We collect string+comment regions first, then
+// scan the gaps for keywords/numbers. This ordering is what keeps `"def"` from
+// being colored as a keyword — strings are carved out before keyword matching.
+type Region = { start: number; end: number; kind: "string" | "comment" };
+
+/** Find string and comment regions in a line for the given language. */
+function scanStringCommentRegions(line: string, lang: CodeLang): Region[] {
+  const regions: Region[] = [];
+  const n = line.length;
+  let i = 0;
+  // sh and py use `#` for comments; js and json use `//`. We only recognize the
+  // line-comment form (line-local: no block-comment state).
+  const commentMarkers: string[] =
+    lang === "py" || lang === "sh" ? ["#"] : ["//"];
+  while (i < n) {
+    const ch = line[i];
+    // Strings: ', ", ` (js only for backtick). Pair on the same line; an
+    // unclosed quote runs to end-of-line.
+    if (ch === "'" || ch === '"' || (lang === "js" && ch === "`")) {
+      const quote = ch;
+      const start = i;
+      i += 1;
+      while (i < n) {
+        if (line[i] === "\\") {
+          i += 2; // skip escaped char
+          continue;
+        }
+        if (line[i] === quote) {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      regions.push({ start, end: i, kind: "string" });
+      continue;
+    }
+    // Comments: highest priority once we hit a marker outside a string.
+    let matched = false;
+    for (const marker of commentMarkers) {
+      if (line.startsWith(marker, i)) {
+        regions.push({ start: i, end: n, kind: "comment" });
+        i = n;
+        matched = true;
+        break;
+      }
+    }
+    if (matched) continue;
+    i += 1;
+  }
+  // Regions are produced in increasing start order by construction.
+  return regions;
+}
+
+/**
+ * Highlight a single code line with theme tokens. Line-local only.
+ * `lang === "unknown"` returns the EXACT pre-change result (whole line in info),
+ * so unannotated code blocks are byte-identical to before — zero regression.
+ */
+function highlightCodeLine(line: string, lang: CodeLang, brightness: TuiBrightness): string {
+  const info = colorSeq("info", brightness);
+  if (lang === "unknown") {
+    return `${info}${line}${STYLE.reset}`;
+  }
+  const regions = scanStringCommentRegions(line, lang);
+  const keywords = KEYWORDS[lang];
+  const accent = colorSeq("accent", brightness);
+  const success = colorSeq("success", brightness);
+  const warning = colorSeq("warning", brightness);
+  const chrome = colorSeq("chrome", brightness);
+  const dim = STYLE.dim;
+  const reset = STYLE.reset;
+
+  const out: string[] = [];
+  let cursor = 0;
+  for (const region of regions) {
+    // Plain gap before this region: scan for keywords + numbers, default info.
+    if (region.start > cursor) {
+      out.push(emitPlainGap(line.slice(cursor, region.start), keywords, info, accent, warning, reset));
+    }
+    const text = line.slice(region.start, region.end);
+    if (region.kind === "string") {
+      out.push(`${success}${text}${reset}`);
+    } else {
+      out.push(`${chrome}${dim}${text}${reset}`);
+    }
+    cursor = region.end;
+  }
+  // Trailing plain gap after the last region.
+  if (cursor < line.length) {
+    out.push(emitPlainGap(line.slice(cursor), keywords, info, accent, warning, reset));
+  }
+  return out.join("");
+}
+
+/** Emit a plain (non-string, non-comment) gap: keywords→accent, numbers→warning, else→info. */
+function emitPlainGap(
+  text: string,
+  keywords: ReadonlySet<string>,
+  info: string,
+  accent: string,
+  warning: string,
+  reset: string
+): string {
+  // Tokenize into word/number runs and everything else. Anything not matched
+  // stays in the info base color so the block keeps a continuous background.
+  const parts: string[] = [];
+  const re = /([A-Za-z_]\w*)|(\d+(?:\.\d+)?)|([\s\S])/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let started = false;
+  while ((m = re.exec(text)) !== null) {
+    if (!started) {
+      // leading text before first token, if any (re always matches at 0 due to [\s\S])
+      started = true;
+    }
+    if (m.index > last) {
+      parts.push(`${info}${text.slice(last, m.index)}`);
+    }
+    if (m[1] !== undefined) {
+      const word = m[1];
+      if (keywords.has(word)) {
+        parts.push(`${accent}${word}${reset}`);
+      } else {
+        parts.push(`${info}${word}`);
+      }
+    } else if (m[2] !== undefined) {
+      parts.push(`${warning}${m[2]}${reset}`);
+    } else {
+      parts.push(`${info}${m[3]}`);
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) {
+    parts.push(`${info}${text.slice(last)}`);
+  }
+  return parts.join("");
 }
 
 function tableRowToBullet(line: string) {
@@ -256,18 +460,26 @@ export function formatAssistantDisplay(
   const brightness = resolveTuiBrightness();
   const polished = polishAssistantStructure(text, options);
   let inFence = false;
+  let fenceLang: CodeLang = "unknown";
   return polished
     .split("\n")
     .map((line) => {
       if (isCodeFenceLine(line)) {
+        if (inFence) {
+          // Closing fence: clear the language we recorded at the opening.
+          fenceLang = "unknown";
+        } else {
+          // Opening fence: record the language for the lines that follow.
+          fenceLang = normalizeCodeLang(readFenceLanguage(line));
+        }
         inFence = !inFence;
         return mode === "plain" ? line : `${STYLE.dim}${line}${STYLE.reset}`;
       }
       if (inFence) {
-        // Color code content with the info token so streaming output matches
-        // the history replay (highlightMarkdown in theme.ts uses info for code).
+        // Line-local highlighting: only this line, no cross-line state beyond
+        // fenceLang. plain mode never colors (see test "plain mode").
         if (mode === "plain") return line;
-        return `${colorSeq("info", brightness)}${line}${STYLE.reset}`;
+        return highlightCodeLine(line, fenceLang, brightness);
       }
       if (mode === "plain") return styleInlineMarkdown(line, "plain", brightness);
       return styleRichMarkdownLine(line, brightness);
@@ -293,6 +505,10 @@ export function createRenderAwareStreamWriter(args: {
   const brightness = resolveTuiBrightness();
   let buffer = "";
   let inFence = false;
+  // Current fence language, recorded at the opening fence and cleared at the
+  // closing fence. This is the only cross-line state the line-local highlighter
+  // is allowed to consume (see highlightCodeLine).
+  let fenceLang: CodeLang = "unknown";
 
   const flushCompleteBlocks = () => {
     if (args.renderMode === "plain") {
@@ -308,15 +524,20 @@ export function createRenderAwareStreamWriter(args: {
       const firstLine = lines[0] ?? "";
 
       if (isCodeFenceLine(firstLine)) {
+        if (inFence) {
+          fenceLang = "unknown";
+        } else {
+          fenceLang = normalizeCodeLang(readFenceLanguage(firstLine));
+        }
         inFence = !inFence;
         args.write(`${STYLE.dim}${firstLine}${STYLE.reset}\n`);
         buffer = lines.slice(1).join("\n");
         continue;
       }
       if (inFence) {
-        // Code lines get info color to match formatAssistantDisplay and the
-        // history replay (highlightMarkdown). No trim, no table conversion.
-        args.write(`${colorSeq("info", brightness)}${firstLine}${STYLE.reset}\n`);
+        // Line-local highlighting, matching formatAssistantDisplay. No trim,
+        // no table conversion inside fences.
+        args.write(`${highlightCodeLine(firstLine, fenceLang, brightness)}\n`);
         buffer = lines.slice(1).join("\n");
         continue;
       }

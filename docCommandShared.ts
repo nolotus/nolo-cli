@@ -92,6 +92,7 @@ export function readTitle(args: string[]) {
     "--body-file",
     "--space",
     "--id",
+    "--key",
     "--kind",
     "--sync",
     "--tools",

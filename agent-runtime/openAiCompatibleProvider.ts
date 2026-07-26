@@ -72,6 +72,7 @@ export function parseOpenAiCompatibleChatCompletionResponse(args: {
   const choiceMessage = args.data?.choices?.[0]?.message ?? {};
   const rawContent = String(choiceMessage?.content ?? "");
   const { content, reasoning } = extractThinkContent(rawContent);
+  const rawFinishReason = args.data?.choices?.[0]?.finish_reason;
   return {
     content,
     model: args.providerConfig.model,
@@ -80,6 +81,9 @@ export function parseOpenAiCompatibleChatCompletionResponse(args: {
     ...(reasoning ? { reasoning_content: reasoning } : {}),
     ...(typeof choiceMessage?.reasoning_content === "string" && choiceMessage.reasoning_content
       ? { reasoning_content: choiceMessage.reasoning_content }
+      : {}),
+    ...(typeof rawFinishReason === "string" && rawFinishReason.length > 0
+      ? { finish_reason: rawFinishReason }
       : {}),
     usage: args.data?.usage,
     trace: args.trace,
@@ -100,6 +104,7 @@ function processOpenAiCompatibleSseEvent(
 export async function readOpenAiCompatibleSseCompletion(args: {
   response: Response;
   onTextDelta?: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
 }) {
   const reader = args.response.body?.getReader();
   if (!reader) {
@@ -115,6 +120,7 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     accumulatedToolCalls: {},
     thinkState: createThinkParserState(),
     onTextDelta: args.onTextDelta,
+    onReasoningDelta: args.onReasoningDelta,
   };
 
   while (true) {
@@ -143,6 +149,7 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
     ...(tool_calls.length > 0 ? { tool_calls } : {}),
     ...(state.usage ? { usage: state.usage } : {}),
+    ...(state.finishReason ? { finish_reason: state.finishReason } : {}),
   };
 }
 
@@ -155,6 +162,7 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
   fetchImpl: FetchLike;
   stream?: boolean;
   onTextDelta?: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
   signal?: AbortSignal;
 }): Promise<AgentRuntimeResult> {
   const request = buildOpenAiCompatibleChatCompletionRequest({
@@ -180,14 +188,13 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
   }
 
   const contentType = res.headers.get("content-type") ?? "";
-  const shouldStream =
-    Boolean(args.stream && args.onTextDelta) &&
-    contentType.includes("text/event-stream");
+  const isEventStream = contentType.includes("text/event-stream");
 
-  if (shouldStream && args.onTextDelta) {
+  if (isEventStream) {
     const streamed = await readOpenAiCompatibleSseCompletion({
       response: res,
-      onTextDelta: args.onTextDelta,
+      ...(args.onTextDelta ? { onTextDelta: args.onTextDelta } : {}),
+      ...(args.onReasoningDelta ? { onReasoningDelta: args.onReasoningDelta } : {}),
     });
     return {
       content: streamed.content,
@@ -196,6 +203,7 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
       ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
       ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
       ...(streamed.usage ? { usage: streamed.usage } : {}),
+      ...(streamed.finish_reason ? { finish_reason: streamed.finish_reason } : {}),
       trace: args.messages,
     };
   }

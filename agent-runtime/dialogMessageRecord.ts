@@ -9,7 +9,7 @@ export function dialogMessageRecordToAgentRuntimeMessage(
   if (record.role !== "user" && record.role !== "assistant" && record.role !== "tool") return null;
   return {
     role: record.role,
-    content: record.content ?? null,
+    content: record.content ?? "",
     ...(typeof record.reasoning_content === "string"
       ? { reasoning_content: record.reasoning_content }
       : {}),

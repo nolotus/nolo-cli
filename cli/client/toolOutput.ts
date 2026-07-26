@@ -232,9 +232,11 @@ function parseUiAskChoiceForCli(event: LocalAgentToolEvent): {
   if (!parsed) return null;
   const question = typeof parsed.question === "string" ? parsed.question.trim() : "";
   const choices = (Array.isArray(parsed.choices) ? parsed.choices : [])
-    .filter((c): c is { label?: string; userMessage?: string } =>
-      Boolean(c && typeof c === "object"),
-    )
+    // 运行时防御：choices 声明为 UiAskChoiceOption[]（label 必填），但内容来自
+    // 线上 JSON，实际可能缺字段。这里只过滤非对象，不再声明类型谓词——
+    // 原谓词把 label 写成可选，与元素类型不兼容（TS2677）；下面的 map 已用
+    // `c.label ?? ""` 兜底，行为不变。
+    .filter((c) => Boolean(c && typeof c === "object"))
     .map((c) => ({
       label: String(c.label ?? "").trim(),
       userMessage: typeof c.userMessage === "string" ? c.userMessage : undefined,

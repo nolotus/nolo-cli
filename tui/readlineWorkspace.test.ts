@@ -393,7 +393,7 @@ describe("createFixedInput", () => {
     // A dialog owns the top rows while paused; the workspace's resize handler
     // still re-docks the composer at the new bottom (the dialog repaints
     // itself on top via its own listener).
-    (tty.output as { rows: number }).rows = 12;
+    (tty.output as unknown as { rows: number }).rows = 12;
     input.repaint("draft");
 
     expect(input.isPaused()).toBe(true);

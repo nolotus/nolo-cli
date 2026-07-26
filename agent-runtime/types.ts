@@ -59,6 +59,15 @@ export interface AgentRuntimeResult {
   runtimeToolNames?: string[];
   runtimeToolSurface?: unknown;
   toolCallCount?: number;
+  /**
+   * Provider 报告的本次 LLM 调用收尾原因（OpenAI chat.completions 语义）。
+   * 典型值："stop"（正常说完）、"length"（撞输出 token 上限被砍断）、
+   * "tool_calls"（要求调工具）、"content_filter"。
+   *
+   * 多轮工具循环里只有最后一轮的值有意义，由 localLoop 透出顶层。
+   * 消费方据此区分"话说了一半"与"正常结束"，**不**改变控制流。
+   */
+  finish_reason?: string;
   /** Set when a turn is persisted after a provider/runtime failure. */
   error?: boolean;
   errorMessage?: string;

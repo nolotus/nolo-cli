@@ -200,6 +200,60 @@ describe("assistantOutput", () => {
     );
     expect(output).toContain("\x1b[1mNolo\x1b[0m");
   });
+
+  describe("polishAssistantStructure code fence masking", () => {
+    test("1. shell comments in code fence are not expanded with blank lines", () => {
+      const input = "```sh\n# setup\necho ok\n```";
+      expect(polishAssistantStructure(input)).toBe(input);
+    });
+
+    test("2. multi-level heading inside py block stays intact", () => {
+      const input = "```py\n### section\nx=1\n```";
+      expect(polishAssistantStructure(input)).toBe(input);
+    });
+
+    test("3. real heading outside code fence still receives blank lines", () => {
+      expect(polishAssistantStructure("intro\n## Title\nbody")).toBe(
+        "intro\n\n## Title\n\nbody"
+      );
+    });
+
+    test("4. mixed scenario: heading outside gets blank lines, comment inside does not", () => {
+      const input = "intro\n## Real\n```sh\n# fake\nls\n```\ntail";
+      const expected = "intro\n\n## Real\n\n```sh\n# fake\nls\n```\ntail";
+      expect(polishAssistantStructure(input)).toBe(expected);
+    });
+
+    test("5. consecutive blank lines inside code fence are preserved", () => {
+      const input = "```sh\nline1\n\n\n\n\nline2\n```";
+      expect(polishAssistantStructure(input)).toBe(input);
+    });
+
+    test("6. unclosed fence masks comments through end of text", () => {
+      const input = "intro\n```sh\n# setup\necho ok";
+      const expected = "intro\n```sh\n# setup\necho ok";
+      expect(polishAssistantStructure(input)).toBe(expected);
+    });
+
+    test("7. zero regression for text without code fences", () => {
+      const input = "paragraph 1\n## Heading 1\nsome text\n### Heading 2\n\nfinal text";
+      const expected = "paragraph 1\n\n## Heading 1\n\nsome text\n\n### Heading 2\n\nfinal text";
+      expect(polishAssistantStructure(input)).toBe(expected);
+    });
+
+    test("8. a literal NUL in code content cannot be mistaken for a mask sentinel", () => {
+      // The mask encodes fence interiors as \x00F<n>\x00. Content that already
+      // contained that shape would be restored as the wrong line, so NUL is
+      // stripped before masking rather than trusting callers to sanitize.
+      const NUL = String.fromCharCode(0);
+      const source = ["```sh", `${NUL}F0${NUL}`, "# a", "echo ok", "```"].join("\n");
+      const out = polishAssistantStructure(source, { trimEdges: false });
+      expect(out).not.toContain(NUL);
+      // The fence protection still holds: the comment is not padded.
+      expect(out).not.toContain("\n\n# a");
+      expect(out).toContain("echo ok");
+    });
+  });
 });
 
 describe("code block syntax highlighting", () => {

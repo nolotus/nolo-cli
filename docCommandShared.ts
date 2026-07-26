@@ -87,6 +87,7 @@ export function resolveWriteTargets(args: string[], env: EnvLike) {
 export function readTitle(args: string[]) {
   const valueFlags = new Set([
     "--title",
+    "--name",
     "--description",
     "--body",
     "--body-file",

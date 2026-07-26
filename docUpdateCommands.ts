@@ -54,7 +54,11 @@ function printSkillDocUpdateUsage(output: { write(chunk: string): unknown }) {
 Options:
   --id <skillId>            Skill id (without user prefix).
   --key <pageKey>           Full dbKey, e.g. page-<userId>-<skillId>.
-  --title <text>            New skill name.
+  --title <text>            New page title. Also renames the skill unless --name is given.
+  --name <text>             New skill name only, leaving the page title untouched.
+                            The name is the skill's identity that other docs
+                            reference, so prefer this over --title when you only
+                            want a nicer title.
   --description <text>      New skill description.
   --body <text>             New skill body.
   --body-file <path>       Read body from file.
@@ -181,6 +185,11 @@ async function runUpdateCommand(
 
     const parsed = parseSkillDocProtocol(existing?.content ?? "", meta);
     const description = readOption(args, "--description") ?? currentConfig.description;
+
+    const explicitName = readOption(args, "--name");
+    if (explicitName !== undefined && !explicitName.trim()) {
+      throw new Error("--name cannot be empty. Omit it to keep the current skill name.");
+    }
     const body = readBodyArg(args, parsed.content ?? "");
 
     const secretFindings = findPotentialSecrets(body);
@@ -197,8 +206,10 @@ async function runUpdateCommand(
       ...currentConfig,
       // The skill's `name` is its identity (other docs reference it), while the
       // page title is prose. They coincide for docs created via skill-doc create,
-      // but diverge when promoting a page, so only an explicit --title renames it.
-      name: explicitTitle ?? currentConfig.name ?? title,
+      // but diverge when promoting a page. --name targets the identity alone, so
+      // a doc can get a readable title without breaking references; without it,
+      // only an explicit --title renames.
+      name: explicitName ?? explicitTitle ?? currentConfig.name ?? title,
       description,
       ...(parseJsonArg<string[]>(readOption(args, "--tools"), currentConfig.toolNames ?? []).length
         ? { toolNames: parseJsonArg<string[]>(readOption(args, "--tools"), currentConfig.toolNames ?? []) }

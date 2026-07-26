@@ -59,7 +59,7 @@ describe("createDialogHost", () => {
 
     await host.run(async (anchor) => {
       expect(anchor.bottomRow()).toBe(28);
-      (resizable as { rows: number }).rows = 20;
+      (resizable as unknown as { rows: number }).rows = 20;
       expect(anchor.bottomRow()).toBe(18);
     });
   });

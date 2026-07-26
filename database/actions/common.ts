@@ -66,28 +66,23 @@ export const mergeConfiguredServers = (
 };
 // 全局缓存网络状态（仅 React Native 使用）
 let cachedNetworkState: boolean | null = null;
-let netInfoListenerInitialized = false;
+
+export const setCachedNetworkState = (state: boolean | null) => {
+  cachedNetworkState = state;
+};
+
+export const getCachedNetworkState = (): boolean | null => {
+  return cachedNetworkState;
+};
 
 // 检测是否为 React Native 环境
 const isReactNative = (): boolean => {
   return typeof navigator !== 'undefined' && (navigator as any).product === 'ReactNative';
 };
 
-// 初始化 NetInfo 监听器（仅在 React Native 环境调用）
+// 初始化 NetInfo 监听器兼容入口 (Common no-op. RN App 优先使用 networkListener.rn.ts)
 export const initNetworkListener = async () => {
-  if (!isReactNative() || netInfoListenerInitialized) return;
-
-  try {
-    // 动态导入 NetInfo，避免在 Web 环境下出错
-    const NetInfo = await import('@react-native-community/netinfo');
-    NetInfo.default.addEventListener(state => {
-      cachedNetworkState = state.isConnected ?? true;
-    });
-    netInfoListenerInitialized = true;
-    console.log('[NetInfo] Listener initialized');
-  } catch (error) {
-    console.warn('[NetInfo] Failed to initialize:', error);
-  }
+  // No-op in common module to prevent pulling React Native dependencies in CLI
 };
 
 // 改进的 isOnline 函数，兼容 Web 和 React Native

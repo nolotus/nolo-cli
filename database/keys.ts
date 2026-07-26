@@ -933,6 +933,24 @@ export const pubAgentKeys = {
   ],
 };
 
+/**
+ * Agent 凭证授权（Grant）键
+ *
+ * 显式授权表项（点对点授权）：
+ *   key: grant-agent-{ownerUserId}-{agentId}-{granteeUserId}
+ *
+ * key 结构中 ownerUserId 必须位于 agentId 与 granteeUserId 之前，
+ * 确保 resolveKeyOwnerId 解析结果为 ownerUserId，且天然通过写鉴权校验。
+ */
+export const createAgentGrantKey = {
+  single: (ownerUserId: string, agentId: string, granteeUserId: string) =>
+    createKey("grant", "agent", ownerUserId, agentId, granteeUserId),
+  rangeOfAgent: (ownerUserId: string, agentId: string) => ({
+    start: createKey("grant", "agent", ownerUserId, agentId, ""),
+    end: createKey("grant", "agent", ownerUserId, agentId, "\uffff"),
+  }),
+};
+
 /* ---- Share (re-exported from share/keys) ---- */
 
 

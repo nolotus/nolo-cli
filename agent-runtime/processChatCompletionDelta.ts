@@ -22,6 +22,8 @@ export type ChatCompletionStreamState = {
   content: string;
   reasoning: string;
   usage?: Record<string, unknown>;
+  /** 最后一轮 provider 报告的收尾原因；非空才覆盖，避免被中间 chunk 的 null 冲掉。 */
+  finishReason?: string;
   accumulatedToolCalls: Record<number, AccumulatedToolCall>;
   thinkState: ThinkParseState;
   onTextDelta?: (chunk: string) => void;
@@ -39,6 +41,12 @@ export function applyChatCompletionDelta(
 ): boolean {
   if (parsed?.usage && typeof parsed.usage === "object") {
     state.usage = parsed.usage;
+  }
+
+  // finish_reason 通常只在最后一个 chunk 非空；非空才覆盖，前面的 null 不冲掉。
+  const rawFinishReason = parsed?.choices?.[0]?.finish_reason;
+  if (typeof rawFinishReason === "string" && rawFinishReason.length > 0) {
+    state.finishReason = rawFinishReason;
   }
 
   const delta = parsed?.choices?.[0]?.delta;

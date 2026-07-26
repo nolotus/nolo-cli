@@ -51,7 +51,15 @@ export interface Model {
     Record<"batch" | "flex" | "priority", ServiceTierPriceMultiplier>
   >;
 
-  maxOutputTokens?: any; // 最大输出令牌数，建议改为 number
+  /**
+   * 最大输出令牌数（建议改为 number）。
+   *
+   * ⚠ 未经验证的参考值，**不要用它构造请求的 max_tokens**。这份数据没有任何请求路径消费，
+   * 因此从未被真实调用校正过，已知至少两处失真：deepseek-v4-pro 标 384000（把
+   * contextWindow 抄进了本字段，实测约 4K 即被截断）；deepinfra 的 Claude 系标 4092
+   * （远低于这些模型的真实输出能力）。真值在 provider 手里，我们抄一份只会静默偏离。
+   */
+  maxOutputTokens?: any;
   jsonOutput?: boolean; // 是否支持 JSON 结构化输出
   fnCall?: boolean; // 是否支持函数调用
   provider?: string; // 供应商

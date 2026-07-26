@@ -201,4 +201,12 @@ export interface Message {
 
   // ========= 消息级 UI 选项（Agent 菜单 / quick reply） =========
   options?: UiOption[];
+
+  /**
+   * Provider 报告的收尾原因（OpenAI chat.completions 语义）。
+   * 复用 CompletionFinishReason；只存需要用户知道的值：
+   * "length"（撞输出上限被截断）、"content_filter"、以及工具轮的 "tool_calls"。
+   * "stop" 是正常结束，不存（避免污染记录）。
+   */
+  finishReason?: CompletionFinishReason;
 }

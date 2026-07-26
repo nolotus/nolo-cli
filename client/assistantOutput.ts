@@ -340,8 +340,34 @@ export function polishAssistantStructure(
   text: string,
   options: { trimEdges?: boolean } = {}
 ) {
-  const polished = convertMarkdownTablesForTerminal(text)
+  // Drop NUL before masking. The fence mask below encodes interior lines as
+  // \x00F<n>\x00, so text that already contained a literal \x00 could be
+  // mistaken for a sentinel and restored as the wrong line. NUL is never
+  // meaningful in markdown — the TUI transcript path strips it anyway — so
+  // removing it here closes the collision instead of relying on callers.
+  const converted = convertMarkdownTablesForTerminal(text)
     .replace(/\r\n/g, "\n")
+    .replace(/\x00/g, "");
+  const lines = converted.split("\n");
+
+  // 遮罩：逐行扫描并标记围栏内部。
+  // 围栏标记行（```）本身不属于围栏内部内容，保持参与围栏外逻辑；
+  // 而开围栏与闭围栏之间的行被判定为围栏内部，替换为形如 \x00F<n>\x00 的非空哨兵串，
+  // 避免匹配标题加空行正则，且防止围栏内连续空行被正则 3 压缩。
+  let inFence = false;
+  const maskedLines = lines.map((line, index) => {
+    if (isCodeFenceLine(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence) {
+      return `\x00F${index}\x00`;
+    }
+    return line;
+  });
+
+  const polishedMasked = maskedLines
+    .join("\n")
     // Blank line before a heading, and one after it. Only the "before" half
     // existed, so a heading sat flush against its own body text and sections
     // ran together — the breathing room is what makes the structure scannable
@@ -349,6 +375,13 @@ export function polishAssistantStructure(
     .replace(/([^\n])\n(#{1,3} )/g, "$1\n\n$2")
     .replace(/^(#{1,3} .+)\n(?!\n)/gm, "$1\n\n")
     .replace(/\n{4,}/g, "\n\n\n");
+
+  // 还原：将哨兵串按行号还原为原始围栏行
+  const polished = polishedMasked.replace(
+    /\x00F(\d+)\x00/g,
+    (_, id) => lines[Number(id)] ?? ""
+  );
+
   // Streamed per-line blocks must keep their indentation (bullets, list items);
   // only whole-message formatting trims outer whitespace.
   return options.trimEdges === false ? polished : polished.trim();

@@ -15,6 +15,7 @@ import type {
   AgentRuntimeResult,
 } from "./types";
 import { parseToolArgumentsJson } from "./parseToolArguments";
+import { sanitizeToolCallPairing } from "./toolCallPairing";
 
 export type LocalAgentTurnInput = {
   adapter: AgentRuntimeHostAdapter;
@@ -100,7 +101,7 @@ export const LOCAL_AGENT_CONFIG_MISSING_CODE = "LOCAL_AGENT_CONFIG_MISSING";
  * 不动其判定/流程逻辑。
  */
 export const EMPTY_ASSISTANT_REPAIR_PROMPT =
-  "你刚刚返回了空消息。请继续完成当前任务：如果需要工具就调用工具，否则直接输出可执行的简短结果；不要留空。";
+  "请给出明确的文字回答或执行下一步：如果任务已完成，请直接总结结果；如果需要调用工具，请直接输出 tool_calls。请切勿返回空内容。";
 export const EMPTY_ASSISTANT_FALLBACK_MESSAGE =
   "模型连续返回空消息，当前任务未完成。请重试当前步骤，或给出更具体的修改范围。";
 
@@ -111,7 +112,8 @@ export const EMPTY_ASSISTANT_FALLBACK_MESSAGE =
  * - 未用过 repair → repair（注入 repair system message 重试一次）
  * - 用过 repair → fallback/empty_completion（以诊断文案结束）
  *
- * reasoning-only 流（content 空、无 tool_calls）算空轮，无论 reasoning 有无。
+ * - reasoning_content 已计入可见输出：只要有 reasoning（或 content/tool_calls）即 ok；
+ *   reasoning-only 且无 tool_calls 仍走 repair/fallback。
  */
 export function resolveEmptyAssistantOutcome(args: {
   hasToolCalls: boolean;
@@ -123,8 +125,12 @@ export function resolveEmptyAssistantOutcome(args: {
   return { kind: "fallback", reason: "empty_completion" };
 }
 
-/** assistant 是否产生了可见输出（文本/图片）。tool_calls 由调用方单独判定。 */
-export function hasAssistantVisibleOutput(content: AgentRuntimeMessageContent): boolean {
+/** assistant 是否产生了可见输出（文本/图片/思考过程）。tool_calls 由调用方单独判定。 */
+export function hasAssistantVisibleOutput(
+  content: AgentRuntimeMessageContent,
+  reasoningContent?: string,
+): boolean {
+  if (typeof reasoningContent === "string" && reasoningContent.trim().length > 0) return true;
   if (typeof content === "string") return content.trim().length > 0;
   if (!Array.isArray(content)) return false;
   return content.some((part) => {
@@ -401,12 +407,27 @@ function summarizeHistoricalToolContent(content: AgentRuntimeMessageContent): Ag
 function prepareMessagesForProviderCall(
   messages: AgentRuntimeChatMessage[],
 ): AgentRuntimeChatMessage[] {
-  return messages.map((message) => {
-    if (message.role !== "tool") return message;
+  // 发 provider 前的唯一咽喉点：先修掉 tool_calls/tool 配对违规（孤儿 tool、悬空 tool_calls），
+  // 再走原 map。脏历史不能原样发给 OpenAI 兼容接口。
+  const paired = sanitizeToolCallPairing(messages);
+  return paired.map((message) => {
+    const sanitizedContent =
+      message.content == null
+        ? ""
+        : typeof message.content === "string"
+          ? message.content
+          : message.content;
+
+    if (message.role !== "tool") {
+      return {
+        ...message,
+        content: sanitizedContent,
+      };
+    }
     return {
       ...message,
       content: summarizeToolContentForProvider(
-        message.content,
+        sanitizedContent,
         MAX_IN_TURN_TOOL_CONTENT_CHARS,
         "in-turn tool result truncated before next provider call",
       ),
@@ -535,11 +556,12 @@ export async function runLocalAgentTurn(
       });
       turnUsage = mergeTurnUsage(turnUsage, result.usage);
       const toolCalls = result.tool_calls ?? [];
-      if (toolCalls.length === 0) {
-        // 空轮判定：content 空、无 tool_calls 即空轮（reasoning-only 也算空轮）。
+      const rawToolCallsCount = (result.tool_calls?.length ?? 0) || (Array.isArray((result as any).raw_tool_calls) ? (result as any).raw_tool_calls.length : 0);
+      if (toolCalls.length === 0 && rawToolCallsCount === 0) {
+        // 空轮判定：无可见输出（文本/图片/思考过程）且绝对无 tool_calls 意图即空轮。
         const outcome = resolveEmptyAssistantOutcome({
-          hasToolCalls: false,
-          hasVisibleOutput: hasAssistantVisibleOutput(result.content),
+          hasToolCalls: rawToolCallsCount > 0,
+          hasVisibleOutput: hasAssistantVisibleOutput(result.content, result.reasoning_content),
           repairUsed: emptyAssistantRepairUsed,
         });
         if (outcome.kind === "repair") {
@@ -707,6 +729,8 @@ export async function runLocalAgentTurn(
     ...(turnUsage ? { usage: turnUsage } : {}),
     ...(toolCallCount > 0 ? { toolCallCount } : {}),
     ...((agentConfig as any).toolSurface ? { runtimeToolSurface: (agentConfig as any).toolSurface } : {}),
+    // 透出最后一轮 provider 调用的 finish_reason；多轮工具循环里只有最后一轮收尾状态有意义。
+    ...(result.finish_reason ? { finish_reason: result.finish_reason } : {}),
     dialogId: saved.dialogId,
     turnMessages,
   };

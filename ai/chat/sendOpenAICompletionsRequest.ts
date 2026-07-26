@@ -1050,7 +1050,7 @@ export const sendOpenAICompletionsRequest = async ({
               ...requestBody,
               messages: [
                 ...(requestBody.messages ?? []),
-                { role: "system", content: EMPTY_ASSISTANT_REPAIR_PROMPT },
+                { role: "user", content: EMPTY_ASSISTANT_REPAIR_PROMPT },
               ],
             },
             currentServer: selectCurrentServer(getState() as RootState),

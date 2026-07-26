@@ -515,10 +515,10 @@ export async function runLocalAgentTurn(
   try {
     while (true) {
       throwIfAborted(input);
-      // 空轮修复：把 repair system message 追加到本轮请求末尾重试一次。
+      // 空轮修复：把 repair user message 追加到本轮请求末尾重试一次（系统消息放在末尾会被大部分 Provider API 拒收或返回空消息）。
       const baseRequestMessages = prepareMessagesForProviderCall(messages);
       const requestMessages: AgentRuntimeChatMessage[] = emptyAssistantRepairPending
-        ? [...baseRequestMessages, { role: "system", content: EMPTY_ASSISTANT_REPAIR_PROMPT }]
+        ? [...baseRequestMessages, { role: "user", content: EMPTY_ASSISTANT_REPAIR_PROMPT }]
         : baseRequestMessages;
       emptyAssistantRepairPending = false;
       result = await runCompleteWithTimeout({

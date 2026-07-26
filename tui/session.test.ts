@@ -107,6 +107,7 @@ describe("applyTuiInputKey", () => {
     expect(applyTuiInputKey("ab", "\x7f").buffer).toBe("a");
     expect(applyTuiInputKey("abc", "\r", { name: "enter" })).toEqual({
       buffer: "",
+      cursorPos: 0,
       submit: "abc",
     });
     expect(applyTuiInputKey("abc", "\u0003").abort).toBe(true);
@@ -115,6 +116,7 @@ describe("applyTuiInputKey", () => {
   test("opens copy view with Ctrl+O without changing the draft", () => {
     expect(applyTuiInputKey("draft", "\u000f")).toEqual({
       buffer: "draft",
+      cursorPos: 5,
       copyView: true,
     });
   });
@@ -135,6 +137,7 @@ describe("applyTuiInputKey", () => {
     const enterRes = applyTuiInputKey(pasteRes.buffer, "\r", { name: "enter" });
     expect(enterRes).toEqual({
       buffer: "",
+      cursorPos: 0,
       submit: "line1\nline2\nline3",
     });
   });
@@ -157,6 +160,36 @@ describe("applyTuiInputKey", () => {
   test("Delete on empty buffer is a no-op", () => {
     expect(applyTuiInputKey("", "\x1b[3~").buffer).toBe("");
     expect(applyTuiInputKey("", "\x1b[3;5~").buffer).toBe("");
+  });
+
+  test("handles left/right arrow navigation, home/end, and in-middle edits", () => {
+    // Navigating left moves cursor left
+    const leftRes = applyTuiInputKey("abcd", "\x1b[D", { name: "left" }, 4);
+    expect(leftRes.buffer).toBe("abcd");
+    expect(leftRes.cursorPos).toBe(3);
+
+    // Typing in the middle inserts character at cursorPos
+    const insertRes = applyTuiInputKey("abcd", "X", {}, 2);
+    expect(insertRes.buffer).toBe("abXcd");
+    expect(insertRes.cursorPos).toBe(3);
+
+    // Backspace in the middle deletes character left of cursorPos
+    const bsRes = applyTuiInputKey("abXcd", "\x7f", { name: "backspace" }, 3);
+    expect(bsRes.buffer).toBe("abcd");
+    expect(bsRes.cursorPos).toBe(2);
+
+    // Forward delete in the middle deletes character at cursorPos
+    const delRes = applyTuiInputKey("abcd", "\x1b[3~", { name: "delete" }, 1);
+    expect(delRes.buffer).toBe("acd");
+    expect(delRes.cursorPos).toBe(1);
+
+    // Home / Ctrl+A moves cursor to 0
+    const homeRes = applyTuiInputKey("abcd", "\x1b[H", { name: "home" }, 3);
+    expect(homeRes.cursorPos).toBe(0);
+
+    // End / Ctrl+E moves cursor to buffer.length
+    const endRes = applyTuiInputKey("abcd", "\x1b[F", { name: "end" }, 1);
+    expect(endRes.cursorPos).toBe(4);
   });
 });
 

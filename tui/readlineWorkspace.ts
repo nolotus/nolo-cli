@@ -1355,6 +1355,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     output.write("\x1b[?2004h");
     let busy = false;
     let done = false;
+    let buffer = "";
+    let cursorPos = 0;
     // True while a raw action gate is waiting for the user to press Enter.
     // The gate owns the keyboard during this modal phase (its own `data`
     // listener handles Enter/Ctrl+C), so the main loop must not let stray
@@ -1426,7 +1428,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     fixedInput.init();
     const paintFrame = (draft: string) => {
       renderHistoryToOutput();
-      fixedInput.repaint(draft);
+      fixedInput.repaint(draft, cursorPos);
     };
     const onResize = () => {
       if (done || copyViewExitResolver) return;
@@ -1440,7 +1442,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // vanished composer), and the dialog's own resize listener —
         // registered after this one — repaints its frame on top.
         renderHistory(output, history, fixedInput.getInputLines());
-        fixedInput.repaint(buffer);
+        fixedInput.repaint(buffer, cursorPos);
         return;
       }
       paintFrame(buffer);
@@ -1501,7 +1503,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         activeTurnAbort.abort();
         return;
       }
-      const result = applyTuiInputKey(buffer, sequence);
+      const result = applyTuiInputKey(buffer, sequence, {}, cursorPos);
       if (result.copyView) {
         if (busyLock) return;
         busy = true;
@@ -1550,7 +1552,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               output.write(`${res.output}\n`);
             }
             buffer = "";
-            if (fixedInput.active) fixedInput.repaint(buffer);
+            cursorPos = 0;
+            if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
             return;
           }
           const binding = ensureChatQueueBinding(
@@ -1582,7 +1585,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           if (decision.kind === "queue-text") {
             binding.enqueue(decision.text);
             buffer = "";
-            fixedInput.repaint(buffer);
+            cursorPos = 0;
+            fixedInput.repaint(buffer, cursorPos);
           } else if (decision.kind === "queue-blocked") {
             // Attachments / mentions can't be queued yet; keep the draft so
             // the user can resend after the turn. No destructive action.
@@ -1595,6 +1599,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         busy = true;
         const submittedText = result.submit;
         buffer = "";
+        cursorPos = 0;
         // Note: we intentionally keep the `data` listener attached. During the
         // agent turn the user can still type into the composer; submit is
         // gated by `busy` above. This avoids tearing the input chrome down
@@ -1640,18 +1645,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
         // Status may have picked up token usage during the turn — repaint chips.
         // Restore the user's draft (which may have been edited while busy).
-        fixedInput.exitOutputMode(buffer);
+        fixedInput.exitOutputMode(buffer, cursorPos);
         return;
       }
       buffer = result.buffer;
-      fixedInput.repaint(buffer);
+      cursorPos = result.cursorPos ?? buffer.length;
+      fixedInput.repaint(buffer, cursorPos);
     };
     const onData = createRawInputDecoder((token) => {
       void handleInputToken(token);
     });
     try {
       input.on("data", onData);
-      fixedInput.repaint(buffer);
+      fixedInput.repaint(buffer, cursorPos);
       await new Promise<void>((resolve) => {
         const check = setInterval(() => {
           if (done) {

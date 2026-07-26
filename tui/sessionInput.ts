@@ -8,19 +8,23 @@ export const PASTE_TOKEN_PREFIX = "\x00PASTE\x00";
 export function applyTuiInputKey(
   buffer: string,
   sequence: string | undefined,
-  key: TuiKeyInfo = {}
+  key: TuiKeyInfo = {},
+  cursorPos?: number
 ): TuiInputKeyResult {
   const seq = sequence ?? "";
+  const curPos = Math.max(0, Math.min(buffer.length, cursorPos ?? buffer.length));
+
   if (seq.startsWith(PASTE_TOKEN_PREFIX)) {
     const rawPayload = seq.slice(PASTE_TOKEN_PREFIX.length);
     const normalized = rawPayload.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    return { buffer: `${buffer}${normalized}` };
+    const nextBuf = buffer.slice(0, curPos) + normalized + buffer.slice(curPos);
+    return { buffer: nextBuf, cursorPos: curPos + normalized.length };
   }
   if (seq === "\u0003" || (key.ctrl && key.name === "c")) {
-    return { buffer, abort: true };
+    return { buffer, cursorPos: curPos, abort: true };
   }
   if (seq === "\u000f" || (key.ctrl && key.name === "o")) {
-    return { buffer, copyView: true };
+    return { buffer, cursorPos: curPos, copyView: true };
   }
   if (
     seq === "\x1b[13;2~" ||
@@ -30,58 +34,99 @@ export function applyTuiInputKey(
     seq === "\n" ||
     (key.ctrl && key.name === "j")
   ) {
-    return { buffer: `${buffer}\n` };
+    const nextBuf = buffer.slice(0, curPos) + "\n" + buffer.slice(curPos);
+    return { buffer: nextBuf, cursorPos: curPos + 1 };
   }
   if (key.name === "enter" || key.name === "return" || seq === "\r") {
-    return { buffer: "", submit: buffer };
+    return { buffer: "", cursorPos: 0, submit: buffer };
   }
-  // Backspace / Delete (incl. modifier variants).
-  // Plain: \b (0x08), \x7f (DEL). Alt+Backspace: \x1b\x7f / \x1b\b (split into
-  // ESC + DEL by splitRawInput, so the DEL half reaches here as \x7f/\b).
-  // Ctrl/Shift+Backspace on modern terminals: \x1b[3;5~ / \x1b[27;2;8~.
-  // Forward Delete and modifier Delete: \x1b[3~ and \x1b[3;{modifier}~.
-  // In a single-line buffer, forward-delete behaves like backspace.
-  if (
-    key.name === "backspace" ||
-    key.name === "delete" ||
-    seq === "\b" ||
-    seq === "\x7f" ||
-    isDeleteFamilyCsi(seq)
-  ) {
-    if (buffer.length > 0) {
-      return { buffer: buffer.slice(0, -1) };
+
+  // Navigation: Left / Right / Home (Ctrl+A) / End (Ctrl+E)
+  if (isLeftArrowSequence(seq, key)) {
+    return { buffer, cursorPos: Math.max(0, curPos - 1) };
+  }
+  if (isRightArrowSequence(seq, key)) {
+    return { buffer, cursorPos: Math.min(buffer.length, curPos + 1) };
+  }
+  if (isHomeSequence(seq, key)) {
+    return { buffer, cursorPos: 0 };
+  }
+  if (isEndSequence(seq, key)) {
+    return { buffer, cursorPos: buffer.length };
+  }
+
+  // Backspace (deletes character left of cursor)
+  if (isBackspaceSequence(seq, key)) {
+    if (curPos > 0) {
+      const nextBuf = buffer.slice(0, curPos - 1) + buffer.slice(curPos);
+      return { buffer: nextBuf, cursorPos: curPos - 1 };
     }
-    return { buffer };
+    return { buffer, cursorPos: curPos };
   }
+
+  // Forward Delete (deletes character at cursor; fallback to backspace if at end)
+  if (isForwardDeleteSequence(seq, key)) {
+    if (curPos < buffer.length) {
+      const nextBuf = buffer.slice(0, curPos) + buffer.slice(curPos + 1);
+      return { buffer: nextBuf, cursorPos: curPos };
+    }
+    if (curPos > 0) {
+      const nextBuf = buffer.slice(0, curPos - 1);
+      return { buffer: nextBuf, cursorPos: curPos - 1 };
+    }
+    return { buffer, cursorPos: curPos };
+  }
+
   if (seq === "\t" || key.name === "tab") {
-    // Tab-complete slash commands: unique match fills the whole command
-    // (plus a trailing space, ready for arguments), multiple matches extend
-    // to their longest common prefix. Never inserts a literal tab.
-    return { buffer: completeSlashPrefix(buffer) ?? buffer };
+    const completed = completeSlashPrefix(buffer) ?? buffer;
+    return { buffer: completed, cursorPos: completed.length };
   }
+
   if (!seq || key.ctrl || key.meta || seq.startsWith("\x1b")) {
-    return { buffer };
+    return { buffer, cursorPos: curPos };
   }
-  return { buffer: `${buffer}${seq}` };
+
+  const nextBuf = buffer.slice(0, curPos) + seq + buffer.slice(curPos);
+  return { buffer: nextBuf, cursorPos: curPos + seq.length };
 }
 
-/**
- * Match CSI sequences for Backspace/Delete with modifier keys.
- *
- * Terminals encode modifier keys in the CSI parameter: `\x1b[3;{m}~` for
- * Delete variants and some terminals use `\x1b[27;{m};{code}~` for Backspace
- * variants. We accept any modifier (2=shift, 3=alt, 5=ctrl, etc.) and any
- * base (3=Delete, 8=Backspace), since in a single-line TUI buffer they all
- * just delete the last character.
- */
-function isDeleteFamilyCsi(seq: string): boolean {
-  // Delete family: ESC [ 3 [; modifier] ~  (e.g. \x1b[3~, \x1b[3;2~, \x1b[3;5~)
-  // eslint-disable-next-line no-control-regex
-  if (/^\x1b\[3(?:;\d+)*~$/.test(seq)) return true;
-  // Backspace family: ESC [ 27 ; modifier ; 8 ~ (e.g. \x1b[27;2;8~)
-  // eslint-disable-next-line no-control-regex
-  if (/^\x1b\[27;\d+;8~$/.test(seq)) return true;
+function isLeftArrowSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.name === "left") return true;
+  if (seq === "\x1b[D" || seq === "\x1b[1;2D" || seq === "\x1b[1;5D" || seq === "\x1bOD") return true;
   return false;
+}
+
+function isRightArrowSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.name === "right") return true;
+  if (seq === "\x1b[C" || seq === "\x1b[1;2C" || seq === "\x1b[1;5C" || seq === "\x1bOC") return true;
+  return false;
+}
+
+function isHomeSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.name === "home") return true;
+  if (key.ctrl && key.name === "a") return true;
+  if (seq === "\u0001" || seq === "\x1b[H" || seq === "\x1b[1~" || seq === "\x1b[7~" || seq === "\x1bOH") return true;
+  return false;
+}
+
+function isEndSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.name === "end") return true;
+  if (key.ctrl && key.name === "e") return true;
+  if (seq === "\u0005" || seq === "\x1b[F" || seq === "\x1b[4~" || seq === "\x1b[8~" || seq === "\x1bOF") return true;
+  return false;
+}
+
+function isBackspaceSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.name === "backspace") return true;
+  if (seq === "\b" || seq === "\x7f") return true;
+  // eslint-disable-next-line no-control-regex
+  return /^\x1b\[27;\d+;8~$/.test(seq);
+}
+
+function isForwardDeleteSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.name === "delete") return true;
+  // eslint-disable-next-line no-control-regex
+  return /^\x1b\[3(?:;\d+)*~$/.test(seq);
 }
 
 // ─── Slash command registry & completion ────────────────────────────────────

@@ -32,8 +32,8 @@ export type FixedInputController = {
    * does not flash away during the agent turn.
    */
   enterOutputMode(submittedText: string): void;
-  exitOutputMode(buffer: string): void;
-  repaint(buffer: string): void;
+  exitOutputMode(buffer: string, cursorPos?: number): void;
+  repaint(buffer: string, cursorPos?: number): void;
   pause(): void;
   resumeFromSubprocess(): void;
   resumeFromDialog(): void;
@@ -117,7 +117,10 @@ export function createFixedInput(
    * ──────────────────────── bottom rule
    * No side borders, no rainbow powerline blocks, status never wraps.
    */
-  const renderInputArea = (buffer: string): { text: string; lines: number; cursorCol: number; cursorRow: number } => {
+  const renderInputArea = (
+    buffer: string,
+    cursorPos?: number,
+  ): { text: string; lines: number; cursorCol: number; cursorRow: number } => {
     const colorEnabled = resolveCliColorEnabled();
     const cols = Math.max(1, getColumns());
 
@@ -125,6 +128,15 @@ export function createFixedInput(
     const sections: string[] = [];
     if (completions.length > 0) {
       sections.push(fitAnsiLine(dimCliText(completions.join("  "), colorEnabled), cols));
+    }
+
+    // Activity line (e.g. active tool execution like "~ Run ... · Esc to stop")
+    // sits ABOVE the top divider rule so ongoing step operations appear in the
+    // scrollback stream area, keeping the composer chrome (status, queues, prompt)
+    // cleanly bounded below the line.
+    const activityLine = config.getActivityLine?.() ?? null;
+    if (activityLine) {
+      sections.push(fitAnsiLine(activityLine.replace(/\r?\n/g, " "), cols));
     }
 
     // The composer rules follow the theme's chrome token rather than a
@@ -136,11 +148,6 @@ export function createFixedInput(
     sections.push(rule);
 
     sections.push(fitAnsiLine(config.getStatusLine(), cols));
-
-    const activityLine = config.getActivityLine?.() ?? null;
-    if (activityLine) {
-      sections.push(fitAnsiLine(activityLine.replace(/\r?\n/g, " "), cols));
-    }
 
     // Queued follow-up preview lines sit between the status line and the input
     // prompt so the user sees the actual staged text, not just a count.
@@ -157,9 +164,12 @@ export function createFixedInput(
     const contentWidth = Math.max(1, cols - promptWidth);
     const logicalLines = buffer.length === 0 ? [""] : buffer.split("\n");
 
+    const targetPos = Math.max(0, Math.min(buffer.length, cursorPos ?? buffer.length));
+    let charOffset = 0;
     let cursorCol = promptWidth;
     let cursorRow = 0;
     let inputRows = 0;
+    let cursorFound = false;
 
     for (let i = 0; i < logicalLines.length; i += 1) {
       const logical = logicalLines[i] ?? "";
@@ -172,6 +182,7 @@ export function createFixedInput(
         cursorCol = promptWidth;
         cursorRow = 0;
         inputRows = 1;
+        cursorFound = true;
         continue;
       }
 
@@ -179,11 +190,26 @@ export function createFixedInput(
       const rows = wrapped.length > 0 ? wrapped : [""];
       for (let j = 0; j < rows.length; j += 1) {
         const rowPrefix = j === 0 ? prefix : " ".repeat(promptWidth);
-        sections.push(`${rowPrefix}${rows[j]}`);
-        cursorCol = displayWidth(rowPrefix) + displayWidth(rows[j]);
-        cursorRow = inputRows;
+        const rowText = rows[j] ?? "";
+        sections.push(`${rowPrefix}${rowText}`);
+
+        const rowLen = rowText.length;
+        if (!cursorFound) {
+          if (
+            targetPos <= charOffset + rowLen ||
+            (j === rows.length - 1 && i === logicalLines.length - 1)
+          ) {
+            const subOffset = Math.max(0, Math.min(rowLen, targetPos - charOffset));
+            const subStr = rowText.slice(0, subOffset);
+            cursorCol = displayWidth(rowPrefix) + displayWidth(subStr);
+            cursorRow = inputRows;
+            cursorFound = true;
+          }
+        }
+        charOffset += rowLen;
         inputRows += 1;
       }
+      charOffset += 1; // count newline between logical lines
     }
 
     const text = sections.join("\n");
@@ -196,8 +222,8 @@ export function createFixedInput(
     return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 
-  const repaintAt = (buffer: string) => {
-    const { text, lines, cursorCol, cursorRow } = renderInputArea(buffer);
+  const repaintAt = (buffer: string, cursorPos?: number) => {
+    const { text, lines, cursorCol, cursorRow } = renderInputArea(buffer, cursorPos);
     if (lines !== inputLines) {
       inputLines = lines;
     }
@@ -228,12 +254,12 @@ export function createFixedInput(
       // bottom chrome down here is what made the bar flash away on Enter.
       repaintAt("");
     },
-    exitOutputMode(buffer: string) {
+    exitOutputMode(buffer: string, cursorPos?: number) {
       saveCursor();
-      repaintAt(buffer);
+      repaintAt(buffer, cursorPos);
     },
-    repaint(buffer: string) {
-      repaintAt(buffer);
+    repaint(buffer: string, cursorPos?: number) {
+      repaintAt(buffer, cursorPos);
     },
     pause() {
       paused = true;

@@ -130,6 +130,7 @@ export type TuiKeyInfo = {
 
 export type TuiInputKeyResult = {
   buffer: string;
+  cursorPos?: number;
   submit?: string;
   abort?: boolean;
   copyView?: boolean;

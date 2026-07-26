@@ -825,6 +825,28 @@ describe("createRawInputDecoder", () => {
 
     expect(tokens.join("")).toBe("hello 世界");
   });
+
+  test("handles split ANSI SGR mouse tracking sequence across chunks", async () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), { escTimeoutMs: 20 });
+    // Chunk 1 has only \x1b
+    decode("\x1b");
+    expect(tokens).toEqual([]); // held in buffer
+
+    // Chunk 2 finishes the SGR mouse scroll sequence
+    decode("[<65;62;24M");
+    expect(tokens).toEqual(["\x1b[<65;62;24M"]);
+  });
+
+  test("flushes standalone ESC after escTimeoutMs", async () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), { escTimeoutMs: 10 });
+    decode("\x1b");
+    expect(tokens).toEqual([]); // pending timeout
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(tokens).toEqual(["\x1b"]);
+  });
 });
 
 describe("scroll-aware history", () => {
@@ -1357,7 +1379,7 @@ describe("scroll-aware history", () => {
 // 根因：/resume 把数据库里的原始 markdown 直接 push 进 history，绕过和新回复
 // （流式）同一套完整渲染器（assistantOutput.ts），重绘时只有 theme.ts 的
 // highlightMarkdown 生效，它处理不了表格/列表/链接。修复：push 前对 assistant
-// turn 过一遍 formatAssistantDisplay，mode 取 state.renderDisplay。
+// turn 过一遍 formatAssistantDisplay。
 describe("/resume renders restored assistant turns through the full renderer", () => {
   type FakeInput = PassThrough & {
     isTTY?: boolean;
@@ -1465,18 +1487,5 @@ describe("/resume renders restored assistant turns through the full renderer", (
     expect(out).toContain("| a | b |");
     // 不应被转成 bullet。
     expect(out).not.toContain("• a");
-  });
-
-  test("/render plain is respected: no ANSI color in restored assistant turn", async () => {
-    const out = await runResume(
-      [{ role: "assistant", content: "- 第一项" }],
-      { NOLO_CLI_RENDER: "plain" },
-    );
-    // plain 模式下 formatAssistantDisplay 走 styleInlineMarkdown("plain")，
-    // bullet 不会被颜色 SGR 包裹。rich 模式会把 • 渲染成
-    // \x1b[<color>m•\x1b[0m；plain 下绝不应出现这种颜色包裹的 bullet。
-    expect(out).toContain("•");
-    expect(out).toContain("第一项");
-    expect(out).not.toMatch(/\x1b\[\d+m•\x1b\[0m/);
   });
 });

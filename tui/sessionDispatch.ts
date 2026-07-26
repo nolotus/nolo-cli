@@ -6,9 +6,6 @@ import {
   resolveAuthToken,
 } from "../cliEnvHelpers";
 import {
-  normalizeRenderDisplayMode,
-} from "../client/assistantOutput";
-import {
   normalizeThinkingDisplayMode,
 } from "../client/thinkingOutput";
 import {
@@ -94,7 +91,6 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
       "hide"
     ),
     toolDisplay: normalizeToolDisplayMode(env.NOLO_CLI_TOOLS ?? env.NOLO_TOOLS, "compact"),
-    renderDisplay: normalizeRenderDisplayMode(env.NOLO_CLI_RENDER ?? env.NOLO_RENDER, "rich"),
   };
 }
 
@@ -279,26 +275,6 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       return {
         nextState: { ...state, thinkingDisplay: nextMode },
         output: `Thinking display: ${nextMode}`,
-      };
-    }
-    case "/render": {
-      if (!argText) {
-        return {
-          nextState: state,
-          output: `Render display: ${state.renderDisplay} (plain | rich)`,
-        };
-      }
-      const normalizedArg = asTrimmedLowercaseString(argText);
-      if (!["plain", "rich", "on", "off"].includes(normalizedArg)) {
-        return {
-          nextState: state,
-          output: "Usage: /render <plain|rich>",
-        };
-      }
-      const nextMode = normalizeRenderDisplayMode(normalizedArg, state.renderDisplay);
-      return {
-        nextState: { ...state, renderDisplay: nextMode },
-        output: `Render display: ${nextMode}`,
       };
     }
     case "/tasks":

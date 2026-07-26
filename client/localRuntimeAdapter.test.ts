@@ -97,7 +97,10 @@ describe("CLI local runtime adapter", () => {
     "cliDoctor",
   ];
   const DEFAULT_PRIVATE_LOCAL_TOOL_NAMES = [
+    "ui_ask_choice",
     ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
+    "exa_search",
+    "fetchWebpage",
     ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
   ];
 
@@ -1425,7 +1428,10 @@ describe("CLI local runtime adapter", () => {
       },
     });
     expect(toolNamesFromRequest(requests[0])).toEqual([
+      "ui_ask_choice",
       ...LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES,
+      "exa_search",
+      "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
     ]);
   });
@@ -2128,7 +2134,10 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(toolNamesFromRequest(requests[0])).toEqual([
+      "ui_ask_choice",
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
+      "exa_search",
+      "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
     ]);
   });
@@ -2182,7 +2191,10 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(toolNamesFromRequest(requests[0])).toEqual([
+      "ui_ask_choice",
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
+      "exa_search",
+      "fetchWebpage",
       "queryTableRows",
     ]);
   });
@@ -2221,7 +2233,7 @@ describe("CLI local runtime adapter", () => {
       input: "inspect cwd",
     });
 
-    expect(toolNamesFromRequest(requests[0])).toEqual(["listFiles", "readFile", "execShell"]);
+    expect(toolNamesFromRequest(requests[0])).toEqual(["ui_ask_choice", "listFiles", "readFile", "execShell"]);
   });
 
   test("defaults local workspace tools to strategy descriptions and rich parameters", async () => {
@@ -3795,6 +3807,157 @@ describe("CLI local runtime adapter", () => {
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
+  });
+
+  test("exposes fetchWebpage and exa_search to OpenAI-compatible providers when the agent declares them", async () => {
+    const requests: Array<{ body: any }> = [];
+    const adapter = createAdapter({
+      env: {
+        OPENAI_API_KEY: "sk-local",
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+      },
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-web-search",
+          prompt: "Search the web.",
+          model: "gpt-4.1-mini",
+          toolNames: ["fetchWebpage", "exa_search"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({
+          choices: [{ message: { content: "done" } }],
+        });
+      },
+    });
+
+    await runLocalAgentTurn({
+      adapter,
+      agentRef: "web-search",
+      input: "搜索一下",
+    });
+
+    const toolNames = toolNamesFromRequest(requests[0]);
+    expect(toolNames).toContain("fetchWebpage");
+    expect(toolNames).toContain("exa_search");
+  });
+
+  test("does not auto-inject fetchWebpage/exa_search in declared-only mode", async () => {
+    const requests: Array<{ body: any }> = [];
+    const adapter = createAdapter({
+      env: {
+        OPENAI_API_KEY: "sk-local",
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+        NOLO_LOCAL_WORKSPACE_TOOLSET: "declared-only",
+      },
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-no-web",
+          prompt: "Be helpful.",
+          model: "gpt-4.1-mini",
+          tools: ["readFile", "searchFiles"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({
+          choices: [{ message: { content: "done" } }],
+        });
+      },
+    });
+
+    await runLocalAgentTurn({
+      adapter,
+      agentRef: "no-web",
+      input: "你好",
+    });
+
+    const toolNames = toolNamesFromRequest(requests[0]);
+    // declared-only mode skips default tools (fetchWebpage/exa_search), but
+    // FORCED_TOOLS (ui_ask_choice) survive — the platform interaction floor
+    // cannot be turned off, even in ablation mode.
+    expect(toolNames).not.toContain("fetchWebpage");
+    expect(toolNames).not.toContain("exa_search");
+    expect(toolNames).toContain("ui_ask_choice");
+  });
+
+  test("ui_ask_choice executor calls requestUserChoice and resolves the selected option", async () => {
+    const requests: Array<{ body: any }> = [];
+    let choiceRequest: any = null;
+    const adapter = createAdapter({
+      env: {
+        OPENAI_API_KEY: "sk-local",
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+      },
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-choice",
+          prompt: "Ask the user.",
+          model: "gpt-4.1-mini",
+          toolNames: ["ui_ask_choice"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        requests.push({ body });
+        // First request: the model calls ui_ask_choice. We detect it by
+        // checking whether ui_ask_choice is in the advertised tools.
+        const hasChoiceTool = (body.tools || []).some(
+          (t: any) => t.function?.name === "ui_ask_choice",
+        );
+        if (hasChoiceTool && requests.length === 1) {
+          return Response.json({
+            choices: [{
+              message: {
+                content: "",
+                tool_calls: [{
+                  id: "call-choice-1",
+                  type: "function",
+                  function: {
+                    name: "ui_ask_choice",
+                    arguments: JSON.stringify({
+                      question: "选哪个？",
+                      choices: [
+                        { id: "a", label: "选项 A", userMessage: "我选 A" },
+                        { id: "b", label: "选项 B", userMessage: "我选 B" },
+                      ],
+                      blocking: true,
+                    }),
+                  },
+                }],
+              },
+            }],
+          });
+        }
+        return Response.json({ choices: [{ message: { content: "ok" } }] });
+      },
+      requestUserChoice: async (req) => {
+        choiceRequest = req;
+        return { kind: "selected", userMessage: "我选 A", label: "选项 A" };
+      },
+    });
+
+    await runLocalAgentTurn({
+      adapter,
+      agentRef: "choice-agent",
+      input: "给我选项",
+    });
+
+    // The callback was invoked with the parsed question + choices.
+    expect(choiceRequest).not.toBeNull();
+    expect(choiceRequest.question).toBe("选哪个？");
+    expect(choiceRequest.choices).toHaveLength(2);
+    expect(choiceRequest.choices[0].label).toBe("选项 A");
   });
 });
 

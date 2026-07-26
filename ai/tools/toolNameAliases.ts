@@ -29,6 +29,23 @@ const LEGACY_TOOL_NAME_ALIASES: Record<string, string> = {
   run_in_bash: "execShell",
   executeCommand: "execShell",
   execute_command: "execShell",
+  // Codex CLI 风格工具名 → nolo 原生工具名
+  bash: "execShell",
+  shell: "execShell",
+  read: "readFile",
+  edit: "editFile",
+  write: "writeFile",
+  glob: "globFiles",
+  grep: "searchFiles",
+  // 联网搜索别名
+  web_search: "exa_search",
+  websearch: "exa_search",
+  search_web: "exa_search",
+  searchweb: "exa_search",
+  webfetch: "fetchWebpage",
+  web_fetch: "fetchWebpage",
+  fetchweb: "fetchWebpage",
+  fetch_web: "fetchWebpage",
 };
 
 const normalizeToolName = (name: string): string =>

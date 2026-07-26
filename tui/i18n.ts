@@ -303,10 +303,6 @@ const STRINGS = {
     en: "thinking",
     zh: "思考",
   },
-  contextFieldRender: {
-    en: "render",
-    zh: "渲染",
-  },
   contextFieldServer: {
     en: "server",
     zh: "服务端",
@@ -345,7 +341,6 @@ const STRINGS = {
       "  /runtime <mode>       Use auto, local, or server runtime",
       "  /tools <mode>         Control tool trace: hide, compact, verbose",
       "  /thinking <mode>      Control thinking output: hide, marker, show",
-      "  /render <mode>        Control assistant output: plain, rich",
       "  /switch               Pick an agent interactively (↑↓, Enter)",
       "  /switch list          List agents as text",
       "  /switch <name>        Switch directly by name, alias, or key (alias: /agent)",
@@ -382,7 +377,6 @@ const STRINGS = {
       "  /runtime <mode>       切换 runtime：auto、local、server",
       "  /tools <mode>         工具轨迹显示：hide、compact、verbose",
       "  /thinking <mode>      思考过程显示：hide、marker、show",
-      "  /render <mode>        回复渲染方式：plain、rich",
       "  /switch               交互式选择 agent（↑↓ 移动，Enter 确认）",
       "  /switch list          以文本列出全部 agent",
       "  /switch <name>        按名称、别名或 key 直接切换（别名：/agent）",

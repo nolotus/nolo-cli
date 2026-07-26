@@ -12,6 +12,7 @@ import { selectIdentityUserId } from "identity/selectors";
 import type { ModelWithProvider } from "../../llm/models";
 import i18n from "../../../app/i18n";
 import { toTrimmedString } from "../../../core/toTrimmedString";
+import { CAPABILITY_PACKS } from "../../tools/toolPacks";
 
 type ReasoningEffort = "low" | "medium" | "high";
 
@@ -41,8 +42,11 @@ export type CreateAgentToolArgs = {
     introduction?: string;
     greeting?: string | GreetingConfigArg; // 支持纯文本或带 menu 的对象
     isPublic?: boolean;
+    allowFork?: boolean;
     tags?: string[] | string;
     tools?: string[];
+    disabledTools?: string[];
+    enabledPacks?: string[];
     references?: ReferenceArg[];
     linkedSpaces?: string[];
     temperature?: number;
@@ -191,6 +195,10 @@ export const createAgentToolFunctionSchema = {
                 type: "boolean",
                 description: i18n.t("tools.createAgent.params.isPublic"),
             },
+            allowFork: {
+                type: "boolean",
+                description: i18n.t("tools.createAgent.params.allowFork"),
+            },
             tags: {
                 type: "array",
                 items: { type: "string" },
@@ -200,6 +208,16 @@ export const createAgentToolFunctionSchema = {
                 type: "array",
                 items: { type: "string" },
                 description: i18n.t("tools.createAgent.params.tools"),
+            },
+            disabledTools: {
+                type: "array",
+                items: { type: "string" },
+                description: "明确禁用的默认工具名称数组（如 exa_search、fetchWebpage）。这些工具即使被平台默认注入也不会发给模型。",
+            },
+            enabledPacks: {
+                type: "array",
+                items: { type: "string", enum: CAPABILITY_PACKS.map((p) => p.id) },
+                description: "启用的能力包 ID 数组，如 [\"web-search\"] 开启联网搜索。",
             },
             runtimeToolPolicy: {
                 type: "object",
@@ -303,8 +321,11 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
         introduction,
         greeting,
         isPublic = false,
+        allowFork = false,
         tags,
         tools,
+        disabledTools,
+        enabledPacks,
         references,
         linkedSpaces,
         temperature,
@@ -348,9 +369,12 @@ const buildFormDataFromArgs = async (args: CreateAgentToolArgs): Promise<AgentFo
         introduction: introduction ?? "",
         greeting, // 直接透传：string 或 { text, menu }
         isPublic: !!isPublic,
+        allowFork: !!allowFork,
         tags: normalizeTags(tags),
 
         tools: normalizedTools,
+        disabledTools: disabledTools ?? [],
+        enabledPacks: enabledPacks ?? [],
         ...(resolvedRuntimeToolPolicy ? { runtimeToolPolicy: resolvedRuntimeToolPolicy } : {}),
         references: (references as any) ?? [],
         linkedSpaces: linkedSpaces ?? [], // Leave raw inputs, resolve in executor
@@ -503,6 +527,7 @@ export async function createAgentToolFunc(
             `- 模型: ${agent.model || "(未指定)"}`,
             `- Provider: ${agent.provider || "(未指定)"}`,
             `- 是否公开: ${agent.isPublic ? "是" : "否"}`,
+            `- 允许他人复制: ${agent.allowFork ? "是" : "否"}`,
         ];
 
         if (Array.isArray(agent.tags) && agent.tags.length > 0) {

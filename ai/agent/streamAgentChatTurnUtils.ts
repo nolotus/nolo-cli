@@ -55,7 +55,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import {
     getAllToolRuns,
@@ -741,7 +741,12 @@ export const mergeAgentToolsWithRuntime = (
     const rawBaseTools = Array.isArray((agentConfig as any).tools)
         ? ((agentConfig as any).tools as string[])
         : [];
-    const baseTools = canonicalizeToolNames(rawBaseTools);
+    // Expand capability packs into tool names, merged with explicit tools.
+    const expandedPackTools = expandEnabledPacks(
+        (agentConfig as any)?.enabledPacks,
+        rawBaseTools,
+    );
+    const baseTools = canonicalizeToolNames(expandedPackTools);
     const requiredSkillTools = canonicalizeToolNames(
         (agentConfig as any).referencedTools ?? []
     );
@@ -795,9 +800,12 @@ export const mergeAgentToolsWithRuntime = (
 
     return {
         ...agentConfig,
-        tools: prioritizeToolNames(
-            Array.from(enhancedTools),
-            recommendedSkillTools,
+        tools: applyDisabledTools(
+            prioritizeToolNames(
+                Array.from(enhancedTools),
+                recommendedSkillTools,
+            ),
+            (agentConfig as any)?.disabledTools,
         ),
         recommendedSkillTools,
         recommendedSkillHints,

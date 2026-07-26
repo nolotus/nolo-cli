@@ -40,6 +40,19 @@ export default {
       syncToAccountSuccess: "Synced to the current account (local Agent kept)",
       syncToAccountError: "Sync failed. Please try again.",
 
+      // Fork (copy public Agent to my list)
+      fork: {
+        action: "Copy to mine",
+        title: "Copy this AI",
+        targetAll: "All (not added to a space)",
+        targetSpaceLabel: "Add to space",
+        confirm: "Copy",
+        success: "Copied to your AI list",
+        failed: "Copy failed. Please try again.",
+        notAllowed: "This AI does not allow copying",
+        addToSpaceFailed: "Copied, but failed to add to space. You can find it in \"All\".",
+      },
+
       // Component Specific
       agent: "Agent",
       unnamed: "Unnamed",
@@ -143,6 +156,7 @@ export default {
         enableThinking: "Thinking Mode",
         thinkingBudget: "Thinking Budget",
         isPublic: "Make Public",
+        allowFork: "Allow others to copy",
         inputPrice: "Input Price",
         inputPricePlaceholder: "Cost per 1M input tokens",
         outputPrice: "Output Price",
@@ -174,6 +188,8 @@ export default {
         enableThinking: "Enable model reasoning/thinking output (Ollama/Qwen3/DeepSeek/Anthropic)",
         thinkingBudget: "Max tokens for thinking (Anthropic only, 1024–32000)",
         isPublic: "Show in community list for others to use",
+        allowForkAny:
+          "When enabled, anyone who can see this AI (public market visitors or members of this space) can copy it to their own space. Copies will not contain your API key, whitelist, or reference docs.",
         isPublicCustomApi: "AIs with custom API keys cannot be made public",
         apiSourcePlatform: "Use platform's built-in API key",
         apiSourceCustom: "Use your own API key and settings",
@@ -334,6 +350,7 @@ export default {
               }
             },
             isPublic: "Whether to publish to the app market. true means public, false means private.",
+            allowFork: "Whether to allow other users to copy this AI to their space (can be set independently of whether it is public).",
             tags: "Array of tags for the Agent, e.g., ['Summary', 'Writing'].",
             tools: "Array of tool names allowed for this Agent, e.g., ['fetchWebpage', 'callAgent'].",
             linkedSpaces: "List of associated Space IDs or Names. The Agent can access the directory structure of these Spaces as rough context. You MUST call 'listUserSpaces' tool first to get valid IDs/Names.",
@@ -425,6 +442,19 @@ export default {
         "这是一次性配置快照上传，不是持续同步。",
       syncToAccountSuccess: "已同步到当前账号（本机 Agent 仍保留）",
       syncToAccountError: "同步失败，请稍后重试",
+
+      // 复制（把公开 Agent 复制到我的列表）
+      fork: {
+        action: "复制到我的",
+        title: "复制这个 AI",
+        targetAll: "全部（不放入空间）",
+        targetSpaceLabel: "放入空间",
+        confirm: "复制",
+        success: "已复制到你的 AI 列表",
+        failed: "复制失败，请稍后重试",
+        notAllowed: "这个 AI 不允许复制",
+        addToSpaceFailed: "已复制，但加入空间失败，可在「全部」里找到它",
+      },
 
       // 组件特定
       agent: "AI",
@@ -525,6 +555,7 @@ export default {
         useServerProxy: "代理模式",
         enableThinking: "思考模式",
         thinkingBudget: "思考 Token 预算",
+        allowFork: "允许他人复制",
         inputPrice: "输入价格",
         inputPricePlaceholder: "每百万输入Token的成本",
         outputPrice: "输出价格",
@@ -557,6 +588,8 @@ export default {
         enableThinking: "开启模型推理/思考过程输出（支持 Ollama/Qwen3/DeepSeek/Anthropic）",
         thinkingBudget: "思考 Token 上限（仅 Anthropic 生效，1024–32000）",
         isPublic: "发布到社区，让其他用户也能使用",
+        allowForkAny:
+          "开启后，能看到这个 AI 的人（公开市场访客，或该空间的成员）可以把它复制一份到自己的空间；复制件不含你的密钥、白名单和引用文档。",
         isPublicCustomApi: "使用自定义API的AI无法公开发布",
         apiSourcePlatform: "使用平台提供的API密钥",
         apiSourceCustom: "使用您自己的API密钥和设置",
@@ -713,6 +746,7 @@ export default {
               }
             },
             isPublic: "是否公开到应用市场。true 表示公开，false 表示仅自己可见。",
+            allowFork: "是否允许其他用户把这个 AI 复制一份到自己的空间（可与是否公开独立设置）。",
             tags: "给 Agent 打上的标签数组，例如 ['总结', '写作']。",
             tools: "允许此 Agent 调用的工具名称数组，例如 ['fetchWebpage', 'callAgent']。",
             linkedSpaces: "关联的其他 Space ID 或名称列表。Agent 可以访问这些 Space 的目录结构作为粗略上下文。你必须先调用 'listUserSpaces' 工具获取有效的 Space ID 或名称。",
@@ -804,6 +838,19 @@ export default {
         "這是一次性設定快照上傳，不是持續同步。",
       syncToAccountSuccess: "已同步到目前帳號（本機 Agent 仍保留）",
       syncToAccountError: "同步失敗，請稍後再試",
+
+      // 複製（把公開 Agent 複製到我的列表）
+      fork: {
+        action: "複製到我的",
+        title: "複製這個 AI",
+        targetAll: "全部（不放入空間）",
+        targetSpaceLabel: "放入空間",
+        confirm: "複製",
+        success: "已複製到你的 AI 列表",
+        failed: "複製失敗，請稍後再試",
+        notAllowed: "這個 AI 不允許複製",
+        addToSpaceFailed: "已複製，但加入空間失敗，可在「全部」裡找到它",
+      },
 
       // 組件特定
       agent: "AI",
@@ -904,6 +951,7 @@ export default {
         useServerProxy: "代理模式",
         enableThinking: "思考模式",
         thinkingBudget: "思考 Token 預算",
+        allowFork: "允許他人複製",
         inputPrice: "輸入價格",
         inputPricePlaceholder: "每百萬輸入Token的成本",
         outputPrice: "輸出價格",
@@ -936,6 +984,8 @@ export default {
         enableThinking: "開啟模型推理/思考過程輸出（支援 Ollama/Qwen3/DeepSeek/Anthropic）",
         thinkingBudget: "思考 Token 上限（僅 Anthropic 生效，1024–32000）",
         isPublic: "發布到社群，讓其他使用者也能使用",
+        allowForkAny:
+          "開啟後，能看到這個 AI 的人（公開市場訪客，或該空間的成員）可以把它複製一份到自己的空間；複製件不含你的金鑰、白名單和引用文檔。",
         isPublicCustomApi: "使用自訂API的AI無法公開發布",
         apiSourcePlatform: "使用平台提供的API金鑰",
         apiSourceCustom: "使用您自己的API金鑰和設定",
@@ -1112,6 +1162,19 @@ export default {
       syncToAccountError:
         "同期に失敗しました。しばらくしてから再試行してください。",
 
+      // 複製（公開 Agent を自分のリストへ複製）
+      fork: {
+        action: "自分に複製",
+        title: "この AI を複製",
+        targetAll: "すべて（スペースに追加しない）",
+        targetSpaceLabel: "スペースに追加",
+        confirm: "複製",
+        success: "あなたの AI リストに複製しました",
+        failed: "複製に失敗しました。しばらくしてから再試行してください。",
+        notAllowed: "この AI は複製できません",
+        addToSpaceFailed: "複製されましたが、スペースへの追加に失敗しました。「すべて」から確認できます。",
+      },
+
       // コンポーネント固有
       agent: "AI",
       unnamed: "無名",
@@ -1217,6 +1280,7 @@ export default {
         enableThinking: "思考モード",
         thinkingBudget: "思考トークン予算",
         isPublic: "公開",
+        allowFork: "他人の複製を許可",
         inputPrice: "入力価格",
         inputPricePlaceholder: "100万入力トークンあたりのコスト",
         outputPrice: "出力価格",
@@ -1250,6 +1314,8 @@ export default {
         thinkingBudget: "思考トークン上限（Anthropic のみ有効、1024〜32000）",
         isPublic:
           "コミュニティリストに表示し、他のユーザーが使用できるようにします",
+        allowForkAny:
+          "有効にすると、この AI を閲覧できるユーザー（公開マーケットの訪問者または該当スペースのメンバー）が自分のスペースに複製できるようになります。複製には API キー、ホワイトリスト、参照ドキュメントは含まれません。",
         isPublicCustomApi: "カスタムAPIを持つAIは公開できません",
         apiSourcePlatform: "プラットフォーム内蔵のAPIキーを使用します",
         apiSourceCustom: "ご自身のAPIキーと設定を使用します",

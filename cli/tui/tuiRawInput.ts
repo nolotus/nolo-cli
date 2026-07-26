@@ -294,65 +294,155 @@ function readCsiSequence(input: string, start: number): string | null {
   return null;
 }
 
+export function isIncompleteTail(input: string, start: number): boolean {
+  if (start >= input.length) return false;
+  const rem = input.slice(start);
+  if (rem === "\x1b") return true;
+  if (rem === "\x1b[") return true;
+  if (rem.startsWith("\x1b[")) {
+    let index = start + 2;
+    while (index < input.length) {
+      const code = input.charCodeAt(index);
+      if ((code >= 0x30 && code <= 0x3f) || (code >= 0x20 && code <= 0x2f)) {
+        index += 1;
+        continue;
+      }
+      if (code >= 0x40 && code <= 0x7e) {
+        return false;
+      }
+      return false;
+    }
+    return true;
+  }
+  if (rem.startsWith("\x1bO") && rem.length < 3) {
+    return true;
+  }
+  return false;
+}
+
 const PASTE_START = "\x1b[?2004h";
 const PASTE_END = "\x1b[?2004l";
 
-export function splitRawInput(input: string) {
-  const chunks: string[] = [];
+export function splitRawInputWithTail(input: string): { tokens: string[]; tail: string } {
+  const tokens: string[] = [];
   for (let index = 0; index < input.length;) {
+    if (isIncompleteTail(input, index)) {
+      return { tokens, tail: input.slice(index) };
+    }
     if (input.startsWith(PASTE_START, index)) {
       const contentStart = index + PASTE_START.length;
       const endPos = input.indexOf(PASTE_END, contentStart);
       if (endPos !== -1) {
         const payload = input.slice(contentStart, endPos);
-        chunks.push(`${PASTE_TOKEN_PREFIX}${payload}`);
+        tokens.push(`${PASTE_TOKEN_PREFIX}${payload}`);
         index = endPos + PASTE_END.length;
       } else {
         const payload = input.slice(contentStart);
-        chunks.push(`${PASTE_TOKEN_PREFIX}${payload}`);
+        tokens.push(`${PASTE_TOKEN_PREFIX}${payload}`);
         index = input.length;
       }
       continue;
     }
     if (input.startsWith("\x1b[13;2~", index)) {
-      chunks.push("\x1b[13;2~");
+      tokens.push("\x1b[13;2~");
       index += "\x1b[13;2~".length;
       continue;
     }
     if (input.startsWith("\x1b[27;2;13~", index)) {
-      chunks.push("\x1b[27;2;13~");
+      tokens.push("\x1b[27;2;13~");
       index += "\x1b[27;2;13~".length;
       continue;
     }
     if (input.startsWith("\x1b\r", index)) {
-      chunks.push("\x1b\r");
+      tokens.push("\x1b\r");
       index += 2;
       continue;
     }
     const csi = readCsiSequence(input, index);
     if (csi) {
-      chunks.push(csi);
+      tokens.push(csi);
       index += csi.length;
       continue;
     }
     const codePoint = input.codePointAt(index);
     if (codePoint === undefined) break;
     const value = String.fromCodePoint(codePoint);
-    chunks.push(value);
+    tokens.push(value);
     index += value.length;
   }
-  return chunks;
+  return { tokens, tail: "" };
 }
 
+export function splitRawInput(input: string): string[] {
+  const { tokens, tail } = splitRawInputWithTail(input);
+  if (!tail) return tokens;
+  const tailTokens: string[] = [];
+  for (let index = 0; index < tail.length;) {
+    const codePoint = tail.codePointAt(index);
+    if (codePoint === undefined) break;
+    const value = String.fromCodePoint(codePoint);
+    tailTokens.push(value);
+    index += value.length;
+  }
+  return [...tokens, ...tailTokens];
+}
+
+export type RawInputDecoder = {
+  (chunk: Buffer | string): void;
+  flush(): void;
+  destroy(): void;
+};
+
 export function createRawInputDecoder(
-  onToken: (token: string) => void
-): (chunk: Buffer | string) => void {
+  onToken: (token: string) => void,
+  options?: { escTimeoutMs?: number }
+): RawInputDecoder {
   const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
-  return (chunk) => {
-    const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
-    const text = decoder.decode(bytes, { stream: true });
-    for (const token of splitRawInput(text)) {
-      onToken(token);
+  let pendingBuffer = "";
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutMs = options?.escTimeoutMs ?? 15;
+
+  const clearTimer = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
     }
   };
+
+  const flush = () => {
+    clearTimer();
+    if (pendingBuffer.length > 0) {
+      const textToFlush = pendingBuffer;
+      pendingBuffer = "";
+      for (const token of splitRawInput(textToFlush)) {
+        onToken(token);
+      }
+    }
+  };
+
+  const decodeFn = (chunk: Buffer | string) => {
+    clearTimer();
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+    const text = decoder.decode(bytes, { stream: true });
+    pendingBuffer += text;
+
+    const { tokens, tail } = splitRawInputWithTail(pendingBuffer);
+    pendingBuffer = tail;
+
+    for (const token of tokens) {
+      onToken(token);
+    }
+
+    if (pendingBuffer.length > 0) {
+      timer = setTimeout(flush, timeoutMs);
+    }
+  };
+
+  decodeFn.flush = flush;
+  decodeFn.destroy = () => {
+    clearTimer();
+    pendingBuffer = "";
+  };
+
+  return decodeFn;
 }

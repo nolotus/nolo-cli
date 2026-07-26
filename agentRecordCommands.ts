@@ -80,7 +80,7 @@ export async function runAgentUpdateCommand(
   if (!parsed) {
     output.write(
       "Usage: nolo agent update <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--field key=value]\n"
-        .replace("[--field key=value]", "[--handle <name>] [--field key=value]")
+        .replace("[--field key=value]", "[--handle <name>] [--field key=value]  (e.g. --field disabledTools='[\"exa_search\"]' to disable default tools)")
     );
     return args[0] ? 0 : 1;
   }

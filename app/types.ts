@@ -235,6 +235,18 @@ export interface Agent {
   handle?: string;
   [key: string]: any;
   tools?: string[];
+  /**
+   * 工具名数组：标记「明确不要」的默认注入工具。运行时注入默认/推荐工具时
+   * 会跳过这里的工具（FORCED_TOOLS 除外），从根上不发给模型，省 token。
+   * 例如 ["exa_search", "fetchWebpage"] 表示这个 agent 不要联网能力。
+   */
+  disabledTools?: string[];
+  /**
+   * 能力包 ID 数组：面向用户的工具分组（如 "web-search"），运行时展开成工具名。
+   * 普通用户通过能力包开关控制工具，无需理解散装工具名。与 tools 字段并存：
+   * enabledPacks 展开后的工具 + tools 里的散装工具合并为最终工具集。
+   */
+  enabledPacks?: string[];
   userId: string;
   useServerProxy: boolean;
   apiKey?: string;
@@ -266,6 +278,8 @@ export interface Agent {
   cover?: string;
   greeting?: string | AgentGreetingConfig; // ✅ 这里改成联合类型
   isPublic: boolean;
+  /** 允许其他用户复制此 agent（仅公开 agent 有意义） */
+  allowFork?: boolean;
   endpointKey?: string;
 
 

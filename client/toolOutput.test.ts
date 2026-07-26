@@ -224,6 +224,70 @@ describe("toolOutput", () => {
     ).toContain("! needs action: gh auth refresh -h github.com -s delete_repo");
   });
 
+  test("compact mode renders ui_ask_choice as a question + numbered choices", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "ui_ask_choice",
+        content: JSON.stringify({
+          type: "ui_ask_choice",
+          question: "接下来你希望我帮你做哪件事？",
+          choices: [
+            { id: "a", label: "生成本周周报", userMessage: "帮我生成本周周报" },
+            { id: "b", label: "整理待办事项", userMessage: "帮我整理待办事项" },
+          ],
+          blocking: true,
+        }),
+        metadata: { uiAskChoice: true },
+      }),
+      "compact",
+      false
+    );
+    // Should NOT be the generic compact trace line.
+    expect(line).not.toContain("✓");
+    // Should render the question and numbered options.
+    expect(line).toContain("接下来你希望我帮你做哪件事？");
+    expect(line).toContain("1. 生成本周周报");
+    expect(line).toContain("2. 整理待办事项");
+  });
+
+  test("verbose mode renders ui_ask_choice question + numbered choices", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "ui_ask_choice",
+        content: JSON.stringify({
+          type: "ui_ask_choice",
+          question: "Which plan?",
+          choices: [{ id: "x", label: "Plan A" }, { id: "y", label: "Plan B" }],
+          blocking: true,
+        }),
+        metadata: { uiAskChoice: true },
+      }),
+      "verbose",
+      false
+    );
+    expect(line).toContain("[nolo:tool]");
+    expect(line).toContain("Which plan?");
+    expect(line).toContain("1. Plan A");
+    expect(line).toContain("2. Plan B");
+  });
+
+  test("compact mode falls back to generic line when ui_ask_choice content is missing", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "ui_ask_choice",
+        content: "",
+        metadata: { uiAskChoice: true },
+      }),
+      "compact",
+      false
+    );
+    // No parseable content → falls through to the generic compact trace.
+    expect(line).toContain("✓");
+  });
+
   test("verbose mode keeps legacy trace format", () => {
     expect(
       formatToolEventForCli(

@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
+import type { UserChoiceRequest, UserChoiceResult } from "../client/localRuntimeAdapter";
 import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPrompts";
 import {
   classifyCliAutoRoute,
@@ -27,6 +28,7 @@ import { saveProfileAgentSelection } from "../client/profileConfig";
 import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
+import { runSelectDialog, type SelectDialogItem } from "./selectDialog";
 import { createDialogHost } from "./dialogHost";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
 import { prefetchAgentCatalog } from "./agentCatalog";
@@ -214,6 +216,7 @@ async function runAgentChat(
     imageUrls?: string[];
     actionGateHandler?: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>;
     confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+    requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
     abortSignal?: AbortSignal;
     /** True when the user just explicitly switched agent (via /agent or /switch).
      *  Suppresses the cached auto-route so the chosen agent actually runs. */
@@ -376,7 +379,6 @@ async function runAgentChat(
       ...env,
       NOLO_CLI_THINKING: state.thinkingDisplay,
       NOLO_CLI_TOOLS: state.toolDisplay,
-      NOLO_CLI_RENDER: state.renderDisplay,
     },
     output,
     ...(options.imageUrls && options.imageUrls.length > 0
@@ -385,6 +387,9 @@ async function runAgentChat(
     ...(options.actionGateHandler ? { actionGateHandler: options.actionGateHandler } : {}),
     ...(options.confirmDestructiveAction
       ? { confirmDestructiveAction: options.confirmDestructiveAction }
+      : {}),
+    ...(options.requestUserChoice
+      ? { requestUserChoice: options.requestUserChoice }
       : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     ...(options.activityReporter ? { activityReporter: options.activityReporter } : {}),
@@ -820,6 +825,38 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           }
         })
       : output;
+    // Interactive ui_ask_choice: dock an arrow-key select dialog above the
+    // composer (same dialogHost + runSelectDialog as the /agent picker) and
+    // resolve the user's pick into the userMessage that continues the turn.
+    // Only wired in interactive TUI mode; headless/CI falls back to text menu.
+    const requestUserChoice =
+      isInteractiveInput(input) && dialogHost
+        ? async (req: UserChoiceRequest): Promise<UserChoiceResult> => {
+            const items: SelectDialogItem[] = req.choices.map((c) => ({
+              label: c.label,
+            }));
+            try {
+              const pickResult = await dialogHost.run((anchor) =>
+                runSelectDialog({
+                  items,
+                  title: req.question,
+                  input: input as NodeJS.ReadStream,
+                  output: output as NodeJS.WritableStream,
+                  ...anchor,
+                }),
+              );
+              if (pickResult.kind === "selected") {
+                const choice = req.choices[pickResult.index];
+                const userMessage =
+                  choice?.userMessage?.trim() || choice?.label || "";
+                return { kind: "selected", userMessage, label: choice?.label ?? "" };
+              }
+              return { kind: "cancelled" };
+            } catch {
+              return { kind: "cancelled" };
+            }
+          }
+        : undefined;
     try {
       activeTurnAbort = new AbortController();
       const runResult = await runAgentChat(
@@ -833,6 +870,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(imageUrls.length > 0 ? { imageUrls } : {}),
           actionGateHandler,
           ...(confirmDestructiveAction ? { confirmDestructiveAction } : {}),
+          ...(requestUserChoice ? { requestUserChoice } : {}),
           abortSignal: activeTurnAbort.signal,
           explicitAgentSwitch,
           activityReporter,
@@ -1122,8 +1160,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           // /resume 恢复的是数据库里的原始 markdown，必须经过和新回复（流式）
           // 同一套完整渲染器，否则表格/列表/链接会降级成 highlightMarkdown 处理
           // 不了的原始语法。只渲染 assistant turn：user turn 靠 ❯ 标记区分，
-          // buildHistoryLines 里 user 分支不走 markdown 渲染。mode 取
-          // state.renderDisplay 以尊重 /render plain；整段消息用默认 trimEdges。
+          // buildHistoryLines 里 user 分支不走 markdown 渲染。整段消息用
+          // 默认 trimEdges。
           const restored = loadedTurns
             .slice(-MAX_TUI_HISTORY_TURNS)
             .map((turn) =>
@@ -1132,7 +1170,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                     ...turn,
                     content: formatAssistantDisplay(
                       turn.content,
-                      state.renderDisplay,
                     ),
                   }
                 : turn,
@@ -1418,6 +1455,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       done = true;
       resizeTarget.off?.("resize", onResize);
       input.off("data", onData);
+      onData.destroy();
       output.write("\x1b[?2004l");
       input.setRawMode?.(false);
     };

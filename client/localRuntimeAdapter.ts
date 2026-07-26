@@ -15,6 +15,30 @@ import type {
   AgentRuntimeToolResult,
 } from "../agent-runtime";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
+
+/**
+ * Interactive choice request surfaced by the local `ui_ask_choice` executor.
+ * When a `requestUserChoice` callback is wired (interactive TUI), the executor
+ * calls it to show an arrow-key select dialog docked above the composer; the
+ * resolved userMessage becomes the next user turn. When absent (headless / CI /
+ * non-TTY), the executor falls back to returning the raw JSON payload and the
+ * toolOutput renderer prints a numbered text menu.
+ */
+export type UserChoiceOption = {
+  id?: string;
+  label: string;
+  userMessage?: string;
+};
+
+export type UserChoiceRequest = {
+  question: string;
+  choices: UserChoiceOption[];
+  blocking: boolean;
+};
+
+export type UserChoiceResult =
+  | { kind: "selected"; userMessage: string; label: string }
+  | { kind: "cancelled" };
 import {
   readDialogFromLocalDb,
   type LocalDialogReadResult,
@@ -121,6 +145,10 @@ let createCliHybridRecordStore: any;
 let executeLocalToolWithPolicy: any;
 let inferCaptureIntent: any;
 let TOOL_PACKS: any;
+let canonicalizeToolNames: any;
+let FORCED_TOOLS: any;
+let applyDisabledTools: any;
+let expandEnabledPacks: any;
 let prepareTools: any;
 let buildNoloWorkspaceCliToolExecutors: any;
 let buildNoloWorkspaceOpenAiTools: any;
@@ -218,8 +246,9 @@ function ensureHeavyCliLocalRuntimeModules() {
   ({ inferCaptureIntent } = requireFromAdapter(
     "../../ai/policy/runtimePolicy.ts",
   ));
-  ({ TOOL_PACKS } = requireFromAdapter("../../ai/tools/toolPacks.ts"));
+  ({ TOOL_PACKS, FORCED_TOOLS, applyDisabledTools, expandEnabledPacks } = requireFromAdapter("../../ai/tools/toolPacks.ts"));
   ({ prepareTools } = requireFromAdapter("../../ai/tools/prepareTools.ts"));
+  ({ canonicalizeToolNames } = requireFromAdapter("../../ai/tools/toolNameAliases.ts"));
   ({
     buildNoloWorkspaceCliToolExecutors,
     buildNoloWorkspaceOpenAiTools,
@@ -279,6 +308,50 @@ const LOCAL_SERVER_TABLE_TOOL_NAME_SET = new Set<string>(
   LOCAL_SERVER_TABLE_TOOL_NAMES,
 );
 
+/**
+ * Web access tools the CLI local runtime proxies through the nolo server
+ * (same routes the desktop runtime uses: /api/fetch-webpage, /api/exa-search).
+ * The CLI has no local EXA/FIRECRAWL keys, so these always bridge to a server
+ * that has them configured. Requires NOLO_SERVER_URL + auth token at runtime.
+ */
+const LOCAL_SERVER_WEB_TOOL_NAMES = ["fetchWebpage", "exa_search"] as const;
+const LOCAL_SERVER_WEB_TOOL_NAME_SET = new Set<string>(
+  LOCAL_SERVER_WEB_TOOL_NAMES,
+);
+
+// ============================================================================
+// CLI tool classification — single source of truth for "which tools belong
+// to which category". Previously each consumer (addDefaultLightWebTools,
+// buildLocalPolicyToolNames, buildServerPlatformOpenAiTools, buildOpenAiTools)
+// re-hardcoded the same name lists with slight drift. All four now read these
+// sets.
+// ============================================================================
+
+/** Tools that imply web-access capability (triggers LIGHT_WEB auto-inject). */
+const WEB_CAPABLE_TOOL_NAMES = new Set<string>([
+  "fetchWebpage",
+  "exa_search",
+  "firecrawl_scrape",
+  "firecrawl_search",
+  "read_x_post",
+  "read_xhs_profile",
+]);
+
+/** Tools whose schema is injected from the nolo tool registry (not workspace). */
+const REGISTRY_INJECTED_TOOL_NAMES = new Set<string>([
+  "callAgent",
+  "ui_ask_choice",
+  "read_x_post",
+  "read_xhs_profile",
+]);
+
+function isWebCapableTool(name: string): boolean {
+  return (
+    WEB_CAPABLE_TOOL_NAMES.has(name) ||
+    name.startsWith("browser_")
+  );
+}
+
 type PreparedAgentRuntime = {
   agentConfig: AgentRuntimeAgentConfig;
   activeAgentToolNames: string[];
@@ -335,6 +408,7 @@ type CliLocalRuntimeAdapterDeps = {
   loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
   buildProviderOpenAiTools?: typeof buildOpenAiTools;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
 };
 
 async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
@@ -371,7 +445,7 @@ function resolveBuiltinLocalCliAgentConfig(
       apiSource: "cli",
       provider: "cli",
       cliProvider: "codex",
-      toolNames: ["readFile", "searchFiles", "execShell"],
+      toolNames: ["readFile", "searchFiles", "execShell", "fetchWebpage", "exa_search"],
       rawRecord: {
         dbKey: LOCAL_CODEX_AGENT_KEY,
         id: LOCAL_CODEX_AGENT_ID,
@@ -659,16 +733,7 @@ function addDefaultLightWebToolsForConfiguredAgents(
     : agentConfig?.toolNames;
   if (!Array.isArray(explicitToolNames) || explicitToolNames.length === 0)
     return toolNames;
-  const webCapable = explicitToolNames.some(
-    (toolName) =>
-      toolName === "fetchWebpage" ||
-      toolName === "exa_search" ||
-      toolName === "firecrawl_scrape" ||
-      toolName === "firecrawl_search" ||
-      toolName === "read_x_post" ||
-      toolName === "read_xhs_profile" ||
-      toolName.startsWith("browser_"),
-  );
+  const webCapable = explicitToolNames.some(isWebCapableTool);
   if (!webCapable) return toolNames;
   return [...new Set([...toolNames, ...TOOL_PACKS.LIGHT_WEB])];
 }
@@ -683,8 +748,13 @@ function buildOpenAiTools(args: {
   const callAgentTools = toolNameSet.has("callAgent")
     ? prepareTools(["callAgent"])
     : [];
+  // ui_ask_choice 是纯交互工具，本地可直接执行；只要 agent 声明了就注入。
+  const uiAskChoiceTools = toolNameSet.has("ui_ask_choice")
+    ? prepareTools(["ui_ask_choice"])
+    : [];
   return [
     ...callAgentTools,
+    ...uiAskChoiceTools,
     ...buildLocalWorkspaceOpenAiTools({
       toolNames: toolset.toolNames,
       exposeShellTools: toolset.exposeShellTools,
@@ -704,14 +774,56 @@ function buildOpenAiTools(args: {
   ];
 }
 
+/**
+ * CLI-side default tools: auto-injected so every agent gets the baseline
+ * interaction + web-search capability without declaring it.
+ *
+ * Split into two tiers:
+ * - FORCED_TOOLS (from toolPacks): always injected, even in declared-only mode.
+ *   These are the platform interaction floor (e.g. ui_ask_choice — an agent
+ *   that cannot ask the user a question is not usable).
+ * - CLI_DEFAULT_TOOLS: injected in normal mode, skipped in declared-only mode
+ *   (ablation / explicit-tool-only runs). These need server proxy config to
+ *   actually execute, so they are opt-out-able rather than forced.
+ */
+const CLI_DEFAULT_TOOLS = ["exa_search", "fetchWebpage"] as const;
+
+/**
+ * Inject forced + default CLI tools. Forced tools survive declared-only mode;
+ * default tools do not. Mirrors web's getRuntimeCoreTools() for the subset of
+ * CORE tools that have a local CLI executor.
+ */
+function addDefaultCliCoreTools(
+  toolNames: string[],
+  env?: EnvLike,
+): string[] {
+  const declaredOnly = env && shouldUseDeclaredOnlyLocalWorkspaceTools(env);
+  // Forced tools are always present; default tools only in normal mode.
+  const injected = declaredOnly
+    ? [...FORCED_TOOLS]
+    : [...FORCED_TOOLS, ...CLI_DEFAULT_TOOLS];
+  return [...new Set([...toolNames, ...injected])];
+}
+
 function resolveProviderOpenAiToolBundle(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
   buildTools: typeof buildOpenAiTools = buildOpenAiTools,
 ) {
-  const requestedToolNames = addDefaultLightWebToolsForConfiguredAgents(
-    resolveRequestedRuntimeToolNames({ agentConfig }),
-    agentConfig,
+  const requestedToolNames = applyDisabledTools(
+    addDefaultLightWebToolsForConfiguredAgents(
+      addDefaultCliCoreTools(
+        canonicalizeToolNames(
+          expandEnabledPacks(
+            (agentConfig as any)?.enabledPacks,
+            resolveRequestedRuntimeToolNames({ agentConfig }),
+          ),
+        ),
+        env,
+      ),
+      agentConfig,
+    ),
+    (agentConfig as any)?.disabledTools,
   );
   const tools = buildTools({
     agentKey: agentConfig.key,
@@ -751,10 +863,9 @@ function buildLocalPolicyToolNames(args: {
       const extra: string[] = [];
       const names = args.toolNames ?? [];
       for (const name of names) {
-        if (name === "read_x_post") extra.push("read_x_post");
-        if (name === "read_xhs_profile") extra.push("read_xhs_profile");
-        if (name === "callAgent") extra.push("callAgent");
+        if (REGISTRY_INJECTED_TOOL_NAMES.has(name)) extra.push(name);
         if (LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)) extra.push(name);
+        if (LOCAL_SERVER_WEB_TOOL_NAME_SET.has(name)) extra.push(name);
       }
       return extra;
     })(),
@@ -838,6 +949,11 @@ function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
       LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name),
     ),
   );
+  const webTools = prepareTools(
+    Array.from(toolNameSet).filter((name) =>
+      LOCAL_SERVER_WEB_TOOL_NAME_SET.has(name),
+    ),
+  );
   return [
     ...(toolNameSet.has("read_xhs_profile")
       ? [
@@ -856,6 +972,7 @@ function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
         ]
       : []),
     ...tableTools,
+    ...webTools,
   ];
 }
 
@@ -1329,7 +1446,41 @@ function buildServerPlatformToolExecutors(args: {
       },
     ]),
   );
-  return tableExecutors;
+  // Web access tools (fetchWebpage / exa_search) bridge to the same server
+  // routes the desktop runtime uses. The CLI holds no local API keys, so these
+  // only work when NOLO_SERVER_URL + auth are configured.
+  const webExecutors = Object.fromEntries(
+    LOCAL_SERVER_WEB_TOOL_NAMES.map((toolName) => [
+      toolName,
+      async (call: any) => {
+        const parsed = parseNoloWorkspaceToolArguments(call.arguments);
+        const path =
+          toolName === "fetchWebpage"
+            ? "/api/fetch-webpage"
+            : "/api/exa-search";
+        const body =
+          toolName === "fetchWebpage"
+            ? { url: parsed.url }
+            : {
+                query: parsed.query,
+                numResults: parsed.numResults ?? 5,
+                useAutoprompt: parsed.useAutoprompt ?? true,
+                type: parsed.type ?? "neural",
+                // Model schema uses `includeContent` (boolean); the Exa API
+                // expects `contents: { text: true }`. Mirror exaSearchFunc's
+                // conversion so CLI proxy results match web behavior.
+                contents:
+                  parsed.includeContent !== false ? { text: true } : undefined,
+              };
+        const content = await postServer(path, body);
+        return {
+          content,
+          metadata: { serverPlatformTool: true, webTool: toolName },
+        };
+      },
+    ]),
+  );
+  return { ...tableExecutors, ...webExecutors };
 }
 
 function buildCliDelegatedAgentInput(task: string, input?: any): string {
@@ -1621,6 +1772,8 @@ function buildLocalToolExecutors(args: {
   commandOutputLimit?: number;
   /** Reused for external-file-access prompts (same PermissionRequest shape). */
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  /** Interactive choice dialog for ui_ask_choice; absent in headless/CI mode. */
+  requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
 }) {
   return {
     ...createLocalWorkspaceToolExecutors({
@@ -1676,6 +1829,80 @@ function buildLocalToolExecutors(args: {
           xhsLocalBridge: true,
           displayData: result.displayData,
         },
+      };
+    },
+    ui_ask_choice: async (call: any) => {
+      const parsedArgs = (() => {
+        try {
+          return JSON.parse(call.arguments || "{}");
+        } catch {
+          return {};
+        }
+      })();
+      const question = String(parsedArgs.question ?? "").trim();
+      const choices = Array.isArray(parsedArgs.choices) ? parsedArgs.choices : [];
+      const blocking = parsedArgs.blocking !== false;
+      if (!question || choices.length === 0) {
+        return {
+          content: JSON.stringify({
+            error: "ui_ask_choice",
+            detail: "ui_ask_choice 需要 question 和至少一个 choice。",
+          }),
+          metadata: { uiAskChoice: true, error: true },
+        };
+      }
+      // Interactive TUI: show an arrow-key select dialog docked above the
+      // composer and resolve the user's pick into the next userMessage.
+      // Headless / non-TTY / no-callback: fall back to the raw JSON payload so
+      // the toolOutput renderer can print a numbered text menu.
+      if (args.requestUserChoice) {
+        try {
+          const result = await args.requestUserChoice({
+            question,
+            choices,
+            blocking,
+          });
+          if (result.kind === "selected") {
+            return {
+              content: JSON.stringify({
+                type: "ui_ask_choice",
+                question,
+                choices,
+                blocking,
+                selected: {
+                  label: result.label,
+                  userMessage: result.userMessage,
+                },
+              }),
+              metadata: { uiAskChoice: true, resolved: true },
+            };
+          }
+          // Cancelled: tell the model the user declined to choose, so it can
+          // either ask differently or proceed with its own best judgement.
+          return {
+            content: JSON.stringify({
+              type: "ui_ask_choice",
+              question,
+              choices,
+              blocking,
+              selected: { label: "", userMessage: "" },
+              cancelled: true,
+            }),
+            metadata: { uiAskChoice: true, resolved: true, cancelled: true },
+          };
+        } catch {
+          // Dialog failed (e.g. non-TTY despite a callback being wired);
+          // fall through to the non-interactive payload below.
+        }
+      }
+      return {
+        content: JSON.stringify({
+          type: "ui_ask_choice",
+          question,
+          choices,
+          blocking,
+        }),
+        metadata: { uiAskChoice: true },
       };
     },
     ...(args.localToolExecutors ?? {}),
@@ -1943,6 +2170,9 @@ export function createCliLocalRuntimeAdapter(
     ...(deps.confirmDestructiveAction
       ? { confirmDestructiveAction: deps.confirmDestructiveAction }
       : {}),
+    ...(deps.requestUserChoice
+      ? { requestUserChoice: deps.requestUserChoice }
+      : {}),
     ...runtimeToolExecutionLimits,
   });
 
@@ -1981,9 +2211,20 @@ export function createCliLocalRuntimeAdapter(
         deps.env,
       );
       const requestedToolNames = agentConfig
-        ? addDefaultLightWebToolsForConfiguredAgents(
-            resolveRequestedRuntimeToolNames({ agentConfig }),
-            agentConfig,
+        ? applyDisabledTools(
+            addDefaultLightWebToolsForConfiguredAgents(
+              addDefaultCliCoreTools(
+                canonicalizeToolNames(
+                  expandEnabledPacks(
+                    (agentConfig as any)?.enabledPacks,
+                    resolveRequestedRuntimeToolNames({ agentConfig }),
+                  ),
+                ),
+                deps.env,
+              ),
+              agentConfig,
+            ),
+            (agentConfig as any)?.disabledTools,
           )
         : [];
       activeAgentToolNames = buildLocalPolicyToolNames({
@@ -2003,6 +2244,9 @@ export function createCliLocalRuntimeAdapter(
         readXhsProfile: deps.readXhsProfile,
         ...(deps.confirmDestructiveAction
           ? { confirmDestructiveAction: deps.confirmDestructiveAction }
+          : {}),
+        ...(deps.requestUserChoice
+          ? { requestUserChoice: deps.requestUserChoice }
           : {}),
         ...runtimeToolExecutionLimits,
       });

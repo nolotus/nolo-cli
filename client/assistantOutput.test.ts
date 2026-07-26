@@ -4,7 +4,6 @@ import {
   convertMarkdownTablesForTerminal,
   createRenderAwareStreamWriter,
   formatAssistantDisplay,
-  normalizeRenderDisplayMode,
   polishAssistantStructure,
 } from "./assistantOutput";
 
@@ -37,17 +36,13 @@ describe("assistantOutput", () => {
   });
 
   test("rich mode styles headings and bold text", () => {
-    expect(normalizeRenderDisplayMode(undefined)).toBe("rich");
-    const rich = formatAssistantDisplay("## Title\n这是 **Nolo** 工作区", "rich");
+    const rich = formatAssistantDisplay("## Title\n这是 **Nolo** 工作区");
     const brightness = resolveTuiBrightness();
     // Headings are bold + warning at every level; bold-only is inline **bold**.
     expect(rich).toContain(
       `\x1b[1m${themeColorSequence("warning", process.env, brightness)}Title\x1b[0m`
     );
     expect(rich).toContain("\x1b[1mNolo\x1b[0m");
-    expect(formatAssistantDisplay("## Title\nplain body", "plain")).toBe(
-      "## Title\n\nplain body"
-    );
   });
 
   test("converts orphan table rows and drops orphan separators", () => {
@@ -117,7 +112,7 @@ describe("assistantOutput", () => {
       "```",
     ].join("\n");
     expect(convertMarkdownTablesForTerminal(text)).toBe(text);
-    const rich = formatAssistantDisplay(text, "rich");
+    const rich = formatAssistantDisplay(text);
     // Code-block syntax highlighting now interleaves ANSI between characters,
     // so a contiguous-content substring assertion is no longer possible. The
     // intent these assertions guard (indentation preserved, table-like lines
@@ -130,7 +125,7 @@ describe("assistantOutput", () => {
   });
 
   test("rich mode styles inline code spans with the muted token, not info", () => {
-    const rich = formatAssistantDisplay("run `nolo update` now", "rich");
+    const rich = formatAssistantDisplay("run `nolo update` now");
     const brightness = resolveTuiBrightness();
     // Pin the actual token. The previous version of this test only checked
     // that the text survived and that some reset was emitted, so it stayed
@@ -140,13 +135,10 @@ describe("assistantOutput", () => {
       `${themeColorSequence("muted", process.env, brightness)}nolo update\x1b[0m`
     );
     expect(rich).not.toContain(themeColorSequence("info", process.env, brightness));
-    expect(formatAssistantDisplay("run `nolo update` now", "plain")).toBe(
-      "run `nolo update` now"
-    );
   });
 
   test("rich mode renders markdown links as OSC 8 clickable hyperlinks", () => {
-    const rich = formatAssistantDisplay("See [docs](https://nolo.chat/docs) here", "rich");
+    const rich = formatAssistantDisplay("See [docs](https://nolo.chat/docs) here");
     // OSC 8 escape wraps the visible text — Cmd/Ctrl-Click opens the URL in
     // supporting terminals (iTerm2, Ghostty, WezTerm, etc.).
     expect(rich).toContain("\x1b]8;;https://nolo.chat/docs\x1b\\");
@@ -154,17 +146,10 @@ describe("assistantOutput", () => {
     expect(rich).toContain("\x1b]8;;\x1b\\");
   });
 
-  test("plain mode leaves links as raw markdown", () => {
-    expect(formatAssistantDisplay("See [docs](https://nolo.chat/docs) here", "plain")).toBe(
-      "See [docs](https://nolo.chat/docs) here"
-    );
-  });
-
   test("stream writer never leaks raw table pipes", () => {
     const chunks: string[] = [];
     const writer = createRenderAwareStreamWriter({
       write: (chunk) => chunks.push(chunk),
-      renderMode: "rich",
     });
 
     writer.push("| pid | 说明 |\n");
@@ -184,7 +169,6 @@ describe("assistantOutput", () => {
     const chunks: string[] = [];
     const writer = createRenderAwareStreamWriter({
       write: (chunk) => chunks.push(chunk),
-      renderMode: "rich",
     });
 
     writer.push("```ts\n  const x = 1;\n| not a table |\n```\n");
@@ -204,7 +188,6 @@ describe("assistantOutput", () => {
     const chunks: string[] = [];
     const writer = createRenderAwareStreamWriter({
       write: (chunk) => chunks.push(chunk),
-      renderMode: "rich",
     });
 
     writer.push("## Title\n");
@@ -226,7 +209,7 @@ describe("code block syntax highlighting", () => {
   const fence = (lang: string, body: string) => ["```" + lang, body, "```"].join("\n");
   /** The rendered line for `body`, i.e. everything between the fence rows. */
   const codeLine = (lang: string, body: string) =>
-    formatAssistantDisplay(fence(lang, body), "rich").split("\n")[1] ?? "";
+    formatAssistantDisplay(fence(lang, body)).split("\n")[1] ?? "";
 
   test("an unlabeled fence is left exactly as it was before highlighting", () => {
     // Zero-regression guarantee: blocks with no language tag must keep the old
@@ -257,11 +240,6 @@ describe("code block syntax highlighting", () => {
     expect(line).toContain(`${seq("chrome")}\x1b[2m# comment`);
   });
 
-  test("plain render mode emits no color inside code blocks", () => {
-    const out = formatAssistantDisplay(fence("ts", "const x = 1;"), "plain");
-    expect(out).not.toContain("\x1b");
-  });
-
   test("streaming and whole-message rendering agree on code lines", () => {
     // The two renderers have separate fence bookkeeping; if they drift, a reply
     // looks different while streaming than it does after /resume replays it.
@@ -269,7 +247,6 @@ describe("code block syntax highlighting", () => {
     const chunks: string[] = [];
     const writer = createRenderAwareStreamWriter({
       write: (chunk) => chunks.push(chunk),
-      renderMode: "rich",
     });
     for (const char of source) writer.push(char);
     writer.flush();

@@ -227,7 +227,6 @@ export function renderContextPanel(
     t("contextFieldRuntime"),
     t("contextFieldTools"),
     t("contextFieldThinking"),
-    t("contextFieldRender"),
     t("contextFieldServer"),
   ];
 
@@ -267,8 +266,7 @@ export function renderContextPanel(
     field(labels[6], state.runtimeMode),
     field(labels[7], state.toolDisplay),
     field(labels[8], state.thinkingDisplay),
-    field(labels[9], state.renderDisplay),
-    field(labels[10], state.serverUrl),
+    field(labels[9], state.serverUrl),
     "",
     themeText(t("contextNext"), "chrome", colorEnabled),
     next("/agents            ", `  ${t("contextNextAgents")}`),

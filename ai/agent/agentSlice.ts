@@ -179,6 +179,8 @@ const processAgentCreateForm = (formData: AgentFormData, userId: string) => {
     references: normalizeAgentReferences(formData.references || []),
     // 非公开时，强制清空白名单，避免脏数据
     whitelist: isPublic ? formData.whitelist || [] : [],
+    // allowFork 独立于公开：Space 内的私有 agent 也可被空间成员复制
+    allowFork: !!formData.allowFork,
   };
 
   delete result.machineId;
@@ -354,6 +356,16 @@ const processAgentUpdateChanges = (
   // whitelist + isPublic
   if ("whitelist" in data) {
     changes.whitelist = (data.whitelist as string[]) || [];
+  }
+
+  if ("allowFork" in data) {
+    changes.allowFork = !!data.allowFork;
+  }
+
+  if ("avatarFileId" in data) {
+    // 头像 file id：空字符串/null 视为清空，否则写入新值
+    const raw = (data as any).avatarFileId;
+    changes.avatarFileId = raw ? String(raw).trim() : null;
   }
 
   if ("isPublic" in data) {

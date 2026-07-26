@@ -1,7 +1,4 @@
-import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import { themeColorSequence, resolveTuiBrightness, type TuiBrightness } from "../tui/theme";
-
-export type RenderDisplayMode = "plain" | "rich";
 
 // ANSI style codes that don't depend on color (bold, dim, reset).
 const STYLE = {
@@ -23,24 +20,6 @@ function colorSeq(
   // "success" is added for syntax-highlight string literals; themeColorSequence
   // already supports it (it's a TuiThemeToken), so theme.ts needs no change.
   return themeColorSequence(token, process.env, brightness);
-}
-
-export function normalizeRenderDisplayMode(
-  raw: string | undefined,
-  fallback: RenderDisplayMode = "rich"
-): RenderDisplayMode {
-  const normalized = asTrimmedLowercaseString(raw);
-  if (normalized === "plain" || normalized === "raw" || normalized === "off" || normalized === "0") {
-    return "plain";
-  }
-  if (normalized === "rich" || normalized === "on" || normalized === "1" || normalized === "styled") {
-    return "rich";
-  }
-  return fallback;
-}
-
-export function resolveRenderDisplayMode(env: Record<string, string | undefined> = process.env) {
-  return normalizeRenderDisplayMode(env.NOLO_CLI_RENDER ?? env.NOLO_RENDER, "rich");
 }
 
 function splitTableCells(line: string) {
@@ -394,8 +373,7 @@ function renderMarkdownLink(match: string, text: string, url: string): string {
 
 const MARKDOWN_LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)/g;
 
-function styleInlineMarkdown(line: string, mode: RenderDisplayMode, brightness: TuiBrightness) {
-  if (mode === "plain") return line;
+function styleInlineMarkdown(line: string, brightness: TuiBrightness) {
   // Inline code is muted, matching highlightMarkdown (tui/theme.ts). Both
   // renderers must agree: this one styles the streamed reply, the other styles
   // the same text once it is repainted from history — a mismatch makes the
@@ -446,15 +424,14 @@ function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
   // entire line (which would fight inline markdown highlighting).
   const bullet = line.match(/^(\s*)(•)\s(.+)$/);
   if (bullet) {
-    const styled = styleInlineMarkdown(bullet[3], "rich", brightness);
+    const styled = styleInlineMarkdown(bullet[3], brightness);
     return `${bullet[1]}${colorSeq("accent", brightness)}•${STYLE.reset} ${styled}`;
   }
-  return styleInlineMarkdown(line, "rich", brightness);
+  return styleInlineMarkdown(line, brightness);
 }
 
 export function formatAssistantDisplay(
   text: string,
-  mode: RenderDisplayMode = "rich",
   options: { trimEdges?: boolean } = {}
 ) {
   const brightness = resolveTuiBrightness();
@@ -473,15 +450,13 @@ export function formatAssistantDisplay(
           fenceLang = normalizeCodeLang(readFenceLanguage(line));
         }
         inFence = !inFence;
-        return mode === "plain" ? line : `${STYLE.dim}${line}${STYLE.reset}`;
+        return `${STYLE.dim}${line}${STYLE.reset}`;
       }
       if (inFence) {
         // Line-local highlighting: only this line, no cross-line state beyond
-        // fenceLang. plain mode never colors (see test "plain mode").
-        if (mode === "plain") return line;
+        // fenceLang.
         return highlightCodeLine(line, fenceLang, brightness);
       }
-      if (mode === "plain") return styleInlineMarkdown(line, "plain", brightness);
       return styleRichMarkdownLine(line, brightness);
     })
     .join("\n");
@@ -490,17 +465,15 @@ export function formatAssistantDisplay(
 function emitFormattedAssistantBlock(
   write: (chunk: string) => void,
   text: string,
-  renderMode: RenderDisplayMode,
   trailingNewline = false
 ) {
   if (!text) return;
-  write(formatAssistantDisplay(text, renderMode, { trimEdges: false }));
+  write(formatAssistantDisplay(text, { trimEdges: false }));
   if (trailingNewline) write("\n");
 }
 
 export function createRenderAwareStreamWriter(args: {
   write: (chunk: string) => void;
-  renderMode: RenderDisplayMode;
 }) {
   const brightness = resolveTuiBrightness();
   let buffer = "";
@@ -511,13 +484,6 @@ export function createRenderAwareStreamWriter(args: {
   let fenceLang: CodeLang = "unknown";
 
   const flushCompleteBlocks = () => {
-    if (args.renderMode === "plain") {
-      if (!buffer) return;
-      args.write(buffer);
-      buffer = "";
-      return;
-    }
-
     while (buffer.includes("\n")) {
       const lines = buffer.split("\n");
       if (lines.length < 2) break;
@@ -564,7 +530,6 @@ export function createRenderAwareStreamWriter(args: {
           emitFormattedAssistantBlock(
             args.write,
             lines.slice(0, end).join("\n"),
-            args.renderMode,
             true
           );
           buffer = lines.slice(end).join("\n");
@@ -572,7 +537,7 @@ export function createRenderAwareStreamWriter(args: {
         }
       }
 
-      emitFormattedAssistantBlock(args.write, firstLine, args.renderMode, true);
+      emitFormattedAssistantBlock(args.write, firstLine, true);
       buffer = lines.slice(1).join("\n");
     }
   };
@@ -580,21 +545,15 @@ export function createRenderAwareStreamWriter(args: {
   return {
     push(chunk: string) {
       if (!chunk) return;
-      if (args.renderMode === "plain") {
-        args.write(chunk);
-        return;
-      }
       buffer += chunk;
       flushCompleteBlocks();
     },
     flush() {
       if (!buffer) return;
-      if (args.renderMode === "plain") {
-        args.write(buffer);
-      } else if (inFence) {
+      if (inFence) {
         args.write(buffer);
       } else {
-        emitFormattedAssistantBlock(args.write, buffer, args.renderMode);
+        emitFormattedAssistantBlock(args.write, buffer);
       }
       buffer = "";
     },

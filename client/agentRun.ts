@@ -25,6 +25,7 @@ import {
   ensureDialogSyncedForServerFallback,
   isBuiltinNoloAgentRef,
 } from "./localRuntimeAdapter";
+import type { UserChoiceRequest, UserChoiceResult } from "./localRuntimeAdapter";
 import type {
   LocalAgentTurnInput,
   LocalAgentTurnResult,
@@ -34,7 +35,6 @@ import { createStreamingTextWriter } from "./streamingOutput";
 import {
   createRenderAwareStreamWriter,
   formatAssistantDisplay,
-  resolveRenderDisplayMode,
 } from "./assistantOutput";
 import {
   createThinkingAwareStreamFilter,
@@ -143,6 +143,8 @@ export type RunAgentTurnOptions = {
     gate: LocalAgentActionGate,
   ) => Promise<AgentRuntimeToolResult | void>;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  /** Interactive ui_ask_choice dialog; absent in headless/CI mode. */
+  requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
   /** Cooperative stop (TUI Esc): aborted turns return exitCode 0 + streamInterrupted. */
   abortSignal?: AbortSignal;
   /** Local loop lifecycle events; used by the CLI runner to write heartbeat activity to the registry. */
@@ -299,10 +301,8 @@ function createCliTurnOutput(params: CliTurnOutputOptions) {
   let printedAssistantLabel = false;
 
   const thinkingMode = resolveThinkingDisplayMode(options.env);
-  const renderMode = resolveRenderDisplayMode(options.env);
   const renderWriter = createRenderAwareStreamWriter({
     write: (chunk) => options.output.write(chunk),
-    renderMode,
   });
 
   const writeVisibleAssistantChunk = (chunk: string) => {
@@ -495,6 +495,9 @@ function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
     ...(options.confirmDestructiveAction
       ? { confirmDestructiveAction: options.confirmDestructiveAction }
       : {}),
+    ...(options.requestUserChoice
+      ? { requestUserChoice: options.requestUserChoice }
+      : {}),
   });
 }
 
@@ -678,10 +681,8 @@ function formatAssistantResponseForCli(
   options: RunAgentTurnOptions,
 ) {
   const thinkingMode = resolveThinkingDisplayMode(options.env);
-  const renderMode = resolveRenderDisplayMode(options.env);
   return formatAssistantDisplay(
     formatAssistantTextForCli(text, thinkingMode),
-    renderMode,
   );
 }
 

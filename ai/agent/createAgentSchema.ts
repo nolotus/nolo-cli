@@ -186,9 +186,14 @@ export const getCreateAgentSchema = (t: TFunction) =>
 
       tools: z.array(z.string()).default([]),
 
+      disabledTools: z.array(z.string()).default([]),
+
+      enabledPacks: z.array(z.string()).default([]),
+
       runtimeToolPolicy: runtimeToolPolicySchema.nullable().optional(),
 
       isPublic: z.boolean().default(false),
+      allowFork: z.boolean().default(false),
 
       greeting: z
         .union([z.string(), greetingConfigSchema])

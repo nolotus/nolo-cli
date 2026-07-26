@@ -97,7 +97,6 @@ export const SLASH_COMMANDS = [
   "/runtime",
   "/tools",
   "/thinking",
-  "/render",
   "/switch",
   "/agent",
   "/agents",

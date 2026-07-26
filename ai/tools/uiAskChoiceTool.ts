@@ -102,3 +102,61 @@ export async function uiAskChoiceFunc(
         displayData: question,
     };
 }
+
+// ============================================================================
+// Shared ui_ask_choice payload contract — single source of truth.
+// Consumed by: the executor above, the CLI local executor, the CLI tool-output
+// renderer, and the server saveDialog choice-selection lookup. Any change to
+// the wire shape (type / question / choices / blocking / selected / cancelled)
+// lands here so all readers stay in sync.
+// ============================================================================
+
+export type UiAskChoiceOption = {
+    id?: string;
+    label: string;
+    userMessage?: string;
+};
+
+export type UiAskChoicePayload = {
+    type: "ui_ask_choice";
+    question: string;
+    choices: UiAskChoiceOption[];
+    blocking: boolean;
+    /** Present when the tool was resolved interactively (CLI select dialog). */
+    selected?: {
+        label: string;
+        userMessage: string;
+    };
+    /** Present when the user dismissed the select dialog without choosing. */
+    cancelled?: boolean;
+    /** Server-side error marker (mirrors the executor's error shape). */
+    error?: string;
+    detail?: string;
+};
+
+/**
+ * Parse a raw tool result into a typed UiAskChoicePayload, or null when the
+ * content is not a ui_ask_choice payload. Accepts both a JSON string (the wire
+ * format stored on tool messages) and an already-parsed object.
+ *
+ * Does NOT trim/filter — callers validate question/choices for their own
+ * display needs. Returns the parsed object as-is so readers that need raw
+ * fields (selected/cancelled/error) get them.
+ */
+export function parseUiAskChoiceContent(
+    rawContent: unknown,
+): UiAskChoicePayload | null {
+    const parsed =
+        typeof rawContent === "string"
+            ? (() => {
+                  try {
+                      return JSON.parse(rawContent);
+                  } catch {
+                      return null;
+                  }
+              })()
+            : rawContent;
+    if (!parsed || typeof parsed !== "object") return null;
+    if ((parsed as any).type !== "ui_ask_choice") return null;
+    return parsed as UiAskChoicePayload;
+}

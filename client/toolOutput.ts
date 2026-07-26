@@ -3,6 +3,7 @@ import { compactWhitespace } from "../core/compactWhitespace";
 import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../agent-runtime/actionGate";
+import { parseUiAskChoiceContent } from "../ai/tools/uiAskChoiceTool";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 import { diffLineSequences, themeText } from "../tui/theme";
 import { t, toolLabel } from "../tui/i18n";
@@ -213,6 +214,69 @@ function isNeedsActionToolResult(event: LocalAgentToolEvent) {
   return Boolean(event.metadata?.actionGate);
 }
 
+/**
+ * Parse a ui_ask_choice tool result into a question + numbered option list
+ * for CLI display. Returns null when the content is not a ui_ask_choice
+ * payload (so non-choice tools fall through to the generic compact line).
+ * Delegates wire parsing to the shared parseUiAskChoiceContent source of
+ * truth; keeps the display-specific trim/filter of choices here.
+ */
+function parseUiAskChoiceForCli(event: LocalAgentToolEvent): {
+  question: string;
+  choices: Array<{ label: string; userMessage?: string }>;
+} | null {
+  if (event.toolName !== "ui_ask_choice" && !event.metadata?.uiAskChoice) {
+    return null;
+  }
+  const parsed = parseUiAskChoiceContent(event.content);
+  if (!parsed) return null;
+  const question = typeof parsed.question === "string" ? parsed.question.trim() : "";
+  const choices = (Array.isArray(parsed.choices) ? parsed.choices : [])
+    .filter((c): c is { label?: string; userMessage?: string } =>
+      Boolean(c && typeof c === "object"),
+    )
+    .map((c) => ({
+      label: String(c.label ?? "").trim(),
+      userMessage: typeof c.userMessage === "string" ? c.userMessage : undefined,
+    }))
+    .filter((c) => c.label.length > 0);
+  if (!question || choices.length === 0) return null;
+  return { question, choices };
+}
+
+function formatUiAskChoiceBlock(
+  event: LocalAgentToolEvent,
+  colorEnabled: boolean,
+): string | null {
+  const parsed = parseUiAskChoiceForCli(event);
+  if (!parsed) return null;
+  const lines: string[] = [];
+  lines.push("");
+  if (colorEnabled) {
+    lines.push(`${themeText("❓ ", "info", true)}${styleCliText(parsed.question, "cyan", true)}`);
+  } else {
+    lines.push(`❓ ${parsed.question}`);
+  }
+  parsed.choices.forEach((choice, i) => {
+    const num = String(i + 1);
+    const label = choice.label;
+    if (colorEnabled) {
+      lines.push(
+        `  ${themeText(num + ".", "chrome", true)} ${label}`,
+      );
+    } else {
+      lines.push(`  ${num}. ${label}`);
+    }
+  });
+  const hint = "请输入序号选择，或直接回复：";
+  if (colorEnabled) {
+    lines.push(`  ${dimCliText(hint, true)}`);
+  } else {
+    lines.push(`  ${hint}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function formatToolTraceLine(text: string, colorEnabled: boolean, accent: "none" | "error" = "none") {
   if (!colorEnabled) return `${text}\n`;
   if (accent === "error") {
@@ -236,6 +300,11 @@ function formatVerboseToolEvent(event: LocalAgentToolEvent, colorEnabled: boolea
     );
   }
   const elapsed = typeof event.elapsedMs === "number" ? ` ${event.elapsedMs}ms` : "";
+  // ui_ask_choice: render the question + numbered choices even in verbose mode.
+  if (event.type === "tool-result" && (event.toolName === "ui_ask_choice" || event.metadata?.uiAskChoice)) {
+    const block = formatUiAskChoiceBlock(event, colorEnabled);
+    if (block) return `${formatToolTraceLine(`[nolo:tool] #${round} <- ${event.toolName}${elapsed}`, colorEnabled)}${block}`;
+  }
   const summary = event.summary ? ` ${event.summary}` : "";
   return formatToolTraceLine(
     `[nolo:tool] #${round} <- ${event.toolName}${elapsed}${summary}`,
@@ -256,6 +325,14 @@ function formatCompactToolLine(
   if (event.type === "tool-error") {
     const message = clip(event.message ?? t("toolFailed"), 96);
     return formatToolTraceLine(`  ▸ ${label}  ✗ ${message}`, colorEnabled, "error");
+  }
+
+  // ui_ask_choice: render question + numbered choices instead of a generic
+  // tool trace line, so CLI users get an interactive-looking menu they can
+  // reply to by typing the number or their own answer.
+  if (event.type === "tool-result" && (event.toolName === "ui_ask_choice" || event.metadata?.uiAskChoice)) {
+    const block = formatUiAskChoiceBlock(event, colorEnabled);
+    if (block) return block;
   }
 
   const hint = compactResultHint(event);

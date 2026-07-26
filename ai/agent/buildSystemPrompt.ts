@@ -34,7 +34,20 @@ const CONTEXT_USAGE_INSTRUCTIONS = `参考资料使用说明：
 // ============================================================================
 
 const MENU_USAGE_INSTRUCTIONS = `--- 交互说明 ---
-所有用户输入均为纯文本消息，直接理解即可，不要在回复中提及按钮、菜单、界面等 UI 元素。`;
+所有用户输入均为纯文本消息，直接理解即可，不要在回复中提及按钮、菜单、界面等 UI 元素。
+
+## 何时调用 ui_ask_choice
+默认倾向"直接行动"：当你能基于现有上下文给出高质量答案或执行时，优先直接做，不要为了问而问。仅在以下情况调用 ui_ask_choice：
+1）用户需求宽泛或模糊，且你能给出 2～5 个互斥、都合理的方向候选——让用户先选一个方向再深入；
+2）计划/流程到了真正的分支节点，不同选择会导致显著不同的成本、隐私或结果走向，且你无法从上下文推断用户偏好；
+3）新会话开头，根据用户画像给出若干"接下来可以尝试的事情"作为功能导航或使用引导。
+
+## 调用 ui_ask_choice 的规范
+- 提供 2～5 个互斥选项；如果你有推荐方向，把它放在 choices 的第一位；
+- 每个选项的 label 写简短按钮文案，userMessage 写成完整的下一句话，方便用户点击后上下文连贯；
+- 不要在选项列表里放"其他/Other"——客户端会自动为用户追加自由输入的退路；
+- 把要问用户的问题写在 question 字段里，不要在同一轮 assistant 普通文本里重复这句话；
+- 如果用户的目标已经非常具体清晰，即便上述条件看似满足，也优先直接回答，不要强行弹选择菜单。`;
 
 // ============================================================================
 // 网页访问（有 exa_search 工具时注入）
@@ -141,6 +154,61 @@ const GENERIC_AGENT_UPDATE_INSTRUCTIONS = `--- Agent 维护能力 ---
 const CLARIFICATION_MODE_INSTRUCTIONS = `在你还不了解用户意图时，通过提问来澄清需求，而不是仓促给出答案。`;
 
 const isBrowser = typeof window !== "undefined";
+
+// ============================================================================
+// 工具能力条件注入的 prompt section 表
+// 每项 { id, triggerTools, build } —— agent 命中 triggerTools 任一即注入。
+// 加新「按工具注入」的 section 只需在此表追加一行，无需改 buildSystemPromptContext。
+// agentOrchestration 的 PAGE_BUILDER_HANDOFF 附加块由 build 函数内部组合。
+// ============================================================================
+type ToolGuidedSection = {
+    id: string;
+    triggerTools: string[];
+    build: (agentTools: string[]) => string;
+};
+
+const TOOL_GUIDED_SECTIONS: ToolGuidedSection[] = [
+    {
+        id: "agentOrchestration",
+        triggerTools: ["callAgent", "runStreamingAgent"],
+        build: (tools) =>
+            [
+                AGENT_ORCHESTRATION_INSTRUCTIONS,
+                tools.includes("runStreamingAgent")
+                    ? PAGE_BUILDER_HANDOFF_INSTRUCTIONS
+                    : "",
+            ]
+                .filter(Boolean)
+                .join("\n\n"),
+    },
+    { id: "menuUsage", triggerTools: ["ui_ask_choice"], build: () => MENU_USAGE_INSTRUCTIONS },
+    {
+        id: "webAccess",
+        triggerTools: ["exa_search", "fetchWebpage", "browser_openSession", "read_x_post"],
+        build: () => WEBPAGE_ACCESS_INSTRUCTIONS,
+    },
+    {
+        id: "knowledgeManagement",
+        triggerTools: ["createDoc", "updateDoc", "read", "readDoc", "readPage"],
+        build: () => KNOWLEDGE_MANAGEMENT_INSTRUCTIONS,
+    },
+    { id: "memoryCapture", triggerTools: ["rememberMemory"], build: () => MEMORY_CAPTURE_INSTRUCTIONS },
+    { id: "selfUpdate", triggerTools: ["updateSelf"], build: () => SELF_UPDATE_INSTRUCTIONS },
+    { id: "genericAgentUpdate", triggerTools: ["updateAgent"], build: () => GENERIC_AGENT_UPDATE_INSTRUCTIONS },
+];
+
+/** Resolve all tool-guided sections at once; returns content keyed by section id. */
+function resolveToolGuidedSections(agentTools: string[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const section of TOOL_GUIDED_SECTIONS) {
+        if (section.triggerTools.some((t) => agentTools.includes(t))) {
+            out[section.id] = section.build(agentTools);
+        } else {
+            out[section.id] = "";
+        }
+    }
+    return out;
+}
 
 // ============================================================================
 // 工具函数
@@ -333,45 +401,8 @@ export const buildSystemPromptContext = (options: {
 
   const agentTools = canonicalizeToolNames(agentConfig.tools ?? []);
 
-  // 按工具能力条件注入各指令块
-  const agentOrchestrationSection = agentTools.some((t) =>
-    ["callAgent", "runStreamingAgent"].includes(t)
-  )
-    ? [
-      AGENT_ORCHESTRATION_INSTRUCTIONS,
-      agentTools.includes("runStreamingAgent") ? PAGE_BUILDER_HANDOFF_INSTRUCTIONS : "",
-    ].filter(Boolean).join("\n\n")
-    : "";
-
-  const menuUsageSection = agentTools.includes("ui_ask_choice")
-    ? MENU_USAGE_INSTRUCTIONS
-    : "";
-
-  const webAccessSection = agentTools.some((t) =>
-    ["exa_search", "fetchWebpage", "browser_openSession", "read_x_post"].includes(t)
-  )
-    ? WEBPAGE_ACCESS_INSTRUCTIONS
-    : "";
-
-  // 知识管理：有页面读写工具时注入通用知识管理说明
-  const knowledgeManagementSection = agentTools.some((t) =>
-    ["createDoc", "updateDoc", "read", "readDoc", "readPage"].includes(t)
-  )
-    ? KNOWLEDGE_MANAGEMENT_INSTRUCTIONS
-    : "";
-
-  const memoryCaptureSection = agentTools.includes("rememberMemory")
-    ? MEMORY_CAPTURE_INSTRUCTIONS
-    : "";
-
-  const selfUpdateSection = agentTools.includes("updateSelf")
-    ? SELF_UPDATE_INSTRUCTIONS
-    : "";
-
-  const genericAgentUpdateSection = agentTools.includes("updateAgent")
-    ? GENERIC_AGENT_UPDATE_INSTRUCTIONS
-    : "";
-
+  // 按工具能力条件注入各指令块（表驱动，见 TOOL_GUIDED_SECTIONS）
+  const toolSections = resolveToolGuidedSections(agentTools);
 
   const {
     startupProtocol,
@@ -416,14 +447,14 @@ export const buildSystemPromptContext = (options: {
     { id: "identity", owner: "platform", cacheScope: "session", content: identitySection },
     { id: "startup-protocol", owner: "platform", cacheScope: "static", content: startupProtocol },
     { id: "core-persona", owner: "agent", cacheScope: "session", content: corePersonaSection },
-    { id: "agent-orchestration", owner: "platform", cacheScope: "session", content: agentOrchestrationSection },
-    { id: "web-access", owner: "platform", cacheScope: "session", content: webAccessSection },
-    { id: "menu-usage", owner: "platform", cacheScope: "session", content: menuUsageSection },
+    { id: "agent-orchestration", owner: "platform", cacheScope: "session", content: toolSections.agentOrchestration },
+    { id: "web-access", owner: "platform", cacheScope: "session", content: toolSections.webAccess },
+    { id: "menu-usage", owner: "platform", cacheScope: "session", content: toolSections.menuUsage },
     { id: "clarification-mode", owner: "platform", cacheScope: "session", content: clarifyingSection },
-    { id: "knowledge-management", owner: "platform", cacheScope: "session", content: knowledgeManagementSection },
-    { id: "memory-capture", owner: "platform", cacheScope: "session", content: memoryCaptureSection },
-    { id: "self-update", owner: "platform", cacheScope: "session", content: selfUpdateSection },
-    { id: "generic-agent-update", owner: "platform", cacheScope: "session", content: genericAgentUpdateSection },
+    { id: "knowledge-management", owner: "platform", cacheScope: "session", content: toolSections.knowledgeManagement },
+    { id: "memory-capture", owner: "platform", cacheScope: "session", content: toolSections.memoryCapture },
+    { id: "self-update", owner: "platform", cacheScope: "session", content: toolSections.selfUpdate },
+    { id: "generic-agent-update", owner: "platform", cacheScope: "session", content: toolSections.genericAgentUpdate },
     { id: "context-layer-contract", owner: "platform", cacheScope: "static", content: contextLayerContract },
     {
       id: "email-registration-workflow",

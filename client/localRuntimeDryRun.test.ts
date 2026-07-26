@@ -23,6 +23,8 @@ describe("CLI local runtime dry run", () => {
     "execShell",
     "launchProcess",
     "listProcesses",
+    "exa_search",
+    "fetchWebpage",
     "listDialogs",
     "readDialog",
     "queryDialogsBySubjectRef",
@@ -83,7 +85,7 @@ describe("CLI local runtime dry run", () => {
           const body = JSON.parse(String(init?.body));
           completeCount += 1;
           if (completeCount === 1) {
-            expect(body.tools.map((tool: any) => tool.function.name)).toEqual(DEFAULT_PRIVATE_LOCAL_TOOL_NAMES);
+            expect(body.tools.map((tool: any) => tool.function.name)).toEqual(["ui_ask_choice", ...DEFAULT_PRIVATE_LOCAL_TOOL_NAMES]);
             return Response.json({
               model: "qwen-coder",
               choices: [{

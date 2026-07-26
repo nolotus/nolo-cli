@@ -5,6 +5,7 @@ import {
   AGENT_UPDATE_FIELD_NAMES,
 } from "../../policy/selfUpdateFields";
 import { ToolResultError } from "../../tools/toolResultError";
+import { CAPABILITY_PACKS } from "../../tools/toolPacks";
 
 type ReasoningEffort = "low" | "medium" | "high";
 
@@ -35,8 +36,11 @@ export type AgentUpdateArgsShape = {
   introduction?: string;
   greeting?: string | GreetingConfigArg;
   isPublic?: boolean;
+  allowFork?: boolean;
   tags?: string[] | string;
   tools?: string[];
+  disabledTools?: string[];
+  enabledPacks?: string[];
   references?: ReferenceArg[];
   temperature?: number;
   top_p?: number;
@@ -86,6 +90,7 @@ export const agentUpdateFieldSchemaProperties = {
     ],
   },
   isPublic: { type: "boolean", description: "是否公开到应用市场。" },
+  allowFork: { type: "boolean", description: "是否允许其他用户把这个 AI 复制一份到自己的空间。" },
   tags: {
     type: "array",
     items: { type: "string" },
@@ -95,6 +100,16 @@ export const agentUpdateFieldSchemaProperties = {
     type: "array",
     items: { type: "string" },
     description: "允许调用的工具名称数组。",
+  },
+  disabledTools: {
+    type: "array",
+    items: { type: "string" },
+    description: "明确禁用的默认工具名称数组（如 exa_search、fetchWebpage）。这些工具即使被平台默认注入也不会发给模型，从根上节省 token。",
+  },
+  enabledPacks: {
+    type: "array",
+    items: { type: "string", enum: CAPABILITY_PACKS.map((p) => p.id) },
+    description: "启用的能力包 ID 数组。能力包是面向用户的工具分组，一个包包含一组协同工具。如 [\"web-search\"] 开启联网搜索。",
   },
   references: {
     type: "array",
@@ -165,8 +180,11 @@ export const buildPatch = (args: AgentUpdateArgsShape): AgentPatch => {
     introduction,
     greeting,
     isPublic,
+    allowFork,
     tags,
     tools,
+    disabledTools,
+    enabledPacks,
     references,
     temperature,
     top_p,
@@ -184,8 +202,11 @@ export const buildPatch = (args: AgentUpdateArgsShape): AgentPatch => {
   if (introduction !== undefined) patch.introduction = introduction;
   if (greeting !== undefined) patch.greeting = greeting;
   if (isPublic !== undefined) patch.isPublic = isPublic;
+  if (allowFork !== undefined) patch.allowFork = allowFork;
   if (tags !== undefined) patch.tags = tags as any;
   if (tools !== undefined) patch.tools = tools ?? [];
+  if (disabledTools !== undefined) patch.disabledTools = disabledTools ?? [];
+  if (enabledPacks !== undefined) patch.enabledPacks = enabledPacks ?? [];
   if (references !== undefined) patch.references = references as any;
   if (temperature !== undefined) patch.temperature = temperature;
   if (top_p !== undefined) patch.top_p = top_p;
@@ -289,6 +310,7 @@ export const formatUpdatedAgentOutput = (agent: Agent): string =>
     `✅ 已更新 Agent：${agent.name ?? "(名称未变)"}`,
     `- ID: ${agent.id}`,
     `- 是否公开: ${agent.isPublic ? "是" : "否"}`,
+    `- 允许他人复制: ${agent.allowFork ? "是" : "否"}`,
     agent.model && `- 模型: ${agent.model}`,
     (agent as any).provider && `- Provider: ${(agent as any).provider}`,
     agent.tags?.length && `- 标签: ${agent.tags.join(", ")}`,

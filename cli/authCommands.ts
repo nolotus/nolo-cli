@@ -111,7 +111,9 @@ const defaultOpenBrowser = async (url: string) => {
         ? "cmd"
         : "xdg-open";
   const args =
-    process.platform === "win32" ? ["/c", "start", "", url] : [url];
+    process.platform === "win32"
+      ? ["/c", "start", "", url.replace(/&/g, "^&")]
+      : [url];
 
   try {
     const child = spawn(command, args, {

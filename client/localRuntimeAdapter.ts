@@ -285,18 +285,20 @@ function remoteDialogSyncTimeout(): number {
 }
 const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
 export const BUILTIN_NOLO_AGENT_KEY = NOLO_DEFAULT_AGENT_KEY;
-const SOURCE_CLI_DIR = dirname(fileURLToPath(import.meta.url));
+const currentMetaFile = fileURLToPath(import.meta.url);
+const isJsBundle = extname(currentMetaFile) === ".js";
+const SOURCE_CLI_DIR = isJsBundle
+  ? dirname(currentMetaFile)
+  : dirname(dirname(currentMetaFile));
 const CLI_DIR = isCompiledBinary() ? dirname(process.execPath) : SOURCE_CLI_DIR;
 // Mirror the source/compiled extension so workspace tools can re-launch the
 // same CLI entrypoint in both repo development (bun + .ts) and published
 // packages (node + .js). Using a hardcoded .ts breaks installed packages.
 const CLI_ENTRYPOINT = isCompiledBinary()
   ? process.execPath
-  : join(
-      SOURCE_CLI_DIR,
-      "..",
-      `index${extname(fileURLToPath(import.meta.url)) || ".ts"}`,
-    );
+  : isJsBundle
+    ? currentMetaFile
+    : join(SOURCE_CLI_DIR, "index.ts");
 const LOCAL_SERVER_TABLE_TOOL_NAMES = [
   "createTable",
   "addTableRow",

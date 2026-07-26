@@ -66,14 +66,14 @@ export function clipPathAware(value: string, max = 72): string {
   const compact = compactWhitespace(value);
   if (compact.length <= max) return compact;
 
-  // "Looks like a path" = no spaces after compaction and contains "/".
+  // "Looks like a path" = no spaces after compaction and contains "/" or "\".
   // Otherwise (commands with args, prose, etc.) keep the shared tail clip so
   // non-path output is byte-identical to before.
-  if (compact.includes(" ") || !compact.includes("/")) {
+  if (compact.includes(" ") || (!compact.includes("/") && !compact.includes("\\"))) {
     return clipCompactText(value, max, "…");
   }
 
-  const segments = compact.split("/");
+  const segments = compact.split(/[/\\]/);
   const filename = segments[segments.length - 1];
 
   // Filename alone already meets/exceeds budget — can't keep a prefix, fall

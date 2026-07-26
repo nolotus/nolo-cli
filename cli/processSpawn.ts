@@ -22,7 +22,18 @@ export type SpawnedProcess = {
 export type SpawnFn = (options: SpawnProcessOptions) => SpawnedProcess;
 
 export function spawnProcess(options: SpawnProcessOptions): SpawnedProcess {
-  const [command, ...args] = options.cmd;
+  let [command, ...args] = options.cmd;
+  if (process.platform === "win32") {
+    const lower = command.toLowerCase();
+    if (
+      (lower === "npm" || lower === "npx" || lower === "pnpm" || lower === "yarn" || lower === "nolo") &&
+      !lower.endsWith(".cmd") &&
+      !lower.endsWith(".exe") &&
+      !lower.endsWith(".bat")
+    ) {
+      command = `${command}.cmd`;
+    }
+  }
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(command, args, {

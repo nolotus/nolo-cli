@@ -6,10 +6,12 @@ import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
 import { buildProviderAuthHeaders } from "./providerResolution";
 import { buildKimiCodeHeaders, isKimiCodeEndpoint } from "./kimiHeaders";
 import { parseSseDataLineJson } from "./sseDataLine";
+import { readSseFrames } from "./sseFrames";
 import { extractThinkContent, createThinkParserState } from "./thinkTagParser";
 import {
   applyChatCompletionDelta,
   flushChatCompletionStream,
+  throwIfChatCompletionStreamFailed,
   type ChatCompletionStreamState,
 } from "./processChatCompletionDelta";
 import { finalizeAccumulatedToolCalls, type AccumulatedToolCall } from "./toolCallAccumulator";
@@ -106,13 +108,6 @@ export async function readOpenAiCompatibleSseCompletion(args: {
   onTextDelta?: (chunk: string) => void;
   onReasoningDelta?: (chunk: string) => void;
 }) {
-  const reader = args.response.body?.getReader();
-  if (!reader) {
-    throw new Error("OpenAI-compatible stream response did not include a readable body.");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
   const state: ChatCompletionStreamState = {
     content: "",
     reasoning: "",
@@ -123,25 +118,13 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     onReasoningDelta: args.onReasoningDelta,
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    while (true) {
-      const boundary = buffer.indexOf("\n\n");
-      if (boundary === -1) break;
-      const event = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      processOpenAiCompatibleSseEvent(event, state);
-    }
-  }
-
-  if (buffer.trim()) {
-    processOpenAiCompatibleSseEvent(buffer, state);
+  for await (const frame of readSseFrames(args.response)) {
+    processOpenAiCompatibleSseEvent(frame, state);
   }
 
   flushChatCompletionStream(state);
+  // 200 OK 的流体里带错误帧时必须抛，否则故障会伪装成空回答。
+  throwIfChatCompletionStreamFailed(state);
 
   const tool_calls = finalizeAccumulatedToolCalls(state.accumulatedToolCalls);
   return {

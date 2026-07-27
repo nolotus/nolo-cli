@@ -388,6 +388,10 @@ function createCliTurnOutput(params: CliTurnOutputOptions) {
     finish(fallbackContent?: string) {
       spinner.stop();
       options.activityReporter?.(null);
+      const pendingToolOutput = formatToolEvent.flush ? formatToolEvent.flush() : "";
+      if (pendingToolOutput) {
+        options.output.write(pendingToolOutput);
+      }
       if (streamedAssistantText) {
         thinkingFilter.flush();
         renderWriter.flush();

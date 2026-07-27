@@ -422,6 +422,75 @@ export async function pushLocalDialogToRemote(args: {
   return { ok: true };
 }
 
+/** 与 pushLocalDialogToRemote 同一套 key 推导，两处必须一致否则会重复写入。 */
+const dialogMessageKey = (dialogId: string, msg: any) =>
+  msg?._key || msg?.dbKey || `dialog-msg-${dialogId}-${msg?.id}`;
+
+/**
+ * 补齐远端缺失的本地消息（best-effort，失败绝不阻塞 fallback）。
+ *
+ * 只补不删、只按 key 补差集：远端比本地新时（例如对话本来就在服务端跑）
+ * 这里什么都不做，不会用陈旧的本地状态覆盖服务端。
+ */
+async function pushLocalMessagesMissingFromRemote(args: {
+  authToken: string;
+  continueDialogId: string;
+  dialogKey: string;
+  fetchImpl: CliFetchImpl;
+  output?: { write(chunk: string): unknown };
+  serverUrl: string;
+  userId: string;
+}): Promise<void> {
+  try {
+    const localData = await readDialogFromLocalDb({
+      dialogKey: args.dialogKey,
+      dialogId: args.continueDialogId,
+      limit: 0,
+    });
+    const localMsgs = localData?.msgs ?? [];
+    if (localMsgs.length === 0) return;
+
+    const remoteRes = await args.fetchImpl(`${args.serverUrl}/rpc/getConvMsgs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${args.authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ dialogId: args.continueDialogId, limit: 0 }),
+    });
+    if (!remoteRes.ok) return;
+    const remoteMsgs = await remoteRes.json();
+    if (!Array.isArray(remoteMsgs)) return;
+
+    const remoteKeys = new Set(
+      remoteMsgs.map((msg) => dialogMessageKey(args.continueDialogId, msg)),
+    );
+    const missing = localMsgs.filter(
+      (msg) => !remoteKeys.has(dialogMessageKey(args.continueDialogId, msg)),
+    );
+    if (missing.length === 0) return;
+
+    for (const msg of missing) {
+      await postRemoteRecord({
+        authToken: args.authToken,
+        data: msg,
+        fetchImpl: args.fetchImpl,
+        key: dialogMessageKey(args.continueDialogId, msg),
+        serverUrl: args.serverUrl,
+        userId: args.userId,
+      });
+    }
+    args.output?.write(
+      `[nolo] Synced ${missing.length} local-only message(s) to the server before falling back.\n`,
+    );
+  } catch (err) {
+    // 补齐是 best-effort：宁可带着略旧的历史继续，也不要因为同步失败而整轮失败。
+    args.output?.write(
+      `[nolo] Warning: could not sync local-only messages before fallback (${toErrorMessage(err)}).\n`,
+    );
+  }
+}
+
 export async function ensureDialogSyncedForServerFallback(
   options: {
     continueDialogId?: string;
@@ -473,6 +542,18 @@ export async function ensureDialogSyncedForServerFallback(
   }
 
   if (response.ok) {
+    // 远端有 dialog 记录 ≠ 远端有完整消息。此前这里直接放行，于是本地轮次
+    // 同步失败后（服务器繁忙时 chat 代理与 db 写入会同时退化）server fallback
+    // 会带着过期历史重跑，用户看到的就是「刚说过的话它不记得」。补齐差额。
+    await pushLocalMessagesMissingFromRemote({
+      authToken,
+      continueDialogId,
+      dialogKey,
+      fetchImpl,
+      output: options.output,
+      serverUrl,
+      userId,
+    });
     return { ok: true };
   }
 

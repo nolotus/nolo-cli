@@ -113,7 +113,7 @@ export type DialogHistoryTurn = {
   content: string;
 };
 
-export async function loadDialogHistory(args: {
+export async function loadDialogHistoryForDisplay(args: {
   dialog: ListedDialog;
   env: EnvLike;
   fetchImpl?: CliFetchImpl;

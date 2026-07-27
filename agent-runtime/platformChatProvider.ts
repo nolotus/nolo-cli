@@ -30,9 +30,13 @@ import {
 import type { ThinkParseState } from "./thinkTagParser";
 import {
   applyChatCompletionDelta,
+  extractChatCompletionStreamError,
   flushChatCompletionStream,
+  throwIfChatCompletionStreamFailed,
+  type ChatCompletionStreamError,
   type ChatCompletionStreamState,
 } from "./processChatCompletionDelta";
+import { readSseFrames } from "./sseFrames";
 import {
   finalizeAccumulatedToolCalls,
   type AccumulatedToolCall,
@@ -309,6 +313,13 @@ function processPlatformChatSseEvent(
       continue;
     }
 
+    // Responses 分支不经过 applyChatCompletionDelta，错误帧要在这里单独收。
+    // 代理的错误帧形状与端点无关：两条分支必须同样看得见它。
+    if (!state.streamError) {
+      const responsesError = extractChatCompletionStreamError(parsed);
+      if (responsesError) state.streamError = responsesError;
+    }
+
     // Responses API streaming events
     const eventType = typeof parsed?.type === "string" ? parsed.type : "";
     if (eventType === "response.output_text.delta" && typeof parsed?.delta === "string") {
@@ -339,12 +350,6 @@ export async function readPlatformChatSseCompletion(args: {
   onTextDelta?: (chunk: string) => void;
   onReasoningDelta?: (chunk: string) => void;
 }) {
-  const reader = args.response.body?.getReader();
-  if (!reader) {
-    throw new Error("Platform chat stream response did not include a readable body.");
-  }
-  const decoder = new TextDecoder();
-  let buffer = "";
   const state = {
     content: "",
     reasoning: "",
@@ -353,30 +358,21 @@ export async function readPlatformChatSseCompletion(args: {
     onTextDelta: args.onTextDelta,
     onReasoningDelta: args.onReasoningDelta,
     completedResponsesPayload: undefined as any,
+    streamError: undefined as ChatCompletionStreamError | undefined,
     accumulatedToolCalls: {} as Record<number, AccumulatedToolCall>,
     thinkState: createThinkParserState(),
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    while (true) {
-      const boundary = buffer.indexOf("\n\n");
-      if (boundary === -1) break;
-      const event = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      processPlatformChatSseEvent(event, state);
-    }
-  }
-  if (buffer.trim()) {
-    processPlatformChatSseEvent(buffer, state);
+  for await (const frame of readSseFrames(args.response)) {
+    processPlatformChatSseEvent(frame, state);
   }
 
   // Flush any think-tag parser state held across chunk boundaries (mirrors
   // readOpenAiCompatibleSseCompletion). No-op for the Responses-API branch
   // since its events carry complete text deltas, not inline <think> tags.
   flushChatCompletionStream(state);
+  // 代理把上游故障编成 HTTP 200 + 错误帧；不抛就会伪装成空回答落进对话历史。
+  throwIfChatCompletionStreamFailed(state);
 
   if (state.usesResponsesApi && state.completedResponsesPayload) {
     const response = state.completedResponsesPayload;

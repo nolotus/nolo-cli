@@ -12,6 +12,7 @@ const REASONING_MODEL_NAMES = new Set([
   "gpt-5.6-terra",
   "gpt-5.6-luna",
   "glm-5.2",
+  "kimi-k3",
   // Legacy OpenAI catalog ids — still support reasoning UI for agents that
   // were never re-seeded after GPT-5.4 / GPT-5 were retired from the picker.
   "gpt-5.4",

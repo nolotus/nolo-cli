@@ -6,6 +6,7 @@ import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import {
   PLATFORM_HOSTED_KIMI_K26_MODEL,
   PLATFORM_HOSTED_KIMI_K27_CODE_MODEL,
+  PLATFORM_HOSTED_KIMI_K3_MODEL,
 } from "./kimi";
 
 /**
@@ -14,6 +15,17 @@ import {
 export const PLATFORM_HOSTED_KIMI_PRICE = {
   input: 0.08,
   output: 1.65,
+} as const;
+
+/**
+ * Platform hosted Kimi K3 price = Moonshot 官方价 × 0.8。
+ * 官方: input $3/1M, output $15/1M → 8折 input $2.4, output $12。
+ * K3 走 Ollama Cloud extra usage，成本由 extra credits 抵扣；
+ * 对外计费按 moonshot 官方 8 折定档，与 K2.6 实测校准价独立维护。
+ */
+export const PLATFORM_HOSTED_KIMI_K3_PRICE = {
+  input: 2.4,
+  output: 12,
 } as const;
 
 /**
@@ -82,6 +94,16 @@ export const isPlatformDeepseekFlashHosted = (
 };
 
 export const platformHostedModels = [
+  {
+    name: PLATFORM_HOSTED_KIMI_K3_MODEL,
+    displayName: "Kimi K3",
+    hasVision: true,
+    price: { ...PLATFORM_HOSTED_KIMI_K3_PRICE },
+    maxOutputTokens: 262144,
+    contextWindow: 1_000_000,
+    supportsTool: true,
+    supportsReasoningEffort: true,
+  },
   {
     name: PLATFORM_HOSTED_KIMI_K26_MODEL,
     displayName: "Kimi K2.6",

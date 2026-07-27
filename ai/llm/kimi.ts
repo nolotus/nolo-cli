@@ -5,8 +5,11 @@
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 
 /** Platform-hosted Kimi models (catalog + routing). Upstream is private. */
+export const PLATFORM_HOSTED_KIMI_K3_MODEL = "kimi-k3";
 export const PLATFORM_HOSTED_KIMI_K26_MODEL = "kimi-k2.6";
 export const PLATFORM_HOSTED_KIMI_K27_CODE_MODEL = "kimi-k2.7-code";
+/** @deprecated Kept for backward compatibility. */
+export const OLLAMA_CLOUD_KIMI_K3_MODEL = PLATFORM_HOSTED_KIMI_K3_MODEL;
 /** @deprecated Kept for backward compatibility. */
 export const OLLAMA_CLOUD_KIMI_K26_MODEL = PLATFORM_HOSTED_KIMI_K26_MODEL;
 /** @deprecated Kept for backward compatibility. */
@@ -77,6 +80,7 @@ export const KIMI_PLATFORM_FALLBACK_STATUSES = [
 ];
 
 export const isOllamaCloudKimiModel = (model?: string | null): boolean =>
+  model === OLLAMA_CLOUD_KIMI_K3_MODEL ||
   model === OLLAMA_CLOUD_KIMI_K26_MODEL ||
   model === OLLAMA_CLOUD_KIMI_K27_CODE_MODEL;
 

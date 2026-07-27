@@ -1,3 +1,5 @@
+import { clipPathAware, formatHomePath, formatReadItemPath, formatReadTreeLines, formatSearchItemQuery, formatSearchTreeLines } from "./formatReadPathTree";
+export { clipPathAware };
 import { clipCompactText } from "../core/clipCompactText";
 import { compactWhitespace } from "../core/compactWhitespace";
 import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
@@ -62,49 +64,6 @@ function clip(value: string, max = 72) {
  * Shares compact-then-clip preconditions with `clipCompactText` so short
  * values behave byte-identically.
  */
-export function clipPathAware(value: string, max = 72): string {
-  const compact = compactWhitespace(value);
-  if (compact.length <= max) return compact;
-
-  // "Looks like a path" = no spaces after compaction and contains "/" or "\".
-  // Otherwise (commands with args, prose, etc.) keep the shared tail clip so
-  // non-path output is byte-identical to before.
-  if (compact.includes(" ") || (!compact.includes("/") && !compact.includes("\\"))) {
-    return clipCompactText(value, max, "…");
-  }
-
-  const segments = compact.split(/[/\\]/);
-  const filename = segments[segments.length - 1];
-
-  // Filename alone already meets/exceeds budget — can't keep a prefix, fall
-  // back to the shared tail clip.
-  if (filename.length >= max) {
-    return clipCompactText(value, max, "…");
-  }
-
-  // Keep as many leading segments as the budget allows. Retaining only the
-  // first one is nearly worthless in a monorepo, where every path starts with
-  // the same top-level directory ("packages/…/foo.ts" says almost nothing);
-  // "packages/cli/tui/…/foo.ts" actually locates the file.
-  const ELISION = "/…/";
-  // Rebuild from the slice rather than appending to `prefix`: an absolute path
-  // starts with an empty first segment, and an empty accumulator is falsy, so
-  // append-style logic silently drops the leading "/" and renders "/Users/x/y"
-  // as the relative-looking "Users/x/y".
-  let prefix = "";
-  for (let i = 0; i < segments.length - 1; i += 1) {
-    const candidate = segments.slice(0, i + 1).join("/");
-    if (candidate.length + ELISION.length + filename.length > max) break;
-    prefix = candidate;
-  }
-  if (prefix) return `${prefix}${ELISION}${filename}`;
-
-  // Drop the leading segment, keep only the ellipsis + filename.
-  const filenameOnly = `…/${filename}`;
-  if (filenameOnly.length <= max) return filenameOnly;
-
-  return clipCompactText(value, max, "…");
-}
 
 export function formatActiveToolLabel(
   event: Pick<LocalAgentToolEvent, "toolName" | "argumentsPreview">
@@ -314,16 +273,110 @@ function formatVerboseToolEvent(event: LocalAgentToolEvent, colorEnabled: boolea
   );
 }
 
+function isReadToolName(name?: string): boolean {
+  if (!name) return false;
+  return name === "read" || name === "readFile" || name === "read_file" || name === "readWorkspaceFile";
+}
+
+function isSearchToolName(name?: string): boolean {
+  if (!name) return false;
+  return (
+    name === "grep" ||
+    name === "searchFiles" ||
+    name === "search_files" ||
+    name === "globFiles" ||
+    name === "glob_files" ||
+    name === "glob" ||
+    name === "searchWorkspace" ||
+    name === "search"
+  );
+}
+
+export function formatSearchTreeBlockForCli(
+  items: Array<{ query: string; path?: string }>,
+  colorEnabled: boolean
+): string {
+  if (items.length === 0) return "";
+  const { count, lines } = formatSearchTreeLines(items);
+
+  if (!colorEnabled) {
+    const headerLine = `• Search (${count})\n`;
+    const treeLines = lines.map((l) => `  ${l.connector}${l.queryText}`).join("\n");
+    return `${headerLine}${treeLines}\n`;
+  }
+
+  const bullet = themeText("•", "chrome", true);
+  const title = styleCliText("Search", "bold", true);
+  const countText = themeText(`(${count})`, "muted", true);
+  const headerLine = `${bullet} ${title} ${countText}\n`;
+
+  const treeLines = lines
+    .map((l) => {
+      const connector = themeText(`  ${l.connector}`, "chrome", true);
+      const queryText = themeText(l.queryText, "info", true);
+      return `${connector}${queryText}`;
+    })
+    .join("\n");
+
+  return `${headerLine}${treeLines}\n`;
+}
+
+export function formatReadTreeBlockForCli(
+  items: Array<{ path: string; metadata?: Record<string, unknown> }>,
+  colorEnabled: boolean
+): string {
+  if (items.length === 0) return "";
+  const { count, lines } = formatReadTreeLines(items);
+
+  if (!colorEnabled) {
+    const headerLine = `• Read (${count})\n`;
+    const treeLines = lines.map((l) => `  ${l.connector}${l.pathWithRange}`).join("\n");
+    return `${headerLine}${treeLines}\n`;
+  }
+
+  const bullet = themeText("•", "chrome", true);
+  const title = styleCliText("Read", "bold", true);
+  const countText = themeText(`(${count})`, "muted", true);
+  const headerLine = `${bullet} ${title} ${countText}\n`;
+
+  const treeLines = lines
+    .map((l) => {
+      const connector = themeText(`  ${l.connector}`, "chrome", true);
+      const pathText = themeText(l.pathWithRange, "info", true);
+      return `${connector}${pathText}`;
+    })
+    .join("\n");
+
+  return `${headerLine}${treeLines}\n`;
+}
 function formatCompactToolLine(
   event: LocalAgentToolEvent,
   pending: { toolName: string; argumentsPreview?: string } | undefined,
   colorEnabled: boolean
 ) {
   const toolName = event.toolName || pending?.toolName || "tool";
+  if (isReadToolName(toolName) && event.type === "tool-result") {
+    const rawPath =
+      (typeof event.metadata?.path === "string" ? event.metadata.path : undefined) ||
+      (typeof event.metadata?.filePath === "string" ? event.metadata.filePath : undefined) ||
+      event.argumentsPreview ||
+      pending?.argumentsPreview ||
+      "";
+    return formatReadTreeBlockForCli([{ path: rawPath, metadata: event.metadata }], colorEnabled);
+  }
+  if (isSearchToolName(toolName) && event.type === "tool-result") {
+    const rawQuery =
+      (typeof event.metadata?.query === "string" ? event.metadata.query : undefined) ||
+      (typeof event.metadata?.pattern === "string" ? event.metadata.pattern : undefined) ||
+      event.argumentsPreview ||
+      pending?.argumentsPreview ||
+      "";
+    const rawPath = typeof event.metadata?.path === "string" ? event.metadata.path : undefined;
+    return formatSearchTreeBlockForCli([{ query: rawQuery, path: rawPath }], colorEnabled);
+  }
   const rawArgs = clipPathAware(event.argumentsPreview || pending?.argumentsPreview || "", 72);
   const rawLabel = toolLabel(toolName);
   const label = rawArgs ? `${rawLabel} ${rawArgs}` : rawLabel;
-
   if (event.type === "tool-error") {
     const message = clip(event.message ?? t("toolFailed"), 96);
     return formatToolTraceLine(`  ▸ ${label}  ✗ ${message}`, colorEnabled, "error");
@@ -404,28 +457,103 @@ export function formatToolEventForCli(
   return formatCompactToolLine(event, undefined, colorEnabled);
 }
 
+export type ToolEventFormatter = ((event: LocalAgentToolEvent) => string) & {
+  flush?: () => string;
+};
+
 export function createToolEventFormatter(
   mode: ToolDisplayMode,
   colorEnabled = resolveCliColorEnabled()
-) {
+): ToolEventFormatter {
   const pending = new Map<string, { toolName: string; argumentsPreview?: string }>();
+  let readBuffer: LocalAgentToolEvent[] = [];
+  let searchBuffer: LocalAgentToolEvent[] = [];
 
-  return (event: LocalAgentToolEvent): string => {
+  const flushBuffers = (): string => {
+    let out = "";
+    if (readBuffer.length > 0) {
+      const items = readBuffer.map((evt) => {
+        const call = pending.get(evt.toolCallId);
+        const rawPath =
+          (typeof evt.metadata?.path === "string" ? evt.metadata.path : undefined) ||
+          (typeof evt.metadata?.filePath === "string" ? evt.metadata.filePath : undefined) ||
+          evt.argumentsPreview ||
+          call?.argumentsPreview ||
+          "";
+        return { path: rawPath, metadata: evt.metadata };
+      });
+      for (const evt of readBuffer) pending.delete(evt.toolCallId);
+      readBuffer = [];
+      out += formatReadTreeBlockForCli(items, colorEnabled);
+    }
+
+    if (searchBuffer.length > 0) {
+      const items = searchBuffer.map((evt) => {
+        const call = pending.get(evt.toolCallId);
+        const rawQuery =
+          (typeof evt.metadata?.query === "string" ? evt.metadata.query : undefined) ||
+          (typeof evt.metadata?.pattern === "string" ? evt.metadata.pattern : undefined) ||
+          evt.argumentsPreview ||
+          call?.argumentsPreview ||
+          "";
+        const rawPath = typeof evt.metadata?.path === "string" ? evt.metadata.path : undefined;
+        return { query: rawQuery, path: rawPath };
+      });
+      for (const evt of searchBuffer) pending.delete(evt.toolCallId);
+      searchBuffer = [];
+      out += formatSearchTreeBlockForCli(items, colorEnabled);
+    }
+
+    return out;
+  };
+
+  const formatter = (event: LocalAgentToolEvent): string => {
     if (mode === "hide") return "";
     if (mode === "verbose") return formatVerboseToolEvent(event, colorEnabled);
 
+    if (isReadToolName(event.toolName)) {
+      if (event.type === "tool-call") {
+        pending.set(event.toolCallId, {
+          toolName: event.toolName,
+          argumentsPreview: event.argumentsPreview,
+        });
+        return "";
+      }
+      if (event.type === "tool-result") {
+        readBuffer.push(event);
+        return "";
+      }
+    }
+
+    if (isSearchToolName(event.toolName)) {
+      if (event.type === "tool-call") {
+        pending.set(event.toolCallId, {
+          toolName: event.toolName,
+          argumentsPreview: event.argumentsPreview,
+        });
+        return "";
+      }
+      if (event.type === "tool-result") {
+        searchBuffer.push(event);
+        return "";
+      }
+    }
+
+    const flushed = flushBuffers();
     if (event.type === "tool-call") {
       pending.set(event.toolCallId, {
         toolName: event.toolName,
         argumentsPreview: event.argumentsPreview,
       });
-      return "";
+      return flushed;
     }
 
     const call = pending.get(event.toolCallId);
     pending.delete(event.toolCallId);
-    return formatCompactToolLine(event, call, colorEnabled);
+    return `${flushed}${formatCompactToolLine(event, call, colorEnabled)}`;
   };
+  formatter.flush = flushBuffers;
+  return formatter;
 }
 
 export function createSseToolEventAdapter(

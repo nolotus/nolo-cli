@@ -38,7 +38,7 @@ describe("toolOutput", () => {
     expect(shouldEmitToolEvents("hide")).toBe(false);
   });
 
-  test("compact mode emits one line per completed tool", () => {
+  test("compact mode emits formatted tree for completed read tool", () => {
     const format = createToolEventFormatter("compact");
     expect(
       format(
@@ -49,28 +49,19 @@ describe("toolOutput", () => {
         })
       )
     ).toBe("");
-    expect(
-      format(
-        toolEvent({
-          type: "tool-result",
-          toolName: "readFile",
-          argumentsPreview: "README.md",
-          elapsedMs: 3,
-          summary: "64 lines 1630 chars tail=\"...\"",
-        })
-      )
-    ).toContain("Read README.md");
-    expect(
-      format(
-        toolEvent({
-          type: "tool-result",
-          toolName: "readFile",
-          argumentsPreview: "README.md",
-          elapsedMs: 3,
-          summary: "64 lines 1630 chars tail=\"...\"",
-        })
-      )
-    ).toContain("✓");
+    format(
+      toolEvent({
+        type: "tool-result",
+        toolName: "readFile",
+        argumentsPreview: "README.md",
+        elapsedMs: 3,
+        summary: "64 lines 1630 chars tail=\"...\"",
+      })
+    );
+    const res = format.flush ? format.flush() : "";
+    expect(res).toContain("Read");
+    expect(res).toContain("README.md");
+    expect(res).toContain("└──");
   });
 
   test("compact mode drops elapsed time and generic output size from successful lines", () => {
@@ -86,7 +77,7 @@ describe("toolOutput", () => {
       false
     );
     // No metadata → no read-range hint; stays the plain compact line.
-    expect(line).toBe("  ▸ Read README.md  ✓\n");
+    expect(line).toBe("• Read (1)\n  └── README.md\n");
     expect(line).not.toContain("ms");
   });
 
@@ -103,7 +94,7 @@ describe("toolOutput", () => {
         "compact",
         false
       )
-    ).toBe("  ▸ Read small.ts  ✓\n");
+    ).toBe("• Read (1)\n  └── small.ts\n");
 
     // Sliced read — show the range so the user can spot disjoint paging.
     expect(
@@ -117,7 +108,41 @@ describe("toolOutput", () => {
         "compact",
         false
       )
-    ).toBe("  ▸ Read big.ts  ✓ 1000-1300/2560\n");
+    ).toBe("• Read (1)\n  └── big.ts:1000-1300\n");
+  });
+  test("compact mode groups consecutive read events into tree view matching spec", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "c1", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/sessionTypes.ts:2-49" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "c1", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/sessionTypes.ts:2-49" }));
+    format(toolEvent({ type: "tool-call", toolCallId: "c2", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/sessionTypes.ts" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "c2", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/sessionTypes.ts" }));
+    format(toolEvent({ type: "tool-call", toolCallId: "c3", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/sessionRender.ts" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "c3", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/sessionRender.ts" }));
+    format(toolEvent({ type: "tool-call", toolCallId: "c4", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/readlineWorkspace.ts:203-387,627-1679" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "c4", toolName: "readFile", argumentsPreview: "~/bun-nolo/packages/cli/tui/readlineWorkspace.ts:203-387,627-1679" }));
+
+    const out = format.flush ? format.flush() : "";
+    expect(out).toBe(
+      "• Read (4)\n" +
+      "  ├── ~/bun-nolo/packages/cli/tui/sessionTypes.ts:2-49\n" +
+      "  ├── ~/bun-nolo/packages/cli/tui/sessionTypes.ts\n" +
+      "  ├── ~/bun-nolo/packages/cli/tui/sessionRender.ts\n" +
+      "  └── ~/bun-nolo/packages/cli/tui/readlineWorkspace.ts:203-387,627-1679\n"
+    );
+  });
+  test("compact mode groups consecutive search events into tree view matching spec", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "s1", toolName: "searchFiles", argumentsPreview: "selectionStart|selectionEnd|setSelectionRange|cursor|caret" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "s1", toolName: "searchFiles", argumentsPreview: "selectionStart|selectionEnd|setSelectionRange|cursor|caret" }));
+    format(toolEvent({ type: "tool-call", toolCallId: "s2", toolName: "searchFiles", argumentsPreview: "contenteditable|textarea|onInput|onChange.*content|editor|Editor" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "s2", toolName: "searchFiles", argumentsPreview: "contenteditable|textarea|onInput|onChange.*content|editor|Editor" }));
+
+    const out = format.flush ? format.flush() : "";
+    expect(out).toBe(
+      "• Search (2)\n" +
+      "  ├── selectionStart|selectionEnd|setSelectionRange|cursor|caret\n" +
+      "  └── contenteditable|textarea|onInput|onChange.*content|editor|Editor\n"
+    );
   });
 
   test("compact mode shows editFile added/removed snippets", () => {
@@ -156,7 +181,7 @@ describe("toolOutput", () => {
           "compact",
           false
         )
-      ).toBe("  ▸ 搜索 packages/cli  ✓\n");
+      ).toBe("• Search (1)\n  └── packages/cli\n");
       // Not in the label table (platform tool registry) — fall back verbatim.
       expect(formatActiveToolLabel({ toolName: "ziweiChart" })).toBe("ziweiChart");
     } finally {

@@ -201,6 +201,95 @@ describe("assistantOutput", () => {
     expect(output).toContain("\x1b[1mNolo\x1b[0m");
   });
 
+  test("stream writer inserts blank line between list block and following prose", () => {
+    // Live TUI streams one finished line at a time — without stream-path
+    // breathing, polishAssistantStructure never sees the list↔prose pair and
+    // the dense wall the owner reported stays dense. Strip ANSI and assert
+    // the same blank the whole-message path inserts.
+    const chunks: string[] = [];
+    const writer = createRenderAwareStreamWriter({
+      write: (chunk) => chunks.push(chunk),
+    });
+    writer.push("intro\n");
+    writer.push("- one\n");
+    writer.push("- two\n");
+    writer.push("next paragraph\n");
+    writer.flush();
+    const stripped = chunks.join("").replace(/\x1b\[[0-9;]*m/g, "");
+    expect(stripped).toBe("intro\n\n• one\n• two\n\nnext paragraph\n");
+  });
+
+  test("inserts blank line between list block and following prose", () => {
+    // A bullet list run-on into the next paragraph is the core readability
+    // problem this task targets; the polish step inserts one blank line.
+    expect(polishAssistantStructure("• one\n• two\nnext paragraph")).toBe(
+      "• one\n• two\n\nnext paragraph"
+    );
+    expect(polishAssistantStructure("1. first\n2. second\nthen prose")).toBe(
+      "1. first\n2. second\n\nthen prose"
+    );
+  });
+
+  test("inserts blank line between prose and following list block", () => {
+    // Symmetric: prose running straight into a list is just as unreadable.
+    expect(polishAssistantStructure("intro\n• one\n• two")).toBe(
+      "intro\n\n• one\n• two"
+    );
+    expect(polishAssistantStructure("intro\n1. first\n2. second")).toBe(
+      "intro\n\n1. first\n2. second"
+    );
+  });
+
+  test("does not insert blank lines between consecutive list items", () => {
+    // Siblings keep their tight grouping — no blank between `• one` and
+    // `• two`, including with nesting indentation.
+    expect(polishAssistantStructure("• one\n• two\n• three")).toBe(
+      "• one\n• two\n• three"
+    );
+    expect(polishAssistantStructure("• top\n • child\n • grandchild")).toBe(
+      "• top\n • child\n • grandchild"
+    );
+    expect(polishAssistantStructure("1. first\n2. second")).toBe(
+      "1. first\n2. second"
+    );
+  });
+
+  test("does not alter spacing inside fenced code that looks like a list", () => {
+    // Fence interior masking means `•`/`1.` inside a code block never get
+    // blank lines inserted around them.
+    const input = "```ts\n• not a real list\n1. not ordered\ncode();\n```";
+    expect(polishAssistantStructure(input)).toBe(input);
+    // List immediately before a fence gets a blank line (list↔fence-line is
+    // list↔prose); the fence interior stays untouched.
+    const mixed = "• one\n• two\n```ts\n1. inside\n```";
+    expect(polishAssistantStructure(mixed)).toBe(
+      "• one\n• two\n\n```ts\n1. inside\n```"
+    );
+  });
+
+  test("styles ordered list markers with accent", () => {
+    // `1.` should be accent-colored like a bullet, body still inline-markdown.
+    const rich = formatAssistantDisplay("1. first step");
+    const brightness = resolveTuiBrightness();
+    expect(rich).toContain(
+      `${themeColorSequence("accent", process.env, brightness)}1.\x1b[0m`
+    );
+    expect(rich).toContain("first step");
+  });
+
+  test("styles task list checkbox markers with accent", () => {
+    // ☐/☑ markers get the same accent as • so task lists scan like bullets.
+    const brightness = resolveTuiBrightness();
+    const todo = formatAssistantDisplay("☐ undone");
+    const done = formatAssistantDisplay("☑ done");
+    expect(todo).toContain(
+      `${themeColorSequence("accent", process.env, brightness)}☐\x1b[0m`
+    );
+    expect(done).toContain(
+      `${themeColorSequence("accent", process.env, brightness)}☑\x1b[0m`
+    );
+  });
+
   describe("polishAssistantStructure code fence masking", () => {
     test("1. shell comments in code fence are not expanded with blank lines", () => {
       const input = "```sh\n# setup\necho ok\n```";

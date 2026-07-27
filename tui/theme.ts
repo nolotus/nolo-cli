@@ -8,12 +8,11 @@ import { resolveCliColorEnabled } from "../client/terminalStyles";
  * hex values are mirrored here — keep them in sync when the default theme
  * changes. Terminals without truecolor fall back to the nearest ANSI-16 code.
  *
- * Intentional divergence: a few trail tokens (light chrome/muted/warning, dark
- * muted) are tuned darker/dimmer than the app values they mirror. The app uses
- * those hexes for placeholder-grade text; the TUI uses the same tokens for
- * rules, tool labels and secondary body text, which need more contrast than a
- * placeholder. Light chrome/muted were nudged one more step (2026-07-27) after
- * owner feedback that trail light was comfortable but a touch washed out.
+ * Intentional divergence: a few trail tokens (light chrome/warning, dark
+ * muted) are tuned one step darker/dimmer than the app values they mirror.
+ * The app uses those hexes for placeholder-grade text; the TUI uses the same
+ * tokens for rules, titles and secondary body text, which need more contrast
+ * than a placeholder.
  */
 
 /** Brightness of the terminal background — drives light/dark token selection. */
@@ -40,12 +39,12 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
   trail: {
     light: {
       accent: { hex: "2E7DB5", ansiFallback: "\x1b[34m" }, // ocean blue
-      chrome: { hex: "768594", ansiFallback: "\x1b[90m" }, // slate — two steps below app placeholder A3B0BD (was 8A97A5); rules/tool markers on white need the extra notch
+      chrome: { hex: "8A97A5", ansiFallback: "\x1b[90m" }, // slate — darkened from the app's placeholder-grade A3B0BD; rules/titles need more contrast on white than placeholder text does
       success: { hex: "3F8F5C", ansiFallback: "\x1b[32m" }, // moss green
       warning: { hex: "B57F2E", ansiFallback: "\x1b[33m" }, // deep amber — D4A054 washed out on light backgrounds
       info: { hex: "4A9FD4", ansiFallback: "\x1b[36m" }, // sky blue
       danger: { hex: "C45C4A", ansiFallback: "\x1b[31m" }, // reddish
-      muted: { hex: "687584", ansiFallback: "\x1b[90m" }, // slate — one step below app textTertiary 7A8796; tool labels / secondary body on white
+      muted: { hex: "7A8796", ansiFallback: "\x1b[90m" }, // slate gray
     },
     dark: {
       accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // blue

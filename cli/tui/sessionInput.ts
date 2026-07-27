@@ -207,7 +207,7 @@ export function completeSlashCommand(buffer: string): string[] {
  *   1. 路径(`/Users/foo`,因为 token 含第二个 `/`,regex 不匹配)
  *   2. 数字开头(`/123abc` 不是合法命令名)
  *
- * 这样 `/help`、`/switch list` 都正确判为 slash,
+ * 这样 `/help`、`/switch list`、`/attach /tmp/x.png` 都正确判为 slash,
  * `/Users/x.png 看图`、`/etc/hosts` 都正确判为 chat。
  */
 export function isLikelySlashCommand(input: string): boolean {

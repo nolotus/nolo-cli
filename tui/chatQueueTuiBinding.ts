@@ -62,6 +62,14 @@ export type ChatQueueTuiBinding = {
    * abort behavior). Returns false when not running or the queue is empty.
    */
   preemptForDrain(): boolean;
+  /**
+   * Preempt the running turn but do NOT drain: the caller aborts the in-flight
+   * turn (e.g. the user pressed Esc to stop the current reply), and the next
+   * `notifyTurnEnd({ aborted: true })` is treated as a failed non-aborted
+   * turn-end so the queue is preserved (not cleared) but the drain cascade
+   * does not run. Returns false when not running.
+   */
+  preemptForStop(): boolean;
   /** Clear the queue (e.g. on /new). */
   clear(): void;
   /** Current UI status snapshot. */
@@ -81,11 +89,16 @@ export type ChatQueueTuiBinding = {
  */
 export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTuiBinding {
   const runtime: ChatQueueRuntime = createChatQueueRuntime();
-  // Armed by `preemptForDrain()`: when the caller aborts the in-flight turn
-  // right after arming, the subsequent `notifyTurnEnd({ aborted: true })` is
-  // reinterpreted as a clean turn-end so the drain cascade runs the queued
-  // head instead of the normal abort behavior (which clears the queue).
-  let preemptArmed = false;
+  // Armed by `preemptForDrain()` / `preemptForStop()`: when the caller
+  // aborts the in-flight turn right after arming, the subsequent
+  // `notifyTurnEnd({ aborted: true })` is reinterpreted so the queue is
+  // preserved instead of cleared (the normal abort behavior). Two modes:
+  //   - "drain": reinterpret as a clean turn-end so the cascade runs the head.
+  //   - "stop":  reinterpret as a failed (non-aborted) turn-end so the queue
+  //              is kept but the cascade does NOT drain (user just wants to
+  //              stop the current reply, not continue to the next queued item).
+  type PreemptMode = "drain" | "stop";
+  let preemptArmed: PreemptMode | null = null;
 
   const resolveSubmit = ({ text, isRunning }: { text: string; isRunning: boolean }) => {
     return resolveChatSendDecision({
@@ -111,16 +124,28 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
   };
 
   const notifyTurnEnd = async (outcome: { ok: boolean; aborted: boolean }) => {
-    // If a preempt was armed, reinterpret the aborted turn-end as a clean
-    // one so the drain cascade runs the queued head. The preempt was
-    // user-initiated (empty Enter while busy + queue non-empty), not a stop,
-    // so the queue must be preserved, not cleared.
+    // If a preempt was armed, reinterpret the aborted turn-end so the queue
+    // is preserved instead of cleared. "drain" mode reinterprets as a clean
+    // turn-end (cascade runs the head); "stop" mode reinterprets as a failed
+    // non-aborted turn-end (queue kept, cascade does not drain — the core
+    // treats ok:false/non-aborted as "keep queue, stop draining").
+    const preempt = preemptArmed;
+    preemptArmed = null;
     const effectiveOutcome =
-      preemptArmed && outcome.aborted
-        ? { ok: true, aborted: false }
+      preempt !== null && outcome.aborted
+        ? preempt === "drain"
+          ? { ok: true, aborted: false }
+          : { ok: false, aborted: false }
         : outcome;
-    preemptArmed = false;
     runtime.send({ type: "turn-end", ...effectiveOutcome });
+    // "stop" mode reinterprets abort as ok:false so the queue is kept and the
+    // cascade does not drain — but ok:false also sets lastDrainError, which
+    // would surface a spurious "previous turn failed" error for a deliberate
+    // Esc. Clear it: an empty drain-error message is falsy, so the status
+    // projection treats it as "no error".
+    if (preempt === "stop" && outcome.aborted) {
+      runtime.send({ type: "drain-error", message: "" });
+    }
 
     // Drain cascade: keep draining while the core says we should. Each drain
     // runs a full agent turn; we feed its outcome back in. The core's own
@@ -162,10 +187,12 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
 
   const drainHeadForManualTurn = (): string | null => {
     const status = runtime.getState();
-    // Only when idle: a running turn owns the queue drain path; interfering
-    // here would race the in-flight turn. The empty-Enter-while-busy path
+    // Only when idle and not drain-paused: a running turn owns the queue
+    // drain path (interfering here would race the in-flight turn), and
+    // drainPaused means a tool confirm is pending — starting a new turn
+    // would race that confirmation flow. The empty-Enter-while-busy path
     // uses preemptForDrain instead.
-    if (status.running || status.queue.length === 0) return null;
+    if (status.running || status.drainPaused || status.queue.length === 0) return null;
     const text = status.queue[0]!;
     runtime.send({ type: "turn-start" });
     runtime.send({ type: "dequeue" });
@@ -175,7 +202,19 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
   const preemptForDrain = (): boolean => {
     const status = runtime.getState();
     if (!status.running || status.queue.length === 0) return false;
-    preemptArmed = true;
+    preemptArmed = "drain";
+    return true;
+  };
+
+  const preemptForStop = (): boolean => {
+    const status = runtime.getState();
+    // Stop-preempt only makes sense with a running turn. An empty queue is
+    // fine: there is nothing to preserve, but we still reinterpret abort as
+    // a non-aborted failure so no "abandoned follow-ups" semantics kick in
+    // (harmless when the queue is empty, and keeps the caller's logic simple:
+    // arm on every Esc while busy, regardless of queue state).
+    if (!status.running) return false;
+    preemptArmed = "stop";
     return true;
   };
 
@@ -198,6 +237,7 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
     notifyTurnEnd,
     drainHeadForManualTurn,
     preemptForDrain,
+    preemptForStop,
     clear,
     getStatus,
     queueLength,

@@ -315,4 +315,96 @@ describe("createChatQueueTuiBinding", () => {
     expect(binding.queueLength()).toBe(0);
     binding.dispose();
   });
+
+  // --- Esc stop-preempt: abort preserves the queue but does not drain ---
+
+  it("preemptForStop returns false when idle", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.enqueue("x");
+    expect(binding.preemptForStop()).toBe(false);
+    binding.dispose();
+  });
+
+  it("preemptForStop returns true when running (even with an empty queue)", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.notifyTurnStart();
+    // No queue items, but still running — stop-preempt arms so the upcoming
+    // abort is not treated as "abandon follow-ups" (harmless when empty).
+    expect(binding.preemptForStop()).toBe(true);
+    binding.dispose();
+  });
+
+  it("preemptForStop returns true when running with a queued item", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.enqueue("queued");
+    binding.notifyTurnStart();
+    expect(binding.preemptForStop()).toBe(true);
+    binding.dispose();
+  });
+
+  it("an armed stop-preempt preserves the queue on abort but does NOT drain", async () => {
+    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const binding = createChatQueueTuiBinding(runTurn);
+    binding.enqueue("first");
+    binding.enqueue("second");
+    binding.notifyTurnStart();
+    // User presses Esc to stop the current reply: arm stop-preempt, then
+    // the turn is aborted.
+    expect(binding.preemptForStop()).toBe(true);
+    await binding.notifyTurnEnd({ ok: false, aborted: true });
+    // The aborted outcome was reinterpreted as a failed non-aborted turn-end,
+    // so the queue is preserved (NOT cleared) but the cascade did not drain.
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(binding.queueLength()).toBe(2);
+    expect(binding.getStatus().queuePreview).toEqual(["first", "second"]);
+    // The binding is idle now (not running), so a later empty-Enter can
+    // manually drain the head.
+    expect(binding.getStatus().isRunning).toBe(false);
+    // Stop-preempt must NOT leave a truthy lastDrainError — an Esc is a
+    // deliberate stop, not a failure, so the composer placeholder must not
+    // flip to "error". The binding clears it to an empty (falsy) string.
+    expect(binding.getStatus().lastDrainError).toBeFalsy();
+    binding.dispose();
+  });
+
+  it("stop-preempt is consumed by the next turn-end and does not leak", async () => {
+    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const binding = createChatQueueTuiBinding(runTurn);
+    binding.enqueue("x");
+    binding.notifyTurnStart();
+    binding.preemptForStop();
+    // Turn actually ended cleanly (not aborted) — stop-preempt is consumed
+    // and ignored since outcome.aborted is false; normal clean drain runs.
+    await binding.notifyTurnEnd({ ok: true, aborted: false });
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(runTurn.mock.calls[0]?.[0]).toBe("x");
+    binding.dispose();
+  });
+
+  it("after a stop-preempt preserves the queue, a manual drainHeadForManualTurn resumes it", async () => {
+    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const binding = createChatQueueTuiBinding(runTurn);
+    binding.enqueue("first");
+    binding.enqueue("second");
+    binding.notifyTurnStart();
+    // Esc: stop the current reply, preserve the queue.
+    binding.preemptForStop();
+    await binding.notifyTurnEnd({ ok: false, aborted: true });
+    expect(binding.queueLength()).toBe(2);
+    // Later: empty Enter manually drains the head. drainHeadForManualTurn
+    // dequeues and returns the text; the CALLER (readlineWorkspace) runs the
+    // turn via runOneAgentTurn (not the binding's internal runTurn), then
+    // reports the outcome via notifyTurnEnd. The binding's internal cascade
+    // only kicks in for the remaining item after that turn ends.
+    const drained = binding.drainHeadForManualTurn();
+    expect(drained).toBe("first");
+    expect(binding.queueLength()).toBe(1);
+    // Caller runs the first turn externally and reports a clean end. The
+    // cascade then drains the remaining "second" via the binding's runTurn.
+    await binding.notifyTurnEnd({ ok: true, aborted: false });
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(runTurn.mock.calls[0]?.[0]).toBe("second");
+    expect(binding.queueLength()).toBe(0);
+    binding.dispose();
+  });
 });

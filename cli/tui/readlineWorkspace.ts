@@ -1403,8 +1403,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
       // Esc while a turn is running = cooperative stop. A lone \x1b token is
       // only produced for a real Esc press (arrow keys arrive as full CSI
-      // sequences), so this cannot swallow other keys.
+      // sequences), so this cannot swallow other keys. When the queue has
+      // staged follow-ups, arm stop-preempt so the abort preserves them
+      // (instead of the normal "abort abandons follow-ups" contract); the
+      // user stopped the current reply but did not abandon what they queued.
       if (busyLock && sequence === "\x1b" && activeTurnAbort) {
+        const stopBinding = chatQueueBinding;
+        if (stopBinding && stopBinding.queueLength() > 0) {
+          stopBinding.preemptForStop();
+        }
         activeTurnAbort.abort();
         return;
       }
@@ -1565,6 +1572,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               );
             } finally {
               busy = false;
+            }
+            // Refresh git branch/dirty counts after the turn — same reason as
+            // the direct-send path: the agent may have checked out a branch,
+            // committed, or written files during the drained turn, so the
+            // session-start snapshot is stale.
+            const drainEnv = options.env ?? process.env;
+            if (drainEnv.NOLO_CLI_GIT_STATUS !== "0") {
+              state = { ...state, gitStatus: detectGitStatus(state.cwd) };
             }
             fixedInput.exitOutputMode(buffer, cursorPos);
             return;

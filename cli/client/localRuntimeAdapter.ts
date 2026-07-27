@@ -871,13 +871,17 @@ export function resolveCliEffectiveEnabledPacks(args: {
   return base;
 }
 
-function resolveProviderOpenAiToolBundle(
+/**
+ * CLI 端 requestedToolNames 管道：expandEnabledPacks → canonicalize →
+ * addDefaultCliCoreTools → addDefaultLightWebToolsForConfiguredAgents → applyDisabledTools。
+ * resolveProviderOpenAiToolBundle 和 loadAgentConfig 两条路径共用，避免重复。
+ */
+function resolveCliRequestedToolNames(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
-  buildTools: typeof buildOpenAiTools = buildOpenAiTools,
-) {
+): string[] {
   const declaredOnly = shouldUseDeclaredOnlyLocalWorkspaceTools(env);
-  const requestedToolNames = applyDisabledTools(
+  return applyDisabledTools(
     addDefaultLightWebToolsForConfiguredAgents(
       addDefaultCliCoreTools(
         canonicalizeToolNames(
@@ -899,6 +903,14 @@ function resolveProviderOpenAiToolBundle(
     ),
     (agentConfig as any)?.disabledTools,
   );
+}
+
+function resolveProviderOpenAiToolBundle(
+  agentConfig: AgentRuntimeAgentConfig,
+  env: EnvLike,
+  buildTools: typeof buildOpenAiTools = buildOpenAiTools,
+) {
+  const requestedToolNames = resolveCliRequestedToolNames(agentConfig, env);
   const tools = buildTools({
     agentKey: agentConfig.key,
     toolNames: requestedToolNames,
@@ -1972,26 +1984,7 @@ export function createCliLocalRuntimeAdapter(
         deps.env,
       );
       const requestedToolNames = agentConfig
-        ? applyDisabledTools(
-            addDefaultLightWebToolsForConfiguredAgents(
-              addDefaultCliCoreTools(
-                canonicalizeToolNames(
-                  expandEnabledPacks(
-                    // 与 resolveProviderOpenAiToolBundle 同逻辑：enabledPacks 为空时
-                    // 默认补 code 包，declared-only 模式下不补。
-                    resolveCliEffectiveEnabledPacks({
-                      enabledPacks: (agentConfig as any)?.enabledPacks,
-                      declaredOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(deps.env),
-                    }),
-                    resolveRequestedRuntimeToolNames({ agentConfig }),
-                  ),
-                ),
-                deps.env,
-              ),
-              agentConfig,
-            ),
-            (agentConfig as any)?.disabledTools,
-          )
+        ? resolveCliRequestedToolNames(agentConfig, deps.env)
         : [];
       activeAgentToolNames = buildLocalPolicyToolNames({
         toolNames: requestedToolNames,

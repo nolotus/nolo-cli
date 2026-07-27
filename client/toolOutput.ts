@@ -1,4 +1,4 @@
-import { clipPathAware, formatHomePath, formatReadItemPath, formatReadTreeLines, formatSearchItemQuery, formatSearchTreeLines } from "./formatReadPathTree";
+import { clipPathAware, formatHomePath, formatReadItemPath, formatReadTreeLines, formatRunTreeLines, formatSearchItemQuery, formatSearchTreeLines } from "./formatReadPathTree";
 export { clipPathAware };
 import { clipCompactText } from "../core/clipCompactText";
 import { compactWhitespace } from "../core/compactWhitespace";
@@ -292,6 +292,25 @@ function isSearchToolName(name?: string): boolean {
   );
 }
 
+/**
+ * Run-class tools: execShell (synchronous shell), launchProcess (detached
+ * background), runCommand (legacy alias). All expose `metadata.command` as
+ * the canonical leaf text, so they fold into a single • Run (N) tree when
+ * they appear back-to-back, just like Read/Search.
+ *
+ * Action-gated (interactive handoff) results stay on the generic line so the
+ * "needs action" recovery hint keeps its visible prompt — folding those into
+ * a tree would bury the one signal the user must act on.
+ */
+function isRunToolName(name?: string): boolean {
+  if (!name) return false;
+  return name === "execShell" || name === "runCommand" || name === "run_command" || name === "launchProcess";
+}
+
+function isRunResultFoldable(event: LocalAgentToolEvent): boolean {
+  return Boolean(event.metadata?.actionGate) === false;
+}
+
 export function formatSearchTreeBlockForCli(
   items: Array<{ query: string; path?: string }>,
   colorEnabled: boolean
@@ -349,6 +368,35 @@ export function formatReadTreeBlockForCli(
 
   return `${headerLine}${treeLines}\n`;
 }
+
+export function formatRunTreeBlockForCli(
+  items: Array<{ command: string; exitCode?: number; timedOut?: boolean }>,
+  colorEnabled: boolean
+): string {
+  if (items.length === 0) return "";
+  const { count, lines } = formatRunTreeLines(items);
+
+  if (!colorEnabled) {
+    const headerLine = `• Run (${count})\n`;
+    const treeLines = lines.map((l) => `  ${l.connector}${l.commandText}`).join("\n");
+    return `${headerLine}${treeLines}\n`;
+  }
+
+  const bullet = themeText("•", "chrome", true);
+  const title = styleCliText("Run", "bold", true);
+  const countText = themeText(`(${count})`, "muted", true);
+  const headerLine = `${bullet} ${title} ${countText}\n`;
+
+  const treeLines = lines
+    .map((l) => {
+      const connector = themeText(`  ${l.connector}`, "chrome", true);
+      const commandText = themeText(l.commandText, "info", true);
+      return `${connector}${commandText}`;
+    })
+    .join("\n");
+
+  return `${headerLine}${treeLines}\n`;
+}
 function formatCompactToolLine(
   event: LocalAgentToolEvent,
   pending: { toolName: string; argumentsPreview?: string } | undefined,
@@ -373,6 +421,16 @@ function formatCompactToolLine(
       "";
     const rawPath = typeof event.metadata?.path === "string" ? event.metadata.path : undefined;
     return formatSearchTreeBlockForCli([{ query: rawQuery, path: rawPath }], colorEnabled);
+  }
+  if (isRunToolName(toolName) && event.type === "tool-result" && isRunResultFoldable(event)) {
+    const rawCommand =
+      (typeof event.metadata?.command === "string" ? event.metadata.command : undefined) ||
+      event.argumentsPreview ||
+      pending?.argumentsPreview ||
+      "";
+    const exitCode = typeof event.metadata?.exitCode === "number" ? event.metadata.exitCode : undefined;
+    const timedOut = Boolean(event.metadata?.timedOut);
+    return formatRunTreeBlockForCli([{ command: rawCommand, exitCode, timedOut }], colorEnabled);
   }
   const rawArgs = clipPathAware(event.argumentsPreview || pending?.argumentsPreview || "", 72);
   const rawLabel = toolLabel(toolName);
@@ -468,6 +526,7 @@ export function createToolEventFormatter(
   const pending = new Map<string, { toolName: string; argumentsPreview?: string }>();
   let readBuffer: LocalAgentToolEvent[] = [];
   let searchBuffer: LocalAgentToolEvent[] = [];
+  let runBuffer: LocalAgentToolEvent[] = [];
 
   const flushBuffers = (): string => {
     let out = "";
@@ -504,6 +563,23 @@ export function createToolEventFormatter(
       out += formatSearchTreeBlockForCli(items, colorEnabled);
     }
 
+    if (runBuffer.length > 0) {
+      const items = runBuffer.map((evt) => {
+        const call = pending.get(evt.toolCallId);
+        const rawCommand =
+          (typeof evt.metadata?.command === "string" ? evt.metadata.command : undefined) ||
+          evt.argumentsPreview ||
+          call?.argumentsPreview ||
+          "";
+        const exitCode = typeof evt.metadata?.exitCode === "number" ? evt.metadata.exitCode : undefined;
+        const timedOut = Boolean(evt.metadata?.timedOut);
+        return { command: rawCommand, exitCode, timedOut };
+      });
+      for (const evt of runBuffer) pending.delete(evt.toolCallId);
+      runBuffer = [];
+      out += formatRunTreeBlockForCli(items, colorEnabled);
+    }
+
     return out;
   };
 
@@ -535,6 +611,31 @@ export function createToolEventFormatter(
       }
       if (event.type === "tool-result") {
         searchBuffer.push(event);
+        return "";
+      }
+    }
+
+    if (isRunToolName(event.toolName)) {
+      // Action-gated (interactive handoff) runs must NOT be buffered: their
+      // recovery hint is the one signal the user must act on, and folding it
+      // into a tree would hide the prompt. Flush prior runs, then fall
+      // through to the generic compact line so the "! needs action" marker
+      // still renders on its own line.
+      if (event.type === "tool-result" && !isRunResultFoldable(event)) {
+        const flushed = flushBuffers();
+        const call = pending.get(event.toolCallId);
+        pending.delete(event.toolCallId);
+        return `${flushed}${formatCompactToolLine(event, call, colorEnabled)}`;
+      }
+      if (event.type === "tool-call") {
+        pending.set(event.toolCallId, {
+          toolName: event.toolName,
+          argumentsPreview: event.argumentsPreview,
+        });
+        return "";
+      }
+      if (event.type === "tool-result") {
+        runBuffer.push(event);
         return "";
       }
     }

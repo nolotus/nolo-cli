@@ -163,3 +163,55 @@ export function formatSearchTreeLines(
 
   return { header, count, lines };
 }
+
+export type RunTreeItemInput = {
+  command: string;
+  exitCode?: number;
+  timedOut?: boolean;
+};
+
+/**
+ * Clip a shell command for the Run tree leaf. Commands can be long (pipelines,
+ * multi-line scripts), so apply the shared compact-then-tail-clip. Unlike
+ * paths there is no leading segment worth preserving, so plain tail clip is
+ * the right call.
+ */
+export function formatRunItemCommand(
+  command: string,
+  exitCode?: number,
+  timedOut?: boolean
+): string {
+  let text = (command || "").trim();
+  if (!text) text = "command";
+  text = text.length > 80 ? `${text.slice(0, 79)}…` : text;
+  // Surface actionable status inline on the leaf, mirroring the standalone
+  // compact line's ✗/! markers. A clean exit (0) is the common case and stays
+  // silent — same noise budget as readFile's read-range hint.
+  if (timedOut) return `${text} (timed out)`;
+  if (typeof exitCode === "number" && exitCode !== 0) return `${text} (exit ${exitCode})`;
+  return text;
+}
+
+/**
+ * Format a list of run items into a tree representation matching:
+ * • Run (N)
+ * ├── bun test tui/session.test.ts
+ * └── git status -sb
+ */
+export function formatRunTreeLines(
+  items: RunTreeItemInput[]
+): {
+  header: string;
+  count: number;
+  lines: Array<{ connector: string; commandText: string }>;
+} {
+  const count = items.length;
+  const header = `Run (${count})`;
+  const lines = items.map((item, index) => {
+    const connector = index === items.length - 1 ? "└── " : "├── ";
+    const commandText = formatRunItemCommand(item.command, item.exitCode, item.timedOut);
+    return { connector, commandText };
+  });
+
+  return { header, count, lines };
+}

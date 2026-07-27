@@ -926,7 +926,12 @@ describe("cli agent run client", () => {
       dialogId: "dialog-next-round-spinner",
     });
 
-    const completedToolAt = inFlightOutput.lastIndexOf("✓");
+    // Run-class tool results now fold into the • Run (N) tree and only flush
+    // at turn end, so the in-flight output no longer carries a standalone ✓
+    // completion marker. The signal that the tool finished and the spinner
+    // handed off to round 2 is the spinner line switching back to
+    // "frontend -> working locally".
+    const completedToolAt = inFlightOutput.lastIndexOf("frontend -> working locally");
     expect(completedToolAt).toBeGreaterThanOrEqual(0);
     expect(inFlightOutput.slice(completedToolAt)).toContain("working locally");
     expect(inFlightOutput).not.toContain("choose a command");

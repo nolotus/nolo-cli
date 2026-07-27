@@ -205,20 +205,23 @@ describe("toolOutput", () => {
   });
 
   test("compact mode marks shell result with non-zero exit code as failed", () => {
-    expect(
-      formatToolEventForCli(
-        toolEvent({
-          type: "tool-result",
-          toolName: "execShell",
-          argumentsPreview: "gh auth refresh -s delete_repo",
-          elapsedMs: 30000,
-          summary: "exit=124 3 lines 80 chars tail=\"command timed out after 30000ms exitCode: 124\"",
-          metadata: { exitCode: 124, timedOut: true },
-        }),
-        "compact",
-        false
-      )
-    ).toContain("✗ timed out");
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "execShell",
+        argumentsPreview: "gh auth refresh -s delete_repo",
+        elapsedMs: 30000,
+        summary: "exit=124 3 lines 80 chars tail=\"command timed out after 30000ms exitCode: 124\"",
+        metadata: { exitCode: 124, timedOut: true },
+      }),
+      "compact",
+      false
+    );
+    // Run-class results now fold into the • Run (N) tree; the leaf carries the
+    // timeout inline so the failure stays visible without a standalone ✗ line.
+    expect(line).toContain("• Run (1)");
+    expect(line).toContain("gh auth refresh -s delete_repo");
+    expect(line).toContain("(timed out)");
   });
 
   test("compact mode shows interactive command recovery hint", () => {
@@ -469,5 +472,91 @@ describe("toolOutput", () => {
     expect(line).toContain("…");
     // The segments that did not fit the budget are elided away.
     expect(line).not.toContain("/levels/");
+  });
+
+  test("compact mode groups consecutive run events into tree view matching spec", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "r1", toolName: "execShell", argumentsPreview: "bun test tui/session.test.ts" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "r1", toolName: "execShell", argumentsPreview: "bun test tui/session.test.ts", metadata: { command: "bun test tui/session.test.ts", exitCode: 0 } }));
+    format(toolEvent({ type: "tool-call", toolCallId: "r2", toolName: "execShell", argumentsPreview: "git status -sb" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "r2", toolName: "execShell", argumentsPreview: "git status -sb", metadata: { command: "git status -sb", exitCode: 0 } }));
+    const out = format.flush ? format.flush() : "";
+    expect(out).toBe(
+      "• Run (2)\n" +
+      "  ├── bun test tui/session.test.ts\n" +
+      "  └── git status -sb\n"
+    );
+  });
+
+  test("compact mode folds runCommand and launchProcess into the same Run tree", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "a1", toolName: "runCommand", argumentsPreview: "pwd" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "a1", toolName: "runCommand", argumentsPreview: "pwd", metadata: { command: "pwd", exitCode: 0 } }));
+    format(toolEvent({ type: "tool-call", toolCallId: "a2", toolName: "launchProcess", argumentsPreview: "bun run dev" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "a2", toolName: "launchProcess", argumentsPreview: "bun run dev", metadata: { command: "bun run dev" } }));
+    const out = format.flush ? format.flush() : "";
+    expect(out).toBe(
+      "• Run (2)\n" +
+      "  ├── pwd\n" +
+      "  └── bun run dev\n"
+    );
+  });
+
+  test("compact mode annotates run leaf with non-zero exit code", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "f1", toolName: "execShell", argumentsPreview: "false" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "f1", toolName: "execShell", argumentsPreview: "false", metadata: { command: "false", exitCode: 1 } }));
+    const out = format.flush ? format.flush() : "";
+    expect(out).toBe(
+      "• Run (1)\n" +
+      "  └── false (exit 1)\n"
+    );
+  });
+
+  test("compact mode does NOT fold action-gated run results into the Run tree", () => {
+    const format = createToolEventFormatter("compact", false);
+    // First a normal run that should be buffered.
+    format(toolEvent({ type: "tool-call", toolCallId: "g1", toolName: "execShell", argumentsPreview: "git status -sb" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "g1", toolName: "execShell", argumentsPreview: "git status -sb", metadata: { command: "git status -sb", exitCode: 0 } }));
+    // Then an action-gated run — must flush the buffered run and render the
+    // handoff hint on its own line, not inside a tree.
+    const out = format(toolEvent({
+      type: "tool-result",
+      toolCallId: "g2",
+      toolName: "execShell",
+      argumentsPreview: "gh auth refresh -s delete_repo",
+      metadata: {
+        exitCode: 130,
+        actionGate: {
+          id: "gate-test",
+          kind: "handoff",
+          title: "This command requires an interactive terminal.",
+          payload: { command: ["gh", "auth", "refresh"], displayCommand: "gh auth refresh" },
+        },
+      },
+    }));
+    // Buffered run flushes first.
+    expect(out).toContain("• Run (1)");
+    expect(out).toContain("git status -sb");
+    // Action-gated result stays on the generic line with the needs-action marker.
+    expect(out).toContain("needs action");
+    expect(out).toContain("gh auth refresh");
+  });
+
+  test("compact mode flushes Run tree before rendering a non-run tool", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "m1", toolName: "execShell", argumentsPreview: "echo hi" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "m1", toolName: "execShell", argumentsPreview: "echo hi", metadata: { command: "echo hi", exitCode: 0 } }));
+    // A writeFile result interrupts the run streak — flush the run tree first.
+    const writeLine = format(toolEvent({
+      type: "tool-result",
+      toolCallId: "m2",
+      toolName: "writeFile",
+      argumentsPreview: "out.txt",
+    }));
+    expect(writeLine).toContain("• Run (1)");
+    expect(writeLine).toContain("echo hi");
+    // The writeFile itself renders on the generic compact line after the flush.
+    expect(writeLine).toContain("Write");
   });
 });

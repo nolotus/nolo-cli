@@ -615,6 +615,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // isInteractiveInput block) so that runSubmittedLine's streaming callback
   // can repaint the user's in-progress draft while an agent turn is running.
   let buffer = "";
+  // Cursor position is hoisted for the same reason as `buffer`: the streaming
+  // and activity repaints defined in this scope call
+  // fixedInput.repaint(buffer, cursorPos) so a streaming token that repaints
+  // mid-edit keeps the caret where the user left it (e.g. mid-draft after an
+  // arrow-key move) instead of the `cursorPos ?? buffer.length` fallback in
+  // renderInputArea snapping it to the line end.
+  let cursorPos = 0;
   // Cooperative stop for the in-flight agent turn (Esc while busy).
   let activeTurnAbort: AbortController | null = null;
   let activityLabel: string | null = null;
@@ -1245,7 +1252,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     output.write("\x1b[?2004h");
     let busy = false;
     let done = false;
-    let buffer = "";
+    // NOTE: do NOT redeclare `buffer` here. The composer draft lives in the
+    // outer scope (hoisted above) on purpose: runSubmittedLine's streaming
+    // callback and the activity spinner timer repaint the composer from that
+    // binding while a turn runs. Shadowing it with a block-local `let buffer`
+    // (as this used to do) decoupled the two: onKey wrote the draft into the
+    // inner binding while every streaming/activity repaint read the outer one,
+    // which stayed "" forever — so during a loop the composer kept snapping
+    // back to the placeholder and hid what the user was typing (the submit
+    // path still read the inner buffer, so input "worked" but was invisible).
     let cursorPos = 0;
     // True while a raw action gate is waiting for the user to press Enter.
     // The gate owns the keyboard during this modal phase (its own `data`

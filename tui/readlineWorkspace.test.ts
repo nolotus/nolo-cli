@@ -1548,3 +1548,113 @@ describe("/resume renders restored assistant turns through the full renderer", (
     expect(out).not.toContain("• a");
   });
 });
+
+describe("composer draft stays visible during a busy turn (shadow-buffer regression)", () => {
+  // Regression for a bug where a block-local `let buffer` inside the
+  // interactive-input block shadowed the outer draft binding that the
+  // streaming / activity repaint callbacks close over. While a turn ran, every
+  // streaming token repainted the composer from the outer binding (stuck at
+  // ""), so the docked composer snapped back to the placeholder and hid what
+  // the user was typing — even though the submit path read the inner binding
+  // and therefore "worked".
+  //
+  // The assertion inspects the LAST composer repaint frame (repaintAt writes
+  // `\x1b[<row>;1H` then `\x1b[J` then the composer text) WHILE the turn is
+  // still busy. Holding the turn open is essential: if we let the turn end,
+  // exitOutputMode() repaints from the inner buffer and would mask the bug by
+  // drawing the draft after the fact.
+  test("a streaming repaint mid-turn shows the typed draft, not the placeholder", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let turnCount = 0;
+    let resolveTail: (() => void) | null = null;
+    let resolveHold: (() => void) | null = null;
+    const tailGate = new Promise<void>((r) => {
+      resolveTail = r;
+    });
+    const holdGate = new Promise<void>((r) => {
+      resolveHold = r;
+    });
+
+    const DRAFT = "draftXYZ";
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        if (turnCount === 1) {
+          // Head token: outer-scope repaint while the draft is still empty.
+          opt.output.write("HEAD-token");
+          await tick(20);
+          // Pause mid-turn so the test can type into the composer while busy.
+          await tailGate;
+          // The test has typed DRAFT by now. This token flows through the
+          // history-stream callback -> fixedInput.repaint(outerBuffer). With the
+          // shadow bug the outer buffer is "" and the composer redraws as the
+          // placeholder; with the fix it carries DRAFT.
+          opt.output.write("TAIL-token");
+          await tick(20);
+          // Keep the turn busy so exitOutputMode() cannot run yet.
+          await holdGate;
+        }
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    // Start turn 1 -> enters busy.
+    input.write("start turn 1\r");
+    while (turnCount < 1) await tick(10);
+    await tick(30); // HEAD streamed + repainted; composer currently placeholder
+
+    // Type a draft while busy (NO carriage return -> not submitted).
+    input.write(DRAFT);
+    await tick(40); // onKey appended DRAFT to the draft buffer + repainted
+
+    // Trigger an outer-scope repaint now that the draft exists.
+    resolveTail!();
+    await tick(40); // TAIL streamed -> its repaint is the last \x1b[J frame
+
+    // The history-stream callback runs renderHistoryToOutput() and then
+    // fixedInput.repaint(), and nothing writes after that while the turn is
+    // held, so splitting on the clear sequence and taking the last segment
+    // (ANSI stripped) yields the authoritative, most-recent composer chrome.
+    const all = Buffer.concat(chunks).toString("utf8");
+    const frames = all.split("\x1b[J");
+    const lastFrame = stripAnsi(frames[frames.length - 1] ?? "");
+
+    // The typed draft must survive the streaming repaint...
+    expect(lastFrame).toContain(DRAFT);
+    // ...and the placeholder must NOT have overwritten it.
+    expect(lastFrame).not.toContain(t("placeholder").slice(0, 12));
+
+    // Tear down: release the busy turn, then exit.
+    resolveHold!();
+    await tick(30);
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, tick(3000)]);
+  });
+});

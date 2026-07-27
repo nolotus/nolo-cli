@@ -1,4 +1,5 @@
 import { findModelConfig } from "../ai/llm/providers";
+import type { EnvLike } from "./agentRunTypes";
 
 export type TurnTokenUsage = {
   input: number;
@@ -104,4 +105,20 @@ export function renderTokenStatus(tokens?: TurnTokenUsage) {
         ? "—"
         : "—";
   return `in ${formatTokenCount(tokens.input)} out ${formatTokenCount(tokens.output)} left ${left}`;
+}
+
+export function shouldShowUsage(env: EnvLike) {
+  return env.NOLO_DEBUG === "1" || env.NOLO_SHOW_USAGE === "1";
+}
+
+export function formatUsage(usage: any, dialogId: unknown) {
+  const parts: string[] = [];
+  if (typeof dialogId === "string" && dialogId)
+    parts.push(`dialog=${dialogId}`);
+
+  const input = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
+  const output = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
+  if (input || output) parts.push(`tokens=${input}+${output}`);
+
+  return parts.length ? `  (${parts.join("  ")})` : "";
 }

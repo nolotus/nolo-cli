@@ -7,61 +7,43 @@ import {
   applyModelLayerOverride,
   type ModelLayerOverride,
 } from "../agent-runtime/modelLayerOverride";
-import { NOLO_PROJECT_MANAGER_AGENT_KEY } from "../agentAliases";
-import type {
-  LocalAgentActionGate,
-  LocalAgentLoopEvent,
-  LocalAgentToolEvent,
-} from "../agent-runtime/localLoop";
-import type { PermissionRequest } from "../agent-runtime/actionGate";
-import type {
-  AgentRuntimeHostAdapter,
-  AgentRuntimeRequestedMode,
-  AgentRuntimeToolResult,
-} from "../agentRuntimeLocal";
+import type { AgentRuntimeHostAdapter } from "../agentRuntimeLocal";
 import {
   createCliCallAgentToolExecutor,
   createCliLocalRuntimeAdapter,
   ensureDialogSyncedForServerFallback,
   isBuiltinNoloAgentRef,
 } from "./localRuntimeAdapter";
-import type { UserChoiceRequest, UserChoiceResult } from "./localRuntimeAdapter";
 import type {
   LocalAgentTurnInput,
   LocalAgentTurnResult,
 } from "../agent-runtime/localLoop";
-import type { CliFetchImpl } from "../cliFetch";
-import { createStreamingTextWriter } from "./streamingOutput";
+import { buildTurnTokenUsage, formatUsage, shouldShowUsage } from "./tokenUsage";
+
 import {
-  createRenderAwareStreamWriter,
-  formatAssistantDisplay,
-} from "./assistantOutput";
-import {
-  createThinkingAwareStreamFilter,
-  createThinkingEventSink,
-  formatAssistantTextForCli,
-  resolveThinkingDisplayMode,
-} from "./thinkingOutput";
-import { buildTurnTokenUsage, type TurnTokenUsage } from "./tokenUsage";
-import {
-  createSseToolEventAdapter,
-  createToolEventFormatter,
-  formatActiveToolLabel,
-  resolveToolDisplayMode,
-  shouldEmitToolEvents,
-} from "./toolOutput";
-import { themeColorSequence } from "../tui/theme";
+  createCliTurnOutput,
+  formatAssistantResponseForCli,
+} from "./agentRunOutput";
+import { readStreamingAgentRun } from "./agentRunStream";
+
 import {
   type DispatchPlan,
   resolveAuthToken,
   isMachineBoundLocalhostCustomProvider,
   resolveBoundMachineId,
   detectCurrentMachineId,
-  CLI_PROVIDER_NAMES,
   isCliProviderAgentConfig,
+  type AgentRunSubjectRef,
+  type RunAgentTurnOptions,
+  type RunAgentTurnResult,
 } from "./agentRunTypes";
+import { Spinner } from "./agentRunSpinner";
+import {
+  resolveServerPlatformToolNames,
+  isKnownServerPlatformAgent,
+} from "./agentRunPlatformTools";
 import { isGatewayHttpStatus } from "../core/gatewayHttpStatus";
-import { normalizeAgentHandle } from "../core/agentHandle";
+
 import { ulid } from "ulid";
 import { asOptionalTrimmedString } from "../core/optionalString";
 import { asTrimmedString } from "../core/trimmedString";
@@ -73,409 +55,8 @@ async function loadRunLocalAgentTurn() {
   return runLocalAgentTurn;
 }
 
-type EnvLike = Record<string, string | undefined>;
-
-type OutputLike = {
-  write(chunk: string): unknown;
-};
-type AgentRunSubjectRef = {
-  kind: string;
-  id: string;
-  role?: string;
-};
-
 type ReviewDecisionStatus = "passed" | "needs_changes" | "blocked";
 
-export type TaskEvidenceInput = {
-  rowDbKey: string;
-  artifactIds?: string[];
-};
-
-export type RunAgentTurnOptions = {
-  agentName: string;
-  agentKey: string;
-  serverUrl: string;
-  message: string;
-  imageUrls?: string[];
-  continueDialogId?: string;
-  spaceId?: string;
-  category?: string;
-  inheritedFromDialogKey?: string;
-  parentDialogId?: string;
-  parentWakeOnTerminal?: boolean;
-  subjectDialogKey?: string;
-  subjectRefs?: AgentRunSubjectRef[];
-  allowedChildAgentKeys?: string[];
-  blockedToolNames?: string[];
-  allowedToolNames?: string[];
-  background?: boolean;
-  noStream?: boolean;
-  /**
-   * Memory-only / ephemeral mode: skip all dialog & message persistence
-   * (LevelDB writes and remote server sync). The turn runs in-process and
-   * its result is discarded once the run returns. Intended for liveness
-   * probes (e.g. nolo-plan探活). Only effective with the local runtime.
-   *
-   * Note: this covers `adapter.saveTurn` (dialog + messages) and
-   * `adapter.loadDialogHistory`. The `callAgent` sub-agent path writes its
-   * own pending/failed child-dialog records directly to the store and is NOT
-   * suppressed — but a liveness probe (a single short reply, no tool calls)
-   * never reaches that path, so in practice nothing is persisted.
-   */
-  ephemeral?: boolean;
-  scriptDir: string;
-  env: EnvLike;
-  output: OutputLike;
-  runtimeMode?: AgentRuntimeRequestedMode;
-  localRuntimeAdapter?: AgentRuntimeHostAdapter;
-  localRuntimeAdapterFactory?: (
-    env: EnvLike,
-    options?: { cwd?: string },
-  ) => AgentRuntimeHostAdapter;
-  localRuntimeCwd?: string;
-  timeoutMs?: number;
-  traceTools?: boolean;
-  eventsMode?: "jsonl";
-  taskEvidence?: TaskEvidenceInput;
-  fetchImpl?: CliFetchImpl;
-  currentMachineIdResolver?: (env: EnvLike) => Promise<string | undefined>;
-  actionGateHandler?: (
-    gate: LocalAgentActionGate,
-  ) => Promise<AgentRuntimeToolResult | void>;
-  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
-  /** Interactive ui_ask_choice dialog; absent in headless/CI mode. */
-  requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
-  /** Cooperative stop (TUI Esc): aborted turns return exitCode 0 + streamInterrupted. */
-  abortSignal?: AbortSignal;
-  /** Local loop lifecycle events; used by the CLI runner to write heartbeat activity to the registry. */
-  onLoopEvent?: (event: LocalAgentLoopEvent) => void;
-  /**
-   * quick-chat 自动路由的「模型层覆盖」：分类路由落到通用档（tier agent）时，
-   * 用用户选择的 agent 的 model 层替换档位 agent 的 model 层。
-   * server 模式随 body 的 runtimeOptions.quickChatModelOverride 由服务端应用；
-   * local 模式在 adapter 读出 tier 配置后本地应用。
-   */
-  modelOverride?: ModelLayerOverride | null;
-  /**
-   * Extra context blocks appended to the system prompt after the agent's own
-   * prompt, before the user message. Used for skill content and AGENTS.md
-   * project instructions — placing them here (instead of prepending to the
-   * user message) preserves LLM prefix-cache hits on the system+history prefix.
-   */
-  extraContextBlocks?: string[];
-  /**
-   * 当前活动标签的外部接收者（TUI 用来在 composer 上方画 docked 活动行）。
-   * 传入时 Spinner 不再向 output 写帧，避免两个 live 指示重复。
-   */
-  activityReporter?: (label: string | null) => void;
-};
-
-export type RunAgentTurnResult = {
-  exitCode: number;
-  dialogId?: string;
-  streamInterrupted?: boolean;
-  localError?: unknown;
-  turnTokens?: TurnTokenUsage;
-};
-
-class Spinner {
-  private timer: any = null;
-  private startTime = 0;
-  private frameIndex = 0;
-  private frames = ["·", "~", "≈", "∿", "≈", "~"];
-  private isTTY: boolean;
-
-  constructor(
-    private output: OutputLike,
-    private text: string,
-    private silent = false,
-  ) {
-    // Prefer the stream's own TTY flag. History capture streams set isTTY so
-    // \\r in-place updates are interpreted; falling back only when unset keeps
-    // plain stdout/file mocks working.
-    const explicit = (output as { isTTY?: boolean }).isTTY;
-    this.isTTY =
-      typeof explicit === "boolean" ? explicit : Boolean(process.stdout.isTTY);
-  }
-
-  start() {
-    if (this.silent) {
-      this.startTime = Date.now();
-      return;
-    }
-
-    if (!this.isTTY) {
-      this.output.write(`\n${this.text}\n`);
-      return;
-    }
-
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-
-    this.frameIndex = 0;
-    this.startTime = Date.now();
-    // Take over the cursor role: the spinner becomes the only "alive"
-    // indicator while the agent turn is in flight, so a static terminal
-    // cursor can no longer be mistaken for a frozen process.
-    this.output.write("\x1b[?25l");
-    this.output.write(this.renderLine(this.frames[0]));
-
-    this.timer = setInterval(() => {
-      this.frameIndex = (this.frameIndex + 1) % this.frames.length;
-      this.output.write(`\r${this.renderLine(this.frames[this.frameIndex])}`);
-    }, 80);
-  }
-
-  stop() {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-
-    if (this.silent) return;
-
-    if (this.isTTY) {
-      this.output.write("\r\x1b[K");
-      this.output.write("\x1b[?25h");
-    }
-  }
-
-  show(text: string) {
-    this.text = text;
-    if (this.silent) {
-      if (!this.startTime) {
-        this.startTime = Date.now();
-      }
-      return;
-    }
-    if (!this.isTTY) return;
-    if (!this.timer) {
-      this.start();
-      return;
-    }
-    this.frameIndex = 0;
-    this.startTime = Date.now();
-    this.output.write(`\r${this.renderLine(this.frames[0])}`);
-  }
-
-  private renderLine(frame: string): string {
-    const elapsedSeconds = Math.max(
-      0,
-      Math.floor((Date.now() - this.startTime) / 1000),
-    );
-    return `${themeColorSequence("accent")}${frame}\x1b[39m ${this.text} (${formatElapsed(elapsedSeconds)})`;
-  }
-}
-
-function formatElapsed(totalSeconds: number): string {
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return `${hours}h ${mins}m`;
-}
-
-interface CliTurnOutputOptions {
-  options: RunAgentTurnOptions;
-  workingLabel?: string;
-  spinner?: Spinner;
-}
-
-function createCliTurnOutput(params: CliTurnOutputOptions) {
-  const { options } = params;
-  const workingLabel = params.workingLabel ?? `${options.agentName} -> working`;
-  const spinner =
-    params.spinner ??
-    new Spinner(options.output, workingLabel, Boolean(options.activityReporter));
-
-  const toolDisplayMode = resolveToolDisplayMode(options.env);
-  const traceLocalTools = shouldEmitToolEvents(toolDisplayMode);
-  const formatToolEvent = createToolEventFormatter(toolDisplayMode);
-  const eventMode = resolveAgentEventMode(options);
-
-  let streamedAssistantText = false;
-  let printedAssistantLabel = false;
-
-  const thinkingMode = resolveThinkingDisplayMode(options.env);
-  const renderWriter = createRenderAwareStreamWriter({
-    write: (chunk) => options.output.write(chunk),
-  });
-
-  const writeVisibleAssistantChunk = (chunk: string) => {
-    if (!chunk) return;
-    spinner.stop();
-    options.activityReporter?.(null);
-    if (!printedAssistantLabel) {
-      options.output.write(`\n${options.agentName} > `);
-      printedAssistantLabel = true;
-    }
-    streamedAssistantText = true;
-    renderWriter.push(chunk);
-  };
-
-  const thinkingFilter = createThinkingAwareStreamFilter(
-    writeVisibleAssistantChunk,
-    thinkingMode,
-  );
-
-  const thinkingSink = createThinkingEventSink((chunk) => {
-    spinner.stop();
-    options.activityReporter?.(null);
-    options.output.write(chunk);
-  }, thinkingMode);
-
-  const handleToolEvent = (event: LocalAgentToolEvent) => {
-    if (!traceLocalTools) return;
-    if (event.type === "tool-call") {
-      thinkingFilter.flush();
-      renderWriter.flush();
-      if (streamedAssistantText) {
-        options.output.write("\n");
-        streamedAssistantText = false;
-        printedAssistantLabel = false;
-      }
-    }
-
-    const chunk =
-      eventMode === "jsonl"
-        ? formatToolJsonEvent(event)
-        : formatToolEvent(event);
-
-    if (
-      eventMode !== "jsonl" &&
-      toolDisplayMode === "compact" &&
-      event.type === "tool-call"
-    ) {
-      const activeLabel = formatActiveToolLabel(event);
-      spinner.show(activeLabel);
-      options.activityReporter?.(activeLabel);
-      return;
-    }
-
-    if (!chunk) return;
-    spinner.stop();
-    options.activityReporter?.(null);
-    options.output.write(chunk);
-    if (event.type === "tool-call") {
-      const activeLabel = formatActiveToolLabel(event);
-      spinner.show(activeLabel);
-      options.activityReporter?.(activeLabel);
-    }
-  };
-
-  return {
-    spinner,
-    thinkingMode,
-    toolDisplayMode,
-    traceLocalTools,
-    eventMode,
-    pushText(chunk: string) {
-      thinkingFilter.push(chunk);
-    },
-    pushThinking(chunk: string) {
-      thinkingSink.push(chunk);
-    },
-    handleToolEvent,
-    showWorking(label?: string) {
-      const activeLabel = label ?? workingLabel;
-      spinner.show(activeLabel);
-      options.activityReporter?.(activeLabel);
-    },
-    finish(fallbackContent?: string) {
-      spinner.stop();
-      options.activityReporter?.(null);
-      const pendingToolOutput = formatToolEvent.flush ? formatToolEvent.flush() : "";
-      if (pendingToolOutput) {
-        options.output.write(pendingToolOutput);
-      }
-      if (streamedAssistantText) {
-        thinkingFilter.flush();
-        renderWriter.flush();
-        options.output.write("\n");
-      } else {
-        const content = fallbackContent
-          ? formatAssistantResponseForCli(fallbackContent.trim(), options)
-          : "";
-        if (content) {
-          options.output.write(`\n${options.agentName} > ${content}\n`);
-        } else {
-          options.output.write(`\n${options.agentName} > (no text response)\n`);
-        }
-      }
-    },
-  };
-}
-
-// Table mutations require the server runtime.
-// Read-only queryTableRows is intentionally excluded: local CLI executes it via
-// noloWorkspaceTools, so auto mode should not skip local just because it appears
-// in the private workspace tool surface.
-const SERVER_PLATFORM_TOOL_NAMES = new Set([
-  "addTableRow",
-  "addTableRows",
-  "deleteTableRow",
-  "deleteTableRows",
-  "updateTableRow",
-  "updateTableRows",
-]);
-
-const KNOWN_SERVER_PLATFORM_AGENT_KEYS = new Set([
-  NOLO_PROJECT_MANAGER_AGENT_KEY,
-]);
-
-const KNOWN_SERVER_PLATFORM_AGENT_ALIASES = new Set([
-  "code-review",
-  "frontend",
-  "frontend-agent",
-  "frontend-implementer",
-  "full-stack",
-  "fullstack",
-  "nolo code review",
-  "nolo fullstack",
-  "nolo project manager",
-  "nolo reviewer",
-  "nolo-code-review",
-  "nolo-fullstack",
-  "nolo-pm",
-  "nolo-project-manager",
-  "nolo-reviewer",
-  "pm",
-  "project-manager",
-  "review",
-  "reviewer",
-]);
-
-export function findServerPlatformTools(toolNames?: string[]) {
-  if (!Array.isArray(toolNames)) return [];
-  return toolNames.filter((toolName) =>
-    SERVER_PLATFORM_TOOL_NAMES.has(toolName),
-  );
-}
-
-function resolveServerPlatformToolNames(agentConfig: any) {
-  return findServerPlatformTools([
-    ...(Array.isArray(agentConfig?.toolNames) ? agentConfig.toolNames : []),
-    ...(Array.isArray(agentConfig?.runtimeToolPolicy?.agentTools)
-      ? agentConfig.runtimeToolPolicy.agentTools
-      : []),
-  ]);
-}
-
-function isKnownServerPlatformAgent(options: RunAgentTurnOptions) {
-  if (KNOWN_SERVER_PLATFORM_AGENT_KEYS.has(options.agentKey)) return true;
-  const normalizedKey = normalizeAgentHandle(options.agentKey);
-  return Boolean(
-    normalizedKey && KNOWN_SERVER_PLATFORM_AGENT_ALIASES.has(normalizedKey),
-  );
-}
-
-function shouldShowUsage(env: EnvLike) {
-  return env.NOLO_DEBUG === "1" || env.NOLO_SHOW_USAGE === "1";
-}
 async function resolveCurrentMachineId(options: RunAgentTurnOptions) {
   return options.currentMachineIdResolver
     ? options.currentMachineIdResolver(options.env)
@@ -680,21 +261,6 @@ function buildSubjectRefs(options: RunAgentTurnOptions) {
   return refs.length ? refs : undefined;
 }
 
-function formatAssistantResponseForCli(
-  text: string,
-  options: RunAgentTurnOptions,
-) {
-  const thinkingMode = resolveThinkingDisplayMode(options.env);
-  return formatAssistantDisplay(
-    formatAssistantTextForCli(text, thinkingMode),
-  );
-}
-
-function resolveAgentEventMode(options: RunAgentTurnOptions): "text" | "jsonl" {
-  if (options.eventsMode === "jsonl") return "jsonl";
-  return options.env.NOLO_AGENT_EVENTS === "jsonl" ? "jsonl" : "text";
-}
-
 function isMissingLocalAgentConfigError(error: unknown, agentRef: string) {
   return Boolean(
     error &&
@@ -704,23 +270,6 @@ function isMissingLocalAgentConfigError(error: unknown, agentRef: string) {
       LOCAL_AGENT_CONFIG_MISSING_CODE &&
     (error as { code?: string; agentRef?: string }).agentRef === agentRef,
   );
-}
-
-function formatToolJsonEvent(event: LocalAgentToolEvent) {
-  return `${JSON.stringify({
-    schemaVersion: 1,
-    type: event.type,
-    round: event.round + 1,
-    tool: event.toolName,
-    toolCallId: event.toolCallId,
-    ...(event.argumentsPreview ? { argsPreview: event.argumentsPreview } : {}),
-    ...(typeof event.elapsedMs === "number"
-      ? { elapsedMs: event.elapsedMs }
-      : {}),
-    ...(event.summary ? { summary: event.summary } : {}),
-    ...(event.message ? { message: event.message } : {}),
-    ...(event.metadata ? { metadata: event.metadata } : {}),
-  })}\n`;
 }
 
 function shouldAttemptAutoLocal(options: RunAgentTurnOptions) {
@@ -780,18 +329,6 @@ export function classifyReviewDecisionStatus(
   return undefined;
 }
 
-function formatUsage(usage: any, dialogId: unknown) {
-  const parts: string[] = [];
-  if (typeof dialogId === "string" && dialogId)
-    parts.push(`dialog=${dialogId}`);
-
-  const input = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
-  const output = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
-  if (input || output) parts.push(`tokens=${input}+${output}`);
-
-  return parts.length ? `  (${parts.join("  ")})` : "";
-}
-
 function buildTransportErrorHint(serverUrl: string, error: unknown) {
   const endpoint = `${serverUrl}/api/agent/run`;
   const reason = toErrorMessage(error);
@@ -836,6 +373,9 @@ async function runHttpAgentTurn(
   const spinner = new Spinner(
     options.output,
     `${options.agentName} -> working`,
+    // 与 createCliTurnOutput 的兜底构造一致：传入 activityReporter 时
+    // Spinner 静默，避免 TUI docked 活动行与 spinner 帧重复 live 指示。
+    Boolean(options.activityReporter),
   );
   spinner.start();
 
@@ -1203,158 +743,6 @@ async function runLocalAgentTurnForCli(
     }
     return { exitCode: 1, localError: error };
   }
-}
-
-async function readStreamingAgentRun(
-  options: RunAgentTurnOptions,
-  res: Response,
-  existingSpinner?: Spinner,
-): Promise<RunAgentTurnResult> {
-  const reader = res.body?.getReader();
-  if (!reader) {
-    existingSpinner?.stop();
-    options.output.write(
-      "[nolo] Agent stream response did not include a readable body.\n",
-    );
-    return { exitCode: 1 };
-  }
-
-  const decoder = new TextDecoder();
-  const turnOutput = createCliTurnOutput({
-    options,
-    workingLabel: `${options.agentName} -> working`,
-    spinner: existingSpinner,
-  });
-  const sseAdapter = createSseToolEventAdapter((evt) => {
-    turnOutput.handleToolEvent(evt);
-  });
-
-  let buffer = "";
-  let content = "";
-  let dialogId: string | undefined;
-  let usage: any;
-
-  const handlePayload = (payload: any) => {
-    if (typeof payload?.dialogId === "string" && payload.dialogId.trim()) {
-      dialogId = payload.dialogId;
-    }
-    if (payload?.error || payload?.type === "error") {
-      throw new Error(
-        String(payload.error || payload.message || "Agent stream failed"),
-      );
-    }
-    if (payload?.type === "done") {
-      usage = payload.usage;
-      return;
-    }
-    if (payload?.type === "dialog" || payload?.type === "status") {
-      return;
-    }
-    if (payload?.type === "turn_warning") {
-      // Silence turn_warning SSE events because their fallback/explanatory content
-      // arrives as standard text events; displaying both would create noisy duplicate warnings.
-      return;
-    }
-    if (payload?.type === "thinking") {
-      const thinkChunk =
-        typeof payload.content === "string"
-          ? payload.content
-          : typeof payload.chunk === "string"
-            ? payload.chunk
-            : "";
-      if (thinkChunk) {
-        turnOutput.pushThinking(thinkChunk);
-      }
-      return;
-    }
-    if (payload?.type === "tool_start") {
-      sseAdapter.onToolStart(payload.calls ?? payload);
-      return;
-    }
-    if (payload?.type === "tool_result") {
-      sseAdapter.onToolResult(payload);
-      return;
-    }
-    if (payload?.type === "tool_end") {
-      sseAdapter.onToolEnd();
-      turnOutput.showWorking();
-      return;
-    }
-
-    const chunk =
-      payload?.type === "text"
-        ? payload.content
-        : typeof payload?.chunk === "string"
-          ? payload.chunk
-          : "";
-    if (!chunk) return;
-
-    content += chunk;
-    turnOutput.pushText(chunk);
-  };
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split("\n\n");
-      buffer = events.pop() ?? "";
-
-      for (const event of events) {
-        const dataLines = event
-          .split("\n")
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trim())
-          .filter(Boolean);
-        for (const raw of dataLines) {
-          handlePayload(JSON.parse(raw));
-        }
-      }
-    }
-    if (buffer.trim()) {
-      const raw = buffer
-        .split("\n")
-        .find((line) => line.startsWith("data:"))
-        ?.slice(5)
-        .trim();
-      if (raw) handlePayload(JSON.parse(raw));
-    }
-  } catch (error) {
-    turnOutput.spinner.stop();
-    if (options.abortSignal?.aborted) {
-      // User-initiated stop; the server may still finish the dialog.
-      return {
-        exitCode: 0,
-        ...(dialogId ? { dialogId } : {}),
-        streamInterrupted: true,
-      };
-    }
-    const message = toErrorMessage(error);
-    if (dialogId) {
-      options.output.write(
-        `\n[nolo] Agent stream transport interrupted after dialog ${dialogId} was created: ${message}\n`,
-      );
-      options.output.write(
-        "[nolo] The agent run may still finish on the server; read the dialog before retrying.\n",
-      );
-      return { exitCode: 0, dialogId, streamInterrupted: true };
-    }
-    options.output.write(`\n[nolo] Agent stream failed: ${message}\n`);
-    return { exitCode: 1 };
-  }
-
-  turnOutput.finish(content);
-
-  const usageText = formatUsage(usage, dialogId);
-  if (usageText && shouldShowUsage(options.env))
-    options.output.write(`${usageText}\n`);
-  return {
-    exitCode: 0,
-    ...(dialogId ? { dialogId } : {}),
-    turnTokens: buildTurnTokenUsage(usage, options.agentKey),
-  };
 }
 
 export async function runAgentTurn(options: RunAgentTurnOptions) {

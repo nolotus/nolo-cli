@@ -23,6 +23,8 @@ import {
   readDialogFromLocalDb,
   type LocalDialogReadResult,
 } from "../agent-runtime/localDialogRead";
+import { isLevelLockError } from "../database/levelLockError";
+import { getDefaultCliLocalRuntimeDb } from "../localRuntimeAuthority";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
 import {
   resolveRuntimeServerUrl,
@@ -369,10 +371,15 @@ export async function pushLocalDialogToRemote(args: {
 
   let localData: LocalDialogReadResult;
   try {
+    // 走 CLI authority broker：attach-to-existing + 重试，不直接 new Level() 抢 LOCK。
+    // 当本地 dev server / 上一轮 agent runtime 持有 LevelDB LOCK 时，直接 import serverDb
+    // 会立刻抛 LEVEL_LOCKED，导致 fallback sync 静默失败、server 带着残缺历史继续。
+    const localDb = await getDefaultCliLocalRuntimeDb({ env: args.env });
     localData = await readDialogFromLocalDb({
       dialogKey,
       dialogId: args.continueDialogId,
       limit: 0,
+      db: localDb,
     });
   } catch (err) {
     args.output?.write(
@@ -436,16 +443,20 @@ async function pushLocalMessagesMissingFromRemote(args: {
   authToken: string;
   continueDialogId: string;
   dialogKey: string;
+  env: EnvLike;
   fetchImpl: CliFetchImpl;
   output?: { write(chunk: string): unknown };
   serverUrl: string;
   userId: string;
 }): Promise<void> {
   try {
+    // 与 pushLocalDialogToRemote 同走 broker，避免直接抢 LevelDB LOCK。
+    const localDb = await getDefaultCliLocalRuntimeDb({ env: args.env });
     const localData = await readDialogFromLocalDb({
       dialogKey: args.dialogKey,
       dialogId: args.continueDialogId,
       limit: 0,
+      db: localDb,
     });
     const localMsgs = localData?.msgs ?? [];
     if (localMsgs.length === 0) return;
@@ -485,9 +496,18 @@ async function pushLocalMessagesMissingFromRemote(args: {
     );
   } catch (err) {
     // 补齐是 best-effort：宁可带着略旧的历史继续，也不要因为同步失败而整轮失败。
-    args.output?.write(
-      `[nolo] Warning: could not sync local-only messages before fallback (${toErrorMessage(err)}).\n`,
-    );
+    // 但 lock 错误要给用户人话提示，告诉他为什么历史会缺——不是网络问题，
+    // 而是本地 dev server / 上一轮 agent runtime 还握着 LevelDB LOCK。
+    if (isLevelLockError(err)) {
+      args.output?.write(
+        `[nolo] Warning: local database is locked; server fallback will continue with incomplete history. `
+          + `Release the local DB (stop the dev server / kill stale agent processes) and retry, or use the server-side history directly.\n`,
+      );
+    } else {
+      args.output?.write(
+        `[nolo] Warning: could not sync local-only messages before fallback (${toErrorMessage(err)}).\n`,
+      );
+    }
   }
 }
 
@@ -549,6 +569,7 @@ export async function ensureDialogSyncedForServerFallback(
       authToken,
       continueDialogId,
       dialogKey,
+      env: options.env,
       fetchImpl,
       output: options.output,
       serverUrl,

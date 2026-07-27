@@ -177,6 +177,7 @@ let canonicalizeToolNames: any;
 let FORCED_TOOLS: any;
 let applyDisabledTools: any;
 let expandEnabledPacks: any;
+let addDefaultLightWebToolsForConfiguredAgents: any;
 let prepareTools: any;
 let buildNoloWorkspaceCliToolExecutors: any;
 let buildNoloWorkspaceOpenAiTools: any;
@@ -274,7 +275,7 @@ function ensureHeavyCliLocalRuntimeModules() {
   ({ inferCaptureIntent } = requireFromAdapter(
     "../../ai/policy/runtimePolicy.ts",
   ));
-  ({ TOOL_PACKS, FORCED_TOOLS, applyDisabledTools, expandEnabledPacks } = requireFromAdapter("../../ai/tools/toolPacks.ts"));
+  ({ TOOL_PACKS, FORCED_TOOLS, applyDisabledTools, expandEnabledPacks, addDefaultLightWebToolsForConfiguredAgents } = requireFromAdapter("../../ai/tools/toolPacks.ts"));
   ({ prepareTools } = requireFromAdapter("../../ai/tools/prepareTools.ts"));
   ({ canonicalizeToolNames } = requireFromAdapter("../../ai/tools/toolNameAliases.ts"));
   ({
@@ -346,16 +347,6 @@ const LOCAL_SERVER_WEB_TOOL_NAME_SET = new Set<string>(
 // sets.
 // ============================================================================
 
-/** Tools that imply web-access capability (triggers LIGHT_WEB auto-inject). */
-const WEB_CAPABLE_TOOL_NAMES = new Set<string>([
-  "fetchWebpage",
-  "exa_search",
-  "firecrawl_scrape",
-  "firecrawl_search",
-  "read_x_post",
-  "read_xhs_profile",
-]);
-
 /** Tools whose schema is injected from the nolo tool registry (not workspace). */
 const REGISTRY_INJECTED_TOOL_NAMES = new Set<string>([
   "callAgent",
@@ -363,13 +354,6 @@ const REGISTRY_INJECTED_TOOL_NAMES = new Set<string>([
   "read_x_post",
   "read_xhs_profile",
 ]);
-
-function isWebCapableTool(name: string): boolean {
-  return (
-    WEB_CAPABLE_TOOL_NAMES.has(name) ||
-    name.startsWith("browser_")
-  );
-}
 
 type PreparedAgentRuntime = {
   agentConfig: AgentRuntimeAgentConfig;
@@ -795,22 +779,6 @@ function summarizeOpenAiToolNames(tools: Array<Record<string, unknown>>) {
   }, []);
 }
 
-function addDefaultLightWebToolsForConfiguredAgents(
-  toolNames: string[],
-  agentConfig?: AgentRuntimeAgentConfig | null,
-) {
-  const explicitToolNames = Array.isArray(
-    (agentConfig as any)?.toolSurface?.explicitToolNames,
-  )
-    ? (agentConfig as any).toolSurface.explicitToolNames
-    : agentConfig?.toolNames;
-  if (!Array.isArray(explicitToolNames) || explicitToolNames.length === 0)
-    return toolNames;
-  const webCapable = explicitToolNames.some(isWebCapableTool);
-  if (!webCapable) return toolNames;
-  return [...new Set([...toolNames, ...TOOL_PACKS.LIGHT_WEB])];
-}
-
 function buildOpenAiTools(args: {
   agentKey?: string;
   toolNames?: string[];
@@ -878,17 +846,50 @@ function addDefaultCliCoreTools(
   return [...new Set([...toolNames, ...injected])];
 }
 
+/**
+ * CLI 端默认开 code 能力包：enabledPacks 为空时补 ["code"]，保持
+ * 「CLI agent 默认能改代码」的体感，但走显式能力包而非隐式兜底
+ * （DEFAULT_LOCAL_CODING_TOOL_NAMES 已删除）。
+ *
+ * 与桌面端 resolveDesktopEffectiveEnabledPacks 区别：桌面端只在绑文件夹时补；
+ * CLI 端因为没有 workspace 授权概念，对 enabledPacks 为空的 agent 一律补——
+ * 除非 declaredOnly=true（用户显式要 ablation，不补任何包）。
+ *
+ * 纯函数，单独可测。
+ */
+export function resolveCliEffectiveEnabledPacks(args: {
+  enabledPacks?: string[] | null;
+  declaredOnly?: boolean;
+}): string[] {
+  if (args.declaredOnly === true) {
+    return args.enabledPacks ?? [];
+  }
+  const base = args.enabledPacks ?? [];
+  if (base.length === 0) {
+    return ["code"];
+  }
+  return base;
+}
+
 function resolveProviderOpenAiToolBundle(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
   buildTools: typeof buildOpenAiTools = buildOpenAiTools,
 ) {
+  const declaredOnly = shouldUseDeclaredOnlyLocalWorkspaceTools(env);
   const requestedToolNames = applyDisabledTools(
     addDefaultLightWebToolsForConfiguredAgents(
       addDefaultCliCoreTools(
         canonicalizeToolNames(
           expandEnabledPacks(
-            (agentConfig as any)?.enabledPacks,
+            // CLI 端默认开 code 能力包：enabledPacks 为空时补 ["code"]，保持
+            // 「CLI agent 默认能改代码」的体感，但走显式能力包而非隐式兜底
+            // （DEFAULT_LOCAL_CODING_TOOL_NAMES 已删除）。
+            // declared-only 模式下不补——用户显式要 ablation。
+            resolveCliEffectiveEnabledPacks({
+              enabledPacks: (agentConfig as any)?.enabledPacks,
+              declaredOnly,
+            }),
             resolveRequestedRuntimeToolNames({ agentConfig }),
           ),
         ),
@@ -1976,7 +1977,12 @@ export function createCliLocalRuntimeAdapter(
               addDefaultCliCoreTools(
                 canonicalizeToolNames(
                   expandEnabledPacks(
-                    (agentConfig as any)?.enabledPacks,
+                    // 与 resolveProviderOpenAiToolBundle 同逻辑：enabledPacks 为空时
+                    // 默认补 code 包，declared-only 模式下不补。
+                    resolveCliEffectiveEnabledPacks({
+                      enabledPacks: (agentConfig as any)?.enabledPacks,
+                      declaredOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(deps.env),
+                    }),
                     resolveRequestedRuntimeToolNames({ agentConfig }),
                   ),
                 ),

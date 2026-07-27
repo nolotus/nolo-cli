@@ -110,7 +110,6 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
       if (streamedAssistantText) {
         options.output.write("\n");
         streamedAssistantText = false;
-        printedAssistantLabel = false;
       }
     }
 

@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import { parseToolArgumentsJson } from "./parseToolArguments";
 import { sanitizeToolCallPairing } from "./toolCallPairing";
+import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
 
 export type LocalAgentTurnInput = {
   adapter: AgentRuntimeHostAdapter;
@@ -82,7 +83,8 @@ export type LocalAgentLoopEvent =
   | { kind: "llm-start"; round: number; atMs: number }
   | { kind: "llm-end"; round: number; atMs: number; ok: boolean }
   | { kind: "tool-start"; name: string; atMs: number }
-  | { kind: "tool-end"; name: string; atMs: number; ok: boolean };
+  | { kind: "tool-end"; name: string; atMs: number; ok: boolean }
+  | { kind: "image-downgraded"; reason: "no-vision"; atMs: number };
 
 export type LocalAgentActionGate = ActionGate & {
   toolName: string;
@@ -494,6 +496,40 @@ function prepareHistoryForNextTurn(history: AgentRuntimeChatMessage[]): AgentRun
   });
 }
 
+/**
+ * 剥离单条消息 content 里的 image_url parts。模型不支持图片输入时，发上去会 400
+ * "this model does not support image input"，把本来能成功的 local 轮判成失败、
+ * fallback 到 server——而 server 端没有 local code 工具，agent 报 blocker。
+ * 过滤后空数组返回占位文本（不是 ""），因为主流 Provider API 要求 user 消息
+ * content 非空，空串会触发 400 "content is required and must be non-empty"，
+ * 又回到误 fallback 的老问题。
+ */
+const IMAGE_OMITTED_PLACEHOLDER = "[Image content omitted: model does not support image input]";
+
+function stripImagePartsFromContent(
+  content: AgentRuntimeMessageContent,
+): AgentRuntimeMessageContent {
+  if (!Array.isArray(content)) return content;
+  const filtered = content.filter((part) => part?.type !== "image_url");
+  if (filtered.length === 0) return IMAGE_OMITTED_PLACEHOLDER;
+  return filtered as AgentRuntimeMessageContent;
+}
+
+/**
+ * 按 vision 能力过滤整条消息数组。supportsImages 为 true 时原样返回（catalog 默认）；
+ * 为 false 时逐条剥离 image_url parts，保留 text/tool_calls 等其他内容。
+ */
+function filterImagePartsFromMessages(
+  messages: AgentRuntimeChatMessage[],
+  supportsImages: boolean,
+): AgentRuntimeChatMessage[] {
+  if (supportsImages) return messages;
+  return messages.map((msg) => ({
+    ...msg,
+    content: stripImagePartsFromContent(msg.content),
+  }));
+}
+
 function buildMessages(args: {
   prompt?: string;
   contextBlocks?: string[];
@@ -571,6 +607,17 @@ export async function runLocalAgentTurn(
     input: input.input,
   });
   const provider = await input.adapter.resolveProvider(agentConfig);
+  // vision 能力检测：catalog 已知模型按 hasVision 判定，未知模型默认 true。
+  // 不支持图片时，buildMessages 产出的 image_url parts 必须在发给 provider 前剥离，
+  // 否则上游 400 "this model does not support image input" → local 判失败 → fallback
+  // 到没有 local code 工具的 server → agent 报 blocker。hasVision 字段类型不一定在
+  // AgentRuntimeAgentConfig 上声明，用 as any 兜底。
+  const supportsImages = resolveAgentImageInputSupport({
+    apiSource: agentConfig.apiSource,
+    provider: agentConfig.provider,
+    model: agentConfig.model,
+    hasVision: (agentConfig as any).hasVision,
+  });
   const userInputText = extractUserInputText(input.input);
   let toolCallCount = 0;
   let result: AgentRuntimeResult;
@@ -582,11 +629,30 @@ export async function runLocalAgentTurn(
   //   repairUsed     → 已用过 repair，二次仍空则 fallback
   let emptyAssistantRepairPending = false;
   let emptyAssistantRepairUsed = false;
+  // 首次图片降级通知标志——每轮可能都带图，但只通知一次，避免刷屏。
+  let imageDowngradeNotified = false;
   try {
     while (true) {
       throwIfAborted(input);
       // 空轮修复：把 repair user message 追加到本轮请求末尾重试一次（系统消息放在末尾会被大部分 Provider API 拒收或返回空消息）。
-      const baseRequestMessages = prepareMessagesForProviderCall(messages);
+      const baseRequestMessages = filterImagePartsFromMessages(
+        prepareMessagesForProviderCall(messages),
+        supportsImages,
+      );
+      // 首次实际降级（模型不支持图片且本轮消息里确实含 image_url part）时通知一次，
+      // 让 CLI 层写「推荐切到 vision agent」提示。不在 supportsImages===true 或无图时触发。
+      if (
+        !supportsImages &&
+        !imageDowngradeNotified &&
+        messages.some((m) => Array.isArray(m.content) && m.content.some((p: any) => p?.type === "image_url"))
+      ) {
+        imageDowngradeNotified = true;
+        emitLoopEvent(input, {
+          kind: "image-downgraded",
+          reason: "no-vision",
+          atMs: Date.now(),
+        });
+      }
       const requestMessages: AgentRuntimeChatMessage[] = emptyAssistantRepairPending
         ? [...baseRequestMessages, { role: "user", content: EMPTY_ASSISTANT_REPAIR_PROMPT }]
         : baseRequestMessages;

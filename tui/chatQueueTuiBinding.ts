@@ -46,6 +46,22 @@ export type ChatQueueTuiBinding = {
    * settles (queue empty, paused, or a turn fails).
    */
   notifyTurnEnd(outcome: { ok: boolean; aborted: boolean }): Promise<void>;
+  /**
+   * Manual drain trigger for the idle case: when the composer is empty and
+   * the queue has residual items (e.g. a previous turn failed and kept the
+   * queue), this dequeues and returns the head so the caller can run it as a
+   * fresh turn. Returns null when idle-and-empty or when a turn is still
+   * running (use `preemptForDrain` for the busy case).
+   */
+  drainHeadForManualTurn(): string | null;
+  /**
+   * Preempt the running turn so the queue head can drain immediately. The
+   * caller aborts the in-flight turn right after this returns true; the next
+   * `notifyTurnEnd({ aborted: true })` is then treated as a clean turn-end so
+   * the drain cascade runs the head instead of clearing the queue (the normal
+   * abort behavior). Returns false when not running or the queue is empty.
+   */
+  preemptForDrain(): boolean;
   /** Clear the queue (e.g. on /new). */
   clear(): void;
   /** Current UI status snapshot. */
@@ -65,6 +81,11 @@ export type ChatQueueTuiBinding = {
  */
 export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTuiBinding {
   const runtime: ChatQueueRuntime = createChatQueueRuntime();
+  // Armed by `preemptForDrain()`: when the caller aborts the in-flight turn
+  // right after arming, the subsequent `notifyTurnEnd({ aborted: true })` is
+  // reinterpreted as a clean turn-end so the drain cascade runs the queued
+  // head instead of the normal abort behavior (which clears the queue).
+  let preemptArmed = false;
 
   const resolveSubmit = ({ text, isRunning }: { text: string; isRunning: boolean }) => {
     return resolveChatSendDecision({
@@ -90,13 +111,22 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
   };
 
   const notifyTurnEnd = async (outcome: { ok: boolean; aborted: boolean }) => {
-    runtime.send({ type: "turn-end", ...outcome });
+    // If a preempt was armed, reinterpret the aborted turn-end as a clean
+    // one so the drain cascade runs the queued head. The preempt was
+    // user-initiated (empty Enter while busy + queue non-empty), not a stop,
+    // so the queue must be preserved, not cleared.
+    const effectiveOutcome =
+      preemptArmed && outcome.aborted
+        ? { ok: true, aborted: false }
+        : outcome;
+    preemptArmed = false;
+    runtime.send({ type: "turn-end", ...effectiveOutcome });
 
     // Drain cascade: keep draining while the core says we should. Each drain
     // runs a full agent turn; we feed its outcome back in. The core's own
     // `drain-ready` event fires synchronously inside the turn-end send above,
     // but we drive the cascade explicitly here so we can await each turn.
-    let lastOk = outcome.ok && !outcome.aborted;
+    let lastOk = effectiveOutcome.ok && !effectiveOutcome.aborted;
     // Guard against runaway: the core clears the queue on abort, and a failed
     // turn stops the cascade (shouldDrainAfterTurnEnd returns false), so this
     // loop is bounded by the queue length and turn outcomes.
@@ -130,6 +160,25 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
     }
   };
 
+  const drainHeadForManualTurn = (): string | null => {
+    const status = runtime.getState();
+    // Only when idle: a running turn owns the queue drain path; interfering
+    // here would race the in-flight turn. The empty-Enter-while-busy path
+    // uses preemptForDrain instead.
+    if (status.running || status.queue.length === 0) return null;
+    const text = status.queue[0]!;
+    runtime.send({ type: "turn-start" });
+    runtime.send({ type: "dequeue" });
+    return text;
+  };
+
+  const preemptForDrain = (): boolean => {
+    const status = runtime.getState();
+    if (!status.running || status.queue.length === 0) return false;
+    preemptArmed = true;
+    return true;
+  };
+
   const clear = () => {
     runtime.send({ type: "clear" });
   };
@@ -147,6 +196,8 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
     enqueue,
     notifyTurnStart,
     notifyTurnEnd,
+    drainHeadForManualTurn,
+    preemptForDrain,
     clear,
     getStatus,
     queueLength,

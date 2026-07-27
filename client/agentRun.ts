@@ -703,6 +703,13 @@ async function runLocalAgentTurnForCli(
         if (event.kind === "llm-start") {
           turnOutput.showWorking();
         }
+        if (event.kind === "image-downgraded") {
+          // 第 4 级降级提示：模型不支持图片，已用占位文本替代；给用户 escape hatch。
+          // 不阻断当前轮——agent 拿到的是 [Image content omitted...] 占位文本，能继续跑。
+          options.output.write(
+            "[nolo] 当前 agent 不支持图片输入，已用占位文本替代。要完整图片理解可 /switch 到 Kimi K2.6。\n",
+          );
+        }
         options.onLoopEvent?.(event);
       },
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),

@@ -210,4 +210,109 @@ describe("createChatQueueTuiBinding", () => {
     expect(binding.queueLength()).toBe(0);
     binding.dispose();
   });
+
+  // --- Empty-Enter manual drain (idle) + preempt (busy) ---
+
+  it("drainHeadForManualTurn returns null when idle and empty", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    expect(binding.drainHeadForManualTurn()).toBeNull();
+    binding.dispose();
+  });
+
+  it("drainHeadForManualTurn returns null when a turn is still running", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.enqueue("x");
+    binding.notifyTurnStart();
+    // Running: manual drain must not interfere with the in-flight turn.
+    expect(binding.drainHeadForManualTurn()).toBeNull();
+    expect(binding.queueLength()).toBe(1);
+    binding.dispose();
+  });
+
+  it("drainHeadForManualTurn dequeues and returns the head when idle with a residual queue", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.enqueue("leftover");
+    // Idle, queue non-empty (e.g. previous turn failed and kept it).
+    const text = binding.drainHeadForManualTurn();
+    expect(text).toBe("leftover");
+    expect(binding.queueLength()).toBe(0);
+    // The binding flipped to running so the caller's turn-start is reflected.
+    expect(binding.getStatus().isRunning).toBe(true);
+    binding.dispose();
+  });
+
+  it("preemptForDrain returns false when idle", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.enqueue("x");
+    expect(binding.preemptForDrain()).toBe(false);
+    binding.dispose();
+  });
+
+  it("preemptForDrain returns false when running but queue is empty", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.notifyTurnStart();
+    expect(binding.preemptForDrain()).toBe(false);
+    binding.dispose();
+  });
+
+  it("preemptForDrain returns true when running with a queued item", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    binding.enqueue("queued");
+    binding.notifyTurnStart();
+    expect(binding.preemptForDrain()).toBe(true);
+    binding.dispose();
+  });
+
+  it("an armed preempt makes the next aborted turn-end drain the head instead of clearing the queue", async () => {
+    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const binding = createChatQueueTuiBinding(runTurn);
+    binding.enqueue("first");
+    binding.enqueue("second");
+    binding.notifyTurnStart();
+    // User presses empty Enter while busy + queue non-empty: arm preempt,
+    // then the caller aborts the in-flight turn and reports it as aborted.
+    expect(binding.preemptForDrain()).toBe(true);
+    await binding.notifyTurnEnd({ ok: false, aborted: true });
+    // The aborted outcome was reinterpreted as clean, so the cascade drained
+    // the head (and continued to the second item since the drained turn
+    // succeeded) instead of clearing the queue.
+    expect(runTurn).toHaveBeenCalledTimes(2);
+    expect(runTurn.mock.calls[0]?.[0]).toBe("first");
+    expect(runTurn.mock.calls[1]?.[0]).toBe("second");
+    expect(binding.queueLength()).toBe(0);
+    binding.dispose();
+  });
+
+  it("a non-aborted turn-end after an armed preempt still drains normally (preempt is harmless)", async () => {
+    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const binding = createChatQueueTuiBinding(runTurn);
+    binding.enqueue("x");
+    binding.notifyTurnStart();
+    binding.preemptForDrain();
+    // Turn actually ended cleanly (not aborted) — preempt flag is consumed
+    // and ignored since outcome.aborted is false.
+    await binding.notifyTurnEnd({ ok: true, aborted: false });
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(runTurn.mock.calls[0]?.[0]).toBe("x");
+    binding.dispose();
+  });
+
+  it("preempt is consumed by the next turn-end and does not leak to a later abort", async () => {
+    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const binding = createChatQueueTuiBinding(runTurn);
+    binding.enqueue("x");
+    binding.notifyTurnStart();
+    binding.preemptForDrain();
+    // Clean end consumes the preempt.
+    await binding.notifyTurnEnd({ ok: true, aborted: false });
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    // Now a fresh turn starts, gets aborted with no preempt armed: normal
+    // abort behavior must clear the queue (no reinterpretation).
+    binding.enqueue("y");
+    binding.notifyTurnStart();
+    await binding.notifyTurnEnd({ ok: false, aborted: true });
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(binding.queueLength()).toBe(0);
+    binding.dispose();
+  });
 });

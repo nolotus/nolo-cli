@@ -667,6 +667,70 @@ describe("cli agent run client", () => {
     expect(output.text()).toContain("frontend > done after retry");
   });
 
+  test("prints agent name only once per loop during multi-step tool iterations", async () => {
+    const output = new CaptureOutput();
+    let completeCalls = 0;
+
+    const result = await runAgentTurn({
+      agentName: "AGY Flash",
+      agentKey: "agy-flash",
+      serverUrl: "https://nolo.chat",
+      message: "check git status",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "AGY Flash",
+          prompt: "Assistant",
+          model: "fake-local",
+          toolNames: ["execShell"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-single-name" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            completeCalls += 1;
+            if (completeCalls === 1) {
+              return {
+                content: "Wait, git status showsclean!",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-1",
+                  type: "function",
+                  function: { name: "execShell", arguments: '{"cmd":"git log -n 2"}' },
+                }],
+              };
+            }
+            if (completeCalls === 2) {
+              return {
+                content: "Let's check git diff.",
+                model: "fake-local",
+                tool_calls: [{
+                  id: "call-2",
+                  type: "function",
+                  function: { name: "execShell", arguments: '{"cmd":"git log -n 3"}' },
+                }],
+              };
+            }
+            return { content: "All done!", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => ({ content: "ok" }),
+      },
+    });
+
+    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-single-name" });
+    const matches = output.text().match(/AGY Flash >/g);
+    expect(matches).not.toBeNull();
+    expect(matches?.length).toBe(1);
+  });
+
   test("prints compact local tool trace by default", async () => {
     const output = new CaptureOutput();
     let completeCalls = 0;

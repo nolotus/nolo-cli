@@ -1495,11 +1495,80 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           } else if (decision.kind === "queue-blocked") {
             // Attachments / mentions can't be queued yet; keep the draft so
             // the user can resend after the turn. No destructive action.
+          } else if (
+            decision.kind === "noop" &&
+            !submittedText.trim() &&
+            binding.queueLength() > 0 &&
+            activeTurnAbort
+          ) {
+            // Empty Enter while busy with a non-empty queue: preempt the
+            // in-flight turn so the queued head drains immediately instead
+            // of waiting for the turn to finish. Arm the binding's preempt
+            // flag (so the upcoming aborted turn-end is reinterpreted as a
+            // clean end and drains rather than clearing the queue), then
+            // abort the current turn. The turn's own finally will call
+            // notifyTurnEnd, which drives the drain cascade.
+            if (binding.preemptForDrain()) {
+              activeTurnAbort.abort();
+            }
           }
           // arm-fresh-dialog / compact-blocked / noop / multi-image-blocked
           // are all intentionally no-ops while busy: the draft is preserved
           // and the user can act on it once the turn completes.
           return;
+        }
+        // Empty Enter while idle with a residual queue (e.g. a previous turn
+        // failed and kept the queue): manually drain the head as a fresh
+        // turn. Reuses the same runOneAgentTurn + notifyTurnEnd path as a
+        // direct send so the queue core stays consistent. Non-empty drafts
+        // fall through to runSubmittedLine as before.
+        if (!result.submit.trim() && chatQueueBinding && chatQueueBinding.queueLength() > 0) {
+          const actionGateHandler = async (gate: LocalAgentActionGate) => {
+            actionGateWaiting = true;
+            try {
+              return await waitForRawActionGate(input, output, gate, spawnRunner, {
+                beforeSubprocess: () => fixedInput.pause(),
+                afterSubprocess: () => fixedInput.resumeFromSubprocess(),
+              });
+            } finally {
+              actionGateWaiting = false;
+            }
+          };
+          const confirmDestructiveAction = async (request: PermissionRequest) =>
+            dialogHost.run((anchor) =>
+              runConfirmDialog({
+                request,
+                input: input as any,
+                output: output as any,
+                ...anchor,
+              }),
+            );
+          const manualBinding = ensureChatQueueBinding(actionGateHandler, confirmDestructiveAction);
+          const drainedText = manualBinding.drainHeadForManualTurn();
+          if (drainedText !== null) {
+            busy = true;
+            buffer = "";
+            cursorPos = 0;
+            fixedInput.enterOutputMode(drainedText);
+            try {
+              const outcome = await runOneAgentTurn(
+                drainedText,
+                [],
+                actionGateHandler,
+                confirmDestructiveAction,
+              );
+              await manualBinding.notifyTurnEnd(outcome);
+            } catch (err) {
+              await manualBinding.notifyTurnEnd({ ok: false, aborted: false });
+              emitCommandOutput(
+                `${t("turnFailed")}${err instanceof Error && err.message ? `\n${err.message}` : ""}`,
+              );
+            } finally {
+              busy = false;
+            }
+            fixedInput.exitOutputMode(buffer, cursorPos);
+            return;
+          }
         }
         busy = true;
         const submittedText = result.submit;

@@ -24,6 +24,9 @@ const msg = (id: string, content: string) => ({
 });
 
 async function loadWithLocalMessages(localMsgs: unknown[]) {
+  mock.module("../localRuntimeAuthority", () => ({
+    getDefaultCliLocalRuntimeDb: async () => ({}),
+  }));
   mock.module("../../agent-runtime/localDialogRead", () => ({
     readDialogFromLocalDb: async () => ({
       meta: { id: DIALOG_ID, dbKey: DIALOG_KEY },
@@ -125,7 +128,10 @@ test("远端比本地新时什么都不做，不用陈旧本地状态覆盖服�
   expect(writtenKeys(calls)).toEqual([]);
 });
 
-test("补齐失败绝不阻塞 fallback", async () => {
+test("补齐失败绝不阻塞 fallback —— lock 错误走 lock 专属提示语", async () => {
+  mock.module("../localRuntimeAuthority", () => ({
+    getDefaultCliLocalRuntimeDb: async () => ({}),
+  }));
   mock.module("../../agent-runtime/localDialogRead", () => ({
     readDialogFromLocalDb: async () => {
       throw new Error("LEVEL_LOCKED");
@@ -147,5 +153,39 @@ test("补齐失败绝不阻塞 fallback", async () => {
   );
 
   expect(result.ok).toBe(true);
-  expect(written.join("")).toContain("LEVEL_LOCKED");
+  // lock 专属提示语：告诉用户历史会缺 + 怎么释放。
+  expect(written.join("")).toContain("local database is locked");
+  // 不应再走原来的 "could not sync" 分支。
+  expect(written.join("")).not.toContain("could not sync");
+});
+
+test("补齐失败绝不阻塞 fallback —— 非 lock 错误走原来的 could not sync 分支", async () => {
+  mock.module("../localRuntimeAuthority", () => ({
+    getDefaultCliLocalRuntimeDb: async () => ({}),
+  }));
+  mock.module("../../agent-runtime/localDialogRead", () => ({
+    readDialogFromLocalDb: async () => {
+      throw new Error("network down");
+    },
+  }));
+  const { ensureDialogSyncedForServerFallback } = await import("./cliRemoteDialogSync");
+  const { fetchImpl } = createFetch([]);
+  const written: string[] = [];
+
+  const result = await ensureDialogSyncedForServerFallback(
+    {
+      continueDialogId: DIALOG_ID,
+      env: { NOLO_SERVER: SERVER },
+      fetchImpl: fetchImpl as any,
+      output: { write: (c: string) => written.push(c) },
+      serverUrl: SERVER,
+    },
+    AUTH_TOKEN,
+  );
+
+  expect(result.ok).toBe(true);
+  // 非 lock 错误：走原来的 "could not sync" 分支。
+  expect(written.join("")).toContain("could not sync");
+  // 不应误报成 lock 错误。
+  expect(written.join("")).not.toContain("local database is locked");
 });

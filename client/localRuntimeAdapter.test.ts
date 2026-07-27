@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
+import { resolveCliEffectiveEnabledPacks } from "./localRuntimeAdapter";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
 import {
   clearCliLocalRuntimePreparedAgentCache,
@@ -4072,5 +4073,24 @@ describe("CLI local runtime adapter remote sync fetch timeout", () => {
     } finally {
       setRemoteDialogSyncTimeoutForTest(undefined);
     }
+  });
+});
+
+describe("resolveCliEffectiveEnabledPacks", () => {
+  test("enabledPacks 为空时默认补 code 包", () => {
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [] })).toEqual(["code"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: null })).toEqual(["code"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: undefined })).toEqual(["code"]);
+    expect(resolveCliEffectiveEnabledPacks({})).toEqual(["code"]);
+  });
+
+  test("enabledPacks 非空时保持原值不补", () => {
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"] })).toEqual(["web-search"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "web-search"] })).toEqual(["code", "web-search"]);
+  });
+
+  test("declared-only 模式下不补 code 包（用户显式要 ablation）", () => {
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [], declaredOnly: true })).toEqual([]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"], declaredOnly: true })).toEqual(["web-search"]);
   });
 });

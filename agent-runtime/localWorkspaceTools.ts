@@ -146,15 +146,6 @@ import {
   filterDeclaredWorkspaceToolNames,
 } from "./localWorkspaceToolDefs";
 
-const DEFAULT_LOCAL_CODING_TOOL_NAMES = [
-  "listFiles",
-  "readFile",
-  "writeFile",
-  "editFile",
-  "globFiles",
-  "searchFiles",
-] as const;
-
 function readTrimmedString(value: unknown): string | undefined {
   return asOptionalTrimmedString(value);
 }
@@ -348,8 +339,11 @@ export function buildLocalWorkspaceToolset(args: {
       exposeShellTools,
     };
   }
+  // DEFAULT_LOCAL_CODING_TOOL_NAMES 兜底已删除：代码工具现在走显式能力包
+  // （code pack）或 declaredToolNames 声明。CLI 端 resolveCliEffectiveEnabledPacks
+  // 对 enabledPacks 为空的 agent 默认补 code 包；桌面端绑文件夹时自动补。
+  // 这里的工具集 = declared 匹配的 workspace 工具 + shell 工具（exposeShellTools 时）。
   const toolNames = new Set([
-    ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
     ...(exposeShellTools ? SHELL_TOOL_NAMES : []),
     ...filterDeclaredWorkspaceToolNames({
       toolNames: args.declaredToolNames,

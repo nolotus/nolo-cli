@@ -6,6 +6,8 @@ import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
 import type { UserChoiceRequest, UserChoiceResult } from "../client/localRuntimeAdapter";
 import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPrompts";
+import { discoverSkills } from "../agent-runtime/skillDiscovery";
+import { buildSkillDiscoveryLayer } from "../agent-runtime/turnContext";
 import {
   classifyCliAutoRoute,
   CLI_AUTO_TIER_AGENT_KEY_TABLE,
@@ -328,6 +330,16 @@ async function runAgentChat(
     ...(agentsMdBlock ? [agentsMdBlock] : []),
     ...(skillContextBlocks ?? []),
   ];
+  // Skill discovery: scan conventional skill dirs for SKILL.md and inject an
+  // index layer so the model knows what skills exist and can readFile them
+  // on-demand. Mirrors agentRunCommand.ts and desktopAgentRuntimeTurnService.
+  try {
+    const discoveredSkills = discoverSkills(state.cwd);
+    const skillDiscoveryLayer = buildSkillDiscoveryLayer(discoveredSkills, state.cwd);
+    if (skillDiscoveryLayer?.content) {
+      extraContextBlocks.push(skillDiscoveryLayer.content);
+    }
+  } catch { /* best-effort; scan failure must not abort the turn */ }
   const result: RunAgentTurnResult = await agentRunner({
     agentName: effectiveAgentName,
     agentKey: effectiveAgentKey,

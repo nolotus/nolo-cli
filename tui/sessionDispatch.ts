@@ -108,8 +108,6 @@ function applyAgentSwitch(state: TuiState, target: { name: string; key: string }
   };
 }
 
-// Removed natural language TUI routing helper functions and patterns as natural language inputs are now directly handled by the AI agent.
-
 export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
   const trimmed = input.trim();
   if (!trimmed) {

@@ -74,10 +74,6 @@ export type TuiAction =
       command: string;
     }
   | {
-      type: "cli-command";
-      args: string[];
-    }
-  | {
       type: "pick-agent";
     }
   | {
@@ -99,14 +95,6 @@ export type TuiAction =
   | {
       type: "set-mouse";
       enabled: boolean;
-    }
-  | {
-      type: "attach-images";
-      /**
-       * 来自 /attach <path...> 命令,workspace 会异步读成 AttachedImage
-       * 然后 merge 进 state.attachedImages。
-       */
-      paths: string[];
     }
   | {
       type: "clear";

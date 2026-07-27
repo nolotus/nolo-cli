@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   fetchRecentDialogs,
   formatDialogTimestamp,
-  loadDialogHistory,
+  loadDialogHistoryForDisplay,
   renderDialogList,
   toDialogPickerItems,
 } from "./dialogPicker";

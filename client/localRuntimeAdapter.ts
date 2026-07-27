@@ -523,6 +523,47 @@ function transientFetchRetryDelayMs(attempt: number) {
   return Math.min(attempt * TRANSIENT_FETCH_RETRY_BASE_DELAY_MS, 2_000);
 }
 
+/**
+ * 上游明确表示「我没受理」的状态码，与服务端 chatUpstreamRetry 的 GENTLE_RETRY_STATUSES
+ * 保持同一口径：重试不会产生重复 token、不会重复计费。
+ * 502/504 不在内——那两个可能意味着请求已被处理，重试有副作用风险。
+ */
+const RETRYABLE_HTTP_STATUSES = new Set([429, 503]);
+
+/**
+ * 从一个可重试响应里读出建议等待时长。
+ *
+ * nolo 服务端在排空/限流时会明确给出信号，例如
+ *   503 {"error":"Server draining","reason":"core_draining","retryable":true,"retryAfterMs":1500}
+ * 以前客户端完全不看这些字段——`fetchWithTransientRetry` 只在**抛异常**时重试，
+ * 而 503 是一次成功的 HTTP 交换，于是服务端说「可以重试、等我 1.5 秒」，
+ * 客户端却直接把它当成终局失败上报给用户。
+ *
+ * 优先级：标准 `Retry-After` 头 > 响应体 `retryAfterMs` > 既有退避。
+ * 读体前先 clone，避免把调用方要用的 body 消费掉。
+ */
+async function resolveRetryAfterMs(
+  response: Response,
+  attempt: number,
+): Promise<number> {
+  const header = response.headers.get("retry-after");
+  if (header) {
+    const seconds = Number(header.trim());
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, 10_000);
+    }
+  }
+  try {
+    const body = await response.clone().text();
+    const parsed = JSON.parse(body) as { retryAfterMs?: unknown };
+    const ms = Number(parsed?.retryAfterMs);
+    if (Number.isFinite(ms) && ms >= 0) return Math.min(ms, 10_000);
+  } catch {
+    // 非 JSON 或 body 不可读：退回既有退避。
+  }
+  return transientFetchRetryDelayMs(attempt);
+}
+
 function isLoopbackUrl(input: FetchInput) {
   try {
     const target =
@@ -597,7 +638,7 @@ async function defaultLoopbackRequest(input: FetchInput, init?: FetchInit) {
   });
 }
 
-async function fetchWithTransientRetry(
+export async function fetchWithTransientRetry(
   fetchImpl: CliFetchImpl,
   input: FetchInput,
   init?: FetchInit,
@@ -615,7 +656,20 @@ async function fetchWithTransientRetry(
       if (options.loopbackRequest && isLoopbackUrl(input)) {
         return await options.loopbackRequest(input, init);
       }
-      return await fetchImpl(input, init);
+      const response = await fetchImpl(input, init);
+      // 429/503 是一次**成功的** HTTP 交换，不会走到下面的 catch。以前这里直接
+      // 把它返回给调用方，于是服务端 `retryable: true, retryAfterMs: 1500` 这类
+      // 明示信号被完全无视，一次容量抖动就成了用户可见的终局失败。
+      if (
+        RETRYABLE_HTTP_STATUSES.has(response.status) &&
+        attempt < TRANSIENT_FETCH_MAX_ATTEMPTS &&
+        !init?.signal?.aborted
+      ) {
+        const delayMs = await resolveRetryAfterMs(response, attempt);
+        await (options.sleep ?? defaultSleep)(delayMs);
+        continue;
+      }
+      return response;
     } catch (error) {
       if (init?.signal?.aborted) throw error;
       if (!isTransientFetchError(error)) throw error;

@@ -61,6 +61,7 @@
     "runtimeModeArgs.ts",
     "tableCommands.ts",
     "updateCommands.ts",
+    "client/fetchWithTransientRetry.test.ts",
     "client/callAgentLocal.test.ts",
     "client/thinkingOutput.test.ts",
     "client/localToolPolicy.test.ts",

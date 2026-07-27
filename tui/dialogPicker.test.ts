@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   fetchRecentDialogs,
   formatDialogTimestamp,
-  loadDialogHistory,
+  loadDialogHistoryForDisplay,
   renderDialogList,
   toDialogPickerItems,
 } from "./dialogPicker";
@@ -105,10 +105,10 @@ describe("fetchRecentDialogs error messages", () => {
   });
 });
 
-describe("loadDialogHistory", () => {
+describe("loadDialogHistoryForDisplay", () => {
   test("reads persisted messages oldest-first and keeps only visible chat turns", async () => {
     const dialog = makeDialog();
-    const result = await loadDialogHistory({
+    const result = await loadDialogHistoryForDisplay({
       dialog,
       env: {
         AUTH_TOKEN: `${Buffer.from(JSON.stringify({ userId: "user" })).toString("base64")}.sig`,

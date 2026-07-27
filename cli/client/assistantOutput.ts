@@ -366,7 +366,7 @@ export function polishAssistantStructure(
     return line;
   });
 
-  const polishedMasked = maskedLines
+  const afterHeading = maskedLines
     .join("\n")
     // Blank line before a heading, and one after it. Only the "before" half
     // existed, so a heading sat flush against its own body text and sections
@@ -375,6 +375,27 @@ export function polishAssistantStructure(
     .replace(/([^\n])\n(#{1,3} )/g, "$1\n\n$2")
     .replace(/^(#{1,3} .+)\n(?!\n)/gm, "$1\n\n")
     .replace(/\n{4,}/g, "\n\n\n");
+
+  // List ↔ prose breathing: insert a single blank line between a list-like
+  // line and an adjacent non-list, non-empty line (both directions). Long
+  // replies lean on `1.`/`•`/`☐`/`☑` lists, and without a gap the list block
+  // runs into the next paragraph (or the prose into the list) so nothing is
+  // scannable. Consecutive list items keep their tight grouping — no blank
+  // between siblings. Fence interiors are already masked to `\x00F<n>\x00`
+  // sentinels (not list-like), so code that happens to look like a list is
+  // never touched.
+  const LIST_LIKE = /^\s*(?:•|☐|☑|\d+\.)\s/;
+  const headingLines = afterHeading.split("\n");
+  const breathed: string[] = [];
+  for (let i = 0; i < headingLines.length; i++) {
+    breathed.push(headingLines[i]);
+    const cur = headingLines[i];
+    const next = headingLines[i + 1];
+    if (cur === "" || next === undefined || next === "") continue;
+    if (LIST_LIKE.test(cur) === LIST_LIKE.test(next)) continue;
+    breathed.push("");
+  }
+  const polishedMasked = breathed.join("\n");
 
   // 还原：将哨兵串按行号还原为原始围栏行
   const polished = polishedMasked.replace(
@@ -460,6 +481,19 @@ function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
     const styled = styleInlineMarkdown(bullet[3], brightness);
     return `${bullet[1]}${colorSeq("accent", brightness)}•${STYLE.reset} ${styled}`;
   }
+  // Ordered list markers (`1.`, `2.` …) and task-list markers (☐/☑): accent the
+  // marker so the leading number is as scannable as a bullet, while the body
+  // still goes through inline markdown. Keeps `1.` from blending into prose.
+  const ordered = line.match(/^(\s*)(\d+\.)\s(.+)$/);
+  if (ordered) {
+    const styled = styleInlineMarkdown(ordered[3], brightness);
+    return `${ordered[1]}${colorSeq("accent", brightness)}${ordered[2]}${STYLE.reset} ${styled}`;
+  }
+  const task = line.match(/^(\s*)(☐|☑)\s(.+)$/);
+  if (task) {
+    const styled = styleInlineMarkdown(task[3], brightness);
+    return `${task[1]}${colorSeq("accent", brightness)}${task[2]}${STYLE.reset} ${styled}`;
+  }
   return styleInlineMarkdown(line, brightness);
 }
 
@@ -505,6 +539,39 @@ function emitFormattedAssistantBlock(
   if (trailingNewline) write("\n");
 }
 
+/**
+ * Stream-path line kind for list↔prose breathing. The whole-message polish
+ * sees all lines at once; the stream writer emits one finished line at a time,
+ * so it must remember the previous kind and inject the same blank line the
+ * polish step would have inserted.
+ */
+type StreamLineKind = "list" | "prose" | "blank" | "other";
+
+function classifyStreamLine(line: string): StreamLineKind {
+  if (line === "") return "blank";
+  // Raw markdown forms (stream input) plus already-normalized markers.
+  if (
+    TASK_LIST_RE.test(line) ||
+    UNORDERED_LIST_RE.test(line) ||
+    ORDERED_LIST_RE.test(line) ||
+    /^\s*(?:•|☐|☑)\s/.test(line)
+  ) {
+    return "list";
+  }
+  return "prose";
+}
+
+function needsListProseBreath(
+  prev: StreamLineKind | null,
+  next: StreamLineKind
+): boolean {
+  if (prev === null || prev === "blank" || next === "blank") return false;
+  const prevList = prev === "list";
+  const nextList = next === "list";
+  // prose↔list and other↔list both breathe; prose↔other does not.
+  return prevList !== nextList;
+}
+
 export function createRenderAwareStreamWriter(args: {
   write: (chunk: string) => void;
 }) {
@@ -515,6 +582,13 @@ export function createRenderAwareStreamWriter(args: {
   // closing fence. This is the only cross-line state the line-local highlighter
   // is allowed to consume (see highlightCodeLine).
   let fenceLang: CodeLang = "unknown";
+  // Last emitted line kind outside (and across) fences — drives stream-path
+  // list↔prose breathing so live TUI matches whole-message polish.
+  let lastKind: StreamLineKind | null = null;
+
+  const emitBreathIfNeeded = (nextKind: StreamLineKind) => {
+    if (needsListProseBreath(lastKind, nextKind)) args.write("\n");
+  };
 
   const flushCompleteBlocks = () => {
     while (buffer.includes("\n")) {
@@ -529,14 +603,19 @@ export function createRenderAwareStreamWriter(args: {
           fenceLang = normalizeCodeLang(readFenceLanguage(firstLine));
         }
         inFence = !inFence;
+        // Fence markers count as non-list ("other") so a list run flush against
+        // ``` still gets the same blank polishAssistantStructure would insert.
+        emitBreathIfNeeded("other");
         args.write(`${STYLE.dim}${firstLine}${STYLE.reset}\n`);
+        lastKind = "other";
         buffer = lines.slice(1).join("\n");
         continue;
       }
       if (inFence) {
         // Line-local highlighting, matching formatAssistantDisplay. No trim,
-        // no table conversion inside fences.
+        // no table conversion inside fences. Interior never breathes as lists.
         args.write(`${highlightCodeLine(firstLine, fenceLang, brightness)}\n`);
+        lastKind = "other";
         buffer = lines.slice(1).join("\n");
         continue;
       }
@@ -560,17 +639,24 @@ export function createRenderAwareStreamWriter(args: {
           const tableComplete = end < lines.length - 1;
           if (!tableComplete) break;
 
+          // Tables render as bullet lists — breathe like entering a list, then
+          // leave lastKind as list so following prose also breathes.
+          emitBreathIfNeeded("list");
           emitFormattedAssistantBlock(
             args.write,
             lines.slice(0, end).join("\n"),
             true
           );
+          lastKind = "list";
           buffer = lines.slice(end).join("\n");
           continue;
         }
       }
 
+      const kind = classifyStreamLine(firstLine);
+      emitBreathIfNeeded(kind);
       emitFormattedAssistantBlock(args.write, firstLine, true);
+      lastKind = kind;
       buffer = lines.slice(1).join("\n");
     }
   };

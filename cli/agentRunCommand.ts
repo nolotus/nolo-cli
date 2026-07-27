@@ -13,8 +13,7 @@ import {
   buildModelLayerOverride,
   type ModelLayerOverride,
 } from "../agent-runtime/modelLayerOverride";
-import { discoverSkills } from "../agent-runtime/skillDiscovery";
-import { buildSkillDiscoveryLayer } from "../agent-runtime/turnContext";
+import { buildSkillDiscoveryContextBlock } from "../agent-runtime/skillDiscovery";
 import { CliProviderQuotaError } from "../ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
 import { resolveAgentRecordFromHybridStore, readDbRecord } from "./agentRecordHelpers";
@@ -441,18 +440,12 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
 
   // Skill discovery: scan conventional skill dirs (.agents/skills, docs/skills)
   // for SKILL.md files and inject an index layer so the model knows what skills
-  // are available and can readFile them on-demand. This is the CLI analog of
-  // desktopAgentRuntimeTurnService's discoverSkills + buildSkillDiscoveryLayer.
-  // Without this, skills like nolo-commit/nolo-cli are invisible to CLI agents
-  // even though their SKILL.md files exist in the workspace.
-  try {
-    const discoveredSkills = discoverSkills(cliCwd);
-    const skillDiscoveryLayer = buildSkillDiscoveryLayer(discoveredSkills, cliCwd);
-    if (skillDiscoveryLayer?.content) {
-      extraContextBlocks.push(skillDiscoveryLayer.content);
-    }
-  } catch (scanError) {
-    // Skill discovery is best-effort; a scan failure must not abort the run.
+  // are available and can readFile them on-demand. Without this, skills like
+  // nolo-commit/nolo-cli are invisible to CLI agents even though their SKILL.md
+  // files exist in the workspace.
+  const skillDiscoveryBlock = buildSkillDiscoveryContextBlock(cliCwd);
+  if (skillDiscoveryBlock) {
+    extraContextBlocks.push(skillDiscoveryBlock);
   }
 
   // Build the runner options once; the same options (message, cwd,

@@ -10,7 +10,8 @@
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { DiscoveredSkill } from "./turnContext";
+import { load as loadYaml } from "js-yaml";
+import { buildSkillDiscoveryLayer, type DiscoveredSkill } from "./turnContext";
 
 const SKILL_SCAN_DIRS = [".agents/skills", "docs/skills"] as const;
 const MAX_DISCOVERED_SKILLS = 50;
@@ -20,40 +21,25 @@ export function parseSkillFrontmatter(filePath: string): { name?: string; descri
     const content = readFileSync(filePath, "utf8").slice(0, 2048);
     const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
     if (!fmMatch) return {};
-    const fm = fmMatch[1];
-    const nameMatch = fm.match(/^name:\s*(.+)$/m);
-    // description supports YAML block scalars: >, >-, >+, |, |-, |+
-    // (folded/literal with chomping indicators). The content lives on the
-    // following indented lines (including blank lines as paragraph separators
-    // for folded scalars) until a dedented line (next top-level key or ---).
-    const blockScalarMatch = fm.match(
-      /^description:\s*([>|])([-+]?).*\n((?:[ \t]+.*\n?|[ \t]*\n)+)/m,
-    );
-    let description: string | undefined;
-    if (blockScalarMatch) {
-      const folded = blockScalarMatch[1] === ">";
-      // Strip leading indentation from each line; drop pure-blank lines but
-      // remember them as paragraph breaks for folded scalars.
-      const lines = blockScalarMatch[3].split("\n").map((line) =>
-        line.replace(/^[ \t]+/, ""),
-      );
-      if (folded) {
-        // Folded: blank lines → paragraph break (join with space, collapse runs).
-        description = lines
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim();
-      } else {
-        // Literal: preserve newlines, drop trailing empty lines.
-        description = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-      }
-    } else {
-      const descMatch = fm.match(/^description:\s*(.+)$/m);
-      description = descMatch?.[1];
-    }
+    // Parse the frontmatter as YAML via js-yaml (already a project dep, used in
+    // skillDocProtocol.ts). This replaces a hand-rolled regex that broke twice:
+    // once on the `>-` chomping indicator, once on blank-line paragraph breaks
+    // in folded scalars. js-yaml handles all block scalar variants correctly.
+    const fm = loadYaml(fmMatch[1]) as Record<string, unknown> | undefined;
+    if (!fm || typeof fm !== "object") return {};
+    const name = typeof fm.name === "string" ? fm.name : undefined;
+    const rawDesc = fm.description;
+    // js-yaml already unfolds folded/literal scalars into strings; for
+    // non-string values fall back to String() so callers always get text.
+    const description =
+      typeof rawDesc === "string"
+        ? rawDesc
+        : rawDesc == null
+          ? undefined
+          : String(rawDesc);
     const sanitize = (s: string | undefined) =>
-      s?.trim().replace(/^["']|["']$/g, "").replace(/[\n\r]/g, " ").slice(0, 200);
-    return { name: sanitize(nameMatch?.[1]), description: sanitize(description) };
+      s?.trim().replace(/^["']|["']$/g, "").replace(/[\n\r]+/g, " ").slice(0, 200);
+    return { name: sanitize(name), description: sanitize(description) };
   } catch { return {}; }
 }
 
@@ -81,4 +67,26 @@ export function discoverSkills(cwd: string): DiscoveredSkill[] {
     } catch { }
   }
   return skills;
+}
+
+/**
+ * One-call helper for host entry points (CLI agentRunCommand, TUI
+ * readlineWorkspace, desktop runtime) to build the skill-discovery context
+ * block. Encapsulates discoverSkills + buildSkillDiscoveryLayer + best-effort
+ * try/catch so every entry point gets identical behavior and a new entry
+ * point can't accidentally omit the scan (the exact bug that made skills
+ * invisible to CLI agents).
+ *
+ * Returns the layer content string ready to push into extraContextBlocks,
+ * or null when no skills were found / the scan failed.
+ */
+export function buildSkillDiscoveryContextBlock(cwd: string): string | null {
+  try {
+    const discovered = discoverSkills(cwd);
+    const layer = buildSkillDiscoveryLayer(discovered, cwd);
+    return layer?.content ?? null;
+  } catch {
+    // Skill discovery is best-effort; a scan failure must not abort the run.
+    return null;
+  }
 }

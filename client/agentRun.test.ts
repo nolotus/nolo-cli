@@ -715,8 +715,8 @@ describe("cli agent run client", () => {
     });
 
     expect(result).toMatchObject({ exitCode: 0, dialogId: "dialog-local" });
-    expect(output.text()).toContain("Read");
-    expect(output.text()).toContain("README.md");
+    expect(output.text()).toContain("▸ Read README.md");
+    expect(output.text()).toContain("✓");
     expect(output.text()).not.toContain("[nolo:tool]");
   });
 

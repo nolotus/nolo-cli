@@ -24,18 +24,29 @@ export function parseSkillFrontmatter(filePath: string): { name?: string; descri
     const nameMatch = fm.match(/^name:\s*(.+)$/m);
     // description supports YAML block scalars: >, >-, >+, |, |-, |+
     // (folded/literal with chomping indicators). The content lives on the
-    // following indented lines until a dedented line (next top-level key or ---).
+    // following indented lines (including blank lines as paragraph separators
+    // for folded scalars) until a dedented line (next top-level key or ---).
     const blockScalarMatch = fm.match(
-      /^description:\s*([>|])([-+]?).*\n((?:[ \t]+\S.*\n?)+)/m,
+      /^description:\s*([>|])([-+]?).*\n((?:[ \t]+.*\n?|[ \t]*\n)+)/m,
     );
     let description: string | undefined;
     if (blockScalarMatch) {
       const folded = blockScalarMatch[1] === ">";
-      const rawLines = blockScalarMatch[3]
-        .split("\n")
-        .map((line) => line.replace(/^[ \t]+/, ""))
-        .filter((line) => line.length > 0);
-      description = folded ? rawLines.join(" ") : rawLines.join("\n");
+      // Strip leading indentation from each line; drop pure-blank lines but
+      // remember them as paragraph breaks for folded scalars.
+      const lines = blockScalarMatch[3].split("\n").map((line) =>
+        line.replace(/^[ \t]+/, ""),
+      );
+      if (folded) {
+        // Folded: blank lines → paragraph break (join with space, collapse runs).
+        description = lines
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+      } else {
+        // Literal: preserve newlines, drop trailing empty lines.
+        description = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      }
     } else {
       const descMatch = fm.match(/^description:\s*(.+)$/m);
       description = descMatch?.[1];

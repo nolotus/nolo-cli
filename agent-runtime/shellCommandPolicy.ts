@@ -126,16 +126,55 @@ const hasExplicitDestructivePermission = (userInput: unknown): boolean => {
   return containsAny(normalized, EXPLICIT_DESTRUCTIVE_REQUEST_PATTERNS);
 };
 
+/**
+ * execShell 的命令参数别名。不同模型会用不同的键名发同一个命令。
+ *
+ * 这份清单必须与实际执行命令的代码看同一组键——否则「检查的字段」和
+ * 「执行的字段」会错开，破坏性命令就能从安全闸门下面绕过去。
+ * 服务端 toolExecutor 的 normalizeToolExecutionArgs 复用这里，不再各存一份。
+ */
+export const SHELL_COMMAND_ARG_ALIASES = [
+  "command",
+  "runCommand",
+  "run_command",
+  "terminalCommand",
+  "terminal_command",
+  "runInBash",
+  "run_in_bash",
+  "executeCommand",
+  "execute_command",
+  "execShell",
+  "bash",
+  "cmd",
+] as const;
+
+/** 按别名顺序取出 execShell 的命令文本；都没有则 undefined。 */
+export const resolveShellCommandArg = (
+  args: Record<string, unknown> | null | undefined,
+): unknown => {
+  if (!args) return undefined;
+  for (const key of SHELL_COMMAND_ARG_ALIASES) {
+    const value = args[key];
+    if (value != null) return value;
+  }
+  return undefined;
+};
+
 const buildCombinedShellInput = (args: {
   command?: unknown;
   input?: unknown;
-}): string =>
-  [
-    typeof args.command === "string" ? args.command : "",
+}): string => {
+  // 只读 args.command 会漏掉别名形态。实测（2026-07-27）：desktop 路径下
+  // `execShell({ cmd: "rm -rf ./tmp" })` 因为 args.command 为 undefined 而被
+  // 判成「非破坏性」，直接跳过确认执行——服务端因为先做了别名归一化没这个洞。
+  const command = resolveShellCommandArg(args as Record<string, unknown>);
+  return [
+    typeof command === "string" ? command : "",
     typeof args.input === "string" ? args.input : "",
   ]
     .filter(Boolean)
     .join("\n");
+};
 
 export function isDestructiveShellCommand(args: {
   command?: unknown;

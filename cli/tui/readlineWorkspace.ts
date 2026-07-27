@@ -28,7 +28,7 @@ import { runSelectDialog, type SelectDialogItem } from "./selectDialog";
 import { createDialogHost } from "./dialogHost";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
 import { prefetchAgentCatalog } from "./agentCatalog";
-import { loadDialogHistoryForDisplay, runDialogPicker } from "./dialogPicker";
+import { loadDialogHistory, runDialogPicker } from "./dialogPicker";
 import { mergeAttachedImages, readImagePaths, resolveImageSource, summarizeAttachment } from "./pasteImage";
 import { getProcessRegistry } from "../../agent-runtime/processRegistry";
 import {
@@ -162,18 +162,29 @@ type WorkspaceOptions = {
   env?: NodeJS.ProcessEnv;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
+  cliEntrypointPath?: string;
   agentRunner?: typeof runAgentTurn;
+  cliCommandRunner?: CliCommandRunner;
   compactRunner?: (options: {
     serverUrl: string;
     authToken: string;
     dialogId: string;
   }) => Promise<CompactDialogResult>;
   dialogPickerRunner?: typeof runDialogPicker;
-  dialogHistoryLoader?: typeof loadDialogHistoryForDisplay;
+  dialogHistoryLoader?: typeof loadDialogHistory;
   selfUpdater?: SelfUpdater;
   spawnRunner?: typeof spawnProcess;
 };
 
+type CliCommandRunner = (
+  args: string[],
+  context: {
+    env: NodeJS.ProcessEnv;
+    output: NodeJS.WritableStream;
+    scriptDir: string;
+    cliEntrypointPath: string;
+  }
+) => Promise<number>;
 
 type RawModeInput = NodeJS.ReadableStream & {
   isRaw?: boolean;
@@ -465,6 +476,40 @@ function waitForActionGate(
   });
 }
 
+async function pipeReadableToOutput(
+  stream: Readable | null,
+  output: NodeJS.WritableStream
+) {
+  const text = await readPipeText(stream);
+  if (text) output.write(text);
+}
+
+function resolveDefaultCliEntrypoint(scriptDir: string) {
+  if (process.argv[1]) return process.argv[1];
+  return join(scriptDir, "..", "packages", "cli", "index.ts");
+}
+
+async function runCliCommandInChildProcess(
+  args: string[],
+  context: {
+    env: NodeJS.ProcessEnv;
+    output: NodeJS.WritableStream;
+    cliEntrypointPath: string;
+  }
+) {
+  const proc = spawnProcess({
+    cmd: [process.execPath, context.cliEntrypointPath, ...args],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: context.env,
+  });
+  await Promise.all([
+    pipeReadableToOutput(proc.stdout, context.output),
+    pipeReadableToOutput(proc.stderr, context.output),
+  ]);
+  return proc.exited;
+}
+
 function persistAgentSelection(
   state: TuiState,
   env: NodeJS.ProcessEnv | undefined
@@ -588,6 +633,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   prefetchAgentCatalog({ env: options.env ?? process.env });
   const input = options.input ?? defaultInput;
   const output = options.output ?? defaultOutput;
+  const cliEntrypointPath =
+    options.cliEntrypointPath ?? resolveDefaultCliEntrypoint(options.scriptDir);
+  const cliCommandRunner = options.cliCommandRunner ?? runCliCommandInChildProcess;
   const spawnRunner = options.spawnRunner ?? spawnProcess;
   const selfUpdater: SelfUpdater =
     options.selfUpdater ?? ((target) => runSelfUpdate({ output: target }));
@@ -1074,7 +1122,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         );
         if (pickResult.kind === "selected") {
           const loadedTurns = await (
-            options.dialogHistoryLoader ?? loadDialogHistoryForDisplay
+            options.dialogHistoryLoader ?? loadDialogHistory
           )({
             dialog: pickResult.dialog,
             env: options.env ?? process.env,
@@ -1141,6 +1189,24 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       } catch (error) {
         output.write(
           `[nolo] Agent list failed: ${toErrorMessage(error)}\n`
+        );
+      }
+    }
+
+    if (result.action?.type === "cli-command") {
+      try {
+        const exitCode = await cliCommandRunner(result.action.args, {
+          env: options.env ?? process.env,
+          output,
+          scriptDir: options.scriptDir,
+          cliEntrypointPath,
+        });
+        if (exitCode !== 0) {
+          output.write(`[nolo] CLI command exited with code ${exitCode}.\n`);
+        }
+      } catch (error) {
+        output.write(
+          `[nolo] CLI command failed: ${toErrorMessage(error)}\n`
         );
       }
     }
@@ -1234,6 +1300,21 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         );
       }
       if (fixedInput.active) fixedInput.repaint(buffer);
+    }
+
+    if (result.action?.type === "attach-images") {
+      const readResult = await readImagePaths(result.action.paths, {
+        resolve: (raw) => resolveImageSource(raw, state.cwd),
+        onSuccess: (img) => output.write(`${summarizeAttachment(img)}\n`),
+        onFailure: (_path, err) =>
+          output.write(`[nolo] image skipped: ${err.message}\n`),
+      });
+      if (readResult.images.length > 0) {
+        state = {
+          ...state,
+          attachedImages: mergeAttachedImages(state.attachedImages, readResult.images),
+        };
+      }
     }
 
     return false;

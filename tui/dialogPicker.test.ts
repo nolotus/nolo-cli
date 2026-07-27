@@ -105,10 +105,10 @@ describe("fetchRecentDialogs error messages", () => {
   });
 });
 
-describe("loadDialogHistoryForDisplay", () => {
+describe("loadDialogHistory", () => {
   test("reads persisted messages oldest-first and keeps only visible chat turns", async () => {
     const dialog = makeDialog();
-    const result = await loadDialogHistoryForDisplay({
+    const result = await loadDialogHistory({
       dialog,
       env: {
         AUTH_TOKEN: `${Buffer.from(JSON.stringify({ userId: "user" })).toString("base64")}.sig`,

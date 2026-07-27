@@ -11,10 +11,6 @@ import {
   CLI_AUTO_TIER_AGENT_KEY_TABLE,
   CLI_IMAGE_AGENT_KEY,
 } from "../client/autoModelRouter";
-import {
-  buildModelLayerOverride,
-  type ModelLayerOverride,
-} from "../agent-runtime/modelLayerOverride";
 import { readDbRecord } from "../agentRecordHelpers";
 import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../ai/llm/agentCapabilities";
 import type { LocalAgentActionGate } from "../agent-runtime/localLoop";
@@ -197,12 +193,11 @@ type RawModeInput = NodeJS.ReadableStream & {
 
 
 
-// 对话 → 首轮自动路由结果。镜像 web quick-chat 语义：分类只发生在
-// 新对话的第一轮（建对话前），同一段对话的后续轮复用首轮选定的
-// agent 与 model 层覆盖，不再重复调用分类器（省钱也省延迟）。
+// 对话 → 首轮自动路由结果。分类只发生在用户未显式指定 agent 时的
+// 新对话第一轮（建对话前），同一段对话的后续轮复用首轮选定的 agent，不再重复调用分类器。
 const autoRouteByDialog = new Map<
   string,
-  { agentKey: string; agentName: string; modelOverride: ModelLayerOverride | null }
+  { agentKey: string; agentName: string }
 >();
 
 async function runAgentChat(
@@ -226,7 +221,6 @@ async function runAgentChat(
 ) {
   let effectiveAgentKey = state.agentKey;
   let effectiveAgentName = state.agentName;
-  let modelOverride: ModelLayerOverride | null = null;
   const continueId = state.dialogId;
   const cachedRoute = continueId ? autoRouteByDialog.get(continueId) : undefined;
 
@@ -236,12 +230,10 @@ async function runAgentChat(
     // 必须尊重用户选择，否则缓存会把用户「切走」的 429 agent 又切回来。
     effectiveAgentKey = cachedRoute.agentKey;
     effectiveAgentName = cachedRoute.agentName;
-    modelOverride = cachedRoute.modelOverride;
-  } else if (!continueId && env.NOLO_AUTO_ROUTE !== "0") {
-    // 新对话第一轮（web 的「建对话前」）：LLM 分类器在内置档间选档。
-    // 未显式选择 agent（仍是默认平台 agent）→ 直接跑分类出的档位；
-    // 显式选择了 agent（/agent 或 NOLO_AGENT）→ 镜像 web 语义：分类照跑，
-    // 仅用所选 agent 的 model 层替换档位 agent 的 model 层。
+  } else if (!continueId && env.NOLO_AUTO_ROUTE !== "0" && state.agentKey === DEFAULT_TUI_AGENT_KEY) {
+    // 新对话第一轮（web 的「建对话前」）：仅在用户未显式选择 agent（保持默认平台 agent）时，
+    // 调用 LLM 分类器在内置档（tier）之间路由。
+    // 若用户已显式选择 agent（如通过 /agent 或 NOLO_AGENT），完全跳过 auto 路由。
     const authToken =
       env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
     const route = await classifyCliAutoRoute(message, {
@@ -250,28 +242,9 @@ async function runAgentChat(
     });
     effectiveAgentKey = route.agentKey;
     effectiveAgentName = `auto→${route.tier}`;
-    if (state.agentKey !== DEFAULT_TUI_AGENT_KEY) {
-      const record = await readDbRecord({
-        dbKey: state.agentKey,
-        authToken,
-        serverUrl: state.serverUrl,
-        fetchImpl: fetch,
-      }).catch(() => null);
-      const override = buildModelLayerOverride(
-        record as Record<string, unknown> | null,
-      );
-      if (override) {
-        modelOverride = override;
-        effectiveAgentName = `auto→${route.tier}·${state.agentName}`;
-      } else {
-        // 覆盖源 record 读不到（离线/无权限）→ 保持现状直跑所选 agent。
-        effectiveAgentKey = state.agentKey;
-        effectiveAgentName = state.agentName;
-      }
-    }
-    if (effectiveAgentKey !== state.agentKey || modelOverride) {
+    if (effectiveAgentKey !== state.agentKey) {
       output.write(
-        `\n[nolo] auto → ${route.tier}${modelOverride ? ` (model: ${state.agentName})` : ""}\n`,
+        `\n[nolo] auto → ${route.tier}\n`,
       );
     }
   }
@@ -310,7 +283,6 @@ async function runAgentChat(
       );
       effectiveAgentKey = CLI_IMAGE_AGENT_KEY;
       effectiveAgentName = "Kimi K2.6";
-      modelOverride = null;
     }
   }
   // Resolve attached skill references (dbKey, .agents/skills/<name>/SKILL.md,
@@ -393,7 +365,6 @@ async function runAgentChat(
       : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     ...(options.activityReporter ? { activityReporter: options.activityReporter } : {}),
-    ...(modelOverride ? { modelOverride } : {}),
     ...(skillAllowedTools !== undefined
       ? { allowedToolNames: skillAllowedTools }
       : {}),
@@ -405,12 +376,11 @@ async function runAgentChat(
   if (
     !continueId &&
     result.dialogId &&
-    (effectiveAgentKey !== state.agentKey || modelOverride)
+    effectiveAgentKey !== state.agentKey
   ) {
     autoRouteByDialog.set(result.dialogId, {
       agentKey: effectiveAgentKey,
       agentName: effectiveAgentName,
-      modelOverride,
     });
   }
   return result;

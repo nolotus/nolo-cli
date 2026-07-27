@@ -28,7 +28,10 @@ export { runLocalAgentTurn } from "./localLoop";
 export {
   EMPTY_ASSISTANT_REPAIR_PROMPT,
   EMPTY_ASSISTANT_FALLBACK_MESSAGE,
+  LENGTH_TRUNCATED_FALLBACK_MESSAGE,
+  STREAM_TRUNCATED_FALLBACK_MESSAGE,
   resolveEmptyAssistantOutcome,
+  resolveEmptyAssistantFallbackMessage,
   hasAssistantVisibleOutput,
 } from "./localLoop";
 export {

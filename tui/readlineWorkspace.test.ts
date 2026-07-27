@@ -1254,6 +1254,65 @@ describe("scroll-aware history", () => {
     expect(Buffer.concat(chunks).toString("utf8")).toContain("Switched to");
   });
 
+  test("explicitly chosen agent skips auto-route completely on the first turn", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    const explicitAgentKey = "agent-pub-01APPBUILDER00000001YAII3I";
+    let capturedAgentKey: string | undefined;
+    let capturedModelOverride: unknown = "not-called";
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: { NOLO_AGENT: explicitAgentKey },
+      agentRunner: async (opt) => {
+        capturedAgentKey = opt.agentKey;
+        capturedModelOverride = (opt as { modelOverride?: unknown }).modelOverride;
+        opt.output.write("turn 1");
+        return { exitCode: 0, dialogId: "explicit-dialog" };
+      },
+    });
+
+    // Send a complex prompt that would normally trigger auto-routing
+    input.write("implement a distributed transaction coordinator\r");
+    while (capturedAgentKey === undefined) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+
+    const fullOutput = Buffer.concat(chunks).toString("utf8");
+
+    // Must execute on the explicitly chosen agent key, NOT an auto-tier key
+    expect(capturedAgentKey).toBe(explicitAgentKey);
+    // modelOverride must be undefined
+    expect(capturedModelOverride).toBeUndefined();
+    // Must NOT contain auto-routing hint in output
+    expect(fullOutput).not.toContain("auto→");
+  });
+
   // Regression for the "处理得好看点" half of the same bug: a 429 / quota error
   // on a local run should produce a friendly, actionable hint pointing the
   // user at /agent, instead of leaving only the raw error text in the transcript.

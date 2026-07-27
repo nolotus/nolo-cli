@@ -94,11 +94,15 @@ export const LOCAL_AGENT_CONFIG_MISSING_CODE = "LOCAL_AGENT_CONFIG_MISSING";
 /**
  * 空轮修复共享常量。
  *
- * 这两个文案常量与判定语义由 `packages/server/handlers/agentRun/loop.ts`
+ * 这些文案常量与判定语义由 `packages/server/handlers/agentRun/loopMessageExtract.ts`
  * 的空轮处置流程首次落地，现下沉到 agent-runtime 共享层，使 CLI local 与
  * 桌面 local turn（都消费 `runLocalAgentTurn`）与服务端 loop 行为一致。
  * 服务端 loop 通过 `../../../agent-runtime` 引用同一常量，仅替换常量来源，
  * 不动其判定/流程逻辑。
+ *
+ * 语义要点（与服务端逐条对齐）：
+ * - reasoning_content 不计入可见输出——reasoning-only 且无 tool_calls 视为空轮，走 repair/fallback；
+ * - finish_reason === "length" 单独兜底为 LENGTH_TRUNCATED_FALLBACK_MESSAGE，不走 repair。
  */
 export const EMPTY_ASSISTANT_REPAIR_PROMPT =
   "请给出明确的文字回答或执行下一步：如果任务已完成，请直接总结结果；如果需要调用工具，请直接输出 tool_calls。请切勿返回空内容。";
@@ -106,31 +110,76 @@ export const EMPTY_ASSISTANT_FALLBACK_MESSAGE =
   "模型连续返回空消息，当前任务未完成。请重试当前步骤，或给出更具体的修改范围。";
 
 /**
- * 判定空 assistant 回复的处置方式。语义与 server loop 完全一致：
+ * length 截断兜底文案。与服务端 loopMessageExtract.LENGTH_TRUNCATED_FALLBACK_MESSAGE 逐字一致：
+ * 模型因输出长度上限被截断（finish_reason === "length"）时，不再重试，直接以此文案结束，
+ * 给用户一个明确诊断，而不是空串。
+ */
+export const LENGTH_TRUNCATED_FALLBACK_MESSAGE =
+  "输出达到长度上限被截断，建议缩短任务或提高输出上限。";
+
+/**
+ * 上游流被中途切断（而不是模型真的没话说）时的文案。与服务端
+ * loopMessageExtract.STREAM_TRUNCATED_FALLBACK_MESSAGE 逐字一致。
  *
- * - 有 tool calls 或可见输出（文本/图片等） → ok
- * - 未用过 repair → repair（注入 repair system message 重试一次）
+ * 判据是「完全没有 finish_reason」：健康的 OpenAI 兼容流最后一个 chunk 必带它，
+ * 拿不到就说明流在收尾前就断了。实测过两种成因：代理侧把整个 fetch 连同正在
+ * 流式返回的 body 一起 abort（已在 providerGateway 修掉），以及上游自己提前
+ * 关闭连接。两者对客户端的表征相同，且都会伪装成「模型返回空内容」。
+ */
+export const STREAM_TRUNCATED_FALLBACK_MESSAGE =
+  "上游响应流在收尾前被中断（未收到结束标记），本轮输出不完整。请重试当前步骤。";
+
+/**
+ * 判定空 assistant 回复的处置方式。语义与 server loopMessageExtract 完全一致：
+ *
+ * - 有 tool calls 或可见输出（文本/图片） → ok
+ * - finishReason === "length" → fallback/length_truncated（不走 repair；模型已被截断，重试无意义）
+ * - 未用过 repair → repair（注入 repair system message 重试一次；截断多为瞬时故障，重试是对的）
+ * - 用过 repair 且始终没有 finishReason → fallback/stream_truncated（流被切断，不是模型空）
  * - 用过 repair → fallback/empty_completion（以诊断文案结束）
  *
- * - reasoning_content 已计入可见输出：只要有 reasoning（或 content/tool_calls）即 ok；
- *   reasoning-only 且无 tool_calls 仍走 repair/fallback。
+ * - reasoning_content 不计入可见输出：reasoning-only 且无 tool_calls 视为空轮，
+ *   走 repair/fallback，与 length 截断分支各自独立兜底。
  */
+export type EmptyAssistantFallbackReason =
+  | "empty_completion"
+  | "length_truncated"
+  | "stream_truncated";
+
 export function resolveEmptyAssistantOutcome(args: {
   hasToolCalls: boolean;
   hasVisibleOutput: boolean;
   repairUsed: boolean;
-}): { kind: "ok" } | { kind: "repair" } | { kind: "fallback"; reason: "empty_completion" } {
+  finishReason?: string;
+}):
+  | { kind: "ok" }
+  | { kind: "repair" }
+  | { kind: "fallback"; reason: EmptyAssistantFallbackReason } {
   if (args.hasToolCalls || args.hasVisibleOutput) return { kind: "ok" };
+  if (args.finishReason === "length") return { kind: "fallback", reason: "length_truncated" };
   if (!args.repairUsed) return { kind: "repair" };
+  if (!args.finishReason) return { kind: "fallback", reason: "stream_truncated" };
   return { kind: "fallback", reason: "empty_completion" };
 }
 
-/** assistant 是否产生了可见输出（文本/图片/思考过程）。tool_calls 由调用方单独判定。 */
+/**
+ * 成因 → 用户可见文案。三种成因各自指向不同的排查方向，
+ * 退化成同一句会把方向带偏，所以这里是唯一的映射点。
+ */
+export function resolveEmptyAssistantFallbackMessage(
+  reason: EmptyAssistantFallbackReason,
+): string {
+  if (reason === "length_truncated") return LENGTH_TRUNCATED_FALLBACK_MESSAGE;
+  if (reason === "stream_truncated") return STREAM_TRUNCATED_FALLBACK_MESSAGE;
+  return EMPTY_ASSISTANT_FALLBACK_MESSAGE;
+}
+
+/** assistant 是否产生了可见输出（文本/图片）。tool_calls 由调用方单独判定。
+ *  reasoning_content 不算可见输出——与服务端 loopMessageExtract.hasAssistantVisibleOutput 一致：
+ *  reasoning-only 且无 tool_calls 视为空轮，走 repair/fallback，避免用户只看到空串。 */
 export function hasAssistantVisibleOutput(
   content: AgentRuntimeMessageContent,
-  reasoningContent?: string,
 ): boolean {
-  if (typeof reasoningContent === "string" && reasoningContent.trim().length > 0) return true;
   if (typeof content === "string") return content.trim().length > 0;
   if (!Array.isArray(content)) return false;
   return content.some((part) => {
@@ -558,11 +607,14 @@ export async function runLocalAgentTurn(
       const toolCalls = result.tool_calls ?? [];
       const rawToolCallsCount = (result.tool_calls?.length ?? 0) || (Array.isArray((result as any).raw_tool_calls) ? (result as any).raw_tool_calls.length : 0);
       if (toolCalls.length === 0 && rawToolCallsCount === 0) {
-        // 空轮判定：无可见输出（文本/图片/思考过程）且绝对无 tool_calls 意图即空轮。
+        // 空轮判定：无可见输出（文本/图片）且绝对无 tool_calls 意图即空轮。
+        // reasoning_content 不算可见输出（见 hasAssistantVisibleOutput 注释），
+        // reasoning-only 仍按空轮处理，走 repair/fallback。
         const outcome = resolveEmptyAssistantOutcome({
           hasToolCalls: rawToolCallsCount > 0,
-          hasVisibleOutput: hasAssistantVisibleOutput(result.content, result.reasoning_content),
+          hasVisibleOutput: hasAssistantVisibleOutput(result.content),
           repairUsed: emptyAssistantRepairUsed,
+          finishReason: result.finish_reason,
         });
         if (outcome.kind === "repair") {
           emptyAssistantRepairPending = true;
@@ -570,8 +622,12 @@ export async function runLocalAgentTurn(
           continue;
         }
         if (outcome.kind === "fallback") {
-          // 二次仍空：以诊断文案作为最终 content 结束，不抛错（行为与 server loop 对齐）。
-          result = { ...result, content: EMPTY_ASSISTANT_FALLBACK_MESSAGE };
+          // 二次仍空：按成因选诊断文案作为最终 content 结束，不抛错
+          // （行为与 server loop 对齐——两边共用同一个映射函数）。
+          result = {
+            ...result,
+            content: resolveEmptyAssistantFallbackMessage(outcome.reason),
+          };
           break;
         }
         break;

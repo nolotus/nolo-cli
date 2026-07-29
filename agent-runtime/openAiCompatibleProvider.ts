@@ -4,7 +4,7 @@ import type {
 } from "./types";
 import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
 import { buildProviderAuthHeaders } from "./providerResolution";
-import { buildKimiCodeHeaders, isKimiCodeEndpoint } from "./kimiHeaders";
+import { kimiIdentityHeaders } from "./kimiUserAgent";
 import { parseSseDataLineJson } from "./sseDataLine";
 import { readSseFrames } from "./sseFrames";
 import { extractThinkContent, createThinkParserState } from "./thinkTagParser";
@@ -50,11 +50,8 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
       apiKey: args.providerConfig.apiKey,
       apiKeyHeader: args.providerConfig.apiKeyHeader,
     }),
+    ...kimiIdentityHeaders(endpoint),
   };
-
-  if (isKimiCodeEndpoint(endpoint)) {
-    Object.assign(headers, buildKimiCodeHeaders());
-  }
 
   return {
     url: endpoint,
@@ -147,17 +144,44 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
   onTextDelta?: (chunk: string) => void;
   onReasoningDelta?: (chunk: string) => void;
   signal?: AbortSignal;
+  /**
+   * 每次请求前解析 bearer。OAuth provider 的 access token 可能短于
+   * 一次工具循环的时长，不能复用 provider 创建时捕获的 token。
+   * `force` 表示即便本地认为仍新鲜也重新换一次（401 重试路径）。
+   * 返回 null 时回落到 providerConfig.apiKey。
+   */
+  resolveApiKey?: (opts: { force: boolean }) => Promise<string | null>;
 }): Promise<AgentRuntimeResult> {
-  const request = buildOpenAiCompatibleChatCompletionRequest({
-    providerConfig: args.providerConfig,
-    messages: args.messages,
-    tools: args.tools,
-    stream: args.stream,
-  });
-  const res = await args.fetchImpl(request.url, {
-    ...request.init,
-    ...(args.signal ? { signal: args.signal } : {}),
-  });
+  const send = async (apiKey: string) => {
+    const request = buildOpenAiCompatibleChatCompletionRequest({
+      providerConfig:
+        apiKey === args.providerConfig.apiKey
+          ? args.providerConfig
+          : { ...args.providerConfig, apiKey },
+      messages: args.messages,
+      tools: args.tools,
+      stream: args.stream,
+    });
+    return args.fetchImpl(request.url, {
+      ...request.init,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+  };
+
+  let apiKey = args.providerConfig.apiKey;
+  if (args.resolveApiKey) {
+    apiKey = (await args.resolveApiKey({ force: false })) ?? apiKey;
+  }
+  let res = await send(apiKey);
+
+  // token 可能在服务端被提前失效，或在本轮请求发出前刚好过期。强刷一次重试一次。
+  if (res.status === 401 && args.resolveApiKey) {
+    const refreshed = await args.resolveApiKey({ force: true });
+    if (refreshed && refreshed !== apiKey) {
+      await res.body?.cancel().catch(() => {});
+      res = await send(refreshed);
+    }
+  }
 
   if (!res.ok) {
     const raw = await res.text().catch(() => "");

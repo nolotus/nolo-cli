@@ -37,7 +37,6 @@ call third-party models using your own subscriptions, you also need:
   nolo auth chatgpt       # ChatGPT Plus / OpenAI Codex
   nolo auth xai           # xAI Grok (SuperGrok)
   nolo auth cloudflare    # Cloudflare OAuth (email routing, etc.)
-  nolo auth kimi-code     # Kimi Code (Kimi membership subscription)
 See "nolo auth <provider> --help" for details.
 `;
 

@@ -3,7 +3,6 @@ import type {
   AgentRuntimeHostAdapter,
   AgentRuntimeSaveTurnInput,
 } from "../agentRuntimeLocal";
-import { createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -52,16 +51,19 @@ import { asTrimmedString } from "../../core/trimmedString";
 import { summarizeEndpoint } from "../../core/summarizeEndpoint";
 
 /**
- * Heavy agent-runtime / AI / local-DB modules are intentionally NOT top-level
- * imported. Help and other light CLI paths import this file only for
- * `clearCliLocalRuntimePreparedAgentCache` / builtin agent helpers; loading the
- * full runtime graph on every `nolo --help` was ~300ms. Modules are require()'d
- * on first real local-runtime use via ensureHeavyCliLocalRuntimeModules().
+ * Heavy agent-runtime / AI / local-DB modules are top-level static imports.
  *
- * Paths below must remain present as string literals for source-contract tests
- * (e.g. fileCredentialBroker wiring).
+ * Rationale: the publish pipeline (buildPublish.ts) bundles index.ts into a
+ * single-file index.js via esbuild. esbuild cannot statically analyze
+ * createRequire() dynamic paths, so any `require("...ts")` residual survives
+ * in the bundle verbatim; the published package ships only index.js + README
+ * (no .ts files), so at runtime the require resolves to a path outside the
+ * package and throws MODULE_NOT_FOUND on first local-runtime use. Static
+ * imports let esbuild inline every dependency into the single-file bundle.
+ *
+ * Paths below must remain present as import specifiers (without .ts
+ * extension) for source-contract tests (e.g. fileCredentialBroker wiring).
  */
-const requireFromAdapter = createRequire(import.meta.url);
 
 type CliExecuteResult = {
   text: string;
@@ -196,6 +198,84 @@ import {
   buildLocalToolExecutors,
   buildCliWorkspaceToolExecutors,
 } from "./cliLocalToolExecutors";
+// Direct static imports replace the former lazy ensureHeavyCliLocalRuntimeModules
+// indirection — see the rationale block at the top of this file.
+import {
+  buildLocalWorkspacePolicyToolNames,
+  buildLocalWorkspaceToolset,
+  buildLocalWorkspaceOpenAiTools,
+  executeOpenAiCompatibleChatCompletion,
+  readOpenAiCompatibleSseCompletion,
+  buildPlatformChatCompletionRequest,
+  createLocalWorkspaceToolExecutors,
+  parsePlatformChatCompletionData,
+  parsePlatformChatCompletionResponse,
+  resolvePlatformChatProviderConfig,
+  resolveCurrentRunRuntimeToolPolicy,
+  resolveLocalWorkspaceExecutorOptionsFromPolicy,
+  resolveRequestedRuntimeToolNames,
+  resolveRuntimeToolSurfaceForAgent,
+  shouldUsePlatformChatProvider,
+  canUsePlatformChatProvider,
+} from "../agentRuntimeLocal";
+import { fetchAntigravityCloudCodeCompletion } from "../../agent-runtime/antigravityCloudCodeProvider";
+import { isAntigravityOAuthAgent } from "../../agent-runtime/antigravityOAuth";
+import {
+  fetchAnthropicMessagesCompletion,
+  isAnthropicOAuthAgent,
+} from "../../agent-runtime/anthropicMessagesProvider";
+import {
+  createCursorProvider,
+  isCursorOAuthAgent,
+} from "../../agent-runtime/cursor/cursorProvider";
+import { readOAuthCredential } from "../../agent-runtime/oauthTokenStore";
+import { getDefaultCliLocalRuntimeDb } from "../localRuntimeDb";
+import { resolveAgentRuntimeConfigFromRecord } from "./agentConfigResolver";
+import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
+import { createFileCredentialBroker } from "../../agent-runtime/fileCredentialBroker";
+import { fetchServerSyncedCredential } from "../../ai/chat/agentCredentialSyncClient";
+import { createOAuthApiKeyRefResolver } from "../oauth/apiKeyRefResolver";
+import {
+  buildLocalDialogWritePlan,
+  localDialogMessageRecordToRuntimeMessage,
+} from "./localDialogRecords";
+import { generateLocalDialogTitle } from "../../agent-runtime/dialogTitleLlm";
+import {
+  buildLocalAgentLookupKeys,
+  shouldReadAgentKeyRemotely,
+} from "./localAgentRecords";
+import { createCliHybridRecordStore } from "./hybridRecordStore";
+import { executeLocalToolWithPolicy } from "./localToolPolicy";
+import { inferCaptureIntent } from "../../ai/policy/runtimePolicy";
+import {
+  TOOL_PACKS,
+  FORCED_TOOLS,
+  applyDisabledTools,
+  expandEnabledPacks,
+  addDefaultLightWebToolsForConfiguredAgents,
+} from "../../ai/tools/toolPacks";
+import { prepareTools } from "../../ai/tools/prepareTools";
+import { canonicalizeToolNames } from "../../ai/tools/toolNameAliases";
+import {
+  buildNoloWorkspaceCliToolExecutors,
+  buildNoloWorkspaceOpenAiTools,
+  filterNoloWorkspaceToolNames,
+  parseNoloWorkspaceToolArguments,
+} from "../../agent-runtime/noloWorkspaceTools";
+import {
+  executeCli as defaultExecuteCli,
+  CliProviderQuotaError,
+} from "../../ai/agent/cliExecutor";
+import { buildCliPrompt } from "../../ai/agent/cliPrompt";
+import {
+  readXhsProfileFunc,
+  readXhsProfileFunctionSchema,
+} from "../../ai/tools/readXhsProfileTool";
+import {
+  readXPostFunc,
+  readXPostFunctionSchema,
+} from "../../ai/tools/readXPostTool";
+import { ulid } from "ulid";
 
 type LocalCliExecutor = (
   provider: string,
@@ -210,172 +290,6 @@ type LocalCliExecutor = (
     imageInputs?: CliImageInput[];
   },
 ) => Promise<CliExecuteResult>;
-
-// Populated by ensureHeavyCliLocalRuntimeModules() before any local-run path.
-let buildLocalWorkspacePolicyToolNames: any;
-let buildLocalWorkspaceToolset: any;
-let buildLocalWorkspaceOpenAiTools: any;
-let executeOpenAiCompatibleChatCompletion: any;
-let readOpenAiCompatibleSseCompletion: any;
-let buildPlatformChatCompletionRequest: any;
-let createLocalWorkspaceToolExecutors: any;
-let parsePlatformChatCompletionData: any;
-let parsePlatformChatCompletionResponse: any;
-let resolvePlatformChatProviderConfig: any;
-let resolveCurrentRunRuntimeToolPolicy: any;
-let resolveLocalWorkspaceExecutorOptionsFromPolicy: any;
-let resolveRequestedRuntimeToolNames: any;
-let resolveRuntimeToolSurfaceForAgent: any;
-let shouldUsePlatformChatProvider: any;
-let canUsePlatformChatProvider: any;
-let fetchAntigravityCloudCodeCompletion: any;
-let isAntigravityOAuthAgent: any;
-let fetchAnthropicMessagesCompletion: any;
-let isAnthropicOAuthAgent: any;
-let createCursorProvider: any;
-let isCursorOAuthAgent: any;
-let readOAuthCredential: any;
-let getDefaultCliLocalRuntimeDb: any;
-let resolveAgentRuntimeConfigFromRecord: any;
-let resolveCliOpenAiProviderConfig: any;
-let createFileCredentialBroker: any;
-let fetchServerSyncedCredential: any;
-let createOAuthApiKeyRefResolver: any;
-let buildLocalDialogWritePlan: any;
-let localDialogMessageRecordToRuntimeMessage: any;
-let generateLocalDialogTitle: any;
-let buildLocalAgentLookupKeys: any;
-let shouldReadAgentKeyRemotely: any;
-let createCliHybridRecordStore: any;
-let executeLocalToolWithPolicy: any;
-let inferCaptureIntent: any;
-let TOOL_PACKS: any;
-let canonicalizeToolNames: any;
-let FORCED_TOOLS: any;
-let applyDisabledTools: any;
-let expandEnabledPacks: any;
-let addDefaultLightWebToolsForConfiguredAgents: any;
-let prepareTools: any;
-let buildNoloWorkspaceCliToolExecutors: any;
-let buildNoloWorkspaceOpenAiTools: any;
-let filterNoloWorkspaceToolNames: any;
-let parseNoloWorkspaceToolArguments: any;
-let defaultExecuteCli: any;
-let CliProviderQuotaError: any;
-let buildCliPrompt: any;
-let readXhsProfileFunc: ReadToolFn;
-let readXhsProfileFunctionSchema: any;
-let readXPostFunc: ReadToolFn;
-let readXPostFunctionSchema: any;
-let ulid: () => string;
-
-let heavyCliLocalRuntimeModulesLoaded = false;
-
-function ensureHeavyCliLocalRuntimeModules() {
-  if (heavyCliLocalRuntimeModulesLoaded) return;
-  heavyCliLocalRuntimeModulesLoaded = true;
-
-  const agentRuntimeLocal = requireFromAdapter("../agentRuntimeLocal.ts");
-  buildLocalWorkspacePolicyToolNames =
-    agentRuntimeLocal.buildLocalWorkspacePolicyToolNames;
-  buildLocalWorkspaceToolset = agentRuntimeLocal.buildLocalWorkspaceToolset;
-  buildLocalWorkspaceOpenAiTools =
-    agentRuntimeLocal.buildLocalWorkspaceOpenAiTools;
-  executeOpenAiCompatibleChatCompletion =
-    agentRuntimeLocal.executeOpenAiCompatibleChatCompletion;
-  readOpenAiCompatibleSseCompletion =
-    agentRuntimeLocal.readOpenAiCompatibleSseCompletion;
-  buildPlatformChatCompletionRequest =
-    agentRuntimeLocal.buildPlatformChatCompletionRequest;
-  createLocalWorkspaceToolExecutors =
-    agentRuntimeLocal.createLocalWorkspaceToolExecutors;
-  parsePlatformChatCompletionData =
-    agentRuntimeLocal.parsePlatformChatCompletionData;
-  parsePlatformChatCompletionResponse =
-    agentRuntimeLocal.parsePlatformChatCompletionResponse;
-  resolvePlatformChatProviderConfig =
-    agentRuntimeLocal.resolvePlatformChatProviderConfig;
-  resolveCurrentRunRuntimeToolPolicy =
-    agentRuntimeLocal.resolveCurrentRunRuntimeToolPolicy;
-  resolveLocalWorkspaceExecutorOptionsFromPolicy =
-    agentRuntimeLocal.resolveLocalWorkspaceExecutorOptionsFromPolicy;
-  resolveRequestedRuntimeToolNames =
-    agentRuntimeLocal.resolveRequestedRuntimeToolNames;
-  resolveRuntimeToolSurfaceForAgent =
-    agentRuntimeLocal.resolveRuntimeToolSurfaceForAgent;
-  shouldUsePlatformChatProvider =
-    agentRuntimeLocal.shouldUsePlatformChatProvider;
-  canUsePlatformChatProvider =
-    agentRuntimeLocal.canUsePlatformChatProvider;
-
-  ({ fetchAntigravityCloudCodeCompletion } = requireFromAdapter(
-    "../../agent-runtime/antigravityCloudCodeProvider.ts",
-  ));
-  ({ isAntigravityOAuthAgent } = requireFromAdapter(
-    "../../agent-runtime/antigravityOAuth.ts",
-  ));
-  ({ fetchAnthropicMessagesCompletion, isAnthropicOAuthAgent } = requireFromAdapter(
-    "../../agent-runtime/anthropicMessagesProvider.ts",
-  ));
-  ({ createCursorProvider, isCursorOAuthAgent } = requireFromAdapter(
-    "../../agent-runtime/cursor/cursorProvider.ts",
-  ));
-  ({ readOAuthCredential } = requireFromAdapter(
-    "../../agent-runtime/oauthTokenStore.ts",
-  ));
-  ({ getDefaultCliLocalRuntimeDb } = requireFromAdapter(
-    "../localRuntimeDb.ts",
-  ));
-  ({ resolveAgentRuntimeConfigFromRecord } = requireFromAdapter(
-    "./agentConfigResolver.ts",
-  ));
-  ({ resolveCliOpenAiProviderConfig } = requireFromAdapter(
-    "./localProviderResolver.ts",
-  ));
-  ({ createFileCredentialBroker } = requireFromAdapter(
-    "../../agent-runtime/fileCredentialBroker.ts",
-  ));
-  ({ fetchServerSyncedCredential } = requireFromAdapter(
-    "../../ai/chat/agentCredentialSyncClient.ts",
-  ));
-  ({ createOAuthApiKeyRefResolver } = requireFromAdapter(
-    "../oauth/apiKeyRefResolver.ts",
-  ));
-  ({ buildLocalDialogWritePlan, localDialogMessageRecordToRuntimeMessage } =
-    requireFromAdapter("./localDialogRecords.ts"));
-  ({ generateLocalDialogTitle } = requireFromAdapter(
-    "../../agent-runtime/dialogTitleLlm.ts",
-  ));
-  ({ buildLocalAgentLookupKeys, shouldReadAgentKeyRemotely } =
-    requireFromAdapter("./localAgentRecords.ts"));
-  ({ createCliHybridRecordStore } = requireFromAdapter(
-    "./hybridRecordStore.ts",
-  ));
-  ({ executeLocalToolWithPolicy } = requireFromAdapter("./localToolPolicy.ts"));
-  ({ inferCaptureIntent } = requireFromAdapter(
-    "../../ai/policy/runtimePolicy.ts",
-  ));
-  ({ TOOL_PACKS, FORCED_TOOLS, applyDisabledTools, expandEnabledPacks, addDefaultLightWebToolsForConfiguredAgents } = requireFromAdapter("../../ai/tools/toolPacks.ts"));
-  ({ prepareTools } = requireFromAdapter("../../ai/tools/prepareTools.ts"));
-  ({ canonicalizeToolNames } = requireFromAdapter("../../ai/tools/toolNameAliases.ts"));
-  ({
-    buildNoloWorkspaceCliToolExecutors,
-    buildNoloWorkspaceOpenAiTools,
-    filterNoloWorkspaceToolNames,
-    parseNoloWorkspaceToolArguments,
-  } = requireFromAdapter("../../agent-runtime/noloWorkspaceTools.ts"));
-  const cliExecutor = requireFromAdapter("../../ai/agent/cliExecutor.ts");
-  defaultExecuteCli = cliExecutor.executeCli;
-  CliProviderQuotaError = cliExecutor.CliProviderQuotaError;
-  ({ buildCliPrompt } = requireFromAdapter("../../ai/agent/cliPrompt.ts"));
-  ({ readXhsProfileFunc, readXhsProfileFunctionSchema } = requireFromAdapter(
-    "../../ai/tools/readXhsProfileTool.ts",
-  ));
-  ({ readXPostFunc, readXPostFunctionSchema } = requireFromAdapter(
-    "../../ai/tools/readXPostTool.ts",
-  ));
-  ({ ulid } = requireFromAdapter("ulid"));
-}
 
 // Max wait for remote dialog-evidence sync fetches (POST write / GET read)
 // before aborting, so an unreachable/hung server cannot stall a turn.
@@ -453,12 +367,10 @@ type CliLocalRuntimeAdapterDeps = {
 };
 
 async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
-  ensureHeavyCliLocalRuntimeModules();
   return getDefaultCliLocalRuntimeDb();
 }
 
 function createFallbackId() {
-  ensureHeavyCliLocalRuntimeModules();
   return ulid();
 }
 
@@ -720,7 +632,6 @@ export function createCliCallAgentToolExecutor(
   deps: CliLocalRuntimeAdapterDeps,
   ctx: CliCallAgentToolExecutorContext,
 ): (call: AgentRuntimeToolCallInput) => Promise<AgentRuntimeToolResult> {
-  ensureHeavyCliLocalRuntimeModules();
   const userId = resolveLocalUserId(deps.env);
   const workspaceRoot = deps.cwd ?? process.cwd();
   const now = deps.now ?? Date.now;
@@ -933,7 +844,6 @@ function createLocalDialogTitleGenerator(
   messages: AgentRuntimeChatMessage[];
   fallbackTitle: string;
 }) => Promise<string | null>) | null {
-  // Defer until first call — modules are loaded by ensureHeavyCliLocalRuntimeModules().
   return async (input) => {
     if (!canUsePlatformChatProvider(deps.env as any)) {
       return null;
@@ -1079,9 +989,6 @@ async function writeDialog(args: {
 export function createCliLocalRuntimeAdapter(
   deps: CliLocalRuntimeAdapterDeps,
 ): AgentRuntimeHostAdapter {
-  // Defer heavy graph until a local runtime adapter is actually constructed
-  // (not when this module is imported for cache-clear / builtin helpers).
-  ensureHeavyCliLocalRuntimeModules();
   const now = deps.now ?? Date.now;
   const createId = deps.createId ?? createFallbackId;
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -1680,20 +1587,16 @@ export function createCliLocalRuntimeAdapter(
         credentialBroker,
         syncFetcher,
       });
-      // kimi-code 这类 OAuth provider 的 access token 只有 900s，比一次工具循环短。
+      // OAuth provider 的 access token 可能短于一次工具循环的时长。
       // 把 token 解析下沉到每次请求，而不是固化在 providerConfig 里。
       // 非 OAuth ref（broker 的 api-key:*）resolver 会返回 null，回落到已解析的 key。
       const oauthApiKeyRef = asOptionalTrimmedString(agentConfig.apiKeyRef);
+      // 不要 catch：resolver 只在「凭证存在、已过期、且刷不动」时抛错，此时旧 token
+      // 必定也是死的，吞掉异常只会把「Run `nolo auth <provider>`」这句可执行的指引
+      // 降级成一句无信息量的 HTTP 401。非 OAuth ref 走的是 return null，不是抛错。
       const resolveRequestApiKey = oauthApiKeyRef
-        ? async (opts: { force: boolean }) => {
-            try {
-              return await apiKeyRefResolver(oauthApiKeyRef, { force: opts.force });
-            } catch {
-              // 刷新失败时回落到已捕获的 key，让上游错误（401/其它）原样冒出来，
-              // 而不是把刷新异常盖掉真正的失败原因。
-              return null;
-            }
-          }
+        ? (opts: { force: boolean }) =>
+            apiKeyRefResolver(oauthApiKeyRef, { force: opts.force })
         : undefined;
       logLocalRuntimeDiagnostic("provider.selected", {
         agentKey: agentConfig.key,

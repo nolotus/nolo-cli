@@ -15,8 +15,7 @@ export type OAuthProvider =
   | "antigravity"
   | "claude"
   | "cloudflare"
-  | "cursor"
-  | "kimi-code";
+  | "cursor";
 
 export type OAuthCredential = {
   provider: OAuthProvider;
@@ -132,12 +131,14 @@ export async function resolveFreshAccessToken(args: {
   refresh?: OAuthRefreshFn;
   skewMs?: number;
   now?: () => number;
+  /** 强制刷新（401 重试路径）：即便本地认为 token 仍新鲜也重新换一次。 */
+  force?: boolean;
 }): Promise<string | null> {
   const store = args.store ?? createOAuthTokenStore(args.homeDir);
   const now = args.now ?? Date.now;
   const credential = store.read(args.provider);
   if (!credential) return null;
-  if (!isTokenExpired(credential, args.skewMs ?? DEFAULT_REFRESH_SKEW_MS, now())) {
+  if (!args.force && !isTokenExpired(credential, args.skewMs ?? DEFAULT_REFRESH_SKEW_MS, now())) {
     return credential.accessToken;
   }
   if (!credential.refreshToken || !args.refresh) return null;

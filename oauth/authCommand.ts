@@ -6,7 +6,6 @@ import { runAntigravityOAuthLogin } from "./flows/antigravity";
 import { runXaiOAuthDeviceCode, runXaiOAuthLogin } from "./flows/xai";
 import { runAnthropicOAuthLogin } from "./flows/anthropic";
 import { runCursorOAuthLogin } from "./flows/cursor";
-import { runKimiCodeOAuthLogin } from "./flows/kimi-code";
 
 import { toErrorMessage } from "../core/errorMessage";
 import type { CliRuntimeContext } from "../cliCommandTypes";
@@ -207,22 +206,6 @@ ${SYNC_HELP_LINE}
   --help, -h           Show this help and exit.
 `;
 
-const KIMI_CODE_HELP_TEXT = `Authorize nolo-cli to call Kimi Code API via your Kimi membership subscription.
-Uses RFC 8628 device-code flow (headless-friendly).
-
-Usage: nolo auth kimi-code [--no-browser] [--sync-to-server] [--help]
-
-Options:
-  --no-browser          Print the authorization URL only (no auto-open browser).
-  --usage               Query subscription usage without re-login.
-  ${SYNC_HELP_LINE}
-  --help, -h            Show this help and exit.
-
-After approval, tokens are stored in ~/.nolo/credentials/kimi-code.json.
-Agents can reference the stored token with apiKeyRef: "kimi-code".
-Usage: nolo auth kimi-code --usage
-`;
-
 const HELP_BY_PROVIDER: Record<OAuthProvider, string> = {
   chatgpt: CHATGPT_HELP_TEXT,
   xai: XAI_HELP_TEXT,
@@ -230,7 +213,6 @@ const HELP_BY_PROVIDER: Record<OAuthProvider, string> = {
   claude: CLAUDE_HELP_TEXT,
   cloudflare: CLOUDFLARE_HELP_TEXT,
   cursor: CURSOR_HELP_TEXT,
-  "kimi-code": KIMI_CODE_HELP_TEXT,
 };
 
 function isOAuthProvider(value: string): value is OAuthProvider {
@@ -240,8 +222,7 @@ function isOAuthProvider(value: string): value is OAuthProvider {
     value === "antigravity" ||
     value === "claude" ||
     value === "cloudflare" ||
-    value === "cursor" ||
-    value === "kimi-code"
+    value === "cursor"
   );
 }
 
@@ -389,46 +370,6 @@ export async function runAuthProviderCommand(
     return 0;
   }
 
-  // Kimi Code --usage: query subscription usage without re-login
-  if (args.includes("--usage") && provider === "kimi-code") {
-    let credential = tokenStore.read(provider);
-    if (!credential) {
-      error.error(
-        `[nolo] No local ${provider} credential. Run: nolo auth ${provider}`
-      );
-      return 1;
-    }
-    try {
-      const { getKimiCodeUsage, refreshKimiCodeOAuthToken } = await import("./flows/kimi-code");
-      const { isTokenExpired } = await import("../agent-runtime/oauthTokenStore");
-      // Refresh if expired, mirroring the server-side resolveApiKeyRefFromStore pattern
-      if (isTokenExpired(credential)) {
-        credential = await refreshKimiCodeOAuthToken(credential, deps.fetchImpl ?? fetch);
-        tokenStore.write(provider, credential);
-      }
-      const usage = await getKimiCodeUsage(
-        credential.accessToken,
-        deps.fetchImpl ?? fetch
-      );
-      output.log("[nolo] Kimi Code subscription usage:");
-      if (usage.remaining_requests !== undefined)
-        output.log(`  Remaining requests: ${usage.remaining_requests}`);
-      if (usage.total_requests !== undefined)
-        output.log(`  Total requests:     ${usage.total_requests}`);
-      if (usage.reset_at) output.log(`  Resets at:          ${usage.reset_at}`);
-      if (
-        usage.remaining_requests === undefined &&
-        usage.total_requests === undefined &&
-        !usage.reset_at
-      )
-        output.log("  (No detailed usage fields returned by the API)");
-    } catch (err) {
-      error.error(`[nolo] ${toErrorMessage(err)}`);
-      return 1;
-    }
-    return 0;
-  }
-
   const flowDeps: OAuthFlowDeps = {
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
@@ -505,8 +446,6 @@ export async function runAuthProviderCommand(
           );
         }
       }
-    } else if (provider === "kimi-code") {
-      credential = await runKimiCodeOAuthLogin(flowDeps);
     } else {
       credential = await runAntigravityOAuthLogin(flowDeps);
     }
@@ -580,12 +519,4 @@ export async function runAuthCursorCommand(
   deps?: AuthProviderCommandDeps
 ): Promise<number> {
   return runAuthProviderCommand("cursor", args, ctx, deps);
-}
-
-export async function runAuthKimiCodeCommand(
-  args: string[],
-  ctx?: CliRuntimeContext,
-  deps?: AuthProviderCommandDeps
-): Promise<number> {
-  return runAuthProviderCommand("kimi-code", args, ctx, deps);
 }

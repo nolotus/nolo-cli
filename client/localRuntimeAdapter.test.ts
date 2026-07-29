@@ -1,8 +1,9 @@
 // @ts-nocheck — mock-heavy local runtime adapter suite; stubs intentionally incomplete vs HybridRecordKvDb/fetch.
-import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { getCredentialPath, writeOAuthCredential } from "../agent-runtime/oauthTokenStore";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
 import { resolveCliEffectiveEnabledPacks } from "./localRuntimeAdapter";
@@ -4103,5 +4104,223 @@ describe("resolveCliEffectiveEnabledPacks", () => {
   test("declared-only 模式下不补 code 包（用户显式要 ablation）", () => {
     expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [], declaredOnly: true })).toEqual([]);
     expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"], declaredOnly: true })).toEqual(["web-search"]);
+  });
+});
+
+describe("CLI local runtime adapter OAuth per-request wiring (real credential store)", () => {
+  // 接线层保护：localRuntimeAdapter 把 token 解析下沉到每次请求（resolveRequestApiKey），
+  // 并在 401 时强刷重试。底层单测覆盖了 openAiCompatibleProvider/oauthTokenStore，但若误删
+  // adapter 里的 `resolveApiKey: resolveRequestApiKey` 接线，底层单测全绿。本组测试从 adapter
+  // 入口驱动，接线被破坏即红。
+  //
+  // 可测性说明：adapter 硬构造 createOAuthApiKeyRefResolver()（不传 homeDir），而 Bun 的
+  // os.homedir() 缓存进程启动时的 HOME（运行时改 process.env.HOME 无效，已 probe 验证），
+  // 因此无法在不改产品代码的前提下把凭证存储重定向到临时目录。退而用真实 homeDir 凭证文件
+  // 驱动真实 resolver 链：beforeEach 备份原文件、写入伪造凭证，afterEach 逐字节恢复。测试
+  // 全程只接触伪造凭证（含 Test 2 的强刷也走 stub 的全局 fetch），不消耗用户真实 token。
+  // 用 xai：chatgpt/claude/cursor/antigravity 在 adapter 里各有专用 provider 分支
+  // （codex responses / anthropic messages / ConnectRPC / CCA），走不到本组要测的
+  // direct-openai-compatible 接线。xai 是唯一无专用分支的 OAuth ref。
+  const OAUTH_REF = "xai";
+  const credentialPath = getCredentialPath(OAUTH_REF);
+  let originalRaw: string | null = null;
+  let originalExisted = false;
+
+  beforeEach(() => {
+    clearCliLocalRuntimePreparedAgentCache();
+    originalExisted = existsSync(credentialPath);
+    originalRaw = originalExisted ? readFileSync(credentialPath, "utf8") : null;
+  });
+
+  afterEach(() => {
+    if (originalExisted && originalRaw !== null) {
+      writeFileSync(credentialPath, originalRaw, { encoding: "utf8", mode: 0o600 });
+    } else if (existsSync(credentialPath)) {
+      unlinkSync(credentialPath);
+    }
+    originalRaw = null;
+    originalExisted = false;
+  });
+
+  function writeFakeOAuthCredential(accessToken: string, refreshToken?: string) {
+    writeOAuthCredential(OAUTH_REF, {
+      provider: OAUTH_REF,
+      accessToken,
+      // 远期 expiresAt 让 token 始终「新鲜」（越过 5min skew），非 force 路径直接返回
+      // 文件里的 accessToken，不触发 refresh；force 路径才会走 refresh（Test 2 用 stub fetch）。
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      obtainedAt: Date.now(),
+      ...(refreshToken ? { refreshToken } : {}),
+    });
+  }
+
+  function createOAuthAdapter(opts: {
+    agentRecord: Record<string, unknown>;
+    fetchImpl: (url: unknown, init?: { headers?: unknown }) => Promise<Response>;
+  }) {
+    const dbKey = String(opts.agentRecord.dbKey);
+    const store = new Map<string, unknown>([[dbKey, opts.agentRecord]]);
+    return createAdapter({
+      env: { NOLO_LOCAL_USER_ID: "user-1" },
+      db: {
+        get: async (key: string) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key: string, value: unknown) => {
+          store.set(key, value);
+        },
+        batch: async (ops: Array<{ type: string; key: string; value: unknown }>) => {
+          for (const op of ops) if (op.type === "put") store.set(op.key, op.value);
+        },
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: opts.fetchImpl,
+      sleep: async () => {},
+    });
+  }
+
+  const OAUTH_AGENT_RECORD = {
+    dbKey: "agent-user-1-oauth",
+    id: "oauth",
+    prompt: "Use OAuth provider.",
+    model: "oauth-coder",
+    provider: "custom-openai-compatible",
+    apiSource: "custom",
+    customProviderUrl: "https://api.example.com/v1/chat/completions",
+    apiKeyRef: "xai",
+  };
+
+  // adapter 在 loadAgentConfig 阶段会打一次远端 record 读取（/api/v1/db/read/...），
+  // 那不是 provider 请求。只录 chat.completions，否则请求计数会多一条。
+  const isChatCompletion = (url: unknown) => String(url).includes("/chat/completions");
+
+  test("re-resolves the OAuth bearer per request instead of reusing the providerConfig snapshot", async () => {
+    writeFakeOAuthCredential("token-snapshot-A");
+    const requests: Array<{ url: string; auth: string | null }> = [];
+    const adapter = createOAuthAdapter({
+      agentRecord: OAUTH_AGENT_RECORD,
+      fetchImpl: async (url, init) => {
+        if (isChatCompletion(url)) {
+          requests.push({
+            url: String(url),
+            auth: new Headers(init?.headers as HeadersInit).get("Authorization"),
+          });
+        }
+        return Response.json({ choices: [{ message: { content: "oauth ok" } }] });
+      },
+    });
+
+    const agentConfig = await adapter.loadAgentConfig("oauth");
+    const provider = await adapter.resolveProvider(agentConfig);
+    // providerConfig.apiKey 此刻固化了 token-snapshot-A（resolver 第一次读到的值）。
+    // 在 complete 之前改写凭证文件：若接线存在，resolver 当次应读到新值。
+    writeFakeOAuthCredential("token-fresh-B");
+
+    const result = await provider.complete([{ role: "user", content: "hello" }], {});
+
+    expect(result.content).toBe("oauth ok");
+    expect(requests).toHaveLength(1);
+    // 实际发出的 bearer 是 resolver 当次返回值，不是固化的快照。
+    expect(requests[0].auth).toBe("Bearer token-fresh-B");
+    expect(requests[0].auth).not.toBe("Bearer token-snapshot-A");
+  });
+
+  test("force-refreshes once and retries once on 401, sending the refreshed bearer", async () => {
+    writeFakeOAuthCredential("token-initial-A", "refresh-R");
+    // force 路径触发 OAuth refresh，其默认 fetchImpl 是全局 fetch；stub 掉以
+    // 伪造 OAuth token 响应，避免任何真实网络请求（也避免触碰真实 refresh_token）。
+    // xai 的 refresh 先打一次 OIDC discovery 再换 token，所以 stub 要按 URL 分流。
+    const refreshFetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      async (input: any) => {
+        const url = String(input?.url ?? input);
+        if (url.includes("/.well-known/openid-configuration")) {
+          return Response.json({
+            authorization_endpoint: "https://accounts.x.ai/authorize",
+            token_endpoint: "https://accounts.x.ai/token",
+          });
+        }
+        return Response.json({
+          access_token: "token-refreshed-B",
+          expires_in: 900,
+          refresh_token: "refresh-R2",
+        });
+      },
+    );
+    try {
+      const requests: Array<{ url: string; auth: string | null }> = [];
+      const adapter = createOAuthAdapter({
+        agentRecord: OAUTH_AGENT_RECORD,
+        fetchImpl: async (url, init) => {
+          if (isChatCompletion(url)) {
+            requests.push({
+              url: String(url),
+              auth: new Headers(init?.headers as HeadersInit).get("Authorization"),
+            });
+          }
+          if (requests.length === 1) {
+            return new Response("unauthorized", { status: 401 });
+          }
+          return Response.json({ choices: [{ message: { content: "oauth ok after retry" } }] });
+        },
+      });
+
+      const agentConfig = await adapter.loadAgentConfig("oauth");
+      const provider = await adapter.resolveProvider(agentConfig);
+      const result = await provider.complete([{ role: "user", content: "hello" }], {});
+
+      // (c) 整轮成功返回，不抛错。
+      expect(result.content).toBe("oauth ok after retry");
+      // (a) 共两次请求：首发（force:false → token-initial-A）+ 重试。resolver 硬构造不可
+      // spy，用等价证据断言 force:true：refresh 函数（全局 fetch stub）恰被调用一次——
+      // 新鲜 token 的非 force 解析直接返回文件值、绝不触发 refresh，只有 force 路径会。
+      expect(requests).toHaveLength(2);
+      // discovery + token 两发；关键是「非 force 路径绝不触发 refresh」，故 >0 即证明走了 force。
+      expect(refreshFetchSpy.mock.calls.length).toBeGreaterThan(0);
+      // (b) 首发用旧 token，重试用强刷后的新 token。
+      expect(requests[0].auth).toBe("Bearer token-initial-A");
+      expect(requests[1].auth).toBe("Bearer token-refreshed-B");
+    } finally {
+      refreshFetchSpy.mockRestore();
+    }
+  });
+
+  test("does not wire resolveApiKey when the agent has no OAuth apiKeyRef", async () => {
+    // 故意在真实 store 放一个 OAuth 凭证：若接线错误地无视空 ref、总是调用 resolver，
+    // 请求就会带上 token-should-not-be-used。
+    writeFakeOAuthCredential("token-should-not-be-used");
+    const requests: Array<{ url: string; auth: string | null }> = [];
+    const adapter = createOAuthAdapter({
+      agentRecord: {
+        dbKey: "agent-user-1-plain",
+        id: "plain",
+        prompt: "Use plain custom provider.",
+        model: "plain-coder",
+        provider: "custom-openai-compatible",
+        apiSource: "custom",
+        customProviderUrl: "https://provider.example/v1/chat/completions",
+        apiKey: "sk-direct-plain",
+        // 无 apiKeyRef → oauthApiKeyRef 为 undefined → resolveApiKey 不传。
+      },
+      fetchImpl: async (url, init) => {
+        if (isChatCompletion(url)) {
+          requests.push({
+            url: String(url),
+            auth: new Headers(init?.headers as HeadersInit).get("Authorization"),
+          });
+        }
+        return Response.json({ choices: [{ message: { content: "plain ok" } }] });
+      },
+    });
+
+    const agentConfig = await adapter.loadAgentConfig("plain");
+    const provider = await adapter.resolveProvider(agentConfig);
+    const result = await provider.complete([{ role: "user", content: "hello" }], {});
+
+    expect(result.content).toBe("plain ok");
+    expect(requests).toHaveLength(1);
+    // 请求用 providerConfig.apiKey（agent.apiKey），而非 resolver 的 OAuth token。
+    expect(requests[0].auth).toBe("Bearer sk-direct-plain");
+    expect(requests[0].auth).not.toBe("Bearer token-should-not-be-used");
   });
 });

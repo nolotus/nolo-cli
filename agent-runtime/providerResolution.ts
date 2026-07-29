@@ -46,7 +46,10 @@ export type AgentRuntimeLocation = "server" | "bound-machine" | "local-host";
  * Injected by the caller so agent-runtime stays free of provider-specific OAuth
  * wiring (which lives in packages/cli/oauth).
  */
-export type ApiKeyRefResolver = (ref: string) => Promise<string | null>;
+export type ApiKeyRefResolver = (
+  ref: string,
+  opts?: { force?: boolean },
+) => Promise<string | null>;
 
 /**
  * Load a secret from the local credential broker by explicit ref.

@@ -1170,8 +1170,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       } else {
         emitCommandOutput(`Executing: ${shellCmd}`);
         try {
+          const shellInvocation =
+            process.platform === "win32"
+              ? [process.env.ComSpec || "cmd.exe", "/d", "/s", "/c", shellCmd]
+              : ["/bin/sh", "-c", shellCmd];
           const proc = spawnRunner({
-            cmd: ["/bin/sh", "-c", shellCmd],
+            cmd: shellInvocation,
             cwd: state.cwd,
             env: options.env ?? process.env,
             stdout: "pipe",

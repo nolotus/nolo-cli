@@ -28,6 +28,7 @@ import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
 import { runSelectDialog, type SelectDialogItem } from "./selectDialog";
 import { createDialogHost } from "./dialogHost";
+import { createActivityIndicator } from "./activityIndicator";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
 import { prefetchAgentCatalog } from "./agentCatalog";
 import { loadDialogHistoryForDisplay, runDialogPicker } from "./dialogPicker";
@@ -644,46 +645,25 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   let cursorPos = 0;
   // Cooperative stop for the in-flight agent turn (Esc while busy).
   let activeTurnAbort: AbortController | null = null;
-  let activityLabel: string | null = null;
-  let activityStartedAt = 0;
-  let activityFrameIndex = 0;
-  let activityTimer: ReturnType<typeof setInterval> | null = null;
-
-  const stopActivity = () => {
-    if (activityTimer !== null) {
-      clearInterval(activityTimer);
-      activityTimer = null;
-    }
-    activityLabel = null;
-    activityStartedAt = 0;
-  };
-
-  const activityReporter = (label: string | null) => {
-    if (label !== null) {
-      activityLabel = label;
-      if (activityStartedAt === 0) {
-        activityStartedAt = Date.now();
-      }
-      if (activityTimer === null) {
-        activityTimer = setInterval(() => {
-          activityFrameIndex += 1;
-          if (fixedInput.active && !fixedInput.isPaused()) {
-            output.write("\x1b[?2026h\x1b[?25l");
-            try {
-              fixedInput.repaint(buffer);
-            } finally {
-              output.write("\x1b[?25h\x1b[?2026l");
-            }
-          }
-        }, 150);
-      }
-    } else {
-      stopActivity();
+  // 活动行状态机抽到 activityIndicator.ts：explicit 标签（working locally /
+  // 工具标签）优先，静默超过阈值时自动补 working fallback，填补「文本流完模型
+  // 在憋 tool_call」「tool-result 到下一轮」这些此前全黑的空窗。
+  const activityIndicator = createActivityIndicator({
+    isTurnActive: () => activeTurnAbort !== null,
+    fallbackLabel: () => `${state.agentName} -> working`,
+    onRepaint: () => {
       if (fixedInput.active && !fixedInput.isPaused()) {
-        fixedInput.repaint(buffer);
+        output.write("\x1b[?2026h\x1b[?25l");
+        try {
+          fixedInput.repaint(buffer);
+        } finally {
+          output.write("\x1b[?25h\x1b[?2026l");
+        }
       }
-    }
-  };
+    },
+  });
+  const activityReporter = (label: string | null) =>
+    activityIndicator.report(label);
   // True after the user explicitly switches agent via /agent or /switch.
   // autoRouteByDialog caches the first-turn router decision per dialog and
   // would otherwise keep replaying the (possibly 429'd) original agent on
@@ -919,7 +899,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
       return { ok: !wasAborted, aborted: wasAborted };
     } finally {
-      stopActivity();
+      activityIndicator.stop();
       activeTurnAbort = null;
       explicitAgentSwitch = false;
     }
@@ -1364,23 +1344,18 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         return base;
       },
       getActivityLine: () => {
-        if (activityLabel === null) return null;
+        const view = activityIndicator.getView();
+        if (view === null) return null;
         const colorEnabled = resolveCliColorEnabled();
-        const FRAMES = ["·", "~", "≈", "∿", "≈", "~"];
-        const frame = FRAMES[activityFrameIndex % FRAMES.length];
-        const elapsedSec =
-          activityStartedAt > 0
-            ? Math.max(0, Math.floor((Date.now() - activityStartedAt) / 1000))
-            : 0;
-        const elapsed = formatElapsedSeconds(elapsedSec);
+        const elapsed = formatElapsedSeconds(view.elapsedSec);
         const stopHint = t("stopHint");
         if (!colorEnabled) {
-          return `${frame} ${activityLabel} (${elapsed}) · ${stopHint}`;
+          return `${view.frame} ${view.label} (${elapsed}) · ${stopHint}`;
         }
         return (
-          themeText(frame, "accent") +
+          themeText(view.frame, "accent") +
           " " +
-          themeText(activityLabel, "muted") +
+          themeText(view.label, "muted") +
           themeText(` (${elapsed})`, "chrome") +
           themeText(` · ${stopHint}`, "chrome")
         );

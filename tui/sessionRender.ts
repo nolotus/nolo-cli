@@ -68,9 +68,10 @@ export function renderStatusLine(state: TuiState) {
     state.agentKey === DEFAULT_TUI_AGENT_KEY &&
     (typeof process === "undefined" || process.env?.NOLO_AUTO_ROUTE !== "0");
   const agentDisplayName = autoRouteActive ? "auto" : state.agentName;
-  // 路由已是 auto 时隐藏重复的 runtime-mode auto 标签，避免 "auto · auto"。
+  // runtime-mode 为默认的 auto 时不显示——它是默认值，纯噪声，且会与 auto
+  // 路由名叠成 "auto · auto"。只有显式切到 local / server 才值得占一个 chip。
   const modeSuffix =
-    state.modeLabel && !(autoRouteActive && state.modeLabel === "auto")
+    state.modeLabel && state.modeLabel !== "auto"
       ? ` · ${state.modeLabel}`
       : "";
   const agentLabel = `🏔 ${agentDisplayName}${modeSuffix}`;

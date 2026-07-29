@@ -7,7 +7,7 @@
  * Keyboard map:
  *   ↑/↓        move cursor
  *   Space      toggle (multi-select) / focus Other
- *   Enter      select (single) / toggle (multi) / save Other / submit
+ *   Enter      submit (multi-select) / pick+advance (single-select) / save Other / submit
  *   Tab        next question tab
  *   Shift+Tab  prev question tab
  *   Esc        cancel
@@ -47,6 +47,7 @@ import {
 } from "./selectDialog";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 import { themeColorSequence, themeText } from "./theme";
+import { parseScrollAction } from "./tuiScrollbar";
 import type { UserChoiceRequest, UserChoiceResult } from "../client/localRuntimeAdapterTypes";
 
 // ── Rendering ──────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ function renderTabBar(
 }
 
 function renderFooter(colorEnabled: boolean): string {
-  const hints = "type answer  ↵save  tab switch  s submit  esc cancel";
+  const hints = "↵ pick/submit · space toggle · tab switch · esc cancel";
   return colorEnabled ? themeText(`  ${hints}`, "chrome", colorEnabled) : `  ${hints}`;
 }
 
@@ -228,6 +229,10 @@ export async function runAskChoiceDialog(args: {
   const input = args.input ?? process.stdin;
   const readKey = args.readKey ?? createRawKeyReader(input);
 
+  // Re-enable mouse tracking for wheel scroll inside the dialog.
+  // dialogHost.pause() disabled it; resumeFromDialog() re-enables on exit.
+  output.write("\x1b[?1006h\x1b[?1000h");
+
   const wasRaw = Boolean(input.isTTY && input.isRaw);
   let renderedLineCount = 0;
   const bottomAnchored = Boolean(args.bottomAnchored && args.bottomRow);
@@ -301,6 +306,17 @@ export async function runAskChoiceDialog(args: {
         break;
       }
 
+      // Mouse wheel scrolls the choice list
+      const scrollAction = parseScrollAction(sequence);
+      if (scrollAction === "wheel-up" || scrollAction === "wheel-down") {
+        state = askChoiceReducer(state, {
+          type: "MOVE_CURSOR",
+          delta: scrollAction === "wheel-up" ? -1 : 1,
+        });
+        paint();
+        continue;
+      }
+
       let action: AskChoiceAction | null = null;
 
       if (isCancel(sequence)) {
@@ -315,13 +331,6 @@ export async function runAskChoiceDialog(args: {
         action = { type: "MOVE_CURSOR", delta: 1 };
       } else if (sequence === CSI_SPACE) {
         action = { type: "TOGGLE_AT_CURSOR" };
-      } else if (
-        sequence === "s" &&
-        !state.questionStates[state.activeIndex].otherFocused &&
-        canSubmit(state)
-      ) {
-        // 's' key = submit (when Other not focused and form is valid)
-        action = { type: "SUBMIT" };
       } else if (isSubmit(sequence)) {
         const qs = state.questionStates[state.activeIndex];
         const q = state.questions[state.activeIndex];
@@ -333,8 +342,11 @@ export async function runAskChoiceDialog(args: {
         } else if (isOtherRow && !qs.otherFocused) {
           // Enter on Other row → focus it
           action = { type: "FOCUS_OTHER" };
+        } else if (q.multiSelect) {
+          // Multi-select: Enter submits (Space toggles) — matches clack convention
+          action = { type: "SUBMIT" };
         } else {
-          // Enter on a choice row
+          // Single-select: Enter picks (reducer auto-advances/submits)
           action = { type: "SELECT_AT_CURSOR" };
         }
       } else if (
@@ -367,11 +379,11 @@ export async function runAskChoiceDialog(args: {
         // the reducer auto-submits. Check phase.
         if (state.phase !== "active") break;
 
-        // If we just blurred Other and this is single-question,
-        // check if we can submit
+        // If we just blurred Other on the last tab and all questions
+        // are answered, auto-submit. Non-last tabs: just save text.
         if (
           action.type === "BLUR_OTHER" &&
-          state.questions.length === 1 &&
+          state.activeIndex >= state.questions.length - 1 &&
           canSubmit(state)
         ) {
           state = askChoiceReducer(state, { type: "SUBMIT" });
@@ -382,6 +394,7 @@ export async function runAskChoiceDialog(args: {
       }
     }
   } finally {
+    output.write("\x1b[?1000l\x1b[?1006l");
     resizeTarget.off?.("resize", onOutputResize);
     readKey.dispose?.();
     if (input.isTTY) {

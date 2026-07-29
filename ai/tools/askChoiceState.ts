@@ -280,16 +280,18 @@ export function askChoiceReducer(
         };
       }
 
-      // Multi-question: advance to next tab
+      // Multi-question single-select: pick, then auto-submit if last tab
+      // and all questions answered; otherwise advance to next tab.
+      const nextState = { ...state, questionStates: newQs };
+      const isLastTab = state.activeIndex >= state.questions.length - 1;
+      if (isLastTab && canSubmit(nextState)) {
+        return { ...nextState, phase: "submitted" as const };
+      }
       const nextTab = Math.min(
         state.activeIndex + 1,
         state.questions.length - 1,
       );
-      return {
-        ...state,
-        questionStates: newQs,
-        activeIndex: nextTab,
-      };
+      return { ...nextState, activeIndex: nextTab };
     }
 
     case "FOCUS_OTHER": {

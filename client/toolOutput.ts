@@ -483,7 +483,7 @@ function formatCompactToolLine(
   const label = rawArgs ? `${rawLabel} ${rawArgs}` : rawLabel;
   if (event.type === "tool-error") {
     const message = clip(event.message ?? t("toolFailed"), 96);
-    return formatToolTraceLine(`  ▸ ${label}  ✗ ${message}`, colorEnabled, "error");
+    return formatToolTraceLine(`▸ ${label}  ✗ ${message}`, colorEnabled, "error");
   }
 
   // ui_ask_choice: render question + numbered choices instead of a generic
@@ -501,7 +501,7 @@ function formatCompactToolLine(
 
   let mainLine: string;
   if (!colorEnabled) {
-    mainLine = `  ▸ ${label}  ${marker}${suffix}\n`;
+    mainLine = `▸ ${label}  ${marker}${suffix}\n`;
   } else {
     const chromePointer = themeText("▸", "chrome", true);
     const mutedLabel = themeText(rawLabel, "muted", true);
@@ -512,7 +512,7 @@ function formatCompactToolLine(
         ? themeText("!", "warning", true)
         : themeText("✓", "success", true);
     const suffixPart = hint.inline ? ` ${dimCliText(hint.inline, true)}` : "";
-    mainLine = `  ${chromePointer} ${mutedLabel}${argsPart}  ${statusToken}${suffixPart}\n`;
+    mainLine = `${chromePointer} ${mutedLabel}${argsPart}  ${statusToken}${suffixPart}\n`;
   }
 
   if (!hint.detail) return mainLine;
@@ -526,28 +526,28 @@ function formatCompactToolLine(
 function formatEditDetailLine(line: string, colorEnabled: boolean): string {
   const marker = line.slice(0, 2);
   const rest = line.slice(2);
-  if (!colorEnabled) return `    ${line}\n`;
+  if (!colorEnabled) return `  ${line}\n`;
 
   const diff = diffLineSequences();
   if (!diff) {
     const color = marker === "- " ? "red" : marker === "+ " ? "green" : undefined;
     if (color) {
-      return `    ${styleCliText(marker, color, true)}${dimCliText(rest, true)}\n`;
+      return `  ${styleCliText(marker, color, true)}${dimCliText(rest, true)}\n`;
     }
-    return `    ${dimCliText(line, true)}\n`;
+    return `  ${dimCliText(line, true)}\n`;
   }
 
   const RESET = "\x1b[0m";
 
   if (marker === "- ") {
-    return `    ${diff.removed.bg}${diff.removed.fg}- ${rest}${RESET}\n`;
+    return `  ${diff.removed.bg}${diff.removed.fg}- ${rest}${RESET}\n`;
   }
 
   if (marker === "+ ") {
-    return `    ${diff.added.bg}${diff.added.fg}+ ${rest}${RESET}\n`;
+    return `  ${diff.added.bg}${diff.added.fg}+ ${rest}${RESET}\n`;
   }
 
-  return `    ${dimCliText(line, true)}\n`;
+  return `  ${dimCliText(line, true)}\n`;
 }
 
 export function formatToolEventForCli(

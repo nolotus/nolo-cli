@@ -4,6 +4,7 @@ import {
   renderDialogTitle,
 } from "./dialogFrame";
 import { t } from "./i18n";
+import { parseScrollAction } from "./tuiScrollbar";
 
 export type SelectDialogItem = {
   label: string;
@@ -250,6 +251,9 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   const input = args.input ?? process.stdin;
   const readKey = args.readKey ?? createRawKeyReader(input);
 
+  // Re-enable mouse tracking for wheel scroll inside the dialog.
+  output.write("\x1b[?1006h\x1b[?1000h");
+
   const wasRaw = Boolean(input.isTTY && input.isRaw);
   let renderedLineCount = 0;
   const bottomAnchored = Boolean(args.bottomAnchored && args.bottomRow);
@@ -331,6 +335,20 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
         return { kind: "cancelled" };
       }
 
+      // Mouse wheel scrolls the list
+      const scrollAction = parseScrollAction(sequence);
+      if (scrollAction === "wheel-up" || scrollAction === "wheel-down") {
+        selectedIndex = Math.min(
+          Math.max(
+            selectedIndex + (scrollAction === "wheel-up" ? -1 : 1),
+            0,
+          ),
+          items.length - 1,
+        );
+        paint();
+        continue;
+      }
+
       if (isCancel(sequence)) {
         return { kind: "cancelled" };
       }
@@ -349,6 +367,7 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       }
     }
   } finally {
+    output.write("\x1b[?1000l\x1b[?1006l");
     resizeTarget.off?.("resize", onOutputResize);
     readKey.dispose?.();
     if (input.isTTY) {

@@ -559,4 +559,55 @@ describe("toolOutput", () => {
     // The writeFile itself renders on the generic compact line after the flush.
     expect(writeLine).toContain("Write");
   });
+
+  test("compact mode folds consecutive fetchWebpage events into a Fetch tree", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "w1", toolName: "fetchWebpage", argumentsPreview: "https://example.com/page1" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "w1", toolName: "fetchWebpage", argumentsPreview: "https://example.com/page1", metadata: { url: "https://example.com/page1" } }));
+    format(toolEvent({ type: "tool-call", toolCallId: "w2", toolName: "fetchWebpage", argumentsPreview: "https://example.com/page2" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "w2", toolName: "fetchWebpage", argumentsPreview: "https://example.com/page2", metadata: { url: "https://example.com/page2" } }));
+    const out = format.flush ? format.flush() : "";
+    expect(out).toBe(
+      "• Fetch (2)\n" +
+      "  ├── https://example.com/page1\n" +
+      "  └── https://example.com/page2\n"
+    );
+  });
+
+  test("compact mode flushes Fetch tree before a non-fetch tool", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "w1", toolName: "fetchWebpage", argumentsPreview: "https://example.com/a" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "w1", toolName: "fetchWebpage", argumentsPreview: "https://example.com/a", metadata: { url: "https://example.com/a" } }));
+    // A writeFile result interrupts the fetch streak — flush the fetch tree first.
+    const writeLine = format(toolEvent({
+      type: "tool-result",
+      toolCallId: "x1",
+      toolName: "writeFile",
+      argumentsPreview: "out.txt",
+    }));
+    expect(writeLine).toContain("• Fetch (1)");
+    expect(writeLine).toContain("https://example.com/a");
+    // The writeFile itself renders on the generic compact line after the flush.
+    expect(writeLine).toContain("Write");
+  });
+
+  test("compact mode does NOT fold fetchWebpage tool-error into the Fetch tree", () => {
+    const format = createToolEventFormatter("compact", false);
+    // A prior fetch should be buffered.
+    format(toolEvent({ type: "tool-call", toolCallId: "w1", toolName: "fetchWebpage", argumentsPreview: "https://example.com/ok" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "w1", toolName: "fetchWebpage", argumentsPreview: "https://example.com/ok", metadata: { url: "https://example.com/ok" } }));
+    // tool-error is not buffered — falls through to the generic compact line,
+    // flushing the prior fetch tree first.
+    const errLine = format(toolEvent({
+      type: "tool-error",
+      toolCallId: "w2",
+      toolName: "fetchWebpage",
+      argumentsPreview: "https://example.com/bad",
+      message: "connection refused",
+    }));
+    expect(errLine).toContain("• Fetch (1)");
+    expect(errLine).toContain("https://example.com/ok");
+    // The error itself renders on the generic trace line with the ✗ marker.
+    expect(errLine).toContain("✗");
+  });
 });

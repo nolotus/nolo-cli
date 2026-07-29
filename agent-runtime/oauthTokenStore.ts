@@ -14,7 +14,9 @@ export type OAuthProvider =
   | "xai"
   | "antigravity"
   | "claude"
-  | "cloudflare";
+  | "cloudflare"
+  | "cursor"
+  | "kimi-code";
 
 export type OAuthCredential = {
   provider: OAuthProvider;

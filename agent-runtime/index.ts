@@ -296,6 +296,7 @@ export type {
   AgentRuntimeMode,
   AgentRuntimeRequestedMode,
   AgentRuntimeResult,
+  AgentRuntimeOutputBlock,
   AgentRuntimeToolPolicy,
   AgentRuntimeToolCall,
   AgentRuntimeWorkspaceMode,

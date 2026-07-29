@@ -34,14 +34,15 @@ export function formatElapsedSeconds(totalSeconds: number): string {
 }
 
 /** Soft token chip for the composer status line (no powerline background). */
-function renderComposerTokenChip(tokens?: TurnTokenUsage) {
-  if (!tokens || !tokens.contextWindow) {
-    return "◫ —";
+function renderComposerTokenChip(tokens: TurnTokenUsage | undefined, fallbackContextWindow?: number) {
+  const cw = tokens?.contextWindow ?? fallbackContextWindow;
+  if (!cw) {
+    return "context: —";
   }
-  const used = tokens.input + tokens.output;
-  const pct = Math.min(100, (used / tokens.contextWindow) * 100);
-  const pctText = pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
-  return `◫ ${pctText}%/${formatTokenCount(tokens.contextWindow)}`;
+  const used = tokens ? tokens.input + tokens.output : 0;
+  const pct = Math.min(100, (used / cw) * 100);
+  const pctText = pct > 0 && pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
+  return `context: ${pctText}% (${formatTokenCount(used)}/${formatTokenCount(cw)})`;
 }
 
 // ─── Status line ────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ export function renderStatusLine(state: TuiState) {
     parts.push(`${branchText}${modifiedText}${untrackedText}`);
   }
 
-  const tokenSegment = themeText(renderComposerTokenChip(state.turnTokens), "muted", colorEnabled);
+  const tokenSegment = themeText(renderComposerTokenChip(state.turnTokens, state.contextWindow), "muted", colorEnabled);
   parts.push(tokenSegment);
 
   const runningCount = getProcessRegistry().list().filter(p => p.status === "running").length;
@@ -131,10 +132,29 @@ export function renderWelcome(state: TuiState) {
   // U+2571/U+2572 slashes plus U+2581/U+2582 lower blocks, so the whole lockup
   // renders on any monospace terminal — no patched Nerd Font, no private-use
   // codepoints that would show as tofu.
+  //
+  // Scene beside the peak, all common BMP symbols (no emoji/PUA, so still no
+  // tofu on a stock monospace font):
+  //   ☾  U+263E last-quarter moon — sky beside the peak (row 1)
+  //   ♠  U+2660 spade — pine tree standing on the foot blocks (row 3, right
+  //       after ▁▁ so it reads as planted on the ground, not floating); ♠
+  //       reads as a conifer far better than ♣ — its triangle points up,
+  //       whereas ♣ is three equal lobes.
+  //   ╰╮~ U+2570 + U+256E + U+007E — a Hokusai-style curling wave at the
+  //       foot: the box-drawing arcs ╰╮ carve a curling wave head (a rising
+  //       crest that folds back, like the claw of a rolling wave in The
+  //       Great Wave off Kanagawa), and the trailing ~ is the water surface.
+  //       All three are width-1 BMP glyphs that every monospace terminal
+  //       renders — no combining marks, so no grid misalignment. A space
+  //       separates ▁ and ╰ so it reads as "sea at the foot" rather than
+  //       "the foot is the sea".
+  // Single peak (╱╲) per request — one cone reads as one mountain, not a
+  // range. The scene glyphs append to the ridge string, so they stay clear
+  // of the wordmark's fixed-width band (cols 0–21) that the test pins.
   const logoRows = [
-    { mark: "█▄ █ ▄▀▀▄ █    ▄▀▀▄", ridge: "  ╱╲", token: "accent" as const, bold: true },
+    { mark: "█▄ █ ▄▀▀▄ █    ▄▀▀▄", ridge: "  ╱╲     ☾", token: "accent" as const, bold: true },
     { mark: "█ ▀█ █  █ █    █  █", ridge: " ╱  ╲", token: "accent" as const, bold: false },
-    { mark: "▀  ▀  ▀▀  ▀▀▀▀  ▀▀", ridge: "╱    ╲▂▁▁", token: "chrome" as const, bold: false },
+    { mark: "▀  ▀  ▀▀  ▀▀▀▀  ▀▀", ridge: "╱  ╲▂▁▁♠ ╰╮~", token: "chrome" as const, bold: false },
   ];
   // Pad the wordmark to a fixed width so the ridge starts at the same column on
   // every row regardless of the mark's own trailing glyphs.

@@ -14,6 +14,7 @@ import {
 } from "../client/autoModelRouter";
 import { readDbRecord } from "../agentRecordHelpers";
 import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../../ai/llm/agentCapabilities";
+import { getModelContextWindow } from "../../ai/llm/getModelContextWindow";
 import type { LocalAgentActionGate } from "../../agent-runtime/localLoop";
 import { readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
@@ -1009,6 +1010,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             ...state,
             agentName: pickResult.name,
             agentKey: pickResult.key,
+            contextWindow: getModelContextWindow(pickResult.name),
           };
           // 用户显式切换 agent：清掉这条对话首轮 auto-route 的缓存，否则
           // 下一轮会被缓存切回原 agent（典型场景：原 agent 429 后想换一个）。
@@ -1513,8 +1515,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           } else if (
             decision.kind === "noop" &&
             !submittedText.trim() &&
-            binding.queueLength() > 0 &&
-            activeTurnAbort
+            binding.queueLength() > 0
           ) {
             // Empty Enter while busy with a non-empty queue: preempt the
             // in-flight turn so the queued head drains immediately instead
@@ -1524,7 +1525,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             // abort the current turn. The turn's own finally will call
             // notifyTurnEnd, which drives the drain cascade.
             if (binding.preemptForDrain()) {
-              activeTurnAbort.abort();
+              if (activeTurnAbort) {
+                activeTurnAbort.abort();
+              }
             }
           }
           // arm-fresh-dialog / compact-blocked / noop / multi-image-blocked

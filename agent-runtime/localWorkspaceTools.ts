@@ -40,9 +40,13 @@ type LocalWorkspaceToolArgs = {
    * body and command (the exact external path) verbatim.
    */
   confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
+  abortSignal?: AbortSignal;
+  detachMs?: number;
 };
 
 const EXEC_SHELL_TIMEOUT_ENV = "NOLO_EXEC_SHELL_TIMEOUT_MS";
+const EXEC_SHELL_DETACH_ENV = "NOLO_EXEC_SHELL_DETACH_MS";
+const DEFAULT_EXEC_SHELL_DETACH_MS = 120000;
 const DEFAULT_LOCAL_API_ORIGIN = "http://127.0.0.1:38123";
 
 export type ActivityRef =
@@ -156,6 +160,15 @@ function resolveExecShellTimeoutMs(override: number | undefined) {
   const raw = process.env[EXEC_SHELL_TIMEOUT_ENV];
   if (raw === undefined) return undefined;
   return asOptionalPositiveFiniteNumber(Number(raw));
+}
+
+export function resolveDetachMs(override: number | undefined): number | undefined {
+  const fromOverride = asOptionalPositiveFiniteNumber(override);
+  if (fromOverride !== undefined) return fromOverride;
+  const raw = process.env[EXEC_SHELL_DETACH_ENV];
+  if (raw === undefined) return DEFAULT_EXEC_SHELL_DETACH_MS;
+  const parsed = asOptionalPositiveFiniteNumber(Number(raw));
+  return parsed === undefined ? DEFAULT_EXEC_SHELL_DETACH_MS : parsed;
 }
 
 
@@ -841,6 +854,8 @@ async function runWorkspaceCommand(args: {
   timeoutMs?: number;
   outputLimit?: number;
   commandPrefix?: string[];
+  abortSignal?: AbortSignal;
+  detachMs?: number; // 超过这个时间仍未退出 → 转后台；默认从 env 读，见 resolveDetachMs
 }) {
   const timeoutMs = asOptionalPositiveFiniteNumber(args.timeoutMs);
   const detached = process.platform !== "win32";
@@ -891,54 +906,130 @@ async function runWorkspaceCommand(args: {
   exitPromise.then(detachSignalCleanup, detachSignalCleanup);
   const stdoutPromise = readNodeStream(proc.stdout);
   const stderrPromise = readNodeStream(proc.stderr);
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const timeoutResult = Symbol("timeout");
-  const exitOrTimeout = timeoutMs
-    ? await Promise.race([
-        exitPromise,
-        new Promise<typeof timeoutResult>((resolveTimeout) => {
-          timeout = setTimeout(() => resolveTimeout(timeoutResult), timeoutMs);
-        }),
-      ])
-    : await exitPromise;
-  if (timeout) clearTimeout(timeout);
-  const timedOut = exitOrTimeout === timeoutResult;
-  if (timedOut) {
-    const kill = (signal: NodeJS.Signals) => {
-      if (detached && typeof proc.pid === "number") {
-        try {
-          process.kill(-proc.pid, signal);
-          return;
-        } catch {
-          // Fall through to killing the immediate child.
-        }
-      }
+  // Shared kill helper: SIGTERM/SIGKILL the whole child process group when
+  // detached (covers timeout AND abort paths). Replaces the inline closure
+  // that used to live only inside the `if (timedOut)` block.
+  const killChild = (signal: NodeJS.Signals) => {
+    if (detached && typeof proc.pid === "number") {
       try {
-        proc.kill(signal);
+        process.kill(-proc.pid, signal);
+        return;
       } catch {
-        // The command may have exited after the timeout won the race.
+        // Fall through to killing the immediate child.
       }
-    };
-    kill("SIGTERM");
+    }
+    try {
+      proc.kill(signal);
+    } catch {
+      // The command may have exited after the race winner was decided.
+    }
+  };
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let detachTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutResult = Symbol("timeout");
+  const abortResult = Symbol("abort");
+  const detachResult = Symbol("detach");
+
+  // abort path: resolve as soon as the caller's AbortSignal fires. Reuses
+  // the same kill path as timeout (SIGTERM → 500ms → SIGKILL) so the child
+  // tree is reliably torn down on Esc.
+  let abortListener: (() => void) | undefined;
+  const abortPromise = args.abortSignal
+    ? new Promise<typeof abortResult>((resolveAbort) => {
+        if (args.abortSignal!.aborted) {
+          resolveAbort(abortResult);
+          return;
+        }
+        abortListener = () => resolveAbort(abortResult);
+        args.abortSignal!.addEventListener("abort", abortListener, { once: true });
+      })
+    : null;
+
+  // detach path: if the command runs longer than detachMs it is promoted to
+  // a background process (registered in processRegistry) and the turn
+  // continues instead of hanging forever. Default 120s, env-overridable.
+  const effectiveDetachMs = resolveDetachMs(args.detachMs);
+  const detachPromise = effectiveDetachMs
+    ? new Promise<typeof detachResult>((r) => {
+        detachTimer = setTimeout(() => r(detachResult), effectiveDetachMs);
+      })
+    : null;
+
+  const racers: Promise<unknown>[] = [exitPromise];
+  if (timeoutMs) {
+    racers.push(
+      new Promise<typeof timeoutResult>((resolveTimeout) => {
+        timeout = setTimeout(() => resolveTimeout(timeoutResult), timeoutMs);
+      }),
+    );
+  }
+  if (abortPromise) racers.push(abortPromise);
+  if (detachPromise) racers.push(detachPromise);
+
+  const raceWinner = await Promise.race(racers);
+  if (timeout) clearTimeout(timeout);
+  if (detachTimer) clearTimeout(detachTimer);
+  if (abortListener && args.abortSignal) {
+    args.abortSignal.removeEventListener("abort", abortListener);
+  }
+
+  const timedOut = raceWinner === timeoutResult;
+  const aborted = raceWinner === abortResult;
+  const didDetach = raceWinner === detachResult;
+
+  if (timedOut || aborted) {
+    killChild("SIGTERM");
     await Promise.race([
       exitPromise.catch(() => 124),
       new Promise((resolveKill) => setTimeout(resolveKill, 500)),
     ]);
-    kill("SIGKILL");
+    killChild("SIGKILL");
   }
+
+  if (didDetach) {
+    // Promote the still-running child to a background process: register it
+    // (so listProcesses / processRegistry can inspect it), detach host-signal
+    // forwarding (the child survives independently), and stop reading
+    // stdout/stderr — those streams staying open is harmless once the child
+    // is no longer our responsibility.
+    detachSignalCleanup();
+    const pid = typeof proc.pid === "number" ? proc.pid : 0;
+    const label = deriveLabel(args.command.join(" "));
+    const pgid = pid;
+    const registry = getProcessRegistry();
+    registry.add({ pid, pgid, command: args.command.join(" "), label });
+    proc.on("close", (code) => {
+      registry.markExited(pid, code ?? 1);
+    });
+    return {
+      stdout: "",
+      stderr: `command detached to background after ${effectiveDetachMs}ms (pid=${pid}, label=${label})\nUse listProcesses / processRegistry to inspect.`,
+      exitCode: 0,
+      timedOut: false,
+      detached: true,
+      pid,
+      label,
+      content: JSON.stringify({ detached: true, pid, label, status: "running" }),
+    };
+  }
+
   const [stdout, rawStderr] = await Promise.all([
     stdoutPromise,
     stderrPromise,
   ]);
-  const exitCode = timedOut ? 124 : Number(exitOrTimeout);
-  const stderr = timedOut
-    ? `${rawStderr.trim() ? `${rawStderr.trim()}\n` : ""}command timed out after ${timeoutMs ?? "unknown"}ms\n`
-    : rawStderr;
+  const exitCode = aborted ? 130 : timedOut ? 124 : Number(raceWinner);
+  const stderr = aborted
+    ? `${rawStderr.trim() ? `${rawStderr.trim()}\n` : ""}command aborted by signal\n`
+    : timedOut
+      ? `${rawStderr.trim() ? `${rawStderr.trim()}\n` : ""}command timed out after ${timeoutMs ?? "unknown"}ms\n`
+      : rawStderr;
   return {
     stdout,
     stderr,
     exitCode,
     timedOut,
+    aborted,
     content: truncateToolOutput([
       stdout.trim() ? `stdout:\n${stdout.trim()}` : "",
       stderr.trim() ? `stderr:\n${stderr.trim()}` : "",
@@ -1762,6 +1853,8 @@ async function execShellTool(args: {
   commandOutputLimit?: number;
   commandPrefix?: string[];
   restrictToWorkspace?: boolean;
+  abortSignal?: AbortSignal;
+  detachMs?: number;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const command = requireShellCommand(parsed, args.call.name);
@@ -1794,6 +1887,8 @@ async function execShellTool(args: {
     timeoutMs: resolveExecShellTimeoutMs(args.commandTimeoutMs),
     outputLimit: args.commandOutputLimit,
     commandPrefix: args.commandPrefix,
+    abortSignal: args.abortSignal,
+    detachMs: args.detachMs,
   });
   const activity = extractActivity(parsed);
   return {
@@ -1802,6 +1897,10 @@ async function execShellTool(args: {
       command,
       exitCode: result.exitCode,
       timedOut: result.timedOut,
+      ...(result.aborted ? { aborted: true } : {}),
+      ...(result.detached
+        ? { detached: true, pid: result.pid, label: result.label, status: "running" as const }
+        : {}),
       ...(activity ? { activity } : {}),
     },
   };
@@ -1961,13 +2060,15 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       workspaceRoot: args.workspaceRoot,
       commandTimeoutMs: args.commandTimeoutMs,
     }),
-    execShell: (call: AgentRuntimeToolCallInput) => execShellTool({
+    execShell: (call: AgentRuntimeToolCallInput, opts?: { abortSignal?: AbortSignal; detachMs?: number }) => execShellTool({
       call,
       workspaceRoot: args.workspaceRoot,
       commandTimeoutMs: args.commandTimeoutMs,
       commandOutputLimit: args.commandOutputLimit,
       commandPrefix: args.commandPrefix,
       restrictToWorkspace: args.restrictShellToWorkspace,
+      abortSignal: opts?.abortSignal ?? args.abortSignal,
+      detachMs: opts?.detachMs ?? args.detachMs,
     }),
     launchProcess: (call: AgentRuntimeToolCallInput) => launchProcessTool({
       call,

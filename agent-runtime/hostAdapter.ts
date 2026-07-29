@@ -46,6 +46,29 @@ export type AgentRuntimeCompleteOptions = {
    * 上的 onReasoningDelta 透传到这里。
    */
   onReasoningDelta?: (chunk: string) => void;
+  /**
+   * Mid-stream tool event callback. Providers that execute tools inline
+   * during the stream (e.g. Cursor's exec channel) call this at the moment
+   * a tool is invoked / resolves, so CLI/Desktop can interleave
+   * text→tool→text instead of deferring all tool cards to after the stream.
+   * Same shape as localLoop's `LocalAgentToolEvent`; localLoop forwards its
+   * own `onToolEvent` here and suppresses duplicate emission for inline
+   * output blocks.
+   */
+  onToolEvent?: (event: {
+    type: "tool-call" | "tool-result" | "tool-error";
+    round: number;
+    toolCallId: string;
+    toolName: string;
+    argumentsPreview?: string;
+    elapsedMs?: number;
+    summary?: string;
+    content?: string;
+    message?: string;
+    metadata?: Record<string, unknown>;
+  }) => void;
+  /** Round number for `onToolEvent` events; localLoop sets it to current round. */
+  toolEventRound?: number;
 };
 
 export type AgentRuntimeProvider = {
@@ -87,7 +110,10 @@ export type AgentRuntimeHostAdapter = {
   loadDialogHistory(dialogId: string): Promise<AgentRuntimeChatMessage[]>;
   saveTurn(input: AgentRuntimeSaveTurnInput): Promise<{ dialogId: string }>;
   resolveProvider(agentConfig: AgentRuntimeAgentConfig): Promise<AgentRuntimeProvider>;
-  executeTool(call: AgentRuntimeToolCallInput): Promise<AgentRuntimeToolResult>;
+  executeTool(
+    call: AgentRuntimeToolCallInput,
+    opts?: { abortSignal?: AbortSignal },
+  ): Promise<AgentRuntimeToolResult>;
 };
 
 export function createRuntimeHostDescriptor(adapter: AgentRuntimeHostAdapter) {

@@ -2,21 +2,36 @@
  * Kimi Code compatible request headers.
  *
  * Kimi Code's API validates client identity via User-Agent and X-Msh-* headers.
- * This module mirrors the official kimi-code CLI's header construction so that
+ * This module mirrors the official kimi-cli's header construction so that
  * nolo requests pass the client identity check.
  *
- * Source of truth: MoonshotAI/kimi-code packages/oauth/src/identity.ts
- * and pi-provider-kimi-code src/device.ts
+ * Source of truth: opencode-kimi-full src/headers.ts + src/constants.ts,
+ * which mirror kimi-cli v1.41.0 (research/kimi-cli/src/kimi_cli/auth/oauth.py).
  */
 
-import { arch, hostname, homedir, type as osType, release } from "node:os";
-import { readFileSync, existsSync } from "node:fs";
+import {
+  arch,
+  hostname,
+  homedir,
+  type as osType,
+  release,
+  machine,
+  version,
+} from "node:os";
+import {
+  readFileSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+  chmodSync,
+} from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
-const KIMI_UPSTREAM_VERSION = "0.18.0";
-const KIMI_CODE_USER_AGENT = `kimi-code-cli/${KIMI_UPSTREAM_VERSION}`;
-const KIMI_PLATFORM = "kimi_code_cli";
+export const KIMI_UPSTREAM_VERSION = "1.41.0";
+const KIMI_CODE_USER_AGENT = `KimiCLI/${KIMI_UPSTREAM_VERSION}`;
+const KIMI_PLATFORM = "kimi_cli";
 
 function asciiSanitize(value: string, fallback = "unknown"): string {
   const cleaned = value.replace(/[^\x20-\x7E]/g, "").trim();
@@ -33,14 +48,15 @@ export function isKimiCodeEndpoint(url: string): boolean {
 /**
  * Build Kimi Code-compatible request headers.
  *
- * Reads the real device_id from ~/.kimi-code/device_id (persisted by the
- * official kimi-code CLI). Falls back to a static identifier when the file
- * is missing (e.g. on a server that never ran the CLI).
+ * Reads the real device_id from ~/.kimi/device_id (persisted by the
+ * official kimi-cli). Falls back to generating a UUIDv4 (no dashes) and
+ * persisting it when the file is missing, so every nolo install has a
+ * stable fingerprint (mirrors opencode-kimi-full src/headers.ts getDeviceId).
  */
 export function buildKimiCodeHeaders(): Record<string, string> {
-  const deviceId = readKimiDeviceId();
+  const deviceId = readOrCreateKimiDeviceId();
   const deviceModel = resolveDeviceModel();
-  const osVersion = release();
+  const osVersion = resolveOsVersion();
 
   return {
     "User-Agent": KIMI_CODE_USER_AGENT,
@@ -53,23 +69,45 @@ export function buildKimiCodeHeaders(): Record<string, string> {
   };
 }
 
-function readKimiDeviceId(): string {
+/**
+ * kimi-cli persists its device id at `~/.kimi/device_id` as a plain UUIDv4
+ * hex string (no dashes). We intentionally share the same path so users who
+ * also run the real kimi CLI keep a single stable fingerprint.
+ *
+ * If the file doesn't exist, generate one (mode 0600, dir mode 0700).
+ */
+function readOrCreateKimiDeviceId(): string {
+  const dir = join(homedir(), ".kimi");
+  const path = join(dir, "device_id");
+
   try {
-    const path = join(homedir(), ".kimi-code", "device_id");
     if (existsSync(path)) {
       const id = readFileSync(path, "utf8").trim();
       if (id.length > 0) return id;
     }
+    // Generate and persist a new device_id
+    const id = randomUUID().replace(/-/g, "");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(path, id, { encoding: "utf8", mode: 0o600 });
+    try {
+      chmodSync(dir, 0o700);
+      chmodSync(path, 0o600);
+    } catch {
+      // Best-effort on platforms that ignore chmod.
+    }
+    return id;
   } catch {
-    // ignore — fall through to default
+    // Last-resort: deterministic fallback (not persisted)
+    return "nolo-agent";
   }
-  return "nolo-agent";
 }
 
 function resolveDeviceModel(): string {
+  // os.arch() returns "x64" but Kimi's backend expects "x86_64".
+  // os.machine() returns the full arch string. Prefer it when available.
+  const sysArch = typeof machine === "function" ? machine() || arch() : arch();
   const sysType = osType();
   const sysRelease = release();
-  const sysArch = arch();
 
   if (sysType === "Darwin") {
     let macVersion = sysRelease;
@@ -90,3 +128,13 @@ function resolveDeviceModel(): string {
   return `${sysType} ${sysRelease} ${sysArch}`;
 }
 
+function resolveOsVersion(): string {
+  // os.version() is available on Node 18+ and returns a detailed OS version
+  // string (e.g. "Darwin Kernel Version 24.0.0 ..."). Fall back to type+release
+  // for older runtimes.
+  if (typeof version === "function") {
+    const v = version();
+    if (v && v !== "unknown") return v;
+  }
+  return `${osType()} ${release()}`;
+}

@@ -181,7 +181,7 @@ export function formatRunItemCommand(
   exitCode?: number,
   timedOut?: boolean
 ): string {
-  let text = (command || "").trim();
+  let text = compactWhitespace(command || "");
   if (!text) text = "command";
   text = text.length > 80 ? `${text.slice(0, 79)}…` : text;
   // Surface actionable status inline on the leaf, mirroring the standalone
@@ -211,6 +211,42 @@ export function formatRunTreeLines(
     const connector = index === items.length - 1 ? "└── " : "├── ";
     const commandText = formatRunItemCommand(item.command, item.exitCode, item.timedOut);
     return { connector, commandText };
+  });
+
+  return { header, count, lines };
+}
+
+export type FetchTreeItemInput = { url: string };
+
+/**
+ * Clip a webpage URL for the Fetch tree leaf. URLs can be long (query strings,
+ * anchors), so apply the same compact-then-truncate as the search query leaf.
+ */
+export function formatFetchItemUrl(url: string): string {
+  const text = (url || "").trim();
+  if (!text) return "webpage";
+  return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+}
+
+/**
+ * Format a list of fetch items into a tree representation matching:
+ * • Fetch (N)
+ * ├── https://example.com/page1
+ * └── https://example.com/page2
+ */
+export function formatFetchTreeLines(
+  items: FetchTreeItemInput[]
+): {
+  header: string;
+  count: number;
+  lines: Array<{ connector: string; urlText: string }>;
+} {
+  const count = items.length;
+  const header = `Fetch (${count})`;
+  const lines = items.map((item, index) => {
+    const connector = index === items.length - 1 ? "└── " : "├── ";
+    const urlText = formatFetchItemUrl(item.url);
+    return { connector, urlText };
   });
 
   return { header, count, lines };

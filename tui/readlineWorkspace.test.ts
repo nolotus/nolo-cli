@@ -226,7 +226,7 @@ describe("createFixedInput", () => {
   test("anchors an OMP-style composer to the terminal bottom", () => {
     const tty = mockTty();
     const input = createFixedInput(tty.output, {
-      getStatusLine: () => "nolo > DeepSeek V4 Flash > ~/tmp > ◫ 1.9%/1M",
+      getStatusLine: () => "nolo > DeepSeek V4 Flash > ~/tmp > context: 1.9% (19.5k/1M)",
     });
 
     input.init();
@@ -405,7 +405,7 @@ describe("createFixedInput", () => {
   test("truncates a long status line instead of wrapping and breaking the composer", () => {
     const tty = mockTty(TERM_ROWS, 40);
     const longStatus =
-      "nolo · 🏔 minimax-m3 · local · 📁 ~/very/long/path/to/bun-nolo · ⑂ main *99 · ◫ 0.4%/1M";
+      "nolo · 🏔 minimax-m3 · local · 📁 ~/very/long/path/to/bun-nolo · ⑂ main *99 · context: 0.4% (4.1k/1M)";
     const input = createFixedInput(tty.output, {
       getStatusLine: () => longStatus,
     });

@@ -153,13 +153,106 @@ describe("applyTuiInputKey", () => {
     expect(applyTuiInputKey("abc", "\x1b[3;2~").buffer).toBe("ab");
     // Shift+Backspace (xterm modifier encoding)
     expect(applyTuiInputKey("abc", "\x1b[27;2;8~").buffer).toBe("ab");
-    // Ctrl+Backspace (xterm modifier encoding)
-    expect(applyTuiInputKey("abc", "\x1b[27;5;8~").buffer).toBe("ab");
+    // Ctrl+Backspace xterm encoding falls through to single-char backspace
+    expect(applyTuiInputKey("foo bar", "\x1b[27;5;8~").buffer).toBe("foo ba");
   });
 
   test("Delete on empty buffer is a no-op", () => {
     expect(applyTuiInputKey("", "\x1b[3~").buffer).toBe("");
     expect(applyTuiInputKey("", "\x1b[3;5~").buffer).toBe("");
+  });
+
+  test("Ctrl+W deletes one word left (whitespace and CJK boundaries)", () => {
+    // Cursor at end: "foo bar baz" -> "foo bar "
+    expect(applyTuiInputKey("foo bar baz", "\x17", { ctrl: true, name: "w" })).toEqual({
+      buffer: "foo bar ",
+      cursorPos: 8,
+    });
+    // Cursor in middle of a word: deletes the whole word fragment left of cursor
+    // "foo bar baz" cursor at 10 (before final 'z') -> "foo bar z"
+    const midRes = applyTuiInputKey("foo bar baz", "\x17", { ctrl: true, name: "w" }, 10);
+    expect(midRes.buffer).toBe("foo bar z");
+    expect(midRes.cursorPos).toBe(8);
+    // Leading whitespace is skipped together with the word
+    expect(applyTuiInputKey("foo   bar", "\x17", { ctrl: true, name: "w" })).toEqual({
+      buffer: "foo   ",
+      cursorPos: 6,
+    });
+    // At position 0 no-op
+    expect(applyTuiInputKey("abc", "\x17", { ctrl: true, name: "w" }, 0)).toEqual({
+      buffer: "abc",
+      cursorPos: 0,
+    });
+    // CJK: each char is its own word — "你好世界" cursor at end -> deletes "界"
+    expect(applyTuiInputKey("你好世界", "\x17", { ctrl: true, name: "w" })).toEqual({
+      buffer: "你好世",
+      cursorPos: 3,
+    });
+    // Mixed ascii + CJK: "foo你好" cursor at end -> deletes "好"
+    expect(applyTuiInputKey("foo你好", "\x17", { ctrl: true, name: "w" })).toEqual({
+      buffer: "foo你",
+      cursorPos: 4,
+    });
+    // Mixed CJK + ascii: "你好foo" cursor at end -> deletes "foo", stops at CJK boundary
+    expect(applyTuiInputKey("你好foo", "\x17", { ctrl: true, name: "w" })).toEqual({
+      buffer: "你好",
+      cursorPos: 2,
+    });
+  });
+
+  test("Ctrl+Backspace and Alt+Backspace both trigger word delete", () => {
+    // Ctrl+Backspace — symbolic key form
+    expect(applyTuiInputKey("foo bar", "", { ctrl: true, name: "backspace" })).toEqual({
+      buffer: "foo ",
+      cursorPos: 4,
+    });
+    // Alt+Backspace — symbolic + escape form
+    expect(applyTuiInputKey("foo bar", "\x1b\x7f", { meta: true, name: "backspace" })).toEqual({
+      buffer: "foo ",
+      cursorPos: 4,
+    });
+  });
+
+  test("Ctrl+U deletes from cursor to start of current line", () => {
+    // Single line: "hello world" cursor at 5 -> " world"
+    expect(applyTuiInputKey("hello world", "\x15", { ctrl: true, name: "u" }, 5)).toEqual({
+      buffer: " world",
+      cursorPos: 0,
+    });
+    // Multiline: only current line segment before cursor is removed
+    // "line1\nline2\nline3" cursor at 15 (inside "line3", after "lin")
+    const multi = applyTuiInputKey("line1\nline2\nline3", "\x15", { ctrl: true, name: "u" }, 15);
+    expect(multi.buffer).toBe("line1\nline2\ne3");
+    expect(multi.cursorPos).toBe(12);
+    // At beginning of a line: no-op for that line
+    expect(applyTuiInputKey("line1\nline2", "\x15", { ctrl: true, name: "u" }, 6)).toEqual({
+      buffer: "line1\nline2",
+      cursorPos: 6,
+    });
+    // At cursor 0 with buffer starting with \n: no-op (guard against
+    // lastIndexOf(-1) finding the leading newline and corrupting the buffer)
+    expect(applyTuiInputKey("\nhello", "\x15", { ctrl: true, name: "u" }, 0)).toEqual({
+      buffer: "\nhello",
+      cursorPos: 0,
+    });
+  });
+
+  test("Ctrl+K deletes from cursor to end of current line", () => {
+    // Single line: "hello world" cursor at 5 -> "hello"
+    expect(applyTuiInputKey("hello world", "\x0b", { ctrl: true, name: "k" }, 5)).toEqual({
+      buffer: "hello",
+      cursorPos: 5,
+    });
+    // Multiline: only current line segment at/after cursor is removed,
+    // newline boundary preserved
+    const multi = applyTuiInputKey("line1\nline2\nline3", "\x0b", { ctrl: true, name: "k" }, 7);
+    expect(multi.buffer).toBe("line1\nl\nline3");
+    expect(multi.cursorPos).toBe(7);
+    // At end of buffer: no-op
+    expect(applyTuiInputKey("abc", "\x0b", { ctrl: true, name: "k" }, 3)).toEqual({
+      buffer: "abc",
+      cursorPos: 3,
+    });
   });
 
   test("handles left/right arrow navigation, home/end, and in-middle edits", () => {
@@ -761,6 +854,24 @@ describe("themed render surfaces", () => {
       const colored = renderWelcome(createInitialTuiState({}));
       expect(colored).toContain("▀▀▀▀");
       expect(colored).toContain("\x1b");
+    } finally {
+      if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
+      else process.env.NOLO_CLI_COLOR = previous;
+    }
+  });
+
+  test("renderWelcome scenes a moon, tree, and sea beside the mountain", () => {
+    // The scene is part of the brand lockup now — pin each glyph so a future
+    // banner edit has to be deliberate, the same way the slopes are pinned.
+    // Plain mode is enough: the scene glyphs ride on the ridge string, which
+    // is the same in both branches.
+    const previous = process.env.NOLO_CLI_COLOR;
+    try {
+      process.env.NOLO_CLI_COLOR = "0";
+      const plain = renderWelcome(createInitialTuiState({}));
+      expect(plain).toContain("☾"); // moon in the sky beside the peak
+      expect(plain).toContain("♠"); // pine tree standing on the foot blocks
+      expect(plain).toContain("╰╮~"); // Hokusai-style curling wave at the foot
     } finally {
       if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
       else process.env.NOLO_CLI_COLOR = previous;

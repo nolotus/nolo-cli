@@ -165,6 +165,17 @@ export async function executeLocalToolWithPolicy(args: {
   executors?: Record<string, (call: AgentRuntimeToolCallInput) => Promise<AgentRuntimeToolResult>>;
   confirmed?: boolean;
   /**
+   * Optional per-turn AbortSignal propagated from the TUI's activeTurnAbort.
+   * When present and the tool is execShell, the signal is injected into the
+   * execShell executor call so Esc aborts a stuck child process tree.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Optional override for the execShell auto-detach threshold (ms). When a
+   * command runs longer than this it is promoted to a background process.
+   */
+  detachMs?: number;
+  /**
    * Optional confirmation callback for destructive shell commands. When
    * provided, a destructive `rm`/`git reset --hard`/etc. triggers this
    * callback BEFORE execution; the command runs only if it returns true.
@@ -206,6 +217,20 @@ export async function executeLocalToolWithPolicy(args: {
   if (!executor) {
     throw new Error(`${decision.toolName} is allowed by policy but no local executor is registered.`);
   }
+  // When a per-turn abortSignal is present and the tool is execShell, inject
+  // the signal into the execShell executor via its optional second arg. Other
+  // executors keep their single-arg contract and ignore the extra opts.
+  const effectiveExecutor =
+    args.abortSignal && decision.toolName === "execShell" && args.executors
+      ? (call: AgentRuntimeToolCallInput) =>
+          (args.executors!.execShell as unknown as (
+            call: AgentRuntimeToolCallInput,
+            opts?: { abortSignal?: AbortSignal; detachMs?: number },
+          ) => Promise<AgentRuntimeToolResult>)(call, {
+            abortSignal: args.abortSignal,
+            detachMs: args.detachMs,
+          })
+      : executor;
   const guardEnabled = args.enableDestructiveShellGuard !== false;
   if (decision.toolName === "execShell" && !args.confirmed && guardEnabled) {
     const parsed = parseShellCommandPayload(args.call.arguments);
@@ -252,7 +277,7 @@ export async function executeLocalToolWithPolicy(args: {
             "destructive shell command blocked: no confirmation channel available",
           );
         }
-        return executor({
+        return effectiveExecutor({
           ...args.call,
           name: decision.toolName,
         });
@@ -265,7 +290,7 @@ export async function executeLocalToolWithPolicy(args: {
       }
     }
   }
-  return executor({
+  return effectiveExecutor({
     ...args.call,
     name: decision.toolName,
   });

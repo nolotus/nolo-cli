@@ -1,4 +1,5 @@
 import { findModelConfig } from "../../ai/llm/providers";
+import { getModelContextWindow } from "../../ai/llm/getModelContextWindow";
 import type { EnvLike } from "./agentRunTypes";
 
 export type TurnTokenUsage = {
@@ -45,15 +46,6 @@ export function mergeUsageRecords(
   };
 }
 
-function fuzzyContextWindow(model: string) {
-  const lower = model.toLowerCase();
-  if (lower.includes("minimax-m3") || lower.includes("minimax_m3")) return 1_000_000;
-  if (lower.includes("minimax-m2")) return 262_144;
-  if (lower.includes("gpt-5") || lower.includes("gpt-4.1")) return 1_047_576;
-  if (lower.includes("claude")) return 200_000;
-  return undefined;
-}
-
 export function resolveContextWindow(model?: string) {
   const raw = model?.trim();
   if (!raw) return undefined;
@@ -63,7 +55,10 @@ export function resolveContextWindow(model?: string) {
     if (config?.contextWindow) return config.contextWindow;
   }
 
-  return fuzzyContextWindow(raw);
+  // PROVIDER_LOOKUP_ORDER 不含 qwen / moonshot / nolo / xai / zai / anthropic，
+  // 且对命名变体（显示名、未在表内的自定义 id）也会 miss。回退到全量模型表 +
+  // fuzzy 兜底，与 TUI 初始 fallback 共用单一真值源（getModelContextWindow）。
+  return getModelContextWindow(raw);
 }
 
 export function buildTurnTokenUsage(

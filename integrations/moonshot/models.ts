@@ -101,6 +101,23 @@ export const kimiCodeModels: Model[] = [
       "Kimi 最强旗舰编程模型，2.8T 参数，1M 上下文，low/high/max 三档思考深度，擅长复杂工程与长程推理。Moderato 及以上可用。",
   },
 
+  // ── 旗舰编程（256K 上下文版）──
+  {
+    name: "k3-256k",
+    displayName: "Kimi K3 256K",
+    hasVision: false,
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    jsonOutput: true,
+    fnCall: true,
+    supportsTool: true,
+    supportsReasoningEffort: true,
+    price: { input: 0, output: 0 },
+    provider: "moonshot",
+    description:
+      "K3 的 256K 上下文版，消耗约为 k3 的一半，适合日常问答与代码补全。不支持视频输入。Moderato 及以上可用。",
+  },
+
   // ── 成熟编程 ──
   {
     name: "kimi-for-coding",

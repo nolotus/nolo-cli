@@ -72,6 +72,7 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
   const eventMode = resolveAgentEventMode(options);
 
   let streamedAssistantText = false;
+  let everStreamedAnyText = false;
   let printedAssistantLabel = false;
 
   const thinkingMode = resolveThinkingDisplayMode(options.env);
@@ -88,6 +89,7 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
       printedAssistantLabel = true;
     }
     streamedAssistantText = true;
+    everStreamedAnyText = true;
     renderWriter.push(chunk);
   };
 
@@ -104,36 +106,65 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
 
   const handleToolEvent = (event: LocalAgentToolEvent) => {
     if (!traceLocalTools) return;
-    if (event.type === "tool-call") {
-      thinkingFilter.flush();
-      renderWriter.flush();
-      if (streamedAssistantText) {
-        options.output.write("\n");
-        streamedAssistantText = false;
-      }
-    }
 
     const chunk =
       eventMode === "jsonl"
         ? formatToolJsonEvent(event)
         : formatToolEvent(event);
 
-    if (
-      eventMode !== "jsonl" &&
-      toolDisplayMode === "compact" &&
-      event.type === "tool-call"
-    ) {
-      const activeLabel = formatActiveToolLabel(event);
-      spinner.show(activeLabel);
-      options.activityReporter?.(activeLabel);
+    if (eventMode === "jsonl") {
+      options.output.write(chunk);
       return;
     }
 
-    if (!chunk) return;
+    // A tool-call interrupts assistant text streaming. Flush any buffered
+    // thinking/render text so it appears before the tool chrome. This must
+    // happen before we stop the spinner for the tool chunk, because
+    // writeVisibleAssistantChunk (called by the flush) manages its own
+    // spinner stop + label writing. Tool-result events don't interrupt
+    // text (it was already flushed by the preceding tool-call).
+    if (event.type === "tool-call") {
+      thinkingFilter.flush();
+      renderWriter.flush();
+    }
+
+    // ── Stop spinner before writing tool content ───────────────────
+    // The spinner's \r clear must hit the spinner's own line, not a line
+    // we are about to emit. The old code placed `spinner.stop()` after
+    // `if (!chunk) return`, so buffered-class tool-results (chunk="")
+    // returned early and left the `· Read xxx (0s)` frame permanently in
+    // the transcript. Stopping unconditionally here also makes stop() a
+    // no-op when no spinner is active (see agentRunSpinner.ts).
     spinner.stop();
     options.activityReporter?.(null);
-    options.output.write(chunk);
-    if (event.type === "tool-call") {
+
+    // Mid-stream tool-calls interrupt assistant text. Break onto a new
+    // line when assistant text was just flushed in this same event
+    // (streamedAssistantText is set by writeVisibleAssistantChunk via
+    // thinkingFilter.flush, and reset right after the newline). This
+    // ensures exactly ONE separator between a text segment and the first
+    // tool that follows it. Subsequent buffered tool-calls (chunk="")
+    // do not re-trigger the newline because streamedAssistantText is
+    // already false — that was the source of the ~19 stray blank lines.
+    // Note: `printedAssistantLabel` is intentionally excluded: it stays
+    // true for the entire turn and would re-trigger "\n" on every call.
+    if (event.type === "tool-call" && streamedAssistantText) {
+      options.output.write("\n");
+      streamedAssistantText = false;
+    }
+
+    // Write tree / compact content. For buffered tools (read/search/run/
+    // fetch) the formatter accumulates internally and returns ""; the tree
+    // is flushed later when a non-buffered tool arrives or at finish().
+    if (chunk) {
+      options.output.write(chunk);
+    }
+
+    // ── Post-write: start spinner for in-flight tool-calls ──────────
+    if (
+      toolDisplayMode === "compact" &&
+      event.type === "tool-call"
+    ) {
       const activeLabel = formatActiveToolLabel(event);
       spinner.show(activeLabel);
       options.activityReporter?.(activeLabel);
@@ -168,6 +199,12 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
       if (streamedAssistantText) {
         thinkingFilter.flush();
         renderWriter.flush();
+        options.output.write("\n");
+      } else if (everStreamedAnyText) {
+        // Text was streamed earlier but reset by a tool-call event; the last
+        // segment (if any) was already flushed. Don't re-render the full
+        // result.content — that would duplicate the streamed output.
+        thinkingFilter.flush();
         options.output.write("\n");
       } else {
         const content = fallbackContent

@@ -15,5 +15,6 @@ export function dialogMessageRecordToAgentRuntimeMessage(
       : {}),
     ...(typeof record.toolCallId === "string" ? { tool_call_id: record.toolCallId } : {}),
     ...(Array.isArray(record.tool_calls) ? { tool_calls: record.tool_calls } : {}),
+    ...(typeof record.toolName === "string" ? { toolName: record.toolName } : {}),
   };
 }

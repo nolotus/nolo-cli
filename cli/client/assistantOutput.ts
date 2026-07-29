@@ -384,7 +384,7 @@ export function polishAssistantStructure(
   // between siblings. Fence interiors are already masked to `\x00F<n>\x00`
   // sentinels (not list-like), so code that happens to look like a list is
   // never touched.
-  const LIST_LIKE = /^\s*(?:•|☐|☑|\d+\.)\s/;
+  const LIST_LIKE = /^\s*(?:•|☐|☑|\d+\.)\s|^\s*[\u2460-\u2473]/;
   const headingLines = afterHeading.split("\n");
   const breathed: string[] = [];
   for (let i = 0; i < headingLines.length; i++) {
@@ -435,10 +435,21 @@ function styleInlineMarkdown(line: string, brightness: TuiBrightness) {
   const inlineCode = colorSeq("muted", brightness);
   const reset = STYLE.reset;
   const bold = STYLE.bold;
+  const dim = STYLE.dim;
+  // Order matters: bold (**) runs before italic (*) so that "**a**" is
+  // consumed first; after bold replacement the remaining single-* pairs are
+  // genuine italics. Strikethrough (~~) is independent. Without this, the
+  // markers would leak into terminal output as literal asterisks/tildes.
   return line
     .replace(MARKDOWN_LINK_RE, (m, t, u) => renderMarkdownLink(m, t, u))
     .replace(/`([^`]+)`/g, `${inlineCode}$1${reset}`)
-    .replace(/\*\*(.+?)\*\*/g, `${bold}$1${reset}`);
+    .replace(/\*\*(.+?)\*\*/g, `${bold}$1${reset}`)
+    // Italic: only `*x*`, not `_x_`. CommonMark gives `_` an intra-word
+    // limitation (snake_case identifiers must not trigger italic), which
+    // requires a word-boundary guard. Agent output contains snake_case
+    // variables frequently; supporting `_italic_` would corrupt them.
+    .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, `${dim}$1${reset}`)
+    .replace(/~~([^~]+?)~~/g, `${dim}\x1b[9m$1\x1b[29m${reset}`);
 }
 
 function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
@@ -461,6 +472,13 @@ function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
       return `${STYLE.bold}${colorSeq("warning", brightness)}${title}${STYLE.reset}`;
     }
     return `${STYLE.bold}${colorSeq("info", brightness)}${title}${STYLE.reset}`;
+  }
+  // 状态行弱化：repo 规范强制每条回复首句是"进入 nolo-plan…"，连续多条
+  // 回复堆叠时视觉噪声大。把它降级成 chrome + dim 的弱化行，和正文拉开
+  // 层级。必须与 highlightMarkdown（tui/theme.ts）对齐，否则同一条回复
+  // 在流式与历史重绘间会出现颜色跳变。
+  if (line.startsWith("进入 nolo-plan")) {
+    return `${colorSeq("chrome", brightness)}${STYLE.dim}${line}${STYLE.reset}`;
   }
   // Blockquote: "> text" → chrome left border + dimmed content, visually
   // distinct from body text without competing with headings or code.
@@ -554,7 +572,8 @@ function classifyStreamLine(line: string): StreamLineKind {
     TASK_LIST_RE.test(line) ||
     UNORDERED_LIST_RE.test(line) ||
     ORDERED_LIST_RE.test(line) ||
-    /^\s*(?:•|☐|☑)\s/.test(line)
+    /^\s*(?:•|☐|☑)\s/.test(line) ||
+    /^\s*[\u2460-\u2473]/.test(line)
   ) {
     return "list";
   }

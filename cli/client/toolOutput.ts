@@ -1,4 +1,4 @@
-import { clipPathAware, formatHomePath, formatReadItemPath, formatReadTreeLines, formatRunTreeLines, formatSearchItemQuery, formatSearchTreeLines } from "./formatReadPathTree";
+import { clipPathAware, formatFetchTreeLines, formatHomePath, formatReadItemPath, formatReadTreeLines, formatRunTreeLines, formatSearchItemQuery, formatSearchTreeLines } from "./formatReadPathTree";
 export { clipPathAware };
 import { clipCompactText } from "../../core/clipCompactText";
 import { compactWhitespace } from "../../core/compactWhitespace";
@@ -307,6 +307,15 @@ function isRunToolName(name?: string): boolean {
   return name === "execShell" || name === "runCommand" || name === "run_command" || name === "launchProcess";
 }
 
+/**
+ * Fetch-class tools: fetchWebpage. Renders as a • Fetch (N) tree, mirroring
+ * Read/Search/Run. The URL is the canonical leaf text.
+ */
+function isFetchToolName(name?: string): boolean {
+  if (!name) return false;
+  return name === "fetchWebpage" || name === "fetch_webpage";
+}
+
 function isRunResultFoldable(event: LocalAgentToolEvent): boolean {
   return Boolean(event.metadata?.actionGate) === false;
 }
@@ -397,6 +406,35 @@ export function formatRunTreeBlockForCli(
 
   return `${headerLine}${treeLines}\n`;
 }
+
+export function formatFetchTreeBlockForCli(
+  items: Array<{ url: string }>,
+  colorEnabled: boolean
+): string {
+  if (items.length === 0) return "";
+  const { count, lines } = formatFetchTreeLines(items);
+
+  if (!colorEnabled) {
+    const headerLine = `• Fetch (${count})\n`;
+    const treeLines = lines.map((l) => `  ${l.connector}${l.urlText}`).join("\n");
+    return `${headerLine}${treeLines}\n`;
+  }
+
+  const bullet = themeText("•", "chrome", true);
+  const title = styleCliText("Fetch", "bold", true);
+  const countText = themeText(`(${count})`, "muted", true);
+  const headerLine = `${bullet} ${title} ${countText}\n`;
+
+  const treeLines = lines
+    .map((l) => {
+      const connector = themeText(`  ${l.connector}`, "chrome", true);
+      const urlText = themeText(l.urlText, "info", true);
+      return `${connector}${urlText}`;
+    })
+    .join("\n");
+
+  return `${headerLine}${treeLines}\n`;
+}
 function formatCompactToolLine(
   event: LocalAgentToolEvent,
   pending: { toolName: string; argumentsPreview?: string } | undefined,
@@ -421,6 +459,14 @@ function formatCompactToolLine(
       "";
     const rawPath = typeof event.metadata?.path === "string" ? event.metadata.path : undefined;
     return formatSearchTreeBlockForCli([{ query: rawQuery, path: rawPath }], colorEnabled);
+  }
+  if (isFetchToolName(toolName) && event.type === "tool-result") {
+    const rawUrl =
+      (typeof event.metadata?.url === "string" ? event.metadata.url : undefined) ||
+      event.argumentsPreview ||
+      pending?.argumentsPreview ||
+      "";
+    return formatFetchTreeBlockForCli([{ url: rawUrl }], colorEnabled);
   }
   if (isRunToolName(toolName) && event.type === "tool-result" && isRunResultFoldable(event)) {
     const rawCommand =
@@ -527,6 +573,7 @@ export function createToolEventFormatter(
   let readBuffer: LocalAgentToolEvent[] = [];
   let searchBuffer: LocalAgentToolEvent[] = [];
   let runBuffer: LocalAgentToolEvent[] = [];
+  let fetchBuffer: LocalAgentToolEvent[] = [];
 
   const flushBuffers = (): string => {
     let out = "";
@@ -578,6 +625,21 @@ export function createToolEventFormatter(
       for (const evt of runBuffer) pending.delete(evt.toolCallId);
       runBuffer = [];
       out += formatRunTreeBlockForCli(items, colorEnabled);
+    }
+
+    if (fetchBuffer.length > 0) {
+      const items = fetchBuffer.map((evt) => {
+        const call = pending.get(evt.toolCallId);
+        const rawUrl =
+          (typeof evt.metadata?.url === "string" ? evt.metadata.url : undefined) ||
+          evt.argumentsPreview ||
+          call?.argumentsPreview ||
+          "";
+        return { url: rawUrl };
+      });
+      for (const evt of fetchBuffer) pending.delete(evt.toolCallId);
+      fetchBuffer = [];
+      out += formatFetchTreeBlockForCli(items, colorEnabled);
     }
 
     return out;
@@ -636,6 +698,20 @@ export function createToolEventFormatter(
       }
       if (event.type === "tool-result") {
         runBuffer.push(event);
+        return "";
+      }
+    }
+
+    if (isFetchToolName(event.toolName)) {
+      if (event.type === "tool-call") {
+        pending.set(event.toolCallId, {
+          toolName: event.toolName,
+          argumentsPreview: event.argumentsPreview,
+        });
+        return "";
+      }
+      if (event.type === "tool-result") {
+        fetchBuffer.push(event);
         return "";
       }
     }

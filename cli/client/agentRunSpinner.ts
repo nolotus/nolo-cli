@@ -62,12 +62,17 @@ export class Spinner {
   }
 
   stop() {
+    const wasActive = this.timer !== null;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
     if (this.silent) return;
-    if (this.isTTY) {
+    // Only clear the line when a spinner frame is actually on screen
+    // (timer was running). Calling stop() when no spinner is active must
+    // be a true no-op — otherwise \r would discard valid transcript content
+    // on the current line (e.g. a just-written tool result or assistant text).
+    if (this.isTTY && wasActive) {
       this.output.write("\r\x1b[K");
       this.output.write("\x1b[?25h");
     }

@@ -104,6 +104,7 @@ export type MachineWsRunDispatchDeps = {
     cwd: string;
     fetchImpl?: CliFetchImpl;
     onProgress?: (progress: ConnectorRunProgress) => void;
+    abortSignal?: AbortSignal;
   }) => Promise<ConnectorLocalRunResult>;
   /** Override ChatGPT web image local job (tests / alternate runners). */
   runChatgptWebImageLocalJob?: (
@@ -346,6 +347,7 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
   cwd: string;
   fetchImpl?: CliFetchImpl;
   onProgress?: (progress: ConnectorRunProgress) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ConnectorLocalRunResult> {
   const obj = asRecordOrEmpty(args.parsed);
   const payload = asRecordOrEmpty(obj.payload);
@@ -433,6 +435,7 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
     input: typeof userInputRaw === "string" ? userInputRaw : "",
     continueDialogId:
       typeof continueDialogIdRaw === "string" ? continueDialogIdRaw : undefined,
+    ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
     onToolEvent: (event) => {
       if (event.type === "tool-call") toolCallCount += 1;
       if (event.type === "tool-result") toolResultCount += 1;

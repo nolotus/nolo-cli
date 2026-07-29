@@ -109,6 +109,9 @@ function buildDialogMessageWriteOps(args: {
       // to opaque ids until dialog query/continuation callers are reviewed.
       const id = `${args.now}-${String(index + 1).padStart(3, "0")}`;
       const key = dialogMessageKey(args.dialogId, id);
+      // 工具名是 tool 行的语义字段：桌面端折叠头、CLI toolsUsed 统计都读它。
+      // 缺它时 UI 只能兜底成「工具」，故在落库层强制持久化。
+      const toolName = asOptionalTrimmedString(message.toolName);
       return {
         type: "put" as const,
         key,
@@ -129,6 +132,7 @@ function buildDialogMessageWriteOps(args: {
             cybotKey: args.input.agentKey,
           } : {}),
           ...(message.tool_call_id ? { toolCallId: message.tool_call_id } : {}),
+          ...(toolName ? { toolName } : {}),
           ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls } : {}),
           ...(message.tool_result_metadata ? { metadata: message.tool_result_metadata } : {}),
           createdAt: args.nowIso,

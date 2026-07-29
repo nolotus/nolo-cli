@@ -8,23 +8,15 @@
 // - postRemoteRecord / readRemoteRecord：远程 db read/write
 // - syncLocalDialogEvidenceToRemote：批量同步本地写入 ops 到远程
 // - maybeWakeParentDialogAfterLocalSync：子对话 terminal → 唤醒父对话
-// - pushLocalDialogToRemote：本地对话推送到远程（fallback 用）
-// - ensureDialogSyncedForServerFallback：检查远程是否存在，不存在则推送
 //
 // 外部依赖：resolveRuntimeServerUrl / resolveRuntimeAuthToken / remoteDialogSyncTimeout /
-// readDialogFromLocalDb / parseUserIdFromAuthToken / clipCompactText
+// parseUserIdFromAuthToken / clipCompactText
 
 import { isRecord } from "../../core/isRecord";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { asTrimmedNonEmptyStringArray } from "../../core/stringArray";
 import { toErrorMessage } from "../../core/errorMessage";
 import type { CliFetchImpl } from "../cliFetch";
-import {
-  readDialogFromLocalDb,
-  type LocalDialogReadResult,
-} from "../../agent-runtime/localDialogRead";
-import { isLevelLockError } from "../../database/levelLockError";
-import { getDefaultCliLocalRuntimeDb } from "../localRuntimeAuthority";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
 import {
   resolveRuntimeServerUrl,
@@ -32,6 +24,7 @@ import {
   remoteDialogSyncTimeout,
   type EnvLike,
 } from "./localRuntimeHelpers";
+import { fetchWithTransientRetry } from "./localRuntimeFetchRetry";
 import { clipCompactText } from "../../core/clipCompactText";
 import type { AgentRuntimeSaveTurnInput } from "../../agent-runtime";
 
@@ -116,6 +109,41 @@ function buildLocalParentWakeMessage(args: {
   ].join("\n");
 }
 
+// ── throttled batch helpers ──────────────────────────────────────────────
+//
+// 服务端 db write 限流 120 次/分/IP；补同步大差集突发会直接打满。
+// 写循环按批执行：每批最多 `EVIDENCE_WRITE_BATCH_SIZE` 条并发，批间 sleep
+// `EVIDENCE_WRITE_BATCH_GAP_MS`。批间 fail-fast：某批任一写失败即抛出，
+// 后续批不再派发（此前无界 Promise.all 失败时其余写已在途）。失败由调用方
+// 的 try/catch 兜底，这里只做节流。
+const EVIDENCE_WRITE_BATCH_SIZE = 4;
+const EVIDENCE_WRITE_BATCH_GAP_MS = 300;
+
+async function defaultEvidenceSleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 按批并发执行写入任务，批间节流。保持输入顺序语义（前一批全部完成后
+ * 才开始下一批），避免乱序覆盖。
+ */
+async function runThrottledBatches<T>(
+  items: readonly T[],
+  run: (item: T) => Promise<void>,
+  options: { batchSize?: number; batchGapMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+) {
+  const batchSize = options.batchSize ?? EVIDENCE_WRITE_BATCH_SIZE;
+  const batchGapMs = options.batchGapMs ?? EVIDENCE_WRITE_BATCH_GAP_MS;
+  const sleep = options.sleep ?? defaultEvidenceSleep;
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map((item) => run(item)));
+    if (i + batchSize < items.length) {
+      await sleep(batchGapMs);
+    }
+  }
+}
+
 // ── remote record I/O ────────────────────────────────────────────────────
 
 export async function postRemoteRecord(args: {
@@ -126,19 +154,26 @@ export async function postRemoteRecord(args: {
   serverUrl: string;
   userId: string;
 }) {
-  const response = await args.fetchImpl(`${args.serverUrl}/api/v1/db/write/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${args.authToken}`,
+  const response = await fetchWithTransientRetry(
+    args.fetchImpl,
+    `${args.serverUrl}/api/v1/db/write/`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${args.authToken}`,
+      },
+      body: JSON.stringify({
+        customKey: args.key,
+        userId: args.userId,
+        data: prepareRemoteDialogEvidenceRecord(args.key, args.data),
+      }),
+      signal: AbortSignal.timeout(remoteDialogSyncTimeout()),
     },
-    body: JSON.stringify({
-      customKey: args.key,
-      userId: args.userId,
-      data: prepareRemoteDialogEvidenceRecord(args.key, args.data),
-    }),
-    signal: AbortSignal.timeout(remoteDialogSyncTimeout()),
-  });
+    // evidence 写是 customKey 幂等覆盖写（同 key 重写结果相同），
+    // 因此 502 重试安全：即便前一次已被服务端处理，重写结果不变。
+    { retryableStatuses: new Set([429, 502, 503]) },
+  );
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(
@@ -279,6 +314,8 @@ export async function syncLocalDialogEvidenceToRemote(args: {
   ops: Array<{ type: "put"; key: string; value: any }>;
   output?: { write(chunk: string): unknown };
   userId: string;
+  /** 可注入 sleep，测试用于断言批间节流；生产路径用默认 setTimeout。 */
+  sleep?: (ms: number) => Promise<void>;
 }) {
   const serverUrl = resolveRuntimeServerUrl(args.env);
   const authToken = resolveRuntimeAuthToken(args.env);
@@ -299,20 +336,23 @@ export async function syncLocalDialogEvidenceToRemote(args: {
   }
   orderedOps.push(...nonMsgOps);
 
-  // Remote post requests are independent — parallelize with Promise.all
-  await Promise.all(
-    orderedOps
-      .filter((op) => op.type === "put")
-      .map((op) =>
-        postRemoteRecord({
-          authToken,
-          data: op.value,
-          fetchImpl: args.fetchImpl,
-          key: op.key,
-          serverUrl,
-          userId: args.userId,
-        }),
-      ),
+  // Remote post requests are independent — but unbounded Promise.all can
+  // burst past the server's 120/min/IP db-write limit on a large backlog.
+  // Bounded concurrency (4) preserves the msg-then-nonMsg ordering while
+  // keeping the write rate within the throttle budget. 某批失败即中止后续
+  // 批次（fail-fast），由调用方 try/catch 兜底。
+  await runThrottledBatches(
+    orderedOps.filter((op) => op.type === "put"),
+    (op) =>
+      postRemoteRecord({
+        authToken,
+        data: op.value,
+        fetchImpl: args.fetchImpl,
+        key: op.key,
+        serverUrl,
+        userId: args.userId,
+      }),
+    args.sleep ? { sleep: args.sleep } : {},
   );
 
   const childDialogOp = args.ops.find(
@@ -346,252 +386,6 @@ export async function syncLocalDialogEvidenceToRemote(args: {
 }
 
 // ── push local dialog to remote (fallback) ───────────────────────────────
-
-export async function pushLocalDialogToRemote(args: {
-  authToken: string;
-  continueDialogId: string;
-  env: EnvLike;
-  fetchImpl?: CliFetchImpl;
-  output?: { write(chunk: string): unknown };
-  serverUrl?: string;
-  userId: string;
-}): Promise<{ ok: boolean; exitCode?: number }> {
-  const serverUrl =
-    (args.serverUrl && args.serverUrl.trim() ? args.serverUrl.trim() : undefined) ||
-    resolveRuntimeServerUrl(args.env);
-  if (!serverUrl) {
-    args.output?.write(
-      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (server URL missing). Please check your network or authentication, or start a new dialog.\n`,
-    );
-    return { ok: false, exitCode: 1 };
-  }
-  const fetchImpl =
-    args.fetchImpl ?? (globalThis.fetch as unknown as CliFetchImpl);
-  const dialogKey = `dialog-${args.userId}-${args.continueDialogId}`;
-
-  let localData: LocalDialogReadResult;
-  try {
-    // 走 CLI authority broker：attach-to-existing + 重试，不直接 new Level() 抢 LOCK。
-    // 当本地 dev server / 上一轮 agent runtime 持有 LevelDB LOCK 时，直接 import serverDb
-    // 会立刻抛 LEVEL_LOCKED，导致 fallback sync 静默失败、server 带着残缺历史继续。
-    const localDb = await getDefaultCliLocalRuntimeDb({ env: args.env });
-    localData = await readDialogFromLocalDb({
-      dialogKey,
-      dialogId: args.continueDialogId,
-      limit: 0,
-      db: localDb,
-    });
-  } catch (err) {
-    args.output?.write(
-      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (${toErrorMessage(err)}). Please check your network or authentication, or start a new dialog.\n`,
-    );
-    return { ok: false, exitCode: 1 };
-  }
-
-  if (!localData || !localData.meta) {
-    args.output?.write(
-      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (local dialog record not found). Please check your network or authentication, or start a new dialog.\n`,
-    );
-    return { ok: false, exitCode: 1 };
-  }
-
-  try {
-    for (const msg of localData.msgs || []) {
-      const msgKey =
-        msg._key ||
-        msg.dbKey ||
-        `dialog-msg-${args.continueDialogId}-${msg.id}`;
-      await postRemoteRecord({
-        authToken: args.authToken,
-        data: msg,
-        fetchImpl,
-        key: msgKey,
-        serverUrl,
-        userId: args.userId,
-      });
-    }
-
-    await postRemoteRecord({
-      authToken: args.authToken,
-      data: localData.meta,
-      fetchImpl,
-      key: dialogKey,
-      serverUrl,
-      userId: args.userId,
-    });
-  } catch (err) {
-    args.output?.write(
-      `[nolo] Dialog "${args.continueDialogId}" exists only locally and failed to sync to server (${toErrorMessage(err)}). Please check your network or authentication, or start a new dialog.\n`,
-    );
-    return { ok: false, exitCode: 1 };
-  }
-
-  return { ok: true };
-}
-
-/** 与 pushLocalDialogToRemote 同一套 key 推导，两处必须一致否则会重复写入。 */
-const dialogMessageKey = (dialogId: string, msg: any) =>
-  msg?._key || msg?.dbKey || `dialog-msg-${dialogId}-${msg?.id}`;
-
-/**
- * 补齐远端缺失的本地消息（best-effort，失败绝不阻塞 fallback）。
- *
- * 只补不删、只按 key 补差集：远端比本地新时（例如对话本来就在服务端跑）
- * 这里什么都不做，不会用陈旧的本地状态覆盖服务端。
- */
-async function pushLocalMessagesMissingFromRemote(args: {
-  authToken: string;
-  continueDialogId: string;
-  dialogKey: string;
-  env: EnvLike;
-  fetchImpl: CliFetchImpl;
-  output?: { write(chunk: string): unknown };
-  serverUrl: string;
-  userId: string;
-}): Promise<void> {
-  try {
-    // 与 pushLocalDialogToRemote 同走 broker，避免直接抢 LevelDB LOCK。
-    const localDb = await getDefaultCliLocalRuntimeDb({ env: args.env });
-    const localData = await readDialogFromLocalDb({
-      dialogKey: args.dialogKey,
-      dialogId: args.continueDialogId,
-      limit: 0,
-      db: localDb,
-    });
-    const localMsgs = localData?.msgs ?? [];
-    if (localMsgs.length === 0) return;
-
-    const remoteRes = await args.fetchImpl(`${args.serverUrl}/rpc/getConvMsgs`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${args.authToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ dialogId: args.continueDialogId, limit: 0 }),
-    });
-    if (!remoteRes.ok) return;
-    const remoteMsgs = await remoteRes.json();
-    if (!Array.isArray(remoteMsgs)) return;
-
-    const remoteKeys = new Set(
-      remoteMsgs.map((msg) => dialogMessageKey(args.continueDialogId, msg)),
-    );
-    const missing = localMsgs.filter(
-      (msg) => !remoteKeys.has(dialogMessageKey(args.continueDialogId, msg)),
-    );
-    if (missing.length === 0) return;
-
-    for (const msg of missing) {
-      await postRemoteRecord({
-        authToken: args.authToken,
-        data: msg,
-        fetchImpl: args.fetchImpl,
-        key: dialogMessageKey(args.continueDialogId, msg),
-        serverUrl: args.serverUrl,
-        userId: args.userId,
-      });
-    }
-    args.output?.write(
-      `[nolo] Synced ${missing.length} local-only message(s) to the server before falling back.\n`,
-    );
-  } catch (err) {
-    // 补齐是 best-effort：宁可带着略旧的历史继续，也不要因为同步失败而整轮失败。
-    // 但 lock 错误要给用户人话提示，告诉他为什么历史会缺——不是网络问题，
-    // 而是本地 dev server / 上一轮 agent runtime 还握着 LevelDB LOCK。
-    if (isLevelLockError(err)) {
-      args.output?.write(
-        `[nolo] Warning: local database is locked; server fallback will continue with incomplete history. `
-          + `Release the local DB (stop the dev server / kill stale agent processes) and retry, or use the server-side history directly.\n`,
-      );
-    } else {
-      args.output?.write(
-        `[nolo] Warning: could not sync local-only messages before fallback (${toErrorMessage(err)}).\n`,
-      );
-    }
-  }
-}
-
-export async function ensureDialogSyncedForServerFallback(
-  options: {
-    continueDialogId?: string;
-    env: EnvLike;
-    fetchImpl?: CliFetchImpl;
-    output?: { write(chunk: string): unknown };
-    serverUrl?: string;
-  },
-  authToken: string,
-): Promise<{ ok: boolean; exitCode?: number }> {
-  const continueDialogId = options.continueDialogId
-    ? String(options.continueDialogId).trim()
-    : "";
-  if (!continueDialogId) {
-    return { ok: true };
-  }
-
-  const userId = parseUserIdFromAuthToken(authToken);
-  if (!userId || userId === "local") {
-    return { ok: true };
-  }
-
-  const serverUrl =
-    resolveRuntimeServerUrl(options.env) ||
-    (options.serverUrl && options.serverUrl.trim() ? options.serverUrl.trim() : undefined);
-  if (!serverUrl) {
-    return { ok: true };
-  }
-  const fetchImpl =
-    options.fetchImpl ?? (globalThis.fetch as unknown as CliFetchImpl);
-  const dialogKey = `dialog-${userId}-${continueDialogId}`;
-
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `${serverUrl}/api/v1/db/read/${encodeURIComponent(dialogKey)}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-      },
-    );
-  } catch (err) {
-    options.output?.write(
-      `[nolo] Warning: Failed to check remote dialog status (${toErrorMessage(err)}); continuing fallback.\n`,
-    );
-    return { ok: true };
-  }
-
-  if (response.ok) {
-    // 远端有 dialog 记录 ≠ 远端有完整消息。此前这里直接放行，于是本地轮次
-    // 同步失败后（服务器繁忙时 chat 代理与 db 写入会同时退化）server fallback
-    // 会带着过期历史重跑，用户看到的就是「刚说过的话它不记得」。补齐差额。
-    await pushLocalMessagesMissingFromRemote({
-      authToken,
-      continueDialogId,
-      dialogKey,
-      env: options.env,
-      fetchImpl,
-      output: options.output,
-      serverUrl,
-      userId,
-    });
-    return { ok: true };
-  }
-
-  if (response.status === 404) {
-    return pushLocalDialogToRemote({
-      authToken,
-      continueDialogId,
-      env: options.env,
-      fetchImpl,
-      output: options.output,
-      serverUrl,
-      userId,
-    });
-  }
-
-  options.output?.write(
-    `[nolo] Warning: Failed to check remote dialog status (HTTP ${response.status}); continuing fallback.\n`,
-  );
-  return { ok: true };
-}
+// Removed: pushLocalDialogToRemote, pushLocalMessagesMissingFromRemote,
+// ensureDialogSyncedForServerFallback — auto runtime no longer falls back
+// to server when local fails (see agentRun.ts).

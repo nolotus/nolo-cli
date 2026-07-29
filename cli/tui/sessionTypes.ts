@@ -46,6 +46,8 @@ export type TuiState = {
   thinkingDisplay: ThinkingDisplayMode;
   toolDisplay: ToolDisplayMode;
   turnTokens?: TurnTokenUsage;
+  /** Resolved from agentName at init / agent-switch; fallback when turnTokens has no contextWindow. */
+  contextWindow?: number;
 };
 
 export type TuiAction =

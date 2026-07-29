@@ -27,6 +27,27 @@ describe("tui theme", () => {
     );
   });
 
+  test("trail light warning is the deeper amber 9A6A1F (H2 contrast on white)", () => {
+    // Owner feedback: ## Plan / H2 headers floated yellow on white. The hex
+    // was deepened from B57F2E → 9A6A1F for more contrast on light backgrounds.
+    expect(themeColorSequence("warning", { COLORTERM: "truecolor", NOLO_TUI_THEME: "light" })).toBe(
+      "\x1b[38;2;154;106;31m",
+    );
+  });
+
+  test("trail light muted is the denser slate 5E6A78 (not lighter than the old 687584)", () => {
+    // 687584 read as a wash of saturated blue in dense prose (inline code /
+    // tool labels). 5E6A78 pulls the blue channel down and stays darker, so
+    // white-background contrast is preserved.
+    const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "light" };
+    expect(themeColorSequence("muted", env)).toBe("\x1b[38;2;94;106;120m");
+    // Hard constraint: new value must not be lighter than the old one.
+    // Luminance-ish check: average channel value must be <= old average.
+    const oldAvg = (0x68 + 0x75 + 0x84) / 3;
+    const newAvg = (0x5e + 0x6a + 0x78) / 3;
+    expect(newAvg).toBeLessThanOrEqual(oldAvg);
+  });
+
   test("dark theme accent uses mocha blue", () => {
     expect(themeColorSequence("accent", { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" })).toBe(
       "\x1b[38;2;137;180;250m",
@@ -92,6 +113,47 @@ describe("tui theme", () => {
       expect(formatted).toContain("└───");
       expect(formatted).toContain(themeText("│", "chrome", true, env));
       expect(formatted).toContain("const x = 1;");
+    });
+
+    test("formats italic with dim, not leaking asterisks", () => {
+      const formatted = highlightMarkdown("this is *important*", true);
+      expect(formatted).toBe("this is \x1b[2mimportant\x1b[22m");
+    });
+
+    test("bold runs before italic so ** is not half-consumed", () => {
+      const formatted = highlightMarkdown("**bold** and *italic*", true);
+      expect(formatted).toContain("\x1b[1mbold\x1b[22m");
+      expect(formatted).toContain("\x1b[2mitalic\x1b[22m");
+    });
+
+    test("does not corrupt snake_case identifiers as italic", () => {
+      // _italic_ is intentionally NOT supported. snake_case must pass through.
+      const formatted = highlightMarkdown("call foo_bar_baz here", true);
+      expect(formatted).not.toContain("\x1b[2mbar\x1b[22m");
+      expect(formatted).toContain("foo_bar_baz");
+    });
+
+    test("formats strikethrough with dim+strike, not leaking tildes", () => {
+      const formatted = highlightMarkdown("this is ~~removed~~", true);
+      expect(formatted).toBe("this is \x1b[2m\x1b[9mremoved\x1b[29m\x1b[22m");
+    });
+
+    test("dims the 进入 nolo-plan status line with chrome", () => {
+      // Repo convention forces every reply to start with "进入 nolo-plan…".
+      // Downgrade to chrome + dim to cut visual noise. Must match the streaming
+      // renderer (assistantOutput.ts styleRichMarkdownLine) so repaint from
+      // history doesn't shift colors.
+      const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
+      const formatted = highlightMarkdown(
+        "进入 nolo-plan（4 项串行小改）。\nbody text",
+        true,
+        env
+      );
+      const chrome = themeColorSequence("chrome", env);
+      expect(formatted).toContain(`${chrome}\x1b[2m进入 nolo-plan（4 项串行小改）。`);
+      // The body line is NOT dimmed by this rule.
+      expect(formatted).toContain("body text");
+      expect(formatted).not.toContain("\x1b[2mbody text");
     });
   });
 

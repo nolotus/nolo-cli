@@ -14,6 +14,10 @@ import { resolveCliColorEnabled } from "../client/terminalStyles";
  * rules, tool labels and secondary body text, which need more contrast than a
  * placeholder. Light chrome/muted were nudged one more step (2026-07-27) after
  * owner feedback that trail light was comfortable but a touch washed out.
+ * Light warning was deepened further (B57F2E → 9A6A1F, 2026-07-29) after owner
+ * feedback that H2 headers (## Plan) looked yellow and floated off the white
+ * background; muted was nudged denser (687584 → 5E6A78) so inline code in dense
+ * prose stopped reading as a wash of saturated blue.
  */
 
 /** Brightness of the terminal background — drives light/dark token selection. */
@@ -42,10 +46,10 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       accent: { hex: "2E7DB5", ansiFallback: "\x1b[34m" }, // ocean blue
       chrome: { hex: "768594", ansiFallback: "\x1b[90m" }, // slate — two steps below app placeholder A3B0BD (was 8A97A5); rules/tool markers on white need the extra notch
       success: { hex: "3F8F5C", ansiFallback: "\x1b[32m" }, // moss green
-      warning: { hex: "B57F2E", ansiFallback: "\x1b[33m" }, // deep amber — D4A054 washed out on light backgrounds
+      warning: { hex: "9A6A1F", ansiFallback: "\x1b[33m" }, // deeper amber — B57F2E still read as yellow/washed on white (H2 headers like ## Plan floated); 9A6A1F raises contrast
       info: { hex: "4A9FD4", ansiFallback: "\x1b[36m" }, // sky blue
       danger: { hex: "C45C4A", ansiFallback: "\x1b[31m" }, // reddish
-      muted: { hex: "687584", ansiFallback: "\x1b[90m" }, // slate — one step below app textTertiary 7A8796; tool labels / secondary body on white
+      muted: { hex: "5E6A78", ansiFallback: "\x1b[90m" }, // denser slate — 687584 read too blue in dense prose (inline code/tool labels); 5E6A78 pulls blue down while staying darker than the old value
     },
     dark: {
       accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // blue
@@ -54,7 +58,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
       info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
       danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
-      muted: { hex: "9AA3B8", ansiFallback: "\x1b[37m" }, // dimmed from A6ADC8 so secondary text sits a step below body text
+      muted: { hex: "9AA3B8", ansiFallback: "\x1b[90m" }, // dimmed from A6ADC8 so secondary text sits a step below body text
     },
   },
   catppuccin: {
@@ -74,7 +78,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
       info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
       danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
-      muted: { hex: "A6ADC8", ansiFallback: "\x1b[37m" },
+      muted: { hex: "A6ADC8", ansiFallback: "\x1b[90m" },
     },
   },
   wave: {
@@ -94,7 +98,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       warning: { hex: "E6C384", ansiFallback: "\x1b[33m" },
       info: { hex: "7FB4CA", ansiFallback: "\x1b[36m" },
       danger: { hex: "E82424", ansiFallback: "\x1b[31m" },
-      muted: { hex: "938AA9", ansiFallback: "\x1b[37m" },
+      muted: { hex: "938AA9", ansiFallback: "\x1b[90m" },
     },
   },
   iris: {
@@ -114,7 +118,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       warning: { hex: "F5A623", ansiFallback: "\x1b[33m" },
       info: { hex: "8B9CF4", ansiFallback: "\x1b[36m" },
       danger: { hex: "EC5B6E", ansiFallback: "\x1b[31m" },
-      muted: { hex: "938AA9", ansiFallback: "\x1b[37m" },
+      muted: { hex: "938AA9", ansiFallback: "\x1b[90m" },
     },
   },
   rose: {
@@ -134,7 +138,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       warning: { hex: "F6C177", ansiFallback: "\x1b[33m" },
       info: { hex: "C4A7E7", ansiFallback: "\x1b[36m" },
       danger: { hex: "EB6F92", ansiFallback: "\x1b[31m" },
-      muted: { hex: "908CAA", ansiFallback: "\x1b[37m" },
+      muted: { hex: "908CAA", ansiFallback: "\x1b[90m" },
     },
   },
   mono: {
@@ -154,7 +158,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       warning: { hex: "FCD34D", ansiFallback: "\x1b[33m" },
       info: { hex: "60A5FA", ansiFallback: "\x1b[34m" },
       danger: { hex: "F87171", ansiFallback: "\x1b[31m" },
-      muted: { hex: "C1C7CD", ansiFallback: "\x1b[37m" },
+      muted: { hex: "C1C7CD", ansiFallback: "\x1b[90m" },
     },
   },
 };
@@ -416,6 +420,16 @@ export function highlightMarkdown(
     return `\x1b[1m${themeColorSequence("info", env)}${title}${reset}`;
   });
 
+  // 2b. 状态行弱化：以"进入 nolo-plan"开头的整行 → chrome + dim。repo
+  //     规范强制每条回复首句为该状态行，连续多条堆叠时噪声大。必须与
+  //     assistantOutput.ts styleRichMarkdownLine 对齐（同一回复流式与
+  //     历史重绘颜色不能跳变）。
+  result = result.replace(
+    /^(进入 nolo-plan[^\n]*)$/gm,
+    (match, content) =>
+      `${themeColorSequence("chrome", env)}\x1b[2m${content}\x1b[0m`
+  );
+
   // 3. Blockquotes: "> text" → chrome left border + dimmed content
   result = result.replace(/^>\s?(.*)$/gm, (match, content) => {
     const border = themeColorSequence("chrome", env);
@@ -431,6 +445,17 @@ export function highlightMarkdown(
   const mutedColor = themeColorSequence("muted", env);
   const reset = "\x1b[39m";
   result = result.replace(/`([^`\n]+)`/g, `${mutedColor}$1${reset}`);
+
+  // 6. Italic + strikethrough: run after bold so ** is consumed first.
+  //    *italic* -> dim; ~~strike~~ -> dim + strikethrough.
+  //    Only `*italic*` is supported, NOT `_italic_`: CommonMark gives `_` an
+  //    intra-word limitation (snake_case must not trigger italic) that needs a
+  //    word-boundary guard. Agent output contains snake_case variables often;
+  //    supporting `_italic_` would corrupt them. Must match styleInlineMarkdown
+  //    in assistantOutput.ts (streaming path) so the same reply doesn't shift
+  //    styling mid-scroll.
+  result = result.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, `\x1b[2m$1\x1b[22m`);
+  result = result.replace(/~~([^~\n]+?)~~/g, `\x1b[2m\x1b[9m$1\x1b[29m\x1b[22m`);
 
   return result;
 }

@@ -1,7 +1,6 @@
 import { clipCompactText } from "../core/clipCompactText";
 import { compactWhitespace } from "../core/compactWhitespace";
 import { toErrorMessage } from "../core/errorMessage";
-import { asOptionalTrimmedString } from "../core/optionalString";
 
 import type {
   AgentRuntimeHostAdapter,
@@ -12,10 +11,12 @@ import { readActionGate, readCommandActionGatePayload } from "./actionGate";
 import type {
   AgentRuntimeChatMessage,
   AgentRuntimeMessageContent,
+  AgentRuntimeOutputBlock,
   AgentRuntimeResult,
+  AgentRuntimeToolCall,
 } from "./types";
-import { parseToolArgumentsJson } from "./parseToolArguments";
 import { sanitizeToolCallPairing } from "./toolCallPairing";
+import { summarizeToolArguments } from "./summarizeToolArguments";
 import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
 
 export type LocalAgentTurnInput = {
@@ -342,33 +343,6 @@ function clip(value: string, max = 240) {
   return clipCompactText(value, max);
 }
 
-
-function summarizeToolArguments(toolName: string, rawArgs: string | undefined) {
-  const args = parseToolArgumentsJson(rawArgs);
-  const pick = (...keys: string[]) => {
-    for (const key of keys) {
-      const value = asOptionalTrimmedString(args[key]);
-      if (value) return value;
-    }
-    return "";
-  };
-  const command = pick("command", "cmd", "runCommand", "executeCommand", "bash");
-  if (command) return clip(command);
-  const filePath = pick("filePath", "file_path", "path", "filename", "file");
-  if (filePath) return clip(filePath);
-  const query = pick("query", "pattern", "search", "q");
-  if (query) return clip(query);
-  const keys = Object.keys(args);
-  if (keys.length === 0) return "";
-  return clip(keys.slice(0, 6).map((key) => {
-    const value = args[key];
-    if (typeof value === "string") return `${key}=${clip(value, 80)}`;
-    if (typeof value === "number" || typeof value === "boolean") return `${key}=${String(value)}`;
-    if (Array.isArray(value)) return `${key}[${value.length}]`;
-    return `${key}=${value === null ? "null" : typeof value}`;
-  }).join(" "));
-}
-
 function summarizeToolResult(content: unknown, metadata?: Record<string, unknown>) {
   const parts: string[] = [];
   const exitCode = metadata?.exitCode;
@@ -406,6 +380,77 @@ function formatToolMessageContent(args: {
     return args.content;
   }
   return `${args.content}\n\n[tool metadata]\n${JSON.stringify(args.metadata)}`;
+}
+
+/**
+ * 把 provider 返回的有序 output blocks（text→toolCall→text）展开为 OpenAI 扁平消息：
+ * assistant(text_before | null, tool_calls[]) → tool(tool_call_id, content) → …
+ * 连续 toolCall 无中间 text → 合并进同一条 assistant 的 tool_calls[]。
+ * thinking → 折进该段 assistant 的 reasoning_content（不单独成 role）。
+ * 末尾 text → 追加一条无 tool_calls 的 assistant。
+ * 仅供 localLoop output 分支调用，不重跑工具（result 已由流内执行填充）。
+ */
+function blocksToOpenAiMessages(
+  blocks: AgentRuntimeOutputBlock[],
+): AgentRuntimeChatMessage[] {
+  const out: AgentRuntimeChatMessage[] = [];
+  let text = "";
+  let reasoning = "";
+  let pendingToolCalls: AgentRuntimeToolCall[] = [];
+  let pendingToolResults: { content: string; metadata?: Record<string, unknown> }[] = [];
+
+  const flushSegment = () => {
+    if (text === "" && pendingToolCalls.length === 0 && reasoning === "") return;
+    out.push({
+      role: "assistant",
+      content: text || null,
+      ...(reasoning ? { reasoning_content: reasoning } : {}),
+      ...(pendingToolCalls.length > 0 ? { tool_calls: pendingToolCalls } : {}),
+    });
+    for (let i = 0; i < pendingToolCalls.length; i += 1) {
+      const tc = pendingToolCalls[i];
+      const res = pendingToolResults[i];
+      out.push({
+        role: "tool",
+        content: formatToolMessageContent({
+          toolName: tc.function.name,
+          content: res?.content ?? "",
+          ...(res?.metadata ? { metadata: res.metadata } : {}),
+        }),
+        tool_call_id: tc.id,
+        toolName: tc.function.name,
+        ...(res?.metadata ? { tool_result_metadata: res.metadata } : {}),
+      });
+    }
+    text = "";
+    reasoning = "";
+    pendingToolCalls = [];
+    pendingToolResults = [];
+  };
+
+  for (const block of blocks) {
+    if (block.type === "text") {
+      // toolCalls 已挂起 → 先 flush assistant+tools，再开新 text 段
+      if (pendingToolCalls.length > 0) {
+        flushSegment();
+      }
+      text += block.text;
+      continue;
+    }
+    if (block.type === "thinking") {
+      reasoning += block.thinking;
+      continue;
+    }
+    if (block.type === "toolCall") {
+      pendingToolCalls.push(block.toolCall);
+      pendingToolResults.push({
+        content: block.result?.content ?? "",
+        ...(block.result?.metadata ? { metadata: block.result.metadata } : {}),
+      });
+    }
+  }
+  flushSegment();
+  return out;
 }
 
 function buildActionGate(args: {
@@ -631,6 +676,9 @@ export async function runLocalAgentTurn(
   let emptyAssistantRepairUsed = false;
   // 首次图片降级通知标志——每轮可能都带图，但只通知一次，避免刷屏。
   let imageDowngradeNotified = false;
+  // provider（如 Cursor）在流内执行完所有工具时，output blocks 已含全部
+  // 文本块（含最后一段）。break 后跳过通用最终 assistant 消息追加。
+  let skipFinalAppend = false;
   try {
     while (true) {
       throwIfAborted(input);
@@ -664,6 +712,8 @@ export async function runLocalAgentTurn(
           ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
           ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
           ...(input.onReasoningDelta ? { onReasoningDelta: input.onReasoningDelta } : {}),
+          ...(input.onToolEvent ? { onToolEvent: input.onToolEvent } : {}),
+          ...(input.onToolEvent ? { toolEventRound: round } : {}),
         },
         timeoutMs: resolveLlmRequestTimeoutMs(input),
         round,
@@ -698,6 +748,44 @@ export async function runLocalAgentTurn(
         }
         break;
       }
+      // ── Canonical output blocks：provider（如 Cursor）返回有序 block 序列时，
+      // 按 block 消费。toolCall block 的 result 已填充 = 流内已执行，不跑 executeTool。
+      // 有带 result 的 toolCall 时 skipFinalAppend（文本已由 onTextDelta 推完）。
+      const outputBlocks: AgentRuntimeOutputBlock[] = result.output ?? [];
+      if (outputBlocks.length > 0) {
+        let hasInlineExecutedTools = false;
+        for (const block of outputBlocks) {
+          if (block.type !== "toolCall") continue;
+          toolCallCount += 1;
+          const toolName = block.toolCall.function.name;
+          if (block.result) {
+            hasInlineExecutedTools = true;
+            // Provider 已经在流内通过 onToolEvent 发过 tool-call / tool-result
+            // （见 cursorProvider.handleExecServerMessage）。这里不再补发，避免
+            // CLI/Desktop 收到重复事件、工具卡片错位。loop 事件同理不再补。
+            // 仍递增 toolCallCount 以反映本轮工具调用数。
+          } else {
+            // block 无 result = provider 未流内执行。
+            // 当前没有任何 provider 走到这里（Cursor 所有 toolCall 都带 result）。
+            // 拒绝继续而不是悄悄跑 executeTool 后丢上下文：未流内执行的 output
+            // block 在标准 tool 循环里没有对应 messages，下一轮发给 provider 会
+            // 丢历史。让调用方显式报 bug，而不是把工具结果悄悄塞进 block 里
+            // 当没发生。
+            throw new Error(
+              `provider returned output block with unexecuted toolCall "${toolName}" (id=${block.toolCall.id}); ` +
+              "no provider currently emits this shape. Either the provider must fill block.result " +
+              "(like Cursor's exec channel) or it must not set result.output at all.",
+            );
+          }
+        }
+        if (hasInlineExecutedTools) {
+          messages.push(...blocksToOpenAiMessages(outputBlocks));
+          skipFinalAppend = true;
+          break;
+        }
+        round += 1;
+        continue;
+      }
       toolCallCount += toolCalls.length;
       messages.push({
         role: "assistant",
@@ -724,6 +812,7 @@ export async function runLocalAgentTurn(
             name: toolName,
             arguments: toolCall.function.arguments,
             ...(userInputText ? { userInput: userInputText } : {}),
+            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
           });
           const actionGate = buildActionGate({
             toolName,
@@ -786,6 +875,7 @@ export async function runLocalAgentTurn(
             metadata: toolResult.metadata,
           }),
           tool_call_id: toolCall.id,
+          toolName,
           ...(toolResult.metadata ? { tool_result_metadata: toolResult.metadata } : {}),
         });
       }
@@ -820,15 +910,17 @@ export async function runLocalAgentTurn(
   }
 
   result = result!;
-  messages.push({
-    role: "assistant",
-    content: result.content,
-    // 与中间轮(:561)一致带上 reasoning_content,让 saveTurn 持久化思维链,
-    // 空轮/异常排查时能回看模型实际想了什么。
-    ...(result.reasoning_content
-      ? { reasoning_content: result.reasoning_content }
-      : {}),
-  });
+  if (!skipFinalAppend) {
+    messages.push({
+      role: "assistant",
+      content: result.content,
+      // 与中间轮(:561)一致带上 reasoning_content,让 saveTurn 持久化思维链,
+      // 空轮/异常排查时能回看模型实际想了什么。
+      ...(result.reasoning_content
+        ? { reasoning_content: result.reasoning_content }
+        : {}),
+    });
+  }
   const turnMessages = messages.slice(turnStartIndex);
   const saved = await input.adapter.saveTurn({
     agentKey: agentConfig.key,

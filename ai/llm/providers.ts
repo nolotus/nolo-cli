@@ -72,7 +72,7 @@ const MODEL_MAP = {
   moonshot: moonshotAllModels,
 } as const;
 
-const MODEL_LOOKUP_MAP = {
+export const MODEL_LOOKUP_MAP = {
   anthropic: anthropicModels,
   xai: xaiModels,
   ...MODEL_MAP,

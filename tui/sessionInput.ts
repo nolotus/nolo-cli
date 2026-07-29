@@ -55,6 +55,33 @@ export function applyTuiInputKey(
     return { buffer, cursorPos: buffer.length };
   }
 
+  // Delete word left (Ctrl+W / Ctrl+Backspace / Alt+Backspace): readline-style word delete.
+  // Skips trailing whitespace, then deletes one word (non-whitespace run, or one CJK char).
+  if (isDeleteWordSequence(seq, key)) {
+    if (curPos === 0) return { buffer, cursorPos: curPos };
+    const cutIdx = findWordStartLeft(buffer, curPos);
+    const nextBuf = buffer.slice(0, cutIdx) + buffer.slice(curPos);
+    return { buffer: nextBuf, cursorPos: cutIdx };
+  }
+
+  // Kill to line start (Ctrl+U): deletes from cursor to beginning of current line.
+  // In a multiline buffer only the current line segment before the cursor is removed.
+  if (isKillToLineStartSequence(seq, key)) {
+    if (curPos === 0) return { buffer, cursorPos: curPos };
+    const lineStart = buffer.lastIndexOf("\n", curPos - 1) + 1;
+    const nextBuf = buffer.slice(0, lineStart) + buffer.slice(curPos);
+    return { buffer: nextBuf, cursorPos: lineStart };
+  }
+
+  // Kill to line end (Ctrl+K): deletes from cursor to end of current line.
+  // In a multiline buffer only the current line segment at/after the cursor is removed.
+  if (isKillToLineEndSequence(seq, key)) {
+    const nlIdx = buffer.indexOf("\n", curPos);
+    const lineEnd = nlIdx === -1 ? buffer.length : nlIdx;
+    const nextBuf = buffer.slice(0, curPos) + buffer.slice(lineEnd);
+    return { buffer: nextBuf, cursorPos: curPos };
+  }
+
   // Backspace (deletes character left of cursor)
   if (isBackspaceSequence(seq, key)) {
     if (curPos > 0) {
@@ -113,6 +140,46 @@ function isEndSequence(seq: string, key: TuiKeyInfo): boolean {
   if (key.name === "end") return true;
   if (key.ctrl && key.name === "e") return true;
   if (seq === "\u0005" || seq === "\x1b[F" || seq === "\x1b[4~" || seq === "\x1b[8~" || seq === "\x1bOF") return true;
+  return false;
+}
+
+// CJK + fullwidth forms: each character is treated as its own "word" for Ctrl+W.
+const CJK_CHAR = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
+
+/**
+ * Find the index where a left-ward word delete should cut.
+ * Skips trailing whitespace, then deletes one word:
+ * - a single CJK char (each char is a word), or
+ * - a run of non-whitespace ASCII-ish chars.
+ */
+function findWordStartLeft(buffer: string, curPos: number): number {
+  let i = curPos;
+  while (i > 0 && /\s/.test(buffer[i - 1])) i--;
+  if (i === 0) return 0;
+  // CJK char is its own word — stop after deleting one.
+  if (CJK_CHAR.test(buffer[i - 1])) return i - 1;
+  // ASCII word run — stop at whitespace OR CJK boundary (don't eat into CJK).
+  while (i > 0 && !/\s/.test(buffer[i - 1]) && !CJK_CHAR.test(buffer[i - 1])) i--;
+  return i;
+}
+
+function isDeleteWordSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.ctrl && key.name === "w") return true;
+  // Ctrl+Backspace and Alt+Backspace both delete a word left (readline convention).
+  if ((key.ctrl || key.meta) && key.name === "backspace") return true;
+  if (seq === "\x17" || seq === "\x1b\x7f") return true;
+  return false;
+}
+
+function isKillToLineStartSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.ctrl && key.name === "u") return true;
+  if (seq === "\x15") return true;
+  return false;
+}
+
+function isKillToLineEndSequence(seq: string, key: TuiKeyInfo): boolean {
+  if (key.ctrl && key.name === "k") return true;
+  if (seq === "\x0b") return true;
   return false;
 }
 

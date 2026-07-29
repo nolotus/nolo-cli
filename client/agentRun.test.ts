@@ -100,7 +100,7 @@ describe("cli agent run client", () => {
     expect(result).toEqual({
       exitCode: 0,
       dialogId: "dialog-1",
-      turnTokens: { input: 2, output: 3 },
+      turnTokens: { contextWindow: 256000, input: 2, output: 3, remaining: 255998 },
     });
     expect(output.text()).toContain("nolo -> working");
     expect(output.text()).toContain("nolo > hi");
@@ -1304,7 +1304,7 @@ describe("cli agent run client", () => {
     expect(output.text().match(/working locally/g)?.length).toBe(2);
   });
 
-  test("auto mode falls back to HTTP when local agent config is still missing after one refresh retry", async () => {
+  test("auto mode surfaces local failure when local agent config is still missing after one refresh retry", async () => {
     const output = new CaptureOutput();
     const httpCalls: Array<{ url: string; body: any }> = [];
     let loadAgentConfigCalls = 0;
@@ -1342,13 +1342,11 @@ describe("cli agent run client", () => {
       },
     });
 
-    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-server-fallback" });
+    expect(result.exitCode).toBe(1);
     expect(loadAgentConfigCalls).toBe(3);
-    expect(httpCalls).toHaveLength(1);
-    expect(httpCalls[0]?.body.agentKey).toBe("frontend-local");
+    expect(httpCalls).toHaveLength(0);
     expect(output.text()).toContain("refreshing local config and retrying local once");
-    expect(output.text()).toContain("frontend -> working");
-    expect(output.text()).toContain("frontend > server fallback");
+    expect(output.text()).toContain("Not falling back to server");
   });
 
   test("auto mode does not treat retired nolo frontend names as known platform agent aliases", async () => {
@@ -1389,12 +1387,13 @@ describe("cli agent run client", () => {
       },
     });
 
-    expect(result).toEqual({ exitCode: 0, dialogId: "dialog-server-fallback" });
+    expect(result.exitCode).toBe(1);
     expect(loadAgentConfigCalls).toBe(3);
-    expect(httpCalls).toHaveLength(1);
-    expect(httpCalls[0]?.body.agentKey).toBe("nolo-frontend");
+    expect(httpCalls).toHaveLength(0);
+    expect(httpCalls[0]?.body.agentKey).toBe(undefined);
     expect(output.text()).not.toContain("known platform agent");
     expect(output.text()).toContain("refreshing local config and retrying local once");
+    expect(output.text()).toContain("Not falling back to server");
   });
 
   test("auto mode skips local runtime for agents that declare server platform tools", async () => {
@@ -2195,11 +2194,11 @@ describe("cli agent run client", () => {
 
     expect(result.exitCode).toBe(1);
     expect(fetchCalls).toBe(0);
-    expect(output.text()).toContain("server fallback is disabled");
-    expect(output.text()).not.toContain("falling back to server");
+    expect(output.text()).toContain("Not falling back to server");
+    expect(output.text()).not.toContain("; falling back to server");
   });
 
-  test("auto mode warns --ephemeral is ignored when it falls back to server", async () => {
+  test("auto mode surfaces local failure without falling back to server (--ephemeral warning stays local-only)", async () => {
     const output = new CaptureOutput();
 
     const result = await runAgentTurn({
@@ -2238,14 +2237,9 @@ describe("cli agent run client", () => {
         Response.json({ content: "server reply", dialogId: "dialog-server" }),
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(result.dialogId).toBe("dialog-server");
-    // auto fallback to server happened
-    expect(output.text()).toContain("falling back to server");
-    // ephemeral warning must surface because the run reached the server path
-    expect(output.text()).toContain(
-      "--ephemeral/--memory-only is only effective with the local runtime",
-    );
+    expect(result.exitCode).toBe(1);
+    expect(output.text()).toContain("Not falling back to server");
+    expect(output.text()).not.toContain("; falling back to server");
   });
 
   test("prints a friendly connection hint instead of crashing on transport errors", async () => {
@@ -2495,38 +2489,18 @@ describe("cli agent run client", () => {
     expect(outputHide.text()).toContain("(no text response)");
   });
 
-  describe("auto runtime dialog fallback precheck and push", () => {
+  describe("auto runtime local failure — no server fallback", () => {
     const TEST_TOKEN =
       "header." +
       Buffer.from(JSON.stringify({ userId: "user-taskb-123" })).toString("base64") +
       ".sig";
 
-    test("server 已有 dialog -> 不补推，直接 fallback", async () => {
+    // Previously 4 separate tests verified fallback precheck/sync paths
+    // (server-has-dialog, server-404+local, sync-fail, no-continueDialogId).
+    // Auto runtime no longer falls back to server at all — one test covers it.
+    test("local failure -> exitCode 1, no /api/agent/run call, no server fallback", async () => {
       const output = new CaptureOutput();
-      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
-
-      const localRuntimeAdapter = {
-        host: "cli" as const,
-        capabilities: ["leveldb-agent-config", "local-provider"],
-        loadAgentConfig: async (agentRef: string) => ({
-          key: agentRef,
-          name: "Local",
-          apiSource: "custom" as const,
-          customProviderUrl: "http://127.0.0.1:11434/v1",
-          model: "local-model",
-        }),
-        loadDialogHistory: async () => [],
-        saveTurn: async () => ({ dialogId: "dialog-exists-123" }),
-        resolveProvider: async () => ({
-          model: "local-model",
-          complete: async () => {
-            throw new Error("local provider offline");
-          },
-        }),
-        executeTool: async () => {
-          throw new Error("no tools");
-        },
-      };
+      const fetchCalls: Array<{ url: string; method: string }> = [];
 
       const result = await runAgentTurn({
         agentName: "nolo",
@@ -2538,287 +2512,39 @@ describe("cli agent run client", () => {
         runtimeMode: "auto",
         continueDialogId: "dialog-exists-123",
         output,
-        localRuntimeAdapter,
-        fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
-          const urlStr = String(input);
-          const method = init?.method ?? "GET";
-          let body: any = null;
-          if (init?.body) {
-            try {
-              body = JSON.parse(String(init.body));
-            } catch {}
-          }
-          fetchCalls.push({ url: urlStr, method, body });
-
-          if (urlStr.includes("/api/v1/db/read/dialog-user-taskb-123-dialog-exists-123")) {
-            return Response.json({
-              data: { id: "dialog-exists-123", userId: "user-taskb-123" },
-            });
-          }
-          if (urlStr.includes("/api/agent/run")) {
-            return Response.json({
-              content: "server response",
-              dialogId: "dialog-exists-123",
-            });
-          }
-          return Response.json({ error: "not found" }, { status: 404 });
-        },
-      });
-
-      expect(result.exitCode).toBe(0);
-      const getCalls = fetchCalls.filter((c) => c.method === "GET");
-      expect(getCalls.length).toBe(1);
-      expect(getCalls[0].url).toContain("dialog-user-taskb-123-dialog-exists-123");
-      const writeCalls = fetchCalls.filter((c) => c.url.includes("/api/v1/db/write/"));
-      expect(writeCalls.length).toBe(0);
-      const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
-      expect(runCalls.length).toBe(1);
-    });
-
-    test("server 404 + 本地有 -> 先补推（dialog+消息全部 POST），成功后发起 server run", async () => {
-      const output = new CaptureOutput();
-      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
-
-      const localRuntimeAdapter = {
-        host: "cli" as const,
-        capabilities: ["leveldb-agent-config", "local-provider"],
-        loadAgentConfig: async (agentRef: string) => ({
-          key: agentRef,
-          name: "Local",
-          apiSource: "custom" as const,
-          customProviderUrl: "http://127.0.0.1:11434/v1",
-          model: "local-model",
-        }),
-        loadDialogHistory: async () => [],
-        saveTurn: async () => ({ dialogId: "dialog-sync-404" }),
-        resolveProvider: async () => ({
-          model: "local-model",
-          complete: async () => {
-            throw new Error("local provider offline");
+        localRuntimeAdapter: {
+          host: "cli" as const,
+          capabilities: ["leveldb-agent-config", "local-provider"],
+          loadAgentConfig: async (agentRef: string) => ({
+            key: agentRef,
+            name: "Local",
+            apiSource: "custom" as const,
+            customProviderUrl: "http://127.0.0.1:11434/v1",
+            model: "local-model",
+          }),
+          loadDialogHistory: async () => [],
+          saveTurn: async () => ({ dialogId: "dialog-exists-123" }),
+          resolveProvider: async () => ({
+            model: "local-model",
+            complete: async () => {
+              throw new Error("local provider offline");
+            },
+          }),
+          executeTool: async () => {
+            throw new Error("no tools");
           },
-        }),
-        executeTool: async () => {
-          throw new Error("no tools");
         },
-      };
-
-      const realLocalDialogRead = await import("../agent-runtime/localDialogRead");
-      mock.module("../../agent-runtime/localDialogRead", () => ({
-        readDialogFromLocalDb: async (args: { dialogKey: string; dialogId: string; limit: number }) => {
-          if (args.dialogId === "dialog-sync-404") {
-            return {
-              meta: { id: "dialog-sync-404", userId: "user-taskb-123", agentKey: "nolo" },
-              msgs: [
-                {
-                  id: "msg-1",
-                  _key: "dialog-msg-dialog-sync-404-msg-1",
-                  content: "local msg 1",
-                },
-              ],
-            };
-          }
-          return realLocalDialogRead.readDialogFromLocalDb(args);
-        },
-      }));
-
-      const result = await runAgentTurn({
-        agentName: "nolo",
-        agentKey: "agent-pub-test",
-        serverUrl: "https://nolo.chat",
-        message: "hello",
-        scriptDir: "C:/missing/scripts",
-        env: { AUTH_TOKEN: TEST_TOKEN },
-        runtimeMode: "auto",
-        continueDialogId: "dialog-sync-404",
-        output,
-        localRuntimeAdapter,
         fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
-          const urlStr = String(input);
-          const method = init?.method ?? "GET";
-          let body: any = null;
-          if (init?.body) {
-            try {
-              body = JSON.parse(String(init.body));
-            } catch {}
-          }
-          fetchCalls.push({ url: urlStr, method, body });
-
-          if (urlStr.includes("/api/v1/db/read/dialog-user-taskb-123-dialog-sync-404")) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          if (urlStr.includes("/api/v1/db/write/")) {
-            return Response.json({ ok: true });
-          }
-          if (urlStr.includes("/api/agent/run")) {
-            return Response.json({
-              content: "server response",
-              dialogId: "dialog-sync-404",
-            });
-          }
-          return Response.json({ error: "not found" }, { status: 404 });
-        },
-      });
-
-      expect(result.exitCode).toBe(0);
-      const getCalls = fetchCalls.filter((c) => c.method === "GET");
-      expect(getCalls.length).toBe(1);
-      const writeCalls = fetchCalls.filter((c) => c.url.includes("/api/v1/db/write/"));
-      expect(writeCalls.length).toBe(2);
-      expect(writeCalls.some((c) => c.body?.customKey === "dialog-msg-dialog-sync-404-msg-1")).toBe(true);
-      expect(writeCalls.some((c) => c.body?.customKey === "dialog-user-taskb-123-dialog-sync-404")).toBe(true);
-      const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
-      expect(runCalls.length).toBe(1);
-    });
-
-    test("补推失败 -> 阻断，exitCode 1，有明确错误输出，且未发起 run 请求", async () => {
-      const output = new CaptureOutput();
-      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
-
-      const localRuntimeAdapter = {
-        host: "cli" as const,
-        capabilities: ["leveldb-agent-config", "local-provider"],
-        loadAgentConfig: async (agentRef: string) => ({
-          key: agentRef,
-          name: "Local",
-          apiSource: "custom" as const,
-          customProviderUrl: "http://127.0.0.1:11434/v1",
-          model: "local-model",
-        }),
-        loadDialogHistory: async () => [],
-        saveTurn: async () => ({ dialogId: "dialog-sync-fail" }),
-        resolveProvider: async () => ({
-          model: "local-model",
-          complete: async () => {
-            throw new Error("local provider offline");
-          },
-        }),
-        executeTool: async () => {
-          throw new Error("no tools");
-        },
-      };
-
-      const realLocalDialogRead = await import("../agent-runtime/localDialogRead");
-      mock.module("../../agent-runtime/localDialogRead", () => ({
-        readDialogFromLocalDb: async (args: { dialogKey: string; dialogId: string; limit: number }) => {
-          if (args.dialogId === "dialog-sync-fail") {
-            return {
-              meta: { id: "dialog-sync-fail", userId: "user-taskb-123", agentKey: "nolo" },
-              msgs: [],
-            };
-          }
-          return realLocalDialogRead.readDialogFromLocalDb(args);
-        },
-      }));
-
-      const result = await runAgentTurn({
-        agentName: "nolo",
-        agentKey: "agent-pub-test",
-        serverUrl: "https://nolo.chat",
-        message: "hello",
-        scriptDir: "C:/missing/scripts",
-        env: { AUTH_TOKEN: TEST_TOKEN },
-        runtimeMode: "auto",
-        continueDialogId: "dialog-sync-fail",
-        output,
-        localRuntimeAdapter,
-        fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
-          const urlStr = String(input);
-          const method = init?.method ?? "GET";
-          let body: any = null;
-          if (init?.body) {
-            try {
-              body = JSON.parse(String(init.body));
-            } catch {}
-          }
-          fetchCalls.push({ url: urlStr, method, body });
-
-          if (urlStr.includes("/api/v1/db/read/dialog-user-taskb-123-dialog-sync-fail")) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          if (urlStr.includes("/api/v1/db/write/")) {
-            return Response.json({ error: "write failed" }, { status: 500 });
-          }
-          if (urlStr.includes("/api/agent/run")) {
-            return Response.json({
-              content: "server response",
-              dialogId: "dialog-sync-fail",
-            });
-          }
+          fetchCalls.push({ url: String(input), method: init?.method ?? "GET" });
           return Response.json({ error: "not found" }, { status: 404 });
         },
       });
 
       expect(result.exitCode).toBe(1);
-      expect(output.text()).toContain("exists only locally and failed to sync to server");
+      expect(output.text()).toContain("Not falling back to server");
+      expect(output.text()).toContain("local provider offline");
       const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
       expect(runCalls.length).toBe(0);
-    });
-
-    test("无 continueDialogId -> fallback 前无任何预检请求", async () => {
-      const output = new CaptureOutput();
-      const fetchCalls: Array<{ url: string; method: string; body?: any }> = [];
-
-      const localRuntimeAdapter = {
-        host: "cli" as const,
-        capabilities: ["leveldb-agent-config", "local-provider"],
-        loadAgentConfig: async (agentRef: string) => ({
-          key: agentRef,
-          name: "Local",
-          apiSource: "custom" as const,
-          customProviderUrl: "http://127.0.0.1:11434/v1",
-          model: "local-model",
-        }),
-        loadDialogHistory: async () => [],
-        saveTurn: async () => ({ dialogId: "new-dialog-id" }),
-        resolveProvider: async () => ({
-          model: "local-model",
-          complete: async () => {
-            throw new Error("local provider offline");
-          },
-        }),
-        executeTool: async () => {
-          throw new Error("no tools");
-        },
-      };
-
-      const result = await runAgentTurn({
-        agentName: "nolo",
-        agentKey: "agent-pub-test",
-        serverUrl: "https://nolo.chat",
-        message: "hello",
-        scriptDir: "C:/missing/scripts",
-        env: { AUTH_TOKEN: TEST_TOKEN },
-        runtimeMode: "auto",
-        output,
-        localRuntimeAdapter,
-        fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
-          const urlStr = String(input);
-          const method = init?.method ?? "GET";
-          let body: any = null;
-          if (init?.body) {
-            try {
-              body = JSON.parse(String(init.body));
-            } catch {}
-          }
-          fetchCalls.push({ url: urlStr, method, body });
-
-          if (urlStr.includes("/api/agent/run")) {
-            return Response.json({
-              content: "server response",
-              dialogId: "new-dialog-id",
-            });
-          }
-          return Response.json({ error: "not found" }, { status: 404 });
-        },
-      });
-
-      expect(result.exitCode).toBe(0);
-      const getCalls = fetchCalls.filter((c) => c.method === "GET");
-      expect(getCalls.length).toBe(0);
-      const writeCalls = fetchCalls.filter((c) => c.url.includes("/api/v1/db/write/"));
-      expect(writeCalls.length).toBe(0);
-      const runCalls = fetchCalls.filter((c) => c.url.includes("/api/agent/run"));
-      expect(runCalls.length).toBe(1);
     });
   });
 });

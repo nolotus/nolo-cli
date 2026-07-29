@@ -84,6 +84,13 @@ export {
 
 type EnvLike = Record<string, string | undefined>;
 
+// Module-level registry of in-flight connector runs keyed by requestId.
+// Each entry holds the AbortController that can cancel the local agent
+// turn for that requestId. Entries are removed in the finally block of
+// the run, with an identity check against the controller so a later run
+// reusing the same requestId is never accidentally deregistered.
+const activeRunAbortControllers = new Map<string, AbortController>();
+
 export async function handleConnectorRunMessage(
   message: string,
   send: (message: string) => void,
@@ -98,10 +105,26 @@ export async function handleConnectorRunMessage(
   } catch {
     return;
   }
-  if (!isRecord(parsed) || parsed.type !== "agent.run" || typeof parsed.requestId !== "string") return;
+  if (!isRecord(parsed) || typeof parsed.requestId !== "string") return;
   const requestId = parsed.requestId;
+  // Cancel frame: abort the in-flight run for this requestId (if any).
+  // We do not send the result here — the aborted run's own catch block
+  // emits the agent.run.result with cancelled: true. Unknown requestId
+  // (run already finished or never started) is silently ignored.
+  if (parsed.type === "agent.run.cancel") {
+    const controller = activeRunAbortControllers.get(requestId);
+    if (controller) {
+      controller.abort(new Error("agent.run.cancel received from server"));
+    }
+    return;
+  }
+  if (parsed.type !== "agent.run") return;
   const payload = asRecordOrEmpty(parsed.payload);
   const agentConfig: Record<string, unknown> = asRecordOrEmpty(payload.agentConfig);
+  const runAbortController = new AbortController();
+  // Register before any await so a concurrent agent.run.cancel frame can
+  // find this controller. Remove in the finally below (with identity check).
+  activeRunAbortControllers.set(requestId, runAbortController);
   const sendProgress = (progress: ConnectorRunProgress) => {
     send(JSON.stringify({
       type: "agent.run.progress",
@@ -340,6 +363,7 @@ export async function handleConnectorRunMessage(
       cwd,
       fetchImpl,
       onProgress: sendProgress,
+      abortSignal: runAbortController.signal,
     });
     runContent = result.content;
     runModel = result.model;
@@ -375,11 +399,22 @@ export async function handleConnectorRunMessage(
       errorName: error instanceof Error ? error.name : null,
       error: toErrorMessage(error),
     });
+    // If this run ended because our own controller was aborted (via
+    // agent.run.cancel), flag the result so the server distinguishes a
+    // user cancellation from a genuine runtime error.
+    const cancelled = runAbortController.signal.aborted;
     send(JSON.stringify({
       type: "agent.run.result",
       requestId,
       error: toErrorMessage(error),
+      ...(cancelled ? { cancelled: true } : {}),
     }));
+  } finally {
+    // Only deregister our own controller — a later run may have already
+    // reused this requestId and registered a different controller.
+    if (activeRunAbortControllers.get(requestId) === runAbortController) {
+      activeRunAbortControllers.delete(requestId);
+    }
   }
 }
 

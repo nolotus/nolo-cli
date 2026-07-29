@@ -11,7 +11,6 @@ import type { AgentRuntimeHostAdapter } from "../agentRuntimeLocal";
 import {
   createCliCallAgentToolExecutor,
   createCliLocalRuntimeAdapter,
-  ensureDialogSyncedForServerFallback,
   isBuiltinNoloAgentRef,
 } from "./localRuntimeAdapter";
 import type {
@@ -801,36 +800,21 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
             }
           }
         } catch {
-          // Fall through — server fallback only when authenticated (M3).
+          // Fall through to surface local runtime failure.
         }
       }
-      // M3: no server fallback without an auth token. Surface local failure instead.
-      if (!authToken) {
-        const localErrorMessage = localResult.localError
-          ? toErrorMessage(localResult.localError)
-          : "local runtime failed";
-        options.output.write(
-          `[nolo] auto runtime: local run unavailable (${localErrorMessage}). ` +
-            "No auth token is set, so server fallback is disabled. " +
-            "Fix local credentials/config, or run `nolo login` / set AUTH_TOKEN to enable server runtime.\n",
-        );
-        return {
-          exitCode: 1,
-          ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
-        };
-      }
-      if (localResult.localError) {
-        options.output.write(
-          `[nolo] auto runtime: local run unavailable (${toErrorMessage(localResult.localError)}); falling back to server.\n`,
-        );
-      }
-      const syncResult = await ensureDialogSyncedForServerFallback(
-        options,
-        authToken,
+      const localErrorMessage = localResult.localError
+        ? toErrorMessage(localResult.localError)
+        : "local runtime failed";
+      options.output.write(
+        `[nolo] auto runtime: local run unavailable (${localErrorMessage}). ` +
+          "Not falling back to server. Fix the local credential/config and retry, " +
+          "or use --server to run on the server explicitly.\n",
       );
-      if (!syncResult.ok) {
-        return { exitCode: syncResult.exitCode ?? 1 };
-      }
+      return {
+        exitCode: 1,
+        ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
+      };
     }
   }
 

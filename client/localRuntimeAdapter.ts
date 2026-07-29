@@ -3,8 +3,6 @@ import type {
   AgentRuntimeHostAdapter,
   AgentRuntimeSaveTurnInput,
 } from "../agentRuntimeLocal";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
 import { createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,21 +22,6 @@ import type { PermissionRequest } from "../agent-runtime/actionGate";
  * non-TTY), the executor falls back to returning the raw JSON payload and the
  * toolOutput renderer prints a numbered text menu.
  */
-export type UserChoiceOption = {
-  id?: string;
-  label: string;
-  userMessage?: string;
-};
-
-export type UserChoiceRequest = {
-  question: string;
-  choices: UserChoiceOption[];
-  blocking: boolean;
-};
-
-export type UserChoiceResult =
-  | { kind: "selected"; userMessage: string; label: string }
-  | { kind: "cancelled" };
 import {
   readDialogFromLocalDb,
   type LocalDialogReadResult,
@@ -86,10 +69,7 @@ type CliExecuteResult = {
   elapsed?: number;
 };
 type CliImageInput = { source: string };
-type ReadToolFn = (
-  args: Record<string, unknown>,
-  ctx?: unknown,
-) => Promise<{ rawData: unknown; displayData?: unknown }>;
+import type { ReadToolFn } from "./cliLocalToolExecutors";
 
 import {
   resolveRuntimeServerUrl as _resolveRuntimeServerUrl,
@@ -103,14 +83,10 @@ export { setRemoteDialogSyncTimeoutForTest } from "./localRuntimeHelpers";
 import {
   postRemoteRecord,
   syncLocalDialogEvidenceToRemote,
-  pushLocalDialogToRemote,
-  ensureDialogSyncedForServerFallback,
   prepareRemoteDialogEvidenceRecord,
 } from "./cliRemoteDialogSync";
 // Re-export for test/external compatibility (agentRun.ts imports from localRuntimeAdapter).
 export {
-  ensureDialogSyncedForServerFallback,
-  pushLocalDialogToRemote,
   postRemoteRecord,
   syncLocalDialogEvidenceToRemote,
   prepareRemoteDialogEvidenceRecord,
@@ -120,8 +96,107 @@ const resolveRuntimeServerUrl = _resolveRuntimeServerUrl;
 const resolveRuntimeAuthToken = _resolveRuntimeAuthToken;
 const remoteDialogSyncTimeout = _remoteDialogSyncTimeout;
 
-type FetchInput = string | URL | Request;
-type FetchInit = RequestInit;
+// Fetch retry + loopback bypass extracted to localRuntimeFetchRetry.ts.
+// Re-exported here (barrel) so existing `from "./localRuntimeAdapter"` imports
+// keep working. isLoopbackUrl now reuses core/localOrigins for single-source
+// loopback detection (previously duplicated here).
+export {
+  fetchWithTransientRetry,
+  isLoopbackUrl,
+  defaultLoopbackRequest,
+  type FetchInput,
+  type FetchInit,
+} from "./localRuntimeFetchRetry";
+import {
+  fetchWithTransientRetry,
+  defaultLoopbackRequest,
+  type FetchInput,
+  type FetchInit,
+} from "./localRuntimeFetchRetry";
+import {
+  persistCliPendingChildDialog,
+  persistCliFailedChildDialog,
+} from "./cliChildDialogPersist";
+import {
+  parseLocalToolBudgets,
+  resolveExecShellDetachMs,
+  assertWithinLocalToolBudget,
+} from "./cliLocalToolBudget";
+import {
+  resolveBuiltinLocalCliAgentConfig,
+  readAgentFromStore,
+  readDialogMessages,
+} from "./cliLocalAgentRecordReader";
+import {
+  shouldUseDeclaredOnlyLocalWorkspaceTools,
+  resolveGlobFilesDescriptionVariant,
+  resolveListFilesDescriptionVariant,
+  resolveListFilesParameterVariant,
+  resolveReadFileDescriptionVariant,
+  resolveReadFileParameterVariant,
+  resolveGlobFilesParameterVariant,
+  resolveSearchFilesDescriptionVariant,
+  resolveSearchFilesParameterVariant,
+} from "./cliWorkspaceToolVariants";
+import {
+  parseJsonObject,
+  isCliProviderAgent,
+  resolveCliProviderName,
+  stringifyRuntimeMessageContent,
+  buildPromptForCliProvider,
+  collectCliProviderImageInputs,
+  buildDelegatedTaskContent,
+} from "./cliProviderHelpers";
+export {
+  BUILTIN_NOLO_AGENT_KEY,
+  isBuiltinNoloAgentRef,
+  isBuiltinNoloAgentConfig,
+  withResolvedRuntimeToolSurface,
+  resolveLocalUserId,
+  extractLastUserText,
+  localTurnHasSubjectRefs,
+} from "./cliAgentConfigHelpers";
+import {
+  BUILTIN_NOLO_AGENT_KEY,
+  isBuiltinNoloAgentRef,
+  isBuiltinNoloAgentConfig,
+  withResolvedRuntimeToolSurface,
+  resolveLocalUserId,
+  extractLastUserText,
+  localTurnHasSubjectRefs,
+} from "./cliAgentConfigHelpers";
+export {
+  LOCAL_SERVER_TABLE_TOOL_NAMES,
+  LOCAL_SERVER_TABLE_TOOL_NAME_SET,
+  LOCAL_SERVER_WEB_TOOL_NAMES,
+  LOCAL_SERVER_WEB_TOOL_NAME_SET,
+  REGISTRY_INJECTED_TOOL_NAMES,
+} from "./cliToolClassification";
+import {
+  LOCAL_SERVER_TABLE_TOOL_NAMES,
+  LOCAL_SERVER_TABLE_TOOL_NAME_SET,
+  LOCAL_SERVER_WEB_TOOL_NAMES,
+  LOCAL_SERVER_WEB_TOOL_NAME_SET,
+  REGISTRY_INJECTED_TOOL_NAMES,
+} from "./cliToolClassification";
+import { buildServerPlatformToolExecutors } from "./cliServerPlatformToolExecutors";
+export type {
+  UserChoiceOption,
+  UserChoiceRequest,
+  UserChoiceResult,
+  CliLocalRuntimeDb,
+} from "./localRuntimeAdapterTypes";
+import type {
+  UserChoiceOption,
+  UserChoiceRequest,
+  UserChoiceResult,
+  CliLocalRuntimeDb,
+} from "./localRuntimeAdapterTypes";
+import {
+  buildLocalToolExecutors,
+  buildCliWorkspaceToolExecutors,
+} from "./cliLocalToolExecutors";
+
 type LocalCliExecutor = (
   provider: string,
   prompt: string,
@@ -157,6 +232,8 @@ let fetchAntigravityCloudCodeCompletion: any;
 let isAntigravityOAuthAgent: any;
 let fetchAnthropicMessagesCompletion: any;
 let isAnthropicOAuthAgent: any;
+let createCursorProvider: any;
+let isCursorOAuthAgent: any;
 let readOAuthCredential: any;
 let getDefaultCliLocalRuntimeDb: any;
 let resolveAgentRuntimeConfigFromRecord: any;
@@ -240,6 +317,9 @@ function ensureHeavyCliLocalRuntimeModules() {
   ({ fetchAnthropicMessagesCompletion, isAnthropicOAuthAgent } = requireFromAdapter(
     "../../agent-runtime/anthropicMessagesProvider.ts",
   ));
+  ({ createCursorProvider, isCursorOAuthAgent } = requireFromAdapter(
+    "../../agent-runtime/cursor/cursorProvider.ts",
+  ));
   ({ readOAuthCredential } = requireFromAdapter(
     "../../agent-runtime/oauthTokenStore.ts",
   ));
@@ -297,12 +377,8 @@ function ensureHeavyCliLocalRuntimeModules() {
   ({ ulid } = requireFromAdapter("ulid"));
 }
 
-const TRANSIENT_FETCH_MAX_ATTEMPTS = 3;
-const TRANSIENT_FETCH_RETRY_BASE_DELAY_MS = 250;
 // Max wait for remote dialog-evidence sync fetches (POST write / GET read)
 // before aborting, so an unreachable/hung server cannot stall a turn.
-export const BUILTIN_NOLO_AGENT_KEY = NOLO_DEFAULT_AGENT_KEY;
-const BUILTIN_NOLO_AGENT_ID = NOLO_DEFAULT_AGENT_ID;
 const currentMetaFile = fileURLToPath(import.meta.url);
 const isJsBundle = extname(currentMetaFile) === ".js";
 const SOURCE_CLI_DIR = isJsBundle
@@ -317,43 +393,6 @@ const CLI_ENTRYPOINT = isCompiledBinary()
   : isJsBundle
     ? currentMetaFile
     : join(SOURCE_CLI_DIR, "index.ts");
-const LOCAL_SERVER_TABLE_TOOL_NAMES = [
-  "createTable",
-  "addTableRow",
-  "addTableRows",
-  "updateTableRow",
-  "updateTableRows",
-] as const;
-const LOCAL_SERVER_TABLE_TOOL_NAME_SET = new Set<string>(
-  LOCAL_SERVER_TABLE_TOOL_NAMES,
-);
-
-/**
- * Web access tools the CLI local runtime proxies through the nolo server
- * (same routes the desktop runtime uses: /api/fetch-webpage, /api/exa-search).
- * The CLI has no local EXA/FIRECRAWL keys, so these always bridge to a server
- * that has them configured. Requires NOLO_SERVER_URL + auth token at runtime.
- */
-const LOCAL_SERVER_WEB_TOOL_NAMES = ["fetchWebpage", "exa_search"] as const;
-const LOCAL_SERVER_WEB_TOOL_NAME_SET = new Set<string>(
-  LOCAL_SERVER_WEB_TOOL_NAMES,
-);
-
-// ============================================================================
-// CLI tool classification — single source of truth for "which tools belong
-// to which category". Previously each consumer (addDefaultLightWebTools,
-// buildLocalPolicyToolNames, buildServerPlatformOpenAiTools, buildOpenAiTools)
-// re-hardcoded the same name lists with slight drift. All four now read these
-// sets.
-// ============================================================================
-
-/** Tools whose schema is injected from the nolo tool registry (not workspace). */
-const REGISTRY_INJECTED_TOOL_NAMES = new Set<string>([
-  "callAgent",
-  "ui_ask_choice",
-  "read_x_post",
-  "read_xhs_profile",
-]);
 
 type PreparedAgentRuntime = {
   agentConfig: AgentRuntimeAgentConfig;
@@ -387,7 +426,6 @@ export function clearCliLocalRuntimePreparedAgentCache() {
   hybridStoreCache.clear();
 }
 
-export type CliLocalRuntimeDb = CliKvDb;
 
 type CliLocalRuntimeAdapterDeps = {
   env: EnvLike;
@@ -422,333 +460,6 @@ async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
 function createFallbackId() {
   ensureHeavyCliLocalRuntimeModules();
   return ulid();
-}
-
-function resolveLocalUserId(env: EnvLike) {
-  const explicitUserId = env.NOLO_LOCAL_USER_ID || env.NOLO_USER_ID;
-  if (explicitUserId) return explicitUserId;
-  const tokenUserId = parseUserIdFromAuthToken(resolveRuntimeAuthToken(env));
-  return tokenUserId || "local";
-}
-
-function resolveBuiltinLocalCliAgentConfig(
-  agentRef: string,
-  userId: string,
-): AgentRuntimeAgentConfig | null {
-  const normalized = agentRef.trim();
-  if (
-    normalized === LOCAL_CODEX_AGENT_KEY ||
-    normalized === LOCAL_CODEX_AGENT_ID
-  ) {
-    return {
-      key: LOCAL_CODEX_AGENT_KEY,
-      name: "Local Codex",
-      prompt:
-        "You are a local Codex CLI coding agent. Use the workspace and dialog evidence available to you, keep changes scoped, run relevant checks, and report worktree, branch, commit or dirty diff, tests, and blockers.",
-      apiSource: "cli",
-      provider: "cli",
-      cliProvider: "codex",
-      toolNames: ["readFile", "searchFiles", "execShell", "fetchWebpage", "exa_search"],
-      rawRecord: {
-        dbKey: LOCAL_CODEX_AGENT_KEY,
-        id: LOCAL_CODEX_AGENT_ID,
-        userId,
-        type: "agent",
-        name: "Local Codex",
-        apiSource: "cli",
-        provider: "cli",
-        cliProvider: "codex",
-      },
-    };
-  }
-  return null;
-}
-
-function parseLocalToolBudgets(env: EnvLike) {
-  const raw = env.NOLO_LOCAL_TOOL_BUDGETS?.trim();
-  if (!raw) return {};
-  const budgets: Record<string, number> = {};
-  for (const part of raw.split(",")) {
-    const [name, value] = part.split("=").map((item) => item.trim());
-    const limit = Number(value);
-    if (name && Number.isFinite(limit) && limit >= 0)
-      budgets[name] = Math.floor(limit);
-  }
-  return budgets;
-}
-
-function assertWithinLocalToolBudget(args: {
-  toolName: string;
-  budgets: Record<string, number>;
-  usage: Map<string, number>;
-}) {
-  const limit = args.budgets[args.toolName];
-  if (typeof limit !== "number") return;
-  const nextCount = (args.usage.get(args.toolName) ?? 0) + 1;
-  args.usage.set(args.toolName, nextCount);
-  if (nextCount <= limit) return;
-  throw new Error(
-    `${args.toolName} exceeded local tool budget ${limit}. Stop broad discovery; edit the narrowest likely file or report a blocker.`,
-  );
-}
-
-function isTransientFetchError(error: unknown) {
-  const message = toErrorMessage(error);
-  return /certificate|handshake|network|socket|timed out|timeout|ECONNRESET/i.test(
-    message,
-  );
-}
-
-async function defaultSleep(ms: number) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function transientFetchRetryDelayMs(attempt: number) {
-  return Math.min(attempt * TRANSIENT_FETCH_RETRY_BASE_DELAY_MS, 2_000);
-}
-
-/**
- * 上游明确表示「我没受理」的状态码，与服务端 chatUpstreamRetry 的 GENTLE_RETRY_STATUSES
- * 保持同一口径：重试不会产生重复 token、不会重复计费。
- * 502/504 不在内——那两个可能意味着请求已被处理，重试有副作用风险。
- */
-const RETRYABLE_HTTP_STATUSES = new Set([429, 503]);
-
-/**
- * 从一个可重试响应里读出建议等待时长。
- *
- * nolo 服务端在排空/限流时会明确给出信号，例如
- *   503 {"error":"Server draining","reason":"core_draining","retryable":true,"retryAfterMs":1500}
- * 以前客户端完全不看这些字段——`fetchWithTransientRetry` 只在**抛异常**时重试，
- * 而 503 是一次成功的 HTTP 交换，于是服务端说「可以重试、等我 1.5 秒」，
- * 客户端却直接把它当成终局失败上报给用户。
- *
- * 优先级：标准 `Retry-After` 头 > 响应体 `retryAfterMs` > 既有退避。
- * 读体前先 clone，避免把调用方要用的 body 消费掉。
- */
-async function resolveRetryAfterMs(
-  response: Response,
-  attempt: number,
-): Promise<number> {
-  const header = response.headers.get("retry-after");
-  if (header) {
-    const seconds = Number(header.trim());
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return Math.min(seconds * 1000, 10_000);
-    }
-  }
-  try {
-    const body = await response.clone().text();
-    const parsed = JSON.parse(body) as { retryAfterMs?: unknown };
-    const ms = Number(parsed?.retryAfterMs);
-    if (Number.isFinite(ms) && ms >= 0) return Math.min(ms, 10_000);
-  } catch {
-    // 非 JSON 或 body 不可读：退回既有退避。
-  }
-  return transientFetchRetryDelayMs(attempt);
-}
-
-function isLoopbackUrl(input: FetchInput) {
-  try {
-    const target =
-      typeof input === "string" || input instanceof URL
-        ? new URL(String(input))
-        : new URL(input.url);
-    const hostname = target.hostname.toLowerCase();
-    return (
-      hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function toNodeRequestBody(body: FetchInit["body"]) {
-  if (typeof body === "string") return Buffer.from(body);
-  if (body instanceof Uint8Array) return Buffer.from(body);
-  if (body instanceof ArrayBuffer) return Buffer.from(body);
-  return null;
-}
-
-async function defaultLoopbackRequest(input: FetchInput, init?: FetchInit) {
-  const target =
-    typeof input === "string" || input instanceof URL
-      ? new URL(String(input))
-      : new URL(input.url);
-  const headers = new Headers(init?.headers);
-  const body = toNodeRequestBody(init?.body);
-  if (body && !headers.has("Content-Length")) {
-    headers.set("Content-Length", String(body.byteLength));
-  }
-  return await new Promise<Response>((resolve, reject) => {
-    const requestImpl =
-      target.protocol === "https:" ? httpsRequest : httpRequest;
-    const req = requestImpl(
-      target,
-      {
-        method: init?.method ?? "GET",
-        headers: Object.fromEntries(headers.entries()),
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) =>
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-        );
-        res.on("end", () => {
-          resolve(
-            new Response(Buffer.concat(chunks), {
-              status: res.statusCode ?? 500,
-              headers: res.headers as Record<string, string>,
-            }),
-          );
-        });
-      },
-    );
-    req.on("error", reject);
-    init?.signal?.addEventListener(
-      "abort",
-      () => {
-        req.destroy(
-          init.signal?.reason instanceof Error
-            ? init.signal.reason
-            : new Error("request aborted"),
-        );
-        reject(init.signal?.reason ?? new Error("request aborted"));
-      },
-      { once: true },
-    );
-    if (body) req.write(body);
-    req.end();
-  });
-}
-
-export async function fetchWithTransientRetry(
-  fetchImpl: CliFetchImpl,
-  input: FetchInput,
-  init?: FetchInit,
-  options: {
-    sleep?: (ms: number) => Promise<void>;
-    loopbackRequest?: (
-      input: FetchInput,
-      init?: FetchInit,
-    ) => Promise<Response>;
-  } = {},
-) {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= TRANSIENT_FETCH_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      if (options.loopbackRequest && isLoopbackUrl(input)) {
-        return await options.loopbackRequest(input, init);
-      }
-      const response = await fetchImpl(input, init);
-      // 429/503 是一次**成功的** HTTP 交换，不会走到下面的 catch。以前这里直接
-      // 把它返回给调用方，于是服务端 `retryable: true, retryAfterMs: 1500` 这类
-      // 明示信号被完全无视，一次容量抖动就成了用户可见的终局失败。
-      if (
-        RETRYABLE_HTTP_STATUSES.has(response.status) &&
-        attempt < TRANSIENT_FETCH_MAX_ATTEMPTS &&
-        !init?.signal?.aborted
-      ) {
-        const delayMs = await resolveRetryAfterMs(response, attempt);
-        await (options.sleep ?? defaultSleep)(delayMs);
-        continue;
-      }
-      return response;
-    } catch (error) {
-      if (init?.signal?.aborted) throw error;
-      if (!isTransientFetchError(error)) throw error;
-      lastError = error;
-      if (attempt < TRANSIENT_FETCH_MAX_ATTEMPTS) {
-        await (options.sleep ?? defaultSleep)(
-          transientFetchRetryDelayMs(attempt),
-        );
-      }
-    }
-  }
-  throw lastError;
-}
-
-function parseJsonObject(raw: string) {
-  try {
-    return asRecordOrEmpty(JSON.parse(raw) as unknown);
-  } catch {
-    return {};
-  }
-}
-
-function isCliProviderAgent(agentConfig: AgentRuntimeAgentConfig) {
-  return Boolean(
-    agentConfig.apiSource === "cli" ||
-    agentConfig.provider === "cli" ||
-    agentConfig.cliProvider,
-  );
-}
-
-function resolveCliProviderName(agentConfig: AgentRuntimeAgentConfig) {
-  return (
-    (agentConfig.cliProvider || agentConfig.provider || "codex").trim() ||
-    "codex"
-  );
-}
-
-function stringifyRuntimeMessageContent(
-  content: AgentRuntimeChatMessage["content"],
-) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const parts: string[] = [];
-    for (const part of content) {
-      let text: string;
-      if (typeof part === "string") {
-        text = part;
-      } else if (part && typeof part === "object" && "text" in part) {
-        text = String(part.text ?? "");
-      } else {
-        text = JSON.stringify(part);
-      }
-      if (text.trim()) parts.push(text);
-    }
-    return parts.join("\n");
-  }
-  return content == null ? "" : String(content);
-}
-
-function buildPromptForCliProvider(messages: AgentRuntimeChatMessage[]) {
-  const systemParts: string[] = [];
-  const taskParts: string[] = [];
-  for (const message of messages) {
-    if (message.role === "system") {
-      const content = stringifyRuntimeMessageContent(message.content).trim();
-      if (content) systemParts.push(content);
-    } else {
-      const content = stringifyRuntimeMessageContent(message.content).trim();
-      if (content) {
-        taskParts.push(`[${message.role}]\n${content}`);
-      }
-    }
-  }
-  const systemPrompt = systemParts.join("\n\n");
-  const taskPrompt = taskParts.join("\n\n");
-  return buildCliPrompt(systemPrompt, taskPrompt);
-}
-
-function collectCliProviderImageInputs(messages: AgentRuntimeChatMessage[]) {
-  const urls: string[] = [];
-  for (const message of messages) {
-    if (!Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (
-        part &&
-        typeof part === "object" &&
-        (part as any).type === "image_url" &&
-        typeof (part as any).image_url?.url === "string" &&
-        (part as any).image_url.url.trim()
-      ) {
-        urls.push((part as any).image_url.url.trim());
-      }
-    }
-  }
-  return urls;
 }
 
 function logLocalRuntimeDiagnostic(
@@ -959,75 +670,6 @@ function buildLocalPolicyToolNames(args: {
   ];
 }
 
-function shouldUseDeclaredOnlyLocalWorkspaceTools(env: EnvLike) {
-  const value =
-    env.NOLO_LOCAL_WORKSPACE_TOOLSET || env.NOLO_LOCAL_TOOLSET_MODE || "";
-  return value === "declared-only" || value === "declared";
-}
-
-function resolveGlobFilesDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(
-    env.NOLO_GLOBFILES_DESCRIPTION_VARIANT,
-  );
-}
-
-function resolveListFilesDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(
-    env.NOLO_LISTFILES_DESCRIPTION_VARIANT,
-  );
-}
-
-function resolveListFilesParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(
-    env.NOLO_LISTFILES_PARAMETER_VARIANT,
-  );
-}
-
-function resolveReadFileDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(
-    env.NOLO_READFILE_DESCRIPTION_VARIANT,
-  );
-}
-
-function resolveReadFileParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(
-    env.NOLO_READFILE_PARAMETER_VARIANT,
-  );
-}
-
-function resolveGlobFilesParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(
-    env.NOLO_GLOBFILES_PARAMETER_VARIANT,
-  );
-}
-
-function resolveSearchFilesDescriptionVariant(env: EnvLike) {
-  return resolveLocalWorkspaceDescriptionVariant(
-    env.NOLO_SEARCHFILES_DESCRIPTION_VARIANT,
-  );
-}
-
-function resolveSearchFilesParameterVariant(env: EnvLike) {
-  return resolveLocalWorkspaceParameterVariant(
-    env.NOLO_SEARCHFILES_PARAMETER_VARIANT,
-  );
-}
-
-function resolveLocalWorkspaceDescriptionVariant(value: string | undefined) {
-  return value === "brief" ||
-    value === "strategy" ||
-    value === "workflow" ||
-    value === "antiShell"
-    ? value
-    : "strategy";
-}
-
-function resolveLocalWorkspaceParameterVariant(value: string | undefined) {
-  return value === "minimal" || value === "scoped" || value === "rich"
-    ? value
-    : "rich";
-}
-
 function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
   const toolNameSet = new Set(args.toolNames ?? []);
   const tableTools = prepareTools(
@@ -1060,281 +702,6 @@ function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
     ...tableTools,
     ...webTools,
   ];
-}
-
-function buildCliWorkspaceToolExecutors(args: {
-  env: EnvLike;
-  cliEntrypoint?: string;
-}) {
-  return buildNoloWorkspaceCliToolExecutors({
-    cliEntrypoint: args.cliEntrypoint ?? CLI_ENTRYPOINT,
-    env: args.env,
-    metadataKind: "cliWorkspaceTool",
-  });
-}
-
-export function isBuiltinNoloAgentRef(ref: unknown) {
-  if (typeof ref !== "string") return false;
-  const normalized = ref.trim();
-  return (
-    normalized === BUILTIN_NOLO_AGENT_KEY ||
-    normalized === BUILTIN_NOLO_AGENT_ID ||
-    normalized.endsWith(`-${BUILTIN_NOLO_AGENT_ID}`)
-  );
-}
-
-function isBuiltinNoloAgentConfig(
-  agentConfig: AgentRuntimeAgentConfig | null | undefined,
-) {
-  const key =
-    agentConfig?.key ||
-    agentConfig?.rawRecord?.dbKey ||
-    agentConfig?.rawRecord?.agentKey;
-  const id = agentConfig?.rawRecord?.id;
-  return isBuiltinNoloAgentRef(key) || isBuiltinNoloAgentRef(id);
-}
-
-function withResolvedRuntimeToolSurface(
-  agentConfig: AgentRuntimeAgentConfig | null,
-  env: EnvLike,
-) {
-  if (!agentConfig) return agentConfig;
-  const currentUserId = resolveLocalUserId(env);
-  const rawRecord = (agentConfig as any).rawRecord ?? {};
-  const ownerId = asOptionalTrimmedString(rawRecord.userId) ?? null;
-  const toolSurface = resolveRuntimeToolSurfaceForAgent({
-    explicitToolNames: agentConfig.toolNames,
-    currentUserId,
-    agentOwnerId: ownerId,
-    agentKey: rawRecord.dbKey ?? agentConfig.key,
-    isPublic:
-      !isBuiltinNoloAgentConfig(agentConfig) && rawRecord.isPublic === true,
-    sharingLevel:
-      typeof rawRecord.sharingLevel === "string"
-        ? rawRecord.sharingLevel
-        : null,
-    trustedPrivateInvocation: isBuiltinNoloAgentConfig(agentConfig),
-    runtimeHost: "cli",
-  });
-  return {
-    ...agentConfig,
-    toolNames: toolSurface.finalToolNames,
-    toolSurface,
-    prompt: agentConfig.prompt,
-  };
-}
-
-function extractLastUserText(messages: AgentRuntimeChatMessage[]): string {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  if (!lastUser) return "";
-  if (typeof lastUser.content === "string") return lastUser.content;
-  if (Array.isArray(lastUser.content)) {
-    return lastUser.content
-      .filter((part: any) => part?.type === "text")
-      .map((part: any) => part.text ?? "")
-      .join(" ");
-  }
-  return "";
-}
-
-function localTurnHasSubjectRefs(input: AgentRuntimeSaveTurnInput) {
-  return (
-    Array.isArray(input.runtimeContext?.subjectRefs) &&
-    input.runtimeContext.subjectRefs.length > 0
-  );
-}
-
-function buildServerPlatformToolExecutors(args: {
-  env: EnvLike;
-  fetchImpl: CliFetchImpl;
-}) {
-  const postServer = async (path: string, body: object) => {
-    const serverUrl = resolveRuntimeServerUrl(args.env);
-    const authToken = resolveRuntimeAuthToken(args.env);
-    if (!serverUrl)
-      throw new Error(
-        "server platform tools require NOLO_SERVER_URL, NOLO_SERVER, or BASE_URL.",
-      );
-    if (!authToken)
-      throw new Error(
-        "server platform tools require AUTH_TOKEN or NOLO_MACHINE_API_KEY.",
-      );
-    const response = await args.fetchImpl(`${serverUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify(body),
-    });
-    const text = await response.text().catch(() => "");
-    if (!response.ok) {
-      throw new Error(
-        `server platform tool bridge failed: HTTP ${response.status} ${text.slice(0, 500)}`,
-      );
-    }
-    return text;
-  };
-  const guardExplicitTableCapture = (call: any) => {
-    if (inferCaptureIntent(String(call.userInput ?? "")) === "strong")
-      return null;
-    return JSON.stringify({
-      error: "knowledge_capture_requires_confirmation",
-      message:
-        "当前本地运行不允许自动写入表格。只有当用户在当前请求里明确要求保存、建表、写入 table 或做成数据集时，才能继续；否则请先询问用户。",
-      policy: {
-        capability: "knowledge_capture",
-        target: "table",
-        mode: "explicit-only-local",
-      },
-    });
-  };
-  const tableExecutors = Object.fromEntries(
-    LOCAL_SERVER_TABLE_TOOL_NAMES.map((toolName) => [
-      toolName,
-      async (call: any) => {
-        const blocked = guardExplicitTableCapture(call);
-        if (blocked) {
-          return {
-            content: blocked,
-            metadata: { serverPlatformTool: true, tableWriteBlocked: true },
-          };
-        }
-        const parsed = parseNoloWorkspaceToolArguments(call.arguments);
-        const path =
-          toolName === "createTable"
-            ? "/api/table/create"
-            : toolName === "addTableRow"
-              ? "/api/table/add-row"
-              : toolName === "addTableRows"
-                ? "/api/table/add-rows"
-                : toolName === "updateTableRow"
-                  ? "/api/table/update-row"
-                  : "/api/table/update-rows";
-        const content = await postServer(path, parsed);
-        return {
-          content,
-          metadata: { serverPlatformTool: true, tableWrite: true },
-        };
-      },
-    ]),
-  );
-  // Web access tools (fetchWebpage / exa_search) bridge to the same server
-  // routes the desktop runtime uses. The CLI holds no local API keys, so these
-  // only work when NOLO_SERVER_URL + auth are configured.
-  const webExecutors = Object.fromEntries(
-    LOCAL_SERVER_WEB_TOOL_NAMES.map((toolName) => [
-      toolName,
-      async (call: any) => {
-        const parsed = parseNoloWorkspaceToolArguments(call.arguments);
-        const path =
-          toolName === "fetchWebpage"
-            ? "/api/fetch-webpage"
-            : "/api/exa-search";
-        const body =
-          toolName === "fetchWebpage"
-            ? { url: parsed.url }
-            : {
-                query: parsed.query,
-                numResults: parsed.numResults ?? 5,
-                useAutoprompt: parsed.useAutoprompt ?? true,
-                type: parsed.type ?? "neural",
-                // Model schema uses `includeContent` (boolean); the Exa API
-                // expects `contents: { text: true }`. Mirror exaSearchFunc's
-                // conversion so CLI proxy results match web behavior.
-                contents:
-                  parsed.includeContent !== false ? { text: true } : undefined,
-              };
-        const content = await postServer(path, body);
-        return {
-          content,
-          metadata: { serverPlatformTool: true, webTool: toolName },
-        };
-      },
-    ]),
-  );
-  return { ...tableExecutors, ...webExecutors };
-}
-
-function buildCliDelegatedAgentInput(task: string, input?: any): string {
-  if (input === undefined || input === null) {
-    return task;
-  }
-  if (typeof input === "string") {
-    return `${task}\n\n--- INPUT (text) ---\n${input}`;
-  }
-  return `${task}\n\n--- INPUT (json) ---\n${JSON.stringify(input, null, 2)}`;
-}
-
-async function persistCliPendingChildDialog(args: {
-  store: HybridRecordStore;
-  userId: string;
-  dialogId: string;
-  agentKey: string;
-  title: string;
-  spaceId?: string;
-  parentDialogId?: string;
-  rootDialogId?: string;
-  workspaceRoot: string;
-  background: boolean;
-  now: number;
-}) {
-  const nowIso = new Date(args.now).toISOString();
-  const dialogKey = `dialog-${args.userId}-${args.dialogId}`;
-  const record: Record<string, unknown> = {
-    id: args.dialogId,
-    dbKey: dialogKey,
-    type: "dialog",
-    userId: args.userId,
-    cybots: [args.agentKey],
-    primaryAgentKey: args.agentKey,
-    title: args.title.slice(0, 80),
-    status: "pending",
-    triggerType: "cli-local",
-    executionMode: args.background ? "background" : "foreground",
-    createdAt: nowIso,
-    updatedAt: nowIso,
-    ...(args.spaceId ? { spaceId: args.spaceId } : {}),
-    ...(args.parentDialogId ? { parentDialogId: args.parentDialogId } : {}),
-    ...(args.rootDialogId ? { rootDialogId: args.rootDialogId } : {}),
-    localRuntime: {
-      host: "cli",
-      workspaceRoot: args.workspaceRoot,
-      workspaceKind: "current",
-      workspaceAccess: "inherited",
-    },
-  };
-  await args.store.batch([{ type: "put", key: dialogKey, value: record }]);
-}
-
-async function persistCliFailedChildDialog(args: {
-  store: HybridRecordStore;
-  userId: string;
-  dialogId: string;
-  errorMessage: string;
-  now: number;
-}) {
-  const dialogKey = `dialog-${args.userId}-${args.dialogId}`;
-  const existing = await args.store.read(dialogKey);
-  const existingRecord =
-    existing && typeof existing === "object"
-      ? (existing as Record<string, unknown>)
-      : {};
-  await args.store.batch([
-    {
-      type: "put",
-      key: dialogKey,
-      value: {
-        ...existingRecord,
-        id: args.dialogId,
-        dbKey: dialogKey,
-        status: "failed",
-        errorMessage: args.errorMessage,
-        updatedAt: new Date(args.now).toISOString(),
-        finishedAt: args.now,
-      },
-    },
-  ]);
 }
 
 export type CliCallAgentToolExecutorContext = {
@@ -1446,7 +813,7 @@ export function createCliCallAgentToolExecutor(
     const childInputBase: LocalAgentTurnInput = {
       adapter: childAdapter,
       agentRef: agentKey,
-      input: buildCliDelegatedAgentInput(task, parsed.input),
+      input: buildDelegatedTaskContent(task, parsed.input),
       runtimeContext: childRuntimeContext,
       spaceId: ctx.spaceId,
       continueDialogId: childDialogId,
@@ -1534,153 +901,6 @@ export function createCliCallAgentToolExecutor(
   };
 }
 
-function buildLocalToolExecutors(args: {
-  workspaceRoot: string;
-  env: EnvLike;
-  fetchImpl: CliFetchImpl;
-  localToolExecutors?: CliLocalRuntimeAdapterDeps["localToolExecutors"];
-  readXPost?: CliLocalRuntimeAdapterDeps["readXPost"];
-  readXhsProfile?: CliLocalRuntimeAdapterDeps["readXhsProfile"];
-  commandTimeoutMs?: number;
-  commandOutputLimit?: number;
-  /** Reused for external-file-access prompts (same PermissionRequest shape). */
-  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
-  /** Interactive choice dialog for ui_ask_choice; absent in headless/CI mode. */
-  requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
-}) {
-  return {
-    ...createLocalWorkspaceToolExecutors({
-      workspaceRoot: args.workspaceRoot,
-      commandTimeoutMs: args.commandTimeoutMs,
-      commandOutputLimit: args.commandOutputLimit,
-      ...(args.confirmDestructiveAction
-        ? { confirmExternalFileAccess: args.confirmDestructiveAction }
-        : {}),
-    }),
-    ...buildServerPlatformToolExecutors({
-      env: args.env,
-      fetchImpl: args.fetchImpl,
-    }),
-    ...buildCliWorkspaceToolExecutors({
-      env: args.env,
-    }),
-    read_x_post: async (call: any) => {
-      const parsedArgs = (() => {
-        try {
-          return JSON.parse(call.arguments || "{}");
-        } catch {
-          return {};
-        }
-      })();
-      const result = await (args.readXPost ?? readXPostFunc)(
-        parsedArgs,
-        undefined,
-      );
-      return {
-        content: JSON.stringify(result.rawData),
-        metadata: {
-          xPostLocalBridge: true,
-          displayData: result.displayData,
-        },
-      };
-    },
-    read_xhs_profile: async (call: any) => {
-      const parsedArgs = (() => {
-        try {
-          return JSON.parse(call.arguments || "{}");
-        } catch {
-          return {};
-        }
-      })();
-      const result = await (args.readXhsProfile ?? readXhsProfileFunc)(
-        parsedArgs,
-        undefined,
-      );
-      return {
-        content: JSON.stringify(result.rawData),
-        metadata: {
-          xhsLocalBridge: true,
-          displayData: result.displayData,
-        },
-      };
-    },
-    ui_ask_choice: async (call: any) => {
-      const parsedArgs = (() => {
-        try {
-          return JSON.parse(call.arguments || "{}");
-        } catch {
-          return {};
-        }
-      })();
-      const question = String(parsedArgs.question ?? "").trim();
-      const choices = Array.isArray(parsedArgs.choices) ? parsedArgs.choices : [];
-      const blocking = parsedArgs.blocking !== false;
-      if (!question || choices.length === 0) {
-        return {
-          content: JSON.stringify({
-            error: "ui_ask_choice",
-            detail: "ui_ask_choice 需要 question 和至少一个 choice。",
-          }),
-          metadata: { uiAskChoice: true, error: true },
-        };
-      }
-      // Interactive TUI: show an arrow-key select dialog docked above the
-      // composer and resolve the user's pick into the next userMessage.
-      // Headless / non-TTY / no-callback: fall back to the raw JSON payload so
-      // the toolOutput renderer can print a numbered text menu.
-      if (args.requestUserChoice) {
-        try {
-          const result = await args.requestUserChoice({
-            question,
-            choices,
-            blocking,
-          });
-          if (result.kind === "selected") {
-            return {
-              content: JSON.stringify({
-                type: "ui_ask_choice",
-                question,
-                choices,
-                blocking,
-                selected: {
-                  label: result.label,
-                  userMessage: result.userMessage,
-                },
-              }),
-              metadata: { uiAskChoice: true, resolved: true },
-            };
-          }
-          // Cancelled: tell the model the user declined to choose, so it can
-          // either ask differently or proceed with its own best judgement.
-          return {
-            content: JSON.stringify({
-              type: "ui_ask_choice",
-              question,
-              choices,
-              blocking,
-              selected: { label: "", userMessage: "" },
-              cancelled: true,
-            }),
-            metadata: { uiAskChoice: true, resolved: true, cancelled: true },
-          };
-        } catch {
-          // Dialog failed (e.g. non-TTY despite a callback being wired);
-          // fall through to the non-interactive payload below.
-        }
-      }
-      return {
-        content: JSON.stringify({
-          type: "ui_ask_choice",
-          question,
-          choices,
-          blocking,
-        }),
-        metadata: { uiAskChoice: true },
-      };
-    },
-    ...(args.localToolExecutors ?? {}),
-  };
-}
 
 async function resolveStore(deps: CliLocalRuntimeAdapterDeps) {
   if (deps.store) return deps.store;
@@ -1702,61 +922,6 @@ async function getOrCreateSharedStore(deps: CliLocalRuntimeAdapterDeps) {
   return storePromise;
 }
 
-async function readAgentFromStore(args: {
-  store: HybridRecordStore;
-  agentRef: string;
-  userId: string;
-}): Promise<AgentRuntimeAgentConfig | null> {
-  // Sequential lookup with early return — each key must be checked in order, stopping at first match.
-  for (const key of buildLocalAgentLookupKeys(args)) {
-    const record = await args.store.read(key, {
-      remote: shouldReadAgentKeyRemotely(key),
-    });
-    if (!record || typeof record !== "object") continue;
-    return resolveAgentRuntimeConfigFromRecord(key, record);
-  }
-  const normalizedRef = normalizeAgentHandle(args.agentRef);
-  if (!normalizedRef) return null;
-  try {
-    // Async iterator — must consume entries sequentially from the store cursor.
-    const iterator = args.store.iterator({
-      gte: "agent-",
-      lte: "agent-\uffff",
-    });
-    for await (const [key, record] of iterator) {
-      if (!record || typeof record !== "object") continue;
-      const handle = normalizeAgentHandle((record as any).handle);
-      if (handle !== normalizedRef) continue;
-      return resolveAgentRuntimeConfigFromRecord(key, record);
-    }
-  } catch {
-    // local handle scan unavailable
-  }
-  return null;
-}
-
-async function readDialogMessages(args: {
-  store: HybridRecordStore;
-  dialogId: string;
-}) {
-  const messages: AgentRuntimeChatMessage[] = [];
-  const { start, end } = dialogMessageRange(args.dialogId);
-  const iterator = args.store.iterator({ gte: start, lte: end });
-  // Async iterator — must consume entries sequentially from the store cursor.
-  for await (const [, value] of iterator) {
-    const message = localDialogMessageRecordToRuntimeMessage(value);
-    if (message) messages.push(message);
-  }
-  return messages;
-}
-
-/**
- * Build a title generator closure for CLI-local dialog title generation.
- * Uses the Nolo platform chat proxy (same route as agent inference) with
- * the builtin title LLM config (deepseek-v4-flash).
- *
- * Returns null when platform chat provider is unavailable (no AUTH_TOKEN).
- */
 function createLocalDialogTitleGenerator(
   deps: CliLocalRuntimeAdapterDeps,
   ctx: {
@@ -1933,13 +1098,19 @@ export function createCliLocalRuntimeAdapter(
   let runtimeToolExecutionLimits: ReturnType<
     typeof resolveLocalWorkspaceExecutorOptionsFromPolicy
   > = {};
-  let localToolExecutors = buildLocalToolExecutors({
+  let localToolExecutors: Record<
+    string,
+    (
+      call: any,
+    ) => Promise<{ content: string; metadata?: Record<string, unknown> }>
+  > = buildLocalToolExecutors({
     workspaceRoot,
     env: deps.env,
     fetchImpl,
     localToolExecutors: deps.localToolExecutors,
     readXPost: deps.readXPost,
     readXhsProfile: deps.readXhsProfile,
+    cliEntrypoint: CLI_ENTRYPOINT,
     ...(deps.confirmDestructiveAction
       ? { confirmDestructiveAction: deps.confirmDestructiveAction }
       : {}),
@@ -2001,6 +1172,7 @@ export function createCliLocalRuntimeAdapter(
         localToolExecutors: deps.localToolExecutors,
         readXPost: deps.readXPost,
         readXhsProfile: deps.readXhsProfile,
+        cliEntrypoint: CLI_ENTRYPOINT,
         ...(deps.confirmDestructiveAction
           ? { confirmDestructiveAction: deps.confirmDestructiveAction }
           : {}),
@@ -2302,6 +1474,86 @@ export function createCliLocalRuntimeAdapter(
         };
       }
 
+      // Cursor OAuth uses a bespoke ConnectRPC + protobuf wire (HTTP/2 to
+      // api2.cursor.sh), not OpenAI-compatible chat.completions. Route through
+      // the dedicated cursorProvider which translates nolo messages to the
+      // AgentRunRequest protobuf and streams AgentServerMessage frames.
+      if (isCursorOAuthAgent(agentConfig)) {
+        const accessToken = await apiKeyRefResolver("cursor");
+        if (!accessToken) {
+          throw new Error(
+            'OAuth credential for "cursor" not found locally. Run `nolo auth cursor`.',
+          );
+        }
+        const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
+          agentConfig,
+          deps.env,
+          buildProviderOpenAiTools,
+        );
+        logLocalRuntimeDiagnostic("provider.selected", {
+          agentKey: agentConfig.key,
+          transport: "cursor-connect",
+          provider: "cursor",
+          model: agentConfig.model ?? "cursor-default",
+          hasApiKey: true,
+        });
+        // Build a cursor-internal executeTool that reuses the same policy +
+        // executors as the host adapter's executeTool. Cursor drives its own
+        // inline exec loop (sync, in-stream), so we give it the same local
+        // tool executors rather than routing back through localLoop.
+        const cursorExecuteTool = async (call: AgentRuntimeToolCallInput) => {
+          const result = await executeLocalToolWithPolicy({
+            env: deps.env,
+            agentToolNames: activeAgentToolNames,
+            call,
+            executors: localToolExecutors,
+            detachMs: resolveExecShellDetachMs(deps.env),
+            ...(deps.confirmDestructiveAction
+              ? { confirmDestructiveAction: deps.confirmDestructiveAction }
+              : {}),
+          });
+          return {
+            content: result.content,
+            metadata: {
+              ...(result.metadata ?? {}),
+              workspaceRoot,
+              workspaceKind: "current",
+            },
+          };
+        };
+        const cursorProvider = createCursorProvider({
+          accessToken,
+          model: agentConfig.model || "cursor-default",
+          systemPrompt: agentConfig.prompt?.trim() || undefined,
+          tools,
+          executeTool: cursorExecuteTool,
+        });
+        // cursorProvider.complete already returns AgentRuntimeResult; wrap to
+        // attach tool surface diagnostics for parity with other providers.
+        return {
+          model: agentConfig.model || "cursor-default",
+          complete: async (messages, options) => {
+            logLocalRuntimeDiagnostic("provider.request.start", {
+              agentKey: agentConfig.key,
+              transport: "cursor-connect",
+              model: agentConfig.model ?? "cursor-default",
+              messageCount: messages.length,
+              toolCount: tools.length,
+              requestedToolNames,
+            });
+            const result = await cursorProvider.complete(messages, options);
+            logLocalRuntimeDiagnostic("provider.request.result", {
+              agentKey: agentConfig.key,
+              transport: "cursor-connect",
+              ok: true,
+              contentChars: (result.content ?? "").length,
+              toolCallCount: result.tool_calls?.length ?? 0,
+            });
+            return result;
+          },
+        };
+      }
+
       if (shouldUsePlatformChatProvider(deps.env, agentConfig)) {
         const providerConfig = await resolvePlatformChatProviderConfig({
           agentConfig,
@@ -2428,6 +1680,21 @@ export function createCliLocalRuntimeAdapter(
         credentialBroker,
         syncFetcher,
       });
+      // kimi-code 这类 OAuth provider 的 access token 只有 900s，比一次工具循环短。
+      // 把 token 解析下沉到每次请求，而不是固化在 providerConfig 里。
+      // 非 OAuth ref（broker 的 api-key:*）resolver 会返回 null，回落到已解析的 key。
+      const oauthApiKeyRef = asOptionalTrimmedString(agentConfig.apiKeyRef);
+      const resolveRequestApiKey = oauthApiKeyRef
+        ? async (opts: { force: boolean }) => {
+            try {
+              return await apiKeyRefResolver(oauthApiKeyRef, { force: opts.force });
+            } catch {
+              // 刷新失败时回落到已捕获的 key，让上游错误（401/其它）原样冒出来，
+              // 而不是把刷新异常盖掉真正的失败原因。
+              return null;
+            }
+          }
+        : undefined;
       logLocalRuntimeDiagnostic("provider.selected", {
         agentKey: agentConfig.key,
         transport: "direct-openai-compatible",
@@ -2472,6 +1739,7 @@ export function createCliLocalRuntimeAdapter(
               }),
             stream,
             onTextDelta: options?.onTextDelta,
+            ...(resolveRequestApiKey ? { resolveApiKey: resolveRequestApiKey } : {}),
           });
           logLocalRuntimeDiagnostic("provider.request.result", {
             agentKey: agentConfig.key,
@@ -2485,7 +1753,7 @@ export function createCliLocalRuntimeAdapter(
         },
       };
     },
-    executeTool: async (call) => {
+    executeTool: async (call, opts?: { abortSignal?: AbortSignal }) => {
       assertWithinLocalToolBudget({
         toolName: call.name,
         budgets: localToolBudgets,
@@ -2496,6 +1764,8 @@ export function createCliLocalRuntimeAdapter(
         agentToolNames: activeAgentToolNames,
         call,
         executors: localToolExecutors,
+        abortSignal: opts?.abortSignal,
+        detachMs: resolveExecShellDetachMs(deps.env),
         ...(deps.confirmDestructiveAction
           ? { confirmDestructiveAction: deps.confirmDestructiveAction }
           : {}),

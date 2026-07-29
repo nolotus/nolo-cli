@@ -1,0 +1,205 @@
+/**
+ * Fetch with transient-error retry + loopback bypass.
+ *
+ * Extracted from localRuntimeAdapter.ts for maintainability. All functions
+ * here are pure (no shared module state) so they can be unit-tested in
+ * isolation via fetchWithTransientRetry.test.ts.
+ *
+ * Re-exported through localRuntimeAdapter.ts (barrel) so existing imports
+ * from "./localRuntimeAdapter" continue to work without changes.
+ */
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import type { CliFetchImpl } from "../cliFetch";
+import { toErrorMessage } from "../../core/errorMessage";
+import { isLoopbackHostname } from "../../core/localOrigins";
+
+export type FetchInput = string | URL | Request;
+export type FetchInit = RequestInit;
+
+const TRANSIENT_FETCH_MAX_ATTEMPTS = 3;
+const TRANSIENT_FETCH_RETRY_BASE_DELAY_MS = 250;
+
+/**
+ * 上游明确表示「我没受理」的状态码，与服务端 chatUpstreamRetry 的 GENTLE_RETRY_STATUSES
+ * 保持同一口径：重试不会产生重复 token、不会重复计费。
+ * 502/504 不在内——那两个可能意味着请求已被处理，重试有副作用风险。
+ * 幂等写路径（如 evidence `customKey` 覆盖写）可经 `retryableStatuses` 显式放宽。
+ */
+const RETRYABLE_HTTP_STATUSES = new Set([429, 503]);
+
+function isTransientFetchError(error: unknown) {
+  const message = toErrorMessage(error);
+  return /certificate|handshake|network|socket|timed out|timeout|ECONNRESET/i.test(
+    message,
+  );
+}
+
+async function defaultSleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function transientFetchRetryDelayMs(attempt: number) {
+  return Math.min(attempt * TRANSIENT_FETCH_RETRY_BASE_DELAY_MS, 2_000);
+}
+
+/**
+ * 从一个可重试响应里读出建议等待时长。
+ *
+ * nolo 服务端在排空/限流时会明确给出信号，例如
+ * 503 {"error":"Server draining","reason":"core_draining","retryable":true,"retryAfterMs":1500}
+ * 以前客户端完全不看这些字段——`fetchWithTransientRetry` 只在**抛异常**时重试，
+ * 而 503 是一次成功的 HTTP 交换，于是服务端说「可以重试、等我 1.5 秒」，
+ * 客户端却直接把它当成终局失败上报给用户。
+ *
+ * 优先级：标准 `Retry-After` 头 > 响应体 `retryAfterMs` > 既有退避。
+ * 读体前先 clone，避免把调用方要用的 body 消费掉。
+ */
+async function resolveRetryAfterMs(
+  response: Response,
+  attempt: number,
+): Promise<number> {
+  const header = response.headers.get("retry-after");
+  if (header) {
+    const seconds = Number(header.trim());
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, 10_000);
+    }
+  }
+  try {
+    const body = await response.clone().text();
+    const parsed = JSON.parse(body) as { retryAfterMs?: unknown };
+    const ms = Number(parsed?.retryAfterMs);
+    if (Number.isFinite(ms) && ms >= 0) return Math.min(ms, 10_000);
+  } catch {
+    // 非 JSON 或 body 不可读：退回既有退避。
+  }
+  return transientFetchRetryDelayMs(attempt);
+}
+
+/**
+ * Loopback URL check for fetch inputs (string | URL | Request).
+ * Reuses core/localOrigins `isLoopbackHostname` so loopback detection stays
+ * single-source. Request objects are unwrapped via `.url`.
+ */
+export function isLoopbackUrl(input: FetchInput) {
+  try {
+    const target =
+      typeof input === "string" || input instanceof URL
+        ? new URL(String(input))
+        : new URL(input.url);
+    return isLoopbackHostname(target.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function toNodeRequestBody(body: FetchInit["body"]) {
+  if (typeof body === "string") return Buffer.from(body);
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  if (body instanceof ArrayBuffer) return Buffer.from(body);
+  return null;
+}
+
+export async function defaultLoopbackRequest(
+  input: FetchInput,
+  init?: FetchInit,
+) {
+  const target =
+    typeof input === "string" || input instanceof URL
+      ? new URL(String(input))
+      : new URL(input.url);
+  const headers = new Headers(init?.headers);
+  const body = toNodeRequestBody(init?.body);
+  if (body && !headers.has("Content-Length")) {
+    headers.set("Content-Length", String(body.byteLength));
+  }
+  return await new Promise<Response>((resolve, reject) => {
+    const requestImpl = target.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = requestImpl(
+      target,
+      {
+        method: init?.method ?? "GET",
+        headers: Object.fromEntries(headers.entries()),
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) =>
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+        );
+        res.on("end", () => {
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: res.statusCode ?? 500,
+              headers: res.headers as Record<string, string>,
+            }),
+          );
+        });
+      },
+    );
+    req.on("error", reject);
+    init?.signal?.addEventListener(
+      "abort",
+      () => {
+        req.destroy(
+          init.signal?.reason instanceof Error
+            ? init.signal.reason
+            : new Error("request aborted"),
+        );
+        reject(init.signal?.reason ?? new Error("request aborted"));
+      },
+      { once: true },
+    );
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+export type FetchWithTransientRetryOptions = {
+  sleep?: (ms: number) => Promise<void>;
+  loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
+  /**
+   * 显式重试状态码集合。默认 `RETRYABLE_HTTP_STATUSES`（{429,503}），
+   * 刻意不含 502/504。幂等写路径可传入含 502 的集合以放宽重试。
+   */
+  retryableStatuses?: ReadonlySet<number>;
+};
+
+export async function fetchWithTransientRetry(
+  fetchImpl: CliFetchImpl,
+  input: FetchInput,
+  init?: FetchInit,
+  options: FetchWithTransientRetryOptions = {},
+) {
+  const retryableStatuses = options.retryableStatuses ?? RETRYABLE_HTTP_STATUSES;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= TRANSIENT_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      if (options.loopbackRequest && isLoopbackUrl(input)) {
+        return await options.loopbackRequest(input, init);
+      }
+      const response = await fetchImpl(input, init);
+      // 429/503 是一次**成功的** HTTP 交换，不会走到下面的 catch。以前这里直接
+      // 把它返回给调用方，于是服务端 `retryable: true, retryAfterMs: 1500` 这类
+      // 明示信号被完全无视，一次容量抖动就成了用户可见的终局失败。
+      if (
+        retryableStatuses.has(response.status) &&
+        attempt < TRANSIENT_FETCH_MAX_ATTEMPTS &&
+        !init?.signal?.aborted
+      ) {
+        const delayMs = await resolveRetryAfterMs(response, attempt);
+        await (options.sleep ?? defaultSleep)(delayMs);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (init?.signal?.aborted) throw error;
+      if (!isTransientFetchError(error)) throw error;
+      lastError = error;
+      if (attempt < TRANSIENT_FETCH_MAX_ATTEMPTS) {
+        await (options.sleep ?? defaultSleep)(transientFetchRetryDelayMs(attempt));
+      }
+    }
+  }
+  throw lastError;
+}

@@ -29,6 +29,7 @@ import {
   THEME_PALETTES,
 } from "./theme";
 import { detectGitStatus } from "./gitStatus";
+import { getModelContextWindow } from "../../ai/llm/getModelContextWindow";
 import { getProcessRegistry } from "../../agent-runtime/processRegistry";
 import { formatElapsedSeconds, renderContextPanel, renderKnownAgents, renderTuiHelp } from "./sessionRender";
 import { isLikelySlashCommand, stripImageTokens } from "./sessionInput";
@@ -91,6 +92,7 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
       "hide"
     ),
     toolDisplay: normalizeToolDisplayMode(env.NOLO_CLI_TOOLS ?? env.NOLO_TOOLS, "compact"),
+    contextWindow: getModelContextWindow(agentName),
   };
 }
 
@@ -101,6 +103,7 @@ function applyAgentSwitch(state: TuiState, target: { name: string; key: string }
       ...state,
       agentName: target.name,
       agentKey: target.key,
+      contextWindow: getModelContextWindow(target.name),
     },
     output: `Switched to ${target.name}. ${
       state.dialogId ? `Dialog kept: ${state.dialogId}` : "Dialog kept: new"

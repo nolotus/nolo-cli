@@ -6,12 +6,13 @@ import {
 } from "./localAgentRecords";
 
 describe("CLI local agent records", () => {
-  test("builds user-scoped agent lookup keys for handles", () => {
+  test("builds user-scoped + public agent lookup keys for handles", () => {
     expect(buildLocalAgentLookupKeys({
       agentRef: "frontend",
       userId: "user-1",
     })).toEqual([
       "agent-user-1-frontend",
+      "agent-pub-frontend",
     ]);
   });
 

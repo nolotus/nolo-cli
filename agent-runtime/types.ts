@@ -39,12 +39,26 @@ export interface AgentRuntimeChatMessage {
   content: AgentRuntimeMessageContent;
   tool_call_id?: string;
   tool_calls?: AgentRuntimeToolCall[];
+  /** 工具名：tool 行的语义字段，落库 / 回读 / 折叠头显示都依赖它。 */
+  toolName?: string;
   tool_result_metadata?: Record<string, unknown>;
   reasoning_content?: string;
   cybotKey?: string;
   agentKey?: string;
   agentName?: string;
 }
+
+export type AgentRuntimeOutputBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string }
+  | {
+      type: "toolCall";
+      toolCall: AgentRuntimeToolCall;
+      /**
+       * 已填充 = provider 流内已执行（如 Cursor exec 通道），localLoop 不得重跑 executeTool。
+       */
+      result?: { content: string; metadata?: Record<string, unknown> };
+    };
 
 export interface AgentRuntimeResult {
   content: string;
@@ -68,6 +82,12 @@ export interface AgentRuntimeResult {
    * 消费方据此区分"话说了一半"与"正常结束"，**不**改变控制流。
    */
   finish_reason?: string;
+  /**
+   * Canonical 有序 block 输出序列（text/thinking/toolCall 交错）。
+   * provider 有此序列时通过 output 返回，localLoop 按 block 消费。
+   * OpenAI 兼容 provider 不设此字段（content + tool_calls 扁平模型足够）。
+   */
+  output?: AgentRuntimeOutputBlock[];
   /** Set when a turn is persisted after a provider/runtime failure. */
   error?: boolean;
   errorMessage?: string;

@@ -1,191 +1,90 @@
 /**
- * 回归：auto runtime 本地失败后 fallback 到服务器时，服务端跑的是**服务端**那份
- * 对话历史。此前 `ensureDialogSyncedForServerFallback` 只检查远端 dialog 记录
- * 是否存在（200 就放行），不比对消息。服务器繁忙时 chat 代理与 db 写入会同时
- * 退化，于是本地已经落库的轮次没能同步上去，fallback 带着过期历史重跑——
- * 用户看到的就是「刚说过的话它不记得」。
+ * Tests for cliRemoteDialogSync — postRemoteRecord retry and
+ * syncLocalDialogEvidenceToRemote bounded concurrency.
+ *
+ * ensureDialogSyncedForServerFallback and pushLocalDialogToRemote tests were
+ * removed: auto runtime no longer falls back to server when local fails
+ * (see agentRun.ts). Those functions were deleted as dead code.
  */
-import { afterEach, expect, mock, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 
 const DIALOG_ID = "01TESTDIALOG0000000000000";
 const USER_ID = "0e95801d90";
-const DIALOG_KEY = `dialog-${USER_ID}-${DIALOG_ID}`;
 const SERVER = "https://nolo.test";
-// userId 从 token 里解出来，形状必须与 parseUserIdFromAuthToken 一致。
 const AUTH_TOKEN = `${Buffer.from(JSON.stringify({ userId: USER_ID })).toString(
   "base64url",
 )}.sig.x`;
 
-const msg = (id: string, content: string) => ({
-  id,
-  _key: `dialog-msg-${DIALOG_ID}-${id}`,
-  role: "user",
-  content,
-});
-
-async function loadWithLocalMessages(localMsgs: unknown[]) {
-  mock.module("../localRuntimeAuthority", () => ({
-    getDefaultCliLocalRuntimeDb: async () => ({}),
-  }));
-  mock.module("../../agent-runtime/localDialogRead", () => ({
-    readDialogFromLocalDb: async () => ({
-      meta: { id: DIALOG_ID, dbKey: DIALOG_KEY },
-      msgs: localMsgs,
-    }),
-  }));
-  return import("./cliRemoteDialogSync");
-}
-
-type Call = { url: string; body?: any };
-
-function createFetch(remoteMsgs: unknown[]) {
-  const calls: Call[] = [];
-  const fetchImpl = mock(async (url: string, init?: RequestInit) => {
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ url: String(url), body });
-    if (String(url).includes("/api/v1/db/read/")) {
-      return new Response(JSON.stringify({ id: DIALOG_ID }), { status: 200 });
-    }
-    if (String(url).includes("/rpc/getConvMsgs")) {
-      return new Response(JSON.stringify(remoteMsgs), { status: 200 });
+test("postRemoteRecord 遇 429 经退避后成功，不再一次即弃", async () => {
+  const { postRemoteRecord } = await import("./cliRemoteDialogSync");
+  let writeCalls = 0;
+  const fetchImpl = mock(async (url: string, _init?: RequestInit) => {
+    if (String(url).includes("/api/v1/db/write/")) {
+      writeCalls += 1;
+      if (writeCalls === 1) {
+        // 服务端限流：第一次 429，Retry-After: 0（立即重试）。
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "retry-after": "0" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
     }
     return new Response(JSON.stringify({ ok: true }), { status: 200 });
   });
-  return { calls, fetchImpl };
-}
 
-const writtenKeys = (calls: Call[]) =>
-  calls
-    .filter((c) => c.url.includes("/api/v1/db/write"))
-    .map((c) => c.body?.key ?? c.body?.data?._key);
+  // 不应抛错——退避后第二次成功。
+  await postRemoteRecord({
+    authToken: AUTH_TOKEN,
+    data: { hello: "world" },
+    fetchImpl: fetchImpl as any,
+    key: `dialog-msg-${DIALOG_ID}-retry`,
+    serverUrl: SERVER,
+    userId: USER_ID,
+  });
 
-afterEach(() => {
-  mock.restore();
+  expect(writeCalls).toBe(2);
 });
 
-test("远端落后时，把本地独有的消息补上去再 fallback", async () => {
-  const { ensureDialogSyncedForServerFallback } = await loadWithLocalMessages([
-    msg("m1", "第一句"),
-    msg("m2", "第二句"),
-    msg("m3", "服务器繁忙时只落在本地的那句"),
-  ]);
-  const { calls, fetchImpl } = createFetch([msg("m1", "第一句"), msg("m2", "第二句")]);
-
-  const result = await ensureDialogSyncedForServerFallback(
-    {
-      continueDialogId: DIALOG_ID,
-      env: { NOLO_SERVER: SERVER },
-      fetchImpl: fetchImpl as any,
-      serverUrl: SERVER,
-    },
-    AUTH_TOKEN,
-  );
-
-  expect(result.ok).toBe(true);
-  expect(calls.some((c) => c.url.includes("/rpc/getConvMsgs"))).toBe(true);
-  const written = writtenKeys(calls);
-  expect(written).toContain(`dialog-msg-${DIALOG_ID}-m3`);
-  // 只补差集：已经同步过的两条不重复写。
-  expect(written).not.toContain(`dialog-msg-${DIALOG_ID}-m1`);
-  expect(written).not.toContain(`dialog-msg-${DIALOG_ID}-m2`);
-});
-
-test("远端已完整时不写任何东西", async () => {
-  const { ensureDialogSyncedForServerFallback } = await loadWithLocalMessages([
-    msg("m1", "第一句"),
-  ]);
-  const { calls, fetchImpl } = createFetch([msg("m1", "第一句")]);
-
-  const result = await ensureDialogSyncedForServerFallback(
-    {
-      continueDialogId: DIALOG_ID,
-      env: { NOLO_SERVER: SERVER },
-      fetchImpl: fetchImpl as any,
-      serverUrl: SERVER,
-    },
-    AUTH_TOKEN,
-  );
-
-  expect(result.ok).toBe(true);
-  expect(writtenKeys(calls)).toEqual([]);
-});
-
-test("远端比本地新时什么都不做，不用陈旧本地状态覆盖服务端", async () => {
-  const { ensureDialogSyncedForServerFallback } = await loadWithLocalMessages([]);
-  const { calls, fetchImpl } = createFetch([msg("m1", "服务端独有"), msg("m2", "服务端独有")]);
-
-  const result = await ensureDialogSyncedForServerFallback(
-    {
-      continueDialogId: DIALOG_ID,
-      env: { NOLO_SERVER: SERVER },
-      fetchImpl: fetchImpl as any,
-      serverUrl: SERVER,
-    },
-    AUTH_TOKEN,
-  );
-
-  expect(result.ok).toBe(true);
-  expect(writtenKeys(calls)).toEqual([]);
-});
-
-test("补齐失败绝不阻塞 fallback —— lock 错误走 lock 专属提示语", async () => {
-  mock.module("../localRuntimeAuthority", () => ({
-    getDefaultCliLocalRuntimeDb: async () => ({}),
+test("syncLocalDialogEvidenceToRemote 有界并发 + 批间节流", async () => {
+  const { syncLocalDialogEvidenceToRemote } = await import("./cliRemoteDialogSync");
+  // 10 个 op：6 msg + 4 non-msg，共 10 条写。
+  const ops = Array.from({ length: 10 }, (_, i) => ({
+    type: "put" as const,
+    key: i < 6 ? `dialog-${USER_ID}-${DIALOG_ID}-msg-m${i}` : `dialog-${USER_ID}-${DIALOG_ID}-meta${i}`,
+    value: { idx: i },
   }));
-  mock.module("../../agent-runtime/localDialogRead", () => ({
-    readDialogFromLocalDb: async () => {
-      throw new Error("LEVEL_LOCKED");
-    },
-  }));
-  const { ensureDialogSyncedForServerFallback } = await import("./cliRemoteDialogSync");
-  const { fetchImpl } = createFetch([]);
-  const written: string[] = [];
 
-  const result = await ensureDialogSyncedForServerFallback(
-    {
-      continueDialogId: DIALOG_ID,
-      env: { NOLO_SERVER: SERVER },
-      fetchImpl: fetchImpl as any,
-      output: { write: (c: string) => written.push(c) },
-      serverUrl: SERVER,
-    },
-    AUTH_TOKEN,
-  );
+  const slept: number[] = [];
+  let inflight = 0;
+  let maxInflight = 0;
+  let writeCalls = 0;
+  const fetchImpl = mock(async (url: string, _init?: RequestInit) => {
+    if (String(url).includes("/api/v1/db/write/")) {
+      writeCalls += 1;
+      inflight += 1;
+      maxInflight = Math.max(maxInflight, inflight);
+      // 模拟一点异步延迟，让并发可观测。
+      await new Promise((r) => setTimeout(r, 5));
+      inflight -= 1;
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  });
 
-  expect(result.ok).toBe(true);
-  // lock 专属提示语：告诉用户历史会缺 + 怎么释放。
-  expect(written.join("")).toContain("local database is locked");
-  // 不应再走原来的 "could not sync" 分支。
-  expect(written.join("")).not.toContain("could not sync");
-});
+  await syncLocalDialogEvidenceToRemote({
+    env: { NOLO_SERVER: SERVER, AUTH_TOKEN },
+    fetchImpl: fetchImpl as any,
+    input: {} as any,
+    ops,
+    userId: USER_ID,
+    sleep: async (ms) => { slept.push(ms); },
+  });
 
-test("补齐失败绝不阻塞 fallback —— 非 lock 错误走原来的 could not sync 分支", async () => {
-  mock.module("../localRuntimeAuthority", () => ({
-    getDefaultCliLocalRuntimeDb: async () => ({}),
-  }));
-  mock.module("../../agent-runtime/localDialogRead", () => ({
-    readDialogFromLocalDb: async () => {
-      throw new Error("network down");
-    },
-  }));
-  const { ensureDialogSyncedForServerFallback } = await import("./cliRemoteDialogSync");
-  const { fetchImpl } = createFetch([]);
-  const written: string[] = [];
-
-  const result = await ensureDialogSyncedForServerFallback(
-    {
-      continueDialogId: DIALOG_ID,
-      env: { NOLO_SERVER: SERVER },
-      fetchImpl: fetchImpl as any,
-      output: { write: (c: string) => written.push(c) },
-      serverUrl: SERVER,
-    },
-    AUTH_TOKEN,
-  );
-
-  expect(result.ok).toBe(true);
-  // 非 lock 错误：走原来的 "could not sync" 分支。
-  expect(written.join("")).toContain("could not sync");
-  // 不应误报成 lock 错误。
-  expect(written.join("")).not.toContain("local database is locked");
+  // 全部写入完成。
+  expect(writeCalls).toBe(10);
+  // 并发上限 = 4（有界，不是无界 Promise.all 的 10）。
+  expect(maxInflight).toBe(4);
+  // 10 条 / 批 4 = 3 批 → 批间 sleep 2 次（最后一批不 sleep）。
+  expect(slept.length).toBe(2);
 });

@@ -90,4 +90,55 @@ describe("fetchWithTransientRetry", () => {
     });
     expect(await res.json()).toEqual({ hi: 1 });
   });
+
+  it("does NOT retry 502 by default (upstream may have already processed it)", async () => {
+    const { impl, calls } = scriptedFetch([json(502, { error: "bad gateway" })]);
+    const res = await fetchWithTransientRetry(impl, "https://example.test/x", undefined, {
+      sleep: async () => {},
+    });
+    expect(res.status).toBe(502);
+    expect(calls.length).toBe(1);
+  });
+
+  it("retries 502 when retryableStatuses explicitly includes it, then succeeds", async () => {
+    const slept: number[] = [];
+    const { impl, calls } = scriptedFetch([
+      json(502, { error: "bad gateway" }),
+      json(200, { ok: true }),
+    ]);
+    const res = await fetchWithTransientRetry(
+      impl,
+      "https://example.test/x",
+      undefined,
+      {
+        sleep: async (ms) => { slept.push(ms); },
+        retryableStatuses: new Set([429, 502, 503]),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(calls.length).toBe(2);
+    expect(slept.length).toBe(1);
+  });
+
+  it("retries 502 with retryableStatuses but surfaces the last response when budget exhausted", async () => {
+    const slept: number[] = [];
+    const { impl, calls } = scriptedFetch([
+      json(502, {}),
+      json(502, {}),
+      json(502, { last: true }),
+    ]);
+    const res = await fetchWithTransientRetry(
+      impl,
+      "https://example.test/x",
+      undefined,
+      {
+        sleep: async (ms) => { slept.push(ms); },
+        retryableStatuses: new Set([502]),
+      },
+    );
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ last: true });
+    expect(calls.length).toBe(3);
+    expect(slept.length).toBe(2);
+  });
 });

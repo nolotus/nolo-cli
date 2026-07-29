@@ -3963,6 +3963,17 @@ describe("CLI local runtime adapter", () => {
 });
 
 describe("CLI local runtime adapter remote sync fetch timeout", () => {
+  // This describe is a sibling of "CLI local runtime adapter", not a child,
+  // so the parent's beforeEach (which clears the prepared-agent + hybrid-store
+  // caches) does NOT run here. The normal-turn test below drives a full
+  // runLocalAgentTurn, which calls getOrCreateSharedStore — a process-level
+  // cache keyed by cwd. Without clearing it, a leftover store from a prior
+  // test (bound to a different db/fetchImpl mock) gets reused, causing the
+  // agent-config read to hang on a fetch that never settles. Clear explicitly.
+  beforeEach(() => {
+    clearCliLocalRuntimePreparedAgentCache();
+  });
+
   test("postRemoteRecord aborts a hung fetch via AbortSignal.timeout (TimeoutError)", async () => {
     // Shorten the timeout via the test-only hook so this never waits the real
     // 10s. A hung/unreachable server is simulated by a fetchImpl that never

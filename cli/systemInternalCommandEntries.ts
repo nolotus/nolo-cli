@@ -29,6 +29,14 @@ export function getSystemInternalCommandEntries(renderHelpText: () => string): C
       const { runAuthClaudeCommand } = await import("./oauth/authCommand");
       return runAuthClaudeCommand(args);
     }),
+    createArgsCommand(["auth", "cursor"], "Authorize Cursor Pro OAuth", async (args) => {
+      const { runAuthCursorCommand } = await import("./oauth/authCommand");
+      return runAuthCursorCommand(args);
+    }),
+    createArgsCommand(["auth", "kimi-code"], "Authorize Kimi Code OAuth (Kimi membership)", async (args) => {
+      const { runAuthKimiCodeCommand } = await import("./oauth/authCommand");
+      return runAuthKimiCodeCommand(args);
+    }),
     createArgsCommand(["login"], "Log in to Nolo", async (args) => {
       const { runLoginCommand } = await import("./authCommands");
       return runLoginCommand(args);

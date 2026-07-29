@@ -254,6 +254,25 @@ describe("assistantOutput", () => {
     );
   });
 
+  test("treats circled-number ①-⑳ section markers as list-like for breathing", () => {
+    // ①-⑳ (U+2460–U+2473) are used as section markers like `①CLI 自动 bump`.
+    // They must join the list↔prose breathing so a ① block is separated from
+    // adjacent prose by one blank line, while consecutive ① lines stay tight.
+    // Note: the circled number is followed directly by text with NO space, so
+    // the list-like check must not require `\s` after it.
+    expect(polishAssistantStructure("intro\n①CLI 自动 bump\n②docs\nnext")).toBe(
+      "intro\n\n①CLI 自动 bump\n②docs\n\nnext"
+    );
+    // Consecutive ① siblings keep tight grouping (no blank between them).
+    expect(polishAssistantStructure("①one\n②two\n③three")).toBe(
+      "①one\n②two\n③three"
+    );
+    // ① block breathing is symmetric: prose → ① also gets a blank line.
+    expect(polishAssistantStructure("prose here\n①first\n②second")).toBe(
+      "prose here\n\n①first\n②second"
+    );
+  });
+
   test("does not alter spacing inside fenced code that looks like a list", () => {
     // Fence interior masking means `•`/`1.` inside a code block never get
     // blank lines inserted around them.
@@ -288,6 +307,48 @@ describe("assistantOutput", () => {
     expect(done).toContain(
       `${themeColorSequence("accent", process.env, brightness)}☑\x1b[0m`
     );
+  });
+
+  test("rich mode renders italic markers as dim without leaking asterisks", () => {
+    // *italic* should lose the asterisks and gain dim styling. **bold** must
+    // still take priority — a single bold run should not be half-consumed by
+    // the italic rule.
+    const rich = formatAssistantDisplay("this is *important* text");
+    expect(rich).toContain("\x1b[2mimportant\x1b[0m");
+    expect(rich).not.toContain("*important*");
+    // Bold is untouched by the italic pass.
+    const bold = formatAssistantDisplay("**bold** and *italic*");
+    expect(bold).toContain("\x1b[1mbold\x1b[0m");
+    expect(bold).toContain("\x1b[2mitalic\x1b[0m");
+  });
+
+  test("rich mode does not corrupt snake_case identifiers as italic", () => {
+    // _italic_ is intentionally NOT supported (CommonMark intra-word rule).
+    // snake_case variables like foo_bar_baz must pass through untouched —
+    // no dim styling injected on the middle segment.
+    const snake = formatAssistantDisplay("call foo_bar_baz here");
+    expect(snake).not.toContain("\x1b[2mbar\x1b[0m");
+    expect(snake).toContain("foo_bar_baz");
+  });
+
+  test("rich mode renders strikethrough markers as dim+strike without leaking tildes", () => {
+    const rich = formatAssistantDisplay("this is ~~removed~~ text");
+    expect(rich).toContain("\x1b[2m\x1b[9mremoved");
+    expect(rich).not.toContain("~~removed~~");
+  });
+
+  test("rich mode dims the 进入 nolo-plan status line with chrome", () => {
+    // Repo convention forces every reply to start with "进入 nolo-plan…"；
+    // back-to-back replies stack these into visual noise. The status line is
+    // downgraded to chrome + dim so it sits below body text. Must match
+    // highlightMarkdown in tui/theme.ts (stream vs history repaint parity).
+    const brightness = resolveTuiBrightness();
+    const rich = formatAssistantDisplay("进入 nolo-plan（4 项串行小改）。");
+    expect(rich).toContain(
+      `${themeColorSequence("chrome", process.env, brightness)}\x1b[2m进入 nolo-plan（4 项串行小改）。`
+    );
+    // Not bold (body text isn't, and it must read as de-emphasized).
+    expect(rich).not.toContain("\x1b[1m");
   });
 
   describe("polishAssistantStructure code fence masking", () => {

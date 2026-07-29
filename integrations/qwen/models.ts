@@ -200,7 +200,7 @@ export const qwenTokenPlanModels: Model[] = [
     name: "qwen3.8-max-preview",
     displayName: "Qwen3.8 Max Preview",
     hasVision: true,
-    contextWindow: 262_144,
+    contextWindow: 1_000_000,
     maxOutputTokens: 32_768,
     jsonOutput: true,
     fnCall: true,

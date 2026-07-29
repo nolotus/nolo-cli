@@ -183,19 +183,24 @@ export function renderHistory(
   // Clear + paint ONLY the main transcript rows. Never use ED (\x1b[J) from
   // the top of the screen — many terminals wipe the docked composer below
   // the scroll region too, which is why the input bar "vanishes" mid-turn.
+  // Build a single frame string and write once — multiple write() calls per
+  // row cause the terminal to paint partial frames, producing flicker during
+  // streaming output.
+  let frame = "";
   for (let i = 0; i < visibleHeight; i++) {
     const line = visibleLines[i] ?? "";
     const padded = padOrTruncateToWidth(line, contentWidth);
     const thumb = renderScrollbarRow(i, visibleHeight, totalLines, history.scrollTop);
-    output.write(`\x1b[${i + 1};1H`);
-    output.write("\x1b[2K");
-    output.write(padded);
-    output.write(`\x1b[${columns}G`);
-    output.write(thumb);
+    frame += `\x1b[${i + 1};1H`;
+    frame += "\x1b[2K";
+    frame += padded;
+    frame += `\x1b[${columns}G`;
+    frame += thumb;
   }
 
   const mainBottom = Math.max(1, rows - inputLines);
-  output.write(`\x1b[${mainBottom};1H`);
+  frame += `\x1b[${mainBottom};1H`;
+  output.write(frame);
 }
 
 export function createHistoryOutputStream(

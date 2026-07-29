@@ -657,7 +657,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         activityTimer = setInterval(() => {
           activityFrameIndex += 1;
           if (fixedInput.active && !fixedInput.isPaused()) {
-            fixedInput.repaint(buffer);
+            output.write("\x1b[?2026h\x1b[?25l");
+            try {
+              fixedInput.repaint(buffer);
+            } finally {
+              output.write("\x1b[?25h\x1b[?2026l");
+            }
           }
         }, 150);
       }
@@ -687,6 +692,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // If the terminal was resized while the dialog owned the screen, the
         // composer is still parked at the pre-resize rows (onResize skips
         // repainting while paused). Repaint so it re-docks at the new bottom.
+        flushPendingRender();
         renderHistoryToOutput();
         fixedInput.repaint(buffer);
       },
@@ -695,6 +701,48 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     },
     output: output as NodeJS.WritableStream,
   });
+  // ── Render coalescing + terminal sync ──────────────────────────────────
+  // Streaming chunks arrive faster than the terminal can paint without
+  // flicker. Coalesce multiple onUpdate calls in the same macrotask into a
+  // single render frame, and wrap each frame in BSU/ESU (2026h/l) + cursor
+  // hide/show so the terminal never shows a half-painted intermediate state.
+  let renderScheduled = false;
+  let renderTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushPendingRender = () => {
+    if (renderTimer !== null) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+    }
+    if (!renderScheduled) return;
+    renderScheduled = false;
+    paintSyncedFrame();
+  };
+
+  const paintSyncedFrame = () => {
+    if (fixedInput.isPaused()) return;
+    // Begin terminal sync update + hide cursor. Terminals without 2026
+    // support silently ignore the sequence; cursor hide is a universal
+    // fallback that still reduces visible flicker.
+    output.write("\x1b[?2026h\x1b[?25l");
+    try {
+      renderHistory(output, history, fixedInput.getInputLines());
+      if (fixedInput.active) fixedInput.repaint(buffer);
+    } finally {
+      output.write("\x1b[?25h\x1b[?2026l");
+    }
+  };
+
+  const scheduleRender = () => {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    renderTimer = setTimeout(() => {
+      renderScheduled = false;
+      renderTimer = null;
+      paintSyncedFrame();
+    }, 0);
+  };
+
   const renderHistoryToOutput = () => {
     // A dialog (picker / confirm) owns the screen while paused. Repainting the
     // transcript underneath it erases the frame — mid-turn confirms streamed
@@ -729,6 +777,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       copyViewExitResolver = null;
       output.write("\x1b[2J\x1b[H");
       fixedInput.resumeFromDialog();
+      flushPendingRender();
       renderHistoryToOutput();
       fixedInput.repaint(buffer);
     }
@@ -758,10 +807,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     startTurn(history, "assistant");
     const agentOutput = isInteractiveInput(input)
       ? createHistoryOutputStream(history, () => {
-          renderHistoryToOutput();
-          if (fixedInput.active && !fixedInput.isPaused()) {
-            fixedInput.repaint(buffer);
-          }
+          scheduleRender();
         })
       : output;
     // Interactive ui_ask_choice: dock an arrow-key select dialog above the
@@ -822,6 +868,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       explicitAgentSwitch = false;
       if (isInteractiveInput(input)) {
         finalizeCurrentTurn(history);
+        flushPendingRender();
         renderHistoryToOutput();
         if (fixedInput.active) fixedInput.repaint(buffer);
       }
@@ -1364,6 +1411,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         fixedInput.repaint(buffer, cursorPos);
         return;
       }
+      flushPendingRender();
       paintFrame(buffer);
     };
     const resizeTarget = output as NodeJS.WritableStream & {
@@ -1378,6 +1426,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       input.off("data", onData);
       onData.destroy();
       output.write("\x1b[?2004l");
+      output.write("\x1b[?25h\x1b[?2026l");
       input.setRawMode?.(false);
     };
     const handleInputToken = async (sequence: string) => {
@@ -1596,6 +1645,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             if (drainEnv.NOLO_CLI_GIT_STATUS !== "0") {
               state = { ...state, gitStatus: detectGitStatus(state.cwd) };
             }
+            flushPendingRender();
             fixedInput.exitOutputMode(buffer, cursorPos);
             return;
           }
@@ -1657,6 +1707,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         if (refreshEnv.NOLO_CLI_GIT_STATUS !== "0") {
           state = { ...state, gitStatus: detectGitStatus(state.cwd) };
         }
+        flushPendingRender();
         fixedInput.exitOutputMode(buffer, cursorPos);
         return;
       }

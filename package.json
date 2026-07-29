@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.8.0-alpha.5",
+  "version": "0.8.0-alpha.6",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -248,11 +248,11 @@
     "cli/internalCommandEntries.ts",
     "cli/scriptCommandEntries.ts",
     "cli/cliCommandFactories.ts",
-    "cli/agentEmailCommands.ts",
     "cli/agentRunCommand.ts",
     "cli/agentRecordCommands.ts",
     "cli/agentPullCommand.ts",
     "cli/offlineMarxistsAgentCommand.ts",
+    "cli/agentEmailCommands.ts",
     "cli/agentDeleteCommand.ts",
     "cli/dialogAttachmentCleanup.ts",
     "cli/dialogCommands.ts",

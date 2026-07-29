@@ -4,12 +4,6 @@ import {
   createEnvCommand,
   createEnvScriptDirCommand,
 } from "./cliCommandFactories";
-import {
-  runAgentEmailBindCommand,
-  runAgentEmailCreateAndProvisionCommand,
-  runAgentEmailProvisionCommand,
-  runAgentEmailTransferCommand,
-} from "./agentEmailCommands";
 
 export function getAgentInternalCommandEntries(): CommandEntry[] {
   const createAgentRunCommand = (path: string[], description: string): CommandEntry =>
@@ -72,18 +66,22 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
       return runAgentUpdateCommand(args, deps);
     }),
     createEnvCommand(["agent", "email", "provision"], "Provision a controlled inbox for an agent", async (args, deps) => {
+      const { runAgentEmailProvisionCommand } = await import("./agentEmailCommands");
       return runAgentEmailProvisionCommand(args, deps);
     }),
     createEnvCommand(["agent", "email", "bind"], "Bind an existing email address to an agent", async (args, deps) => {
+      const { runAgentEmailBindCommand } = await import("./agentEmailCommands");
       return runAgentEmailBindCommand(args, deps);
     }),
     createEnvCommand(["agent", "email", "transfer"], "Transfer an email identity from one agent to another (cross-account)", async (args, deps) => {
+      const { runAgentEmailTransferCommand } = await import("./agentEmailCommands");
       return runAgentEmailTransferCommand(args, deps);
     }),
     createEnvCommand(
       ["agent", "email", "create-and-provision"],
       "Create an agent and provision its controlled inbox",
       async (args, deps) => {
+        const { runAgentEmailCreateAndProvisionCommand } = await import("./agentEmailCommands");
         return runAgentEmailCreateAndProvisionCommand(args, deps);
       }
     ),

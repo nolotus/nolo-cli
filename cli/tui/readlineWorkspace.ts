@@ -776,6 +776,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     return true;
   };
 
+  // True while a modal (raw action gate OR ask_choice popup) owns the
+  // keyboard. The modal's own `data` listener handles its keys (Enter/Esc/
+  // Ctrl+C/arrow keys), so the main loop must not let stray keys leak into
+  // the composer draft buffer — otherwise a key typed while the modal is
+  // open gets prepended to the next submitted line (e.g. `x` before `/exit`
+  // yields `x/exit`, which is not recognized as /exit and the process never
+  // exits), or — for ask_choice — Esc meant to cancel the popup also aborts
+  // the whole turn (activeTurnAbort). Mirrors how the non-raw gate path uses
+  // rl.pause() to give the gate exclusive keyboard access.
+  // Hoisted above runOneAgentTurn so the requestUserChoice closure (which
+  // wraps an ask_choice dialog) can set/clear it without a forward-reference.
+  let modalOwnsKeyboard = false;
+
   // --- Chat queue (TUI binding, no Redux) ---
   //
   // runOneAgentTurn executes a single agent turn end-to-end: records the user
@@ -809,6 +822,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const requestUserChoice =
       isInteractiveInput(input) && dialogHost
         ? async (req: UserChoiceRequest): Promise<UserChoiceResult> => {
+            // The ask_choice popup installs its own raw-key reader on stdin,
+            // but dialogHost.run only composer.pause()s and does NOT detach
+            // the global `input.on("data", onData)` listener. Node fans the
+            // same `data` event to both listeners, so every key (Esc/Enter/
+            // printable) would be handled twice: once by the popup and once
+            // by handleInputToken — which aborts the turn on Esc and pollutes
+            // the composer draft / queue on Enter. Claim the keyboard here so
+            // handleInputToken drops all keys while the popup is open.
+            modalOwnsKeyboard = true;
             try {
               return await dialogHost.run((anchor) =>
                 runAskChoiceDialog({
@@ -820,6 +842,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               );
             } catch {
               return { kind: "cancelled" };
+            } finally {
+              modalOwnsKeyboard = false;
             }
           }
         : undefined;
@@ -1304,15 +1328,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // back to the placeholder and hid what the user was typing (the submit
     // path still read the inner buffer, so input "worked" but was invisible).
     let cursorPos = 0;
-    // True while a raw action gate is waiting for the user to press Enter.
-    // The gate owns the keyboard during this modal phase (its own `data`
-    // listener handles Enter/Ctrl+C), so the main loop must not let stray
-    // keys leak into the composer draft buffer — otherwise a key typed while
-    // the gate is open gets prepended to the next submitted line (e.g. `x`
-    // before `/exit` yields `x/exit`, which is not recognized as /exit and
-    // the process never exits). Mirrors how the non-raw gate path uses
-    // rl.pause() to give the gate exclusive keyboard access.
-    let actionGateWaiting = false;
     fixedInput = createFixedInput(output, {
       getStatusLine: () => {
         let base = renderStatusLine(state);
@@ -1420,11 +1435,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
         return;
       }
-      // While a raw action gate is waiting for Enter, the gate's own `data`
-      // listener owns the keyboard. Drop everything else so random keys do
-      // not accumulate in the composer draft buffer and corrupt the next
-      // submitted line once the gate resolves.
-      if (actionGateWaiting) return;
+      // While a modal (raw action gate OR ask_choice popup) owns the
+      // keyboard, that modal's own `data` listener owns the keyboard. Drop
+      // everything else so random keys do not accumulate in the composer
+      // draft buffer and corrupt the next submitted line, and so Esc meant
+      // to cancel an ask_choice popup does not also abort the running turn.
+      if (modalOwnsKeyboard) return;
       // While an agent turn is running we let the user keep typing into the
       // docked composer (draft buffer) but ignore submit so a second turn
       // cannot race the in-flight one. The draft is preserved and shown
@@ -1548,25 +1564,31 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           }
           const binding = ensureChatQueueBinding(
             async (gate) => {
-              actionGateWaiting = true;
+              modalOwnsKeyboard = true;
               try {
                 return await waitForRawActionGate(input, output, gate, spawnRunner, {
                   beforeSubprocess: () => fixedInput.pause(),
                   afterSubprocess: () => fixedInput.resumeFromSubprocess(),
                 });
               } finally {
-                actionGateWaiting = false;
+                modalOwnsKeyboard = false;
               }
             },
-            async (request) =>
-              dialogHost.run((anchor) =>
-                runConfirmDialog({
-                  request,
-                  input: input as any,
-                  output: output as any,
-                  ...anchor,
-                }),
-              ),
+            async (request) => {
+              modalOwnsKeyboard = true;
+              try {
+                return await dialogHost.run((anchor) =>
+                  runConfirmDialog({
+                    request,
+                    input: input as any,
+                    output: output as any,
+                    ...anchor,
+                  }),
+                );
+              } finally {
+                modalOwnsKeyboard = false;
+              }
+            },
           );
           const decision = binding.resolveSubmit({
             text: submittedText,
@@ -1610,25 +1632,31 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // fall through to runSubmittedLine as before.
         if (!result.submit.trim() && chatQueueBinding && chatQueueBinding.queueLength() > 0) {
           const actionGateHandler = async (gate: LocalAgentActionGate) => {
-            actionGateWaiting = true;
+            modalOwnsKeyboard = true;
             try {
               return await waitForRawActionGate(input, output, gate, spawnRunner, {
                 beforeSubprocess: () => fixedInput.pause(),
                 afterSubprocess: () => fixedInput.resumeFromSubprocess(),
               });
             } finally {
-              actionGateWaiting = false;
+              modalOwnsKeyboard = false;
             }
           };
-          const confirmDestructiveAction = async (request: PermissionRequest) =>
-            dialogHost.run((anchor) =>
-              runConfirmDialog({
-                request,
-                input: input as any,
-                output: output as any,
-                ...anchor,
-              }),
-            );
+          const confirmDestructiveAction = async (request: PermissionRequest) => {
+            modalOwnsKeyboard = true;
+            try {
+              return await dialogHost.run((anchor) =>
+                runConfirmDialog({
+                  request,
+                  input: input as any,
+                  output: output as any,
+                  ...anchor,
+                }),
+              );
+            } finally {
+              modalOwnsKeyboard = false;
+            }
+          };
           const manualBinding = ensureChatQueueBinding(actionGateHandler, confirmDestructiveAction);
           const drainedText = manualBinding.drainHeadForManualTurn();
           if (drainedText !== null) {
@@ -1684,25 +1712,31 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           shouldExit = await runSubmittedLine(
             submittedText,
             async (gate) => {
-              actionGateWaiting = true;
+              modalOwnsKeyboard = true;
               try {
                 return await waitForRawActionGate(input, output, gate, spawnRunner, {
                   beforeSubprocess: () => fixedInput.pause(),
                   afterSubprocess: () => fixedInput.resumeFromSubprocess(),
                 });
               } finally {
-                actionGateWaiting = false;
+                modalOwnsKeyboard = false;
               }
             },
-            async (request) =>
-              dialogHost.run((anchor) =>
-                runConfirmDialog({
-                  request,
-                  input: input as any,
-                  output: output as any,
-                  ...anchor,
-                }),
-              ),
+            async (request) => {
+              modalOwnsKeyboard = true;
+              try {
+                return await dialogHost.run((anchor) =>
+                  runConfirmDialog({
+                    request,
+                    input: input as any,
+                    output: output as any,
+                    ...anchor,
+                  }),
+                );
+              } finally {
+                modalOwnsKeyboard = false;
+              }
+            },
           );
         } finally {
           busy = false;

@@ -63,22 +63,22 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
   },
   catppuccin: {
     light: {
-      accent: { hex: "1E66F5", ansiFallback: "\x1b[34m" },
-      chrome: { hex: "9CCFD8", ansiFallback: "\x1b[90m" },
-      success: { hex: "40A02B", ansiFallback: "\x1b[32m" },
-      warning: { hex: "DF8E1D", ansiFallback: "\x1b[33m" },
-      info: { hex: "04A5E5", ansiFallback: "\x1b[36m" },
-      danger: { hex: "D20F39", ansiFallback: "\x1b[31m" },
-      muted: { hex: "7C7F93", ansiFallback: "\x1b[90m" },
+      accent: { hex: "0969DA", ansiFallback: "\x1b[34m" },
+      chrome: { hex: "57606A", ansiFallback: "\x1b[90m" },
+      success: { hex: "116329", ansiFallback: "\x1b[32m" },
+      warning: { hex: "9A6700", ansiFallback: "\x1b[33m" },
+      info: { hex: "0969DA", ansiFallback: "\x1b[36m" },
+      danger: { hex: "CF222E", ansiFallback: "\x1b[31m" },
+      muted: { hex: "6E7781", ansiFallback: "\x1b[90m" },
     },
     dark: {
-      accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // mocha blue
-      chrome: { hex: "6C7086", ansiFallback: "\x1b[90m" },
-      success: { hex: "A6E3A1", ansiFallback: "\x1b[32m" },
-      warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
-      info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
-      danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
-      muted: { hex: "A6ADC8", ansiFallback: "\x1b[90m" },
+      accent: { hex: "58A6FF", ansiFallback: "\x1b[34m" }, // GitHub sky blue
+      chrome: { hex: "6E7681", ansiFallback: "\x1b[90m" },
+      success: { hex: "3FB950", ansiFallback: "\x1b[32m" },
+      warning: { hex: "D29922", ansiFallback: "\x1b[33m" },
+      info: { hex: "58A6FF", ansiFallback: "\x1b[36m" },
+      danger: { hex: "FF7B72", ansiFallback: "\x1b[31m" },
+      muted: { hex: "B1BAC4", ansiFallback: "\x1b[90m" },
     },
   },
   wave: {
@@ -163,7 +163,7 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
   },
 };
 
-let activeThemeName = "trail";
+let activeThemeName = "catppuccin";
 
 export function getActiveThemeName(): string {
   return activeThemeName;
@@ -259,7 +259,7 @@ function hexToSgr(hex: string): string {
  */
 const SURFACE_HEX: Record<string, Record<TuiBrightness, string>> = {
   trail: { light: "E4E8EC", dark: "313244" },
-  catppuccin: { light: "E6E9EF", dark: "313244" },
+  catppuccin: { light: "E8ECF0", dark: "161B22" },
   wave: { light: "E5E1D6", dark: "2A2A37" },
   iris: { light: "E9E8F2", dark: "2A2740" },
   rose: { light: "F2EAE4", dark: "26233A" },

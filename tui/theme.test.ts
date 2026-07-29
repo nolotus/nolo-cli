@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeEach } from "bun:test";
 import {
   resolveTuiBrightness,
   themeColorSequence,
@@ -10,9 +10,13 @@ import {
 } from "./theme";
 
 describe("tui theme", () => {
-  test("truecolor terminals get the exact catppuccin primary", () => {
+  beforeEach(() => {
+    // 默认主题已改为 catppuccin；测 trail 专有色值的用例自行 setActiveThemeName("trail")。
+    setActiveThemeName("catppuccin");
+  });
+  test("truecolor terminals get the exact catppuccin primary (default theme)", () => {
     expect(themeColorSequence("accent", { COLORTERM: "truecolor" })).toBe(
-      "\x1b[38;2;137;180;250m", // dark accent (default)
+      "\x1b[38;2;88;166;255m", // catppuccin dark accent (default) — GitHub sky blue #58A6FF
     );
   });
 
@@ -22,6 +26,7 @@ describe("tui theme", () => {
   });
 
   test("light theme accent uses trail light blue", () => {
+    setActiveThemeName("trail");
     expect(themeColorSequence("accent", { COLORTERM: "truecolor", NOLO_TUI_THEME: "light" })).toBe(
       "\x1b[38;2;46;125;181m",
     );
@@ -30,6 +35,7 @@ describe("tui theme", () => {
   test("trail light warning is the deeper amber 9A6A1F (H2 contrast on white)", () => {
     // Owner feedback: ## Plan / H2 headers floated yellow on white. The hex
     // was deepened from B57F2E → 9A6A1F for more contrast on light backgrounds.
+    setActiveThemeName("trail");
     expect(themeColorSequence("warning", { COLORTERM: "truecolor", NOLO_TUI_THEME: "light" })).toBe(
       "\x1b[38;2;154;106;31m",
     );
@@ -39,6 +45,7 @@ describe("tui theme", () => {
     // 687584 read as a wash of saturated blue in dense prose (inline code /
     // tool labels). 5E6A78 pulls the blue channel down and stays darker, so
     // white-background contrast is preserved.
+    setActiveThemeName("trail");
     const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "light" };
     expect(themeColorSequence("muted", env)).toBe("\x1b[38;2;94;106;120m");
     // Hard constraint: new value must not be lighter than the old one.
@@ -48,9 +55,9 @@ describe("tui theme", () => {
     expect(newAvg).toBeLessThanOrEqual(oldAvg);
   });
 
-  test("dark theme accent uses mocha blue", () => {
+  test("dark theme accent uses GitHub sky blue", () => {
     expect(themeColorSequence("accent", { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" })).toBe(
-      "\x1b[38;2;137;180;250m",
+      "\x1b[38;2;88;166;255m",
     );
   });
 
@@ -99,6 +106,7 @@ describe("tui theme", () => {
     });
 
     test("formats inline code with muted color, not the code-block info hue", () => {
+    setActiveThemeName("trail");
       const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
       const formatted = highlightMarkdown("this is `code`", true, env);
       expect(formatted).toContain("\x1b[38;2;154;163;184mcode\x1b[39m"); // trail dark muted

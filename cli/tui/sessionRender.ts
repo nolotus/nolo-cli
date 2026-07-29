@@ -8,6 +8,7 @@ import { DEFAULT_TUI_AGENT_KEY, resolveCatalogPlatformAgents } from "./agentCata
 import { renderDialogTitle } from "./dialogFrame";
 import { t } from "./i18n";
 import { displayWidth } from "./readlineWorkspace";
+import { stripAnsi } from "./tuiAnsi";
 import {
   themeText,
   themeColorSequence,
@@ -202,25 +203,41 @@ function buildColoredScene(isDark: boolean, frame: number = 0, maxFrames: number
   ].join("\n");
 }
 
-export function renderWelcome(state: TuiState, frame: number = 0, maxFrames: number = 0) {
+export function renderWelcome(
+  state: TuiState,
+  frame: number = 0,
+  maxFrames: number = 0,
+  columns?: number,
+) {
   const colorEnabled = resolveCliColorEnabled();
   const brightness = resolveTuiBrightness();
   const isDark = brightness === "dark";
 
-  const sceneArt = colorEnabled
+  let sceneArt = colorEnabled
     ? buildColoredScene(isDark, frame, maxFrames)
     : buildPlainScene(isDark, frame, maxFrames);
+
+  // The scene art is ~48 columns wide. On a narrower terminal its rows wrap,
+  // which looks broken and (for the old animated banner) corrupted the redraw.
+  // When we know the width and it can't hold the widest scene row, drop the
+  // scene entirely and keep just the version + hint lines, which degrade to a
+  // clean two-line welcome. `columns` is optional so pure-function callers and
+  // tests that don't pass it keep the full scene.
+  if (typeof columns === "number" && columns > 0) {
+    const widestSceneCol = sceneArt
+      .split("\n")
+      .reduce((max, line) => Math.max(max, displayWidth(stripAnsi(line))), 0);
+    if (columns < widestSceneCol) sceneArt = "";
+  }
 
   const versionLine = colorEnabled
     ? `\x1b[1m${themeColorSequence("accent")}nolo\x1b[0m ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |")
     : `nolo ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |");
 
-  return [
-    sceneArt,
-    versionLine,
-    t("welcomeHint"),
-    "",
-  ].join("\n");
+  const body = sceneArt
+    ? [sceneArt, versionLine, t("welcomeHint"), ""]
+    : [versionLine, t("welcomeHint"), ""];
+  return body.join("\n");
 }
 
 export function renderPrompt(_state: TuiState) {

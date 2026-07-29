@@ -891,6 +891,34 @@ describe("themed render surfaces", () => {
     }
   });
 
+  test("renderWelcome drops the wide scene on narrow terminals", () => {
+    // The scene art is ~48 columns wide. When the caller passes a terminal
+    // width that can't hold it, the scene must be dropped so its rows don't
+    // wrap — wrapping is exactly what corrupted the old animated banner on
+    // narrow terminals (sky rows stacked into vertical columns). The version
+    // and hint lines always remain so the welcome still reads cleanly.
+    const previous = process.env.NOLO_CLI_COLOR;
+    try {
+      process.env.NOLO_CLI_COLOR = "0";
+      const state = createInitialTuiState({});
+
+      const narrow = renderWelcome(state, 0, 0, 20);
+      expect(narrow).not.toContain("♠"); // tree gone with the scene
+      expect(narrow).not.toContain("╱"); // mountain slope gone too
+      expect(narrow).toContain("nolo"); // version line kept
+      expect(narrow).toContain("/help"); // hint line kept
+
+      const wide = renderWelcome(state, 0, 0, 200);
+      expect(wide).toContain("♠"); // full scene on a wide terminal
+
+      // Omitting columns (pure-function callers / other tests) keeps the scene.
+      expect(renderWelcome(state)).toContain("♠");
+    } finally {
+      if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
+      else process.env.NOLO_CLI_COLOR = previous;
+    }
+  });
+
   test("renderContextPanel drops the ASCII rule but keeps a plain-mode divider", () => {
     const plain = renderContextPanel(createInitialTuiState({}), false);
     expect(plain).not.toContain("-----");

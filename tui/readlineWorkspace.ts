@@ -619,18 +619,18 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   });
   if (detected) setActiveBrightness(detected);
 
-  // Animate the welcome banner for a brief moment
-  const frames = 15; // 1.5 seconds at 100ms per frame
-  output.write("\x1b[?25l"); // hide cursor
-  for (let i = 0; i < frames; i++) {
-    output.write(renderWelcome(state, i, frames));
-    if (i < frames - 1) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      // renderWelcome outputs 8 newlines, so we move up 8 lines and clear to end of screen
-      output.write("\r\x1b[8A\x1b[0J");
-    }
-  }
-  output.write("\x1b[?25h"); // restore cursor
+  // Paint the welcome banner once, statically. The previous 15-frame animation
+  // blocked composer setup for ~1.5s (the input box only appeared after the
+  // loop finished) and repainted by moving the cursor up a fixed 8 lines. When
+  // any banner line wrapped on a narrow terminal the real on-screen line count
+  // exceeded 8, so the cursor never reached the top and each frame's sky row
+  // (✦ 🌙  ·) was left behind, stacking into the vertical columns seen in the
+  // bug report. A single static frame performs no cursor rewind, so wrapping
+  // can never corrupt it, and the composer mounts immediately afterwards. The
+  // terminal width is passed through so renderWelcome can drop the wide scene
+  // art on narrow terminals instead of letting it wrap.
+  const bannerColumns = (output as { columns?: number }).columns;
+  output.write(renderWelcome(state, 0, 0, bannerColumns));
 
   let fixedInput: FixedInputController = createNoopFixedInput();
   // Composer draft buffer. Hoisted to this scope (rather than the

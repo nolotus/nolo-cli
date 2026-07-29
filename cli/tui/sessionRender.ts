@@ -125,62 +125,91 @@ export function renderStatusLine(state: TuiState) {
 // Vertical landscape: mountain (left) → sky (right) → ground → NOLO → waves.
 // All glyphs are common BMP (no emoji/PUA/Nerd Font).
 
-function buildPlainScene(isDark: boolean): string {
-  const sky = isDark ? "☾" : "☀";
+function buildPlainScene(isDark: boolean, frame: number = 0, maxFrames: number = 0): string {
+  let skyLine = `                      ${isDark ? "🌙" : "☀"}`;
+  if (isDark) {
+    const star1 = frame % 6 < 3 ? "✦" : "⋆";
+    const star2 = frame % 4 < 2 ? "⋆" : "·";
+    const star3 = frame % 5 < 2 ? "·" : "✦";
+    skyLine = `      ${star1}               🌙    ${star2}    ${star3}`;
+  }
+
+  const wavePattern = "_.~^~.";
+  const longWave = wavePattern.repeat(10);
+  const offset = frame % wavePattern.length;
+  const wave = longWave.slice(offset, offset + 25);
+
   return [
-    `                                       ${sky}`,
-    isDark ? "             ╱╲                     ·" : "             ╱╲",
-    "            ╱  ╲",
-    isDark ? "           ╱    ╲                ✦" : "           ╱    ╲",
-    "          ╱ ♠  ♠ ╲",
-    "   ▁▁▁▁▁▁╱   ♠♠   ╲▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁",
-    "        █▄ █ ▄▀▀▄ █    ▄▀▀▄",
-    "        █ ▀█ █  █ █    █  █",
-    "        ▀  ▀  ▀▀  ▀▀▀▀  ▀▀",
-    "   ╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~",
+    skyLine,
+    "             ╱╲                     █▄ █ ▄▀▀▄ █    ▄▀▀▄",
+    "            ╱  ╲  ╱╲                █ ▀█ █  █ █    █  █",
+    "           ╱    ╲╱  ╲               ▀  ▀  ▀▀  ▀▀▀▀  ▀▀",
+    `          ╱  ♠       ╲          ${wave}`,
+    "   ▁▁▁▁▁▁╱ ♠   ♠      ╲▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁",
   ].join("\n");
 }
 
-function buildColoredScene(isDark: boolean): string {
+function buildColoredScene(isDark: boolean, frame: number = 0, maxFrames: number = 0): string {
   const pk = themeColorSequence("chrome");    // mountain + ground
   const sk = themeColorSequence("warning");   // moon / sun
-  const st = themeColorSequence("muted");     // stars
   const tr = themeColorSequence("success");   // trees
   const wv = themeColorSequence("info");      // waves
   const ac = themeColorSequence("accent");    // NOLO wordmark
-  const cr = themeColorSequence("chrome");    // NOLO bottom row
+  const mu = themeColorSequence("muted");     // faded trailing colors
   const r  = "\x1b[39m";
   const b  = "\x1b[1m";
   const rs = "\x1b[0m";
 
-  const sky = isDark ? "☾" : "☀";
+  let skyLine = `                      ${sk}${isDark ? "🌙" : "☀"}${r}`;
+  if (isDark) {
+    const star1 = frame % 6 < 3 ? "✦" : "⋆";
+    const star2 = frame % 4 < 2 ? "⋆" : "·";
+    const star3 = frame % 5 < 2 ? "·" : "✦";
+    skyLine = `      ${mu}${star1}${r}               ${sk}🌙${r}    ${mu}${star2}${r}    ${mu}${star3}${r}`;
+  }
+
+  const wavePattern = "_.~^~.";
+  const longWave = wavePattern.repeat(10);
+  const offset = frame % wavePattern.length;
+  const wave = longWave.slice(offset, offset + 25);
+  // Fade out the last 5 characters
+  const waveStr = `${wv}${wave.slice(0, 20)}${r}${mu}${wave.slice(20, 25)}${r}`;
+
+  const line1 = "█▄ █ ▄▀▀▄ █    ▄▀▀▄";
+  const line2 = "█ ▀█ █  █ █    █  █";
+  const line3 = "▀  ▀  ▀▀  ▀▀▀▀  ▀▀";
+  
+  const sweepEndFrame = maxFrames > 3 ? maxFrames - 3 : maxFrames;
+  const sweepLen = maxFrames === 0 ? 21 : Math.min(21, Math.floor((frame / sweepEndFrame) * 21));
+  
+  const colorLine = (str: string, bold: boolean) => {
+    const active = str.slice(0, sweepLen);
+    const dimmed = str.slice(sweepLen);
+    return `${bold ? b : ""}${ac}${active}${r}${mu}${dimmed}${r}${bold ? rs : ""}`;
+  };
+
+  const nolo1 = colorLine(line1, true);
+  const nolo2 = colorLine(line2, false);
+  const nolo3 = colorLine(line3, false);
 
   return [
-    `                                       ${sk}${sky}${r}`,
-    isDark
-      ? `             ${pk}╱╲${r}                     ${st}·${r}`
-      : `             ${pk}╱╲${r}`,
-    `            ${pk}╱  ╲${r}`,
-    isDark
-      ? `           ${pk}╱    ╲${r}                ${st}✦${r}`
-      : `           ${pk}╱    ╲${r}`,
-    `          ${pk}╱${r} ${tr}♠  ♠${r} ${pk}╲${r}`,
-    `   ${pk}▁▁▁▁▁▁╱${r}   ${tr}♠♠${r}   ${pk}╲▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁${r}`,
-    `        ${b}${ac}█▄ █ ▄▀▀▄ █    ▄▀▀▄${rs}`,
-    `        ${ac}█ ▀█ █  █ █    █  █${r}`,
-    `        ${cr}▀  ▀  ▀▀  ▀▀▀▀  ▀▀${r}`,
-    `   ${wv}╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~${r}`,
+    skyLine,
+    `             ${pk}╱╲${r}                     ${nolo1}`,
+    `            ${pk}╱  ╲  ╱╲${r}                ${nolo2}`,
+    `           ${pk}╱    ╲╱  ╲${r}               ${nolo3}`,
+    `          ${pk}╱${r}  ${tr}♠${r}       ${pk}╲${r}          ${waveStr}`,
+    `   ${pk}▁▁▁▁▁▁╱${r} ${tr}♠${r}   ${tr}♠${r}      ${pk}╲▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁${r}`,
   ].join("\n");
 }
 
-export function renderWelcome(state: TuiState) {
+export function renderWelcome(state: TuiState, frame: number = 0, maxFrames: number = 0) {
   const colorEnabled = resolveCliColorEnabled();
   const brightness = resolveTuiBrightness();
   const isDark = brightness === "dark";
 
   const sceneArt = colorEnabled
-    ? buildColoredScene(isDark)
-    : buildPlainScene(isDark);
+    ? buildColoredScene(isDark, frame, maxFrames)
+    : buildPlainScene(isDark, frame, maxFrames);
 
   const versionLine = colorEnabled
     ? `\x1b[1m${themeColorSequence("accent")}nolo\x1b[0m ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |")

@@ -617,7 +617,18 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   });
   if (detected) setActiveBrightness(detected);
 
-  output.write(renderWelcome(state));
+  // Animate the welcome banner for a brief moment
+  const frames = 15; // 1.5 seconds at 100ms per frame
+  output.write("\x1b[?25l"); // hide cursor
+  for (let i = 0; i < frames; i++) {
+    output.write(renderWelcome(state, i, frames));
+    if (i < frames - 1) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      // renderWelcome outputs 8 newlines, so we move up 8 lines and clear to end of screen
+      output.write("\r\x1b[8A\x1b[0J");
+    }
+  }
+  output.write("\x1b[?25h"); // restore cursor
 
   let fixedInput: FixedInputController = createNoopFixedInput();
   // Composer draft buffer. Hoisted to this scope (rather than the

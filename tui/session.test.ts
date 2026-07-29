@@ -862,25 +862,27 @@ describe("themed render surfaces", () => {
       // Dark mode: moon + stars
       process.env.NOLO_TUI_THEME = "dark";
       const dark = renderWelcome(createInitialTuiState({}));
-      expect(dark).toContain("☾");       // moon in dark sky
+      expect(dark).toContain("🌙");       // big moon in dark sky
       expect(dark).toContain("♠");       // pine tree
-      expect(dark).toContain("╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~");   // wide waves
+      expect(dark).toContain("✦");       // twinkling stars in dark mode
+      expect(dark).toContain("_.~^~._.~^~._.~^~._.~^~._");   // steeper waves
 
       // Check colored scene coverage
       process.env.NOLO_CLI_COLOR = "1";
       const darkColored = renderWelcome(createInitialTuiState({}));
-      expect(darkColored).toContain("☾");
+      expect(darkColored).toContain("🌙");
       expect(darkColored).toContain("♠");
-      expect(darkColored).toContain("╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~");
+      expect(darkColored).toContain("✦");
+      expect(darkColored).toContain("_.~^~._.~^~._.~^~._.");
 
       // Light mode: sun, no moon
       process.env.NOLO_CLI_COLOR = "0";
       process.env.NOLO_TUI_THEME = "light";
       const light = renderWelcome(createInitialTuiState({}));
       expect(light).toContain("☀");      // sun in light sky
-      expect(light).not.toContain("☾"); // no moon
+      expect(light).not.toContain("🌙"); // no moon
       expect(light).toContain("♠");      // pine tree
-      expect(light).toContain("╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~");  // wide waves
+      expect(light).toContain("_.~^~._.~^~._.~^~._.~^~._");  // steeper waves
     } finally {
       if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
       else process.env.NOLO_CLI_COLOR = previous;

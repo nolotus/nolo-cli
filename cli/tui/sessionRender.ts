@@ -12,6 +12,7 @@ import {
   themeText,
   themeColorSequence,
   surfaceBackgroundSequence,
+  resolveTuiBrightness,
 } from "./theme";
 import { getProcessRegistry } from "../../agent-runtime/processRegistry";
 import type { TuiState } from "./sessionTypes";
@@ -119,65 +120,74 @@ export function renderStatusLine(state: TuiState) {
 
 // ─── Welcome & prompt ───────────────────────────────────────────────────────
 
+// ── Scene builders for the welcome screen ──────────────────────────────────────────────
+//
+// Vertical landscape: mountain (left) → sky (right) → ground → NOLO → waves.
+// All glyphs are common BMP (no emoji/PUA/Nerd Font).
+
+function buildPlainScene(isDark: boolean): string {
+  const sky = isDark ? "☾" : "☀";
+  return [
+    `                                       ${sky}`,
+    isDark ? "             ╱╲                     ·" : "             ╱╲",
+    "            ╱  ╲",
+    isDark ? "           ╱    ╲                ✦" : "           ╱    ╲",
+    "          ╱ ♠  ♠ ╲",
+    "   ▁▁▁▁▁▁╱   ♠♠   ╲▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁",
+    "        █▄ █ ▄▀▀▄ █    ▄▀▀▄",
+    "        █ ▀█ █  █ █    █  █",
+    "        ▀  ▀  ▀▀  ▀▀▀▀  ▀▀",
+    "   ╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~",
+  ].join("\n");
+}
+
+function buildColoredScene(isDark: boolean): string {
+  const pk = themeColorSequence("chrome");    // mountain + ground
+  const sk = themeColorSequence("warning");   // moon / sun
+  const st = themeColorSequence("muted");     // stars
+  const tr = themeColorSequence("success");   // trees
+  const wv = themeColorSequence("info");      // waves
+  const ac = themeColorSequence("accent");    // NOLO wordmark
+  const cr = themeColorSequence("chrome");    // NOLO bottom row
+  const r  = "\x1b[39m";
+  const b  = "\x1b[1m";
+  const rs = "\x1b[0m";
+
+  const sky = isDark ? "☾" : "☀";
+
+  return [
+    `                                       ${sk}${sky}${r}`,
+    isDark
+      ? `             ${pk}╱╲${r}                     ${st}·${r}`
+      : `             ${pk}╱╲${r}`,
+    `            ${pk}╱  ╲${r}`,
+    isDark
+      ? `           ${pk}╱    ╲${r}                ${st}✦${r}`
+      : `           ${pk}╱    ╲${r}`,
+    `          ${pk}╱${r} ${tr}♠  ♠${r} ${pk}╲${r}`,
+    `   ${pk}▁▁▁▁▁▁╱${r}   ${tr}♠♠${r}   ${pk}╲▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁${r}`,
+    `        ${b}${ac}█▄ █ ▄▀▀▄ █    ▄▀▀▄${rs}`,
+    `        ${ac}█ ▀█ █  █ █    █  █${r}`,
+    `        ${cr}▀  ▀  ▀▀  ▀▀▀▀  ▀▀${r}`,
+    `   ${wv}╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~${r}`,
+  ].join("\n");
+}
+
 export function renderWelcome(state: TuiState) {
   const colorEnabled = resolveCliColorEnabled();
+  const brightness = resolveTuiBrightness();
+  const isDark = brightness === "dark";
 
-  // Brand lockup: block-character "nolo" wordmark with the mountain rising
-  // beside it. The mountain is the mark the status line already uses (🏔), so
-  // dropping it from the first screen cost the two surfaces their shared
-  // identity — setting it alongside the wordmark keeps both without making the
-  // banner taller than the three rows the wordmark needs.
-  //
-  // Wordmark uses only U+2580–U+259F block elements and the mountain only
-  // U+2571/U+2572 slashes plus U+2581/U+2582 lower blocks, so the whole lockup
-  // renders on any monospace terminal — no patched Nerd Font, no private-use
-  // codepoints that would show as tofu.
-  //
-  // Scene beside the peak, all common BMP symbols (no emoji/PUA, so still no
-  // tofu on a stock monospace font):
-  //   ☾  U+263E last-quarter moon — sky beside the peak (row 1)
-  //   ♠  U+2660 spade — pine tree standing on the foot blocks (row 3, right
-  //       after ▁▁ so it reads as planted on the ground, not floating); ♠
-  //       reads as a conifer far better than ♣ — its triangle points up,
-  //       whereas ♣ is three equal lobes.
-  //   ╰╮~ U+2570 + U+256E + U+007E — a Hokusai-style curling wave at the
-  //       foot: the box-drawing arcs ╰╮ carve a curling wave head (a rising
-  //       crest that folds back, like the claw of a rolling wave in The
-  //       Great Wave off Kanagawa), and the trailing ~ is the water surface.
-  //       All three are width-1 BMP glyphs that every monospace terminal
-  //       renders — no combining marks, so no grid misalignment. A space
-  //       separates ▁ and ╰ so it reads as "sea at the foot" rather than
-  //       "the foot is the sea".
-  // Single peak (╱╲) per request — one cone reads as one mountain, not a
-  // range. The scene glyphs append to the ridge string, so they stay clear
-  // of the wordmark's fixed-width band (cols 0–21) that the test pins.
-  const logoRows = [
-    { mark: "█▄ █ ▄▀▀▄ █    ▄▀▀▄", ridge: "  ╱╲     ☾", token: "accent" as const, bold: true },
-    { mark: "█ ▀█ █  █ █    █  █", ridge: " ╱  ╲", token: "accent" as const, bold: false },
-    { mark: "▀  ▀  ▀▀  ▀▀▀▀  ▀▀", ridge: "╱  ╲▂▁▁♠ ╰╮~", token: "chrome" as const, bold: false },
-  ];
-  // Pad the wordmark to a fixed width so the ridge starts at the same column on
-  // every row regardless of the mark's own trailing glyphs.
-  const MARK_WIDTH = 19;
-  const GUTTER = "   ";
-  const logoArt = logoRows
-    .map(({ mark, ridge, token, bold }) => {
-      const padded = mark.padEnd(MARK_WIDTH);
-      if (!colorEnabled) return `${padded}${GUTTER}${ridge}`;
-      const markText = bold
-        ? `\x1b[1m${themeColorSequence(token)}${padded}\x1b[0m`
-        : themeText(padded, token, colorEnabled);
-      return `${markText}${GUTTER}${themeText(ridge, "chrome", colorEnabled)}`;
-    })
-    .join("\n");
+  const sceneArt = colorEnabled
+    ? buildColoredScene(isDark)
+    : buildPlainScene(isDark);
 
-  // Brand name in accent within the version line — no extra line needed.
   const versionLine = colorEnabled
     ? `\x1b[1m${themeColorSequence("accent")}nolo\x1b[0m ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |")
     : `nolo ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |");
 
   return [
-    logoArt,
+    sceneArt,
     versionLine,
     t("welcomeHint"),
     "",

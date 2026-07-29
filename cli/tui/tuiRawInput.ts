@@ -15,7 +15,7 @@
  */
 import { displayWidth, fitAnsiLine, wrapTextToLines } from "./tuiAnsi";
 import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
-import { themeColorSequence } from "./theme";
+import { themeColorSequence, themeText } from "./theme";
 import { t } from "./i18n";
 import { completeSlashCommand } from "./sessionInput";
 import { PASTE_TOKEN_PREFIX } from "./session";
@@ -159,8 +159,12 @@ export function createFixedInput(
       sections.push(fitAnsiLine(line.replace(/\r?\n/g, " "), cols));
     }
 
-    const prompt = t("promptLabel");
-    const promptWidth = displayWidth(prompt);
+    const promptRaw = t("promptLabel");
+    const promptWidth = displayWidth(promptRaw);
+    // Accent-colored chevron so the input area feels active, not inert.
+    const prompt = colorEnabled
+      ? `${themeColorSequence("accent")}${promptRaw}\x1b[39m`
+      : promptRaw;
     const contentWidth = Math.max(1, cols - promptWidth);
     const logicalLines = buffer.length === 0 ? [""] : buffer.split("\n");
 
@@ -177,7 +181,7 @@ export function createFixedInput(
       const prefix = isFirst ? prompt : " ".repeat(promptWidth);
 
       if (buffer.length === 0) {
-        const placeholder = dimCliText(t("placeholder"), colorEnabled);
+        const placeholder = themeText(t("placeholder"), "chrome", colorEnabled);
         sections.push(fitAnsiLine(`${prefix}${placeholder}`, cols));
         cursorCol = promptWidth;
         cursorRow = 0;
@@ -201,7 +205,7 @@ export function createFixedInput(
           ) {
             const subOffset = Math.max(0, Math.min(rowLen, targetPos - charOffset));
             const subStr = rowText.slice(0, subOffset);
-            cursorCol = displayWidth(rowPrefix) + displayWidth(subStr);
+            cursorCol = promptWidth + displayWidth(subStr);
             cursorRow = inputRows;
             cursorFound = true;
           }

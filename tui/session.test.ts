@@ -584,7 +584,10 @@ describe("handleTuiInput - path-vs-slash disambiguation", () => {
   test("handles /theme command to list or switch themes", () => {
     const state = createInitialTuiState({});
     const listResult = handleTuiInput("/theme", state);
-    expect(listResult.output).toContain("Current theme: trail");
+    // Default theme is catppuccin with auto-detected brightness; the exact
+    // brightness suffix depends on the test runner's terminal, so only pin
+    // the theme name and the available list.
+    expect(listResult.output).toContain("Current theme: catppuccin");
     expect(listResult.output).toContain("Available themes: trail, catppuccin, wave, iris, rose, mono");
 
     const switchResult = handleTuiInput("/theme wave", state);
@@ -828,27 +831,15 @@ describe("themed render surfaces", () => {
   // argument. Without pinning it the "no escapes" assertion would pass merely
   // because the test runner is not a TTY, and would keep passing if the
   // plain-text branch regressed.
-  test("renderWelcome draws the block-character wordmark, plain when color is off", () => {
+  test("renderWelcome draws the vertical scene with wordmark, plain when color is off", () => {
     const previous = process.env.NOLO_CLI_COLOR;
     try {
       process.env.NOLO_CLI_COLOR = "0";
       const plain = renderWelcome(createInitialTuiState({}));
-      expect(plain).toContain("▀▀▀▀");
-      expect(plain).not.toContain("\x1b");
-      // The mountain is half the brand lockup — the status line uses the same
-      // mark (🏔), and it was silently lost once when the banner was reworked.
-      // Pin both slopes so a future banner edit has to be deliberate about it.
-      expect(plain).toContain("╱╲");
-      expect(plain).toContain("╲▂▁▁");
-      // The wordmark is padded to a fixed width so the ridge sits in its own
-      // column band; the slopes themselves step outward row by row, which is
-      // what makes it read as a peak. Assert the band, not the glyphs.
-      const ridgeRows = plain
-        .split("\n")
-        .slice(0, 3)
-        .map((row) => row.slice(0, 22));
-      expect(new Set(ridgeRows.map((row) => row.length)).size).toBe(1);
-      for (const row of ridgeRows) expect(row).not.toMatch(/[╱╲]/);
+      expect(plain).toContain("▀▀▀▀");       // NOLO wordmark present
+      expect(plain).not.toContain("\x1b");    // no ANSI in plain mode
+      expect(plain).toContain("╱╲");          // mountain peak
+      expect(plain).toContain("▁▁▁▁▁▁╱");    // ground meets mountain slope
 
       process.env.NOLO_CLI_COLOR = "1";
       const colored = renderWelcome(createInitialTuiState({}));
@@ -860,21 +851,41 @@ describe("themed render surfaces", () => {
     }
   });
 
-  test("renderWelcome scenes a moon, tree, and sea beside the mountain", () => {
-    // The scene is part of the brand lockup now — pin each glyph so a future
-    // banner edit has to be deliberate, the same way the slopes are pinned.
-    // Plain mode is enough: the scene glyphs ride on the ridge string, which
-    // is the same in both branches.
+  test("renderWelcome scenes sky body, tree, and sea beside the mountain", () => {
+    // The scene adapts to brightness — dark gets ☾, light gets ☀.
+    // Pin each element so a future banner edit is deliberate.
     const previous = process.env.NOLO_CLI_COLOR;
+    const prevTheme = process.env.NOLO_TUI_THEME;
     try {
       process.env.NOLO_CLI_COLOR = "0";
-      const plain = renderWelcome(createInitialTuiState({}));
-      expect(plain).toContain("☾"); // moon in the sky beside the peak
-      expect(plain).toContain("♠"); // pine tree standing on the foot blocks
-      expect(plain).toContain("╰╮~"); // Hokusai-style curling wave at the foot
+
+      // Dark mode: moon + stars
+      process.env.NOLO_TUI_THEME = "dark";
+      const dark = renderWelcome(createInitialTuiState({}));
+      expect(dark).toContain("☾");       // moon in dark sky
+      expect(dark).toContain("♠");       // pine tree
+      expect(dark).toContain("╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~");   // wide waves
+
+      // Check colored scene coverage
+      process.env.NOLO_CLI_COLOR = "1";
+      const darkColored = renderWelcome(createInitialTuiState({}));
+      expect(darkColored).toContain("☾");
+      expect(darkColored).toContain("♠");
+      expect(darkColored).toContain("╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~");
+
+      // Light mode: sun, no moon
+      process.env.NOLO_CLI_COLOR = "0";
+      process.env.NOLO_TUI_THEME = "light";
+      const light = renderWelcome(createInitialTuiState({}));
+      expect(light).toContain("☀");      // sun in light sky
+      expect(light).not.toContain("☾"); // no moon
+      expect(light).toContain("♠");      // pine tree
+      expect(light).toContain("╰╮~≈~~≈~~≈~~≈~~≈~~≈~~≈~~≈~╰╮≈~");  // wide waves
     } finally {
       if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
       else process.env.NOLO_CLI_COLOR = previous;
+      if (prevTheme === undefined) delete process.env.NOLO_TUI_THEME;
+      else process.env.NOLO_TUI_THEME = prevTheme;
     }
   });
 

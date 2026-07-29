@@ -341,7 +341,7 @@ export function formatSearchTreeBlockForCli(
   const treeLines = lines
     .map((l) => {
       const connector = themeText(`  ${l.connector}`, "chrome", true);
-      const queryText = themeText(l.queryText, "info", true);
+      const queryText = themeText(l.queryText, "muted", true);
       return `${connector}${queryText}`;
     })
     .join("\n");
@@ -370,7 +370,7 @@ export function formatReadTreeBlockForCli(
   const treeLines = lines
     .map((l) => {
       const connector = themeText(`  ${l.connector}`, "chrome", true);
-      const pathText = themeText(l.pathWithRange, "info", true);
+      const pathText = themeText(l.pathWithRange, "muted", true);
       return `${connector}${pathText}`;
     })
     .join("\n");
@@ -399,7 +399,7 @@ export function formatRunTreeBlockForCli(
   const treeLines = lines
     .map((l) => {
       const connector = themeText(`  ${l.connector}`, "chrome", true);
-      const commandText = themeText(l.commandText, "info", true);
+      const commandText = themeText(l.commandText, "muted", true);
       return `${connector}${commandText}`;
     })
     .join("\n");
@@ -428,7 +428,7 @@ export function formatFetchTreeBlockForCli(
   const treeLines = lines
     .map((l) => {
       const connector = themeText(`  ${l.connector}`, "chrome", true);
-      const urlText = themeText(l.urlText, "info", true);
+      const urlText = themeText(l.urlText, "muted", true);
       return `${connector}${urlText}`;
     })
     .join("\n");

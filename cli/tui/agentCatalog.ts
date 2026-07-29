@@ -14,6 +14,7 @@ import {
   resolveServerCandidates,
   resolveServerUrl,
 } from "../cliEnvHelpers";
+import { sortAgentsFavoriteOwnedPublic, type SortableAgentItem } from "../../ai/agent/utils/sortUtils";
 export const DEFAULT_TUI_AGENT_KEY = "agent-pub-01NOLOAPPBLD000000019KCKT0";
 
 export type AgentCatalogEntry = {
@@ -135,16 +136,17 @@ export function mergeCatalogEntries(
     if (entry.key !== currentKey) push(entry);
   }
 
-  // 收藏的 agent 排在前面（按收藏时间倒序），其余按更新时间倒序。
-  const sortedPrivate = [...privateAgents].sort((a, b) => {
-    const fa = favoritedAtByKey[a.key] ?? 0;
-    const fb = favoritedAtByKey[b.key] ?? 0;
-    if (fa !== fb) return fb - fa;
-    const tb = b.updatedAt ?? 0;
-    const ta = a.updatedAt ?? 0;
-    if (tb !== ta) return tb - ta;
-    return a.name.localeCompare(b.name);
-  });
+  const sortablePrivate: SortableAgentItem[] = privateAgents.map((entry) => ({
+    key: entry.key,
+    favoritedAt: favoritedAtByKey[entry.key],
+    isOwned: true,
+    updatedAt: entry.updatedAt ?? 0,
+  }));
+  const sortedKeys = sortAgentsFavoriteOwnedPublic(sortablePrivate);
+  const sortedKeyOrder = new Map(sortedKeys.map((item, i) => [item.key, i]));
+  const sortedPrivate = [...privateAgents].sort(
+    (a, b) => (sortedKeyOrder.get(a.key) ?? 0) - (sortedKeyOrder.get(b.key) ?? 0)
+  );
   for (const entry of sortedPrivate) {
     if (entry.key !== currentKey) push(entry);
   }

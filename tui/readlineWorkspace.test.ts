@@ -1171,6 +1171,103 @@ describe("scroll-aware history", () => {
     expect(fullOutput).toContain(TAIL);
   });
 
+  test("busy /switch switches immediately for the next turn (not queued) and warns about token cost", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    let resolveFirstTurn: (() => void) | null = null;
+    const firstTurnPromise = new Promise<void>((resolve) => {
+      resolveFirstTurn = resolve;
+    });
+
+    let turnCount = 0;
+    const turnsProcessed: string[] = [];
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        turnsProcessed.push(opt.message);
+        if (turnCount === 1) {
+          opt.output.write("HEAD");
+          await new Promise((r) => setTimeout(r, 30));
+          await firstTurnPromise;
+          opt.output.write("TAIL");
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    input.write("start turn 1\r");
+    while (turnCount < 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Busy: switch to a known agent by name. Must apply locally right now
+    // (the next turn uses it) and MUST NOT be enqueued as a chat turn.
+    input.write("/switch app-builder\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Busy: bare /switch wants the interactive picker, which can't open
+    // mid-stream. It must surface a notice instead of being queued.
+    input.write("/switch\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const outputAfterSwitch = Buffer.concat(chunks).toString("utf8");
+    expect(outputAfterSwitch).toContain("Switched to app-builder");
+    // The token-cost / next-turn notice for a successful busy switch.
+    expect(outputAfterSwitch).toContain("may consume more tokens");
+    // The picker-unavailable notice for the bare /switch.
+    expect(outputAfterSwitch).toContain(
+      "isn't available while a reply is running",
+    );
+
+    // Normal text while busy is still queued for after the turn.
+    input.write("normal queued text\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    resolveFirstTurn!();
+    await new Promise((r) => setTimeout(r, 50));
+    while (turnCount < 2) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    input.write("/exit\r");
+    input.end();
+
+    await Promise.race([
+      workspacePromise,
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
+
+    // Neither /switch form reached the agent runner: only the real user
+    // messages did. A queued `/switch` would have been drained as a chat
+    // message and shown up here as "/switch app-builder".
+    expect(turnsProcessed).toEqual(["start turn 1", "normal queued text"]);
+  });
+
   // Regression for "在 TUI 对话时 agent 429 后 /agent 切换不生效"。
   // 根因：autoRouteByDialog 在首轮 auto-route 后按对话缓存 agent，后续轮直接复用
   // 缓存、无视 state.agentKey，导致用户 /agent 切换的 agent 被缓存「切回」原 agent。

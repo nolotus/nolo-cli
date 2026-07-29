@@ -21,7 +21,13 @@ export const uiAskChoiceFunctionSchema = {
         "在代码协作场景下的推荐用法：",
         "- 如果你已经在本轮 assistant 的 content 中给出了分析、说明或多个备选方案，可以在同一轮消息的结尾调用本工具，请用户选择“是否根据上述方案开始实际修改代码”或“优先执行哪一个方案/步骤”。",
         "- 在这种情况下，question 字段通常是一个简短的问题（例如：“接下来你希望我按哪个方案来具体修改代码？”），而详细的解释和方案描述放在 content 中。",
-        "- 如果当前对话只需要一个简单的选择，而不需要额外解释，你也可以不输出额外的 content，而只调用本工具，由 question 字段直接向用户提问。"
+        "- 如果当前对话只需要一个简单的选择，而不需要额外解释，你也可以不输出额外的 content，而只调用本工具，由 question 字段直接向用户提问。",
+        "",
+        "多问题 & 多选支持：",
+        "- 当你需要一次问多个问题时，使用 questions 数组代替 question+choices。",
+        "- 每个 question 可以设置 multiSelect: true 允许多选。",
+        "- 每个 question 可以设置 allowOther: false 隐藏\u201c其他\u201d输入框。",
+        "- 每个 choice 可以加 detail 字段提供更长的描述。"
     ].join("\n"),
     parameters: {
         type: "object",
@@ -29,7 +35,7 @@ export const uiAskChoiceFunctionSchema = {
             question: {
                 type: "string",
                 description:
-                    "展示给用户的问题文案，用一句话说明要做什么选择。例如：“接下来你更希望我帮你做哪件事？”。不要在同一轮 assistant 普通文本里重复这句话。"
+                    "展示给用户的问题文案（单问题模式）。与 questions 二选一。"
             },
             choices: {
                 type: "array",
@@ -48,6 +54,11 @@ export const uiAskChoiceFunctionSchema = {
                             description:
                                 "显示给用户看的按钮文字。例如：“生成本周周报”。"
                         },
+                        detail: {
+                            type: "string",
+                            description:
+                                "选项的补充描述，显示在 label 下方。可选。"
+                        },
                         userMessage: {
                             type: "string",
                             description: [
@@ -60,6 +71,57 @@ export const uiAskChoiceFunctionSchema = {
                     required: ["id", "label"]
                 }
             },
+            questions: {
+                type: "array",
+                description:
+                    "多问题模式：一次问多个问题，每个问题独立渲染为一个 tab。与 question+choices 二选一。",
+                items: {
+                    type: "object",
+                    properties: {
+                        id: {
+                            type: "string",
+                            description: "问题标识，用于结果对应。"
+                        },
+                        question: {
+                            type: "string",
+                            description: "问题文案。"
+                        },
+                        choices: {
+                            type: "array",
+                            description: "该问题的备选项。",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    id: { type: "string" },
+                                    label: { type: "string" },
+                                    detail: {
+                                        type: "string",
+                                        description: "补充描述。"
+                                    },
+                                    userMessage: { type: "string" }
+                                },
+                                required: ["id", "label"]
+                            }
+                        },
+                        multiSelect: {
+                            type: "boolean",
+                            description: "允许多选。默认 false。",
+                            default: false
+                        },
+                        allowOther: {
+                            type: "boolean",
+                            description: "显示“其他”自由输入行。默认 true。",
+                            default: true
+                        },
+                        required: {
+                            type: "boolean",
+                            description: "是否必须回答才能提交。默认 true。",
+                            default: true
+                        }
+                    },
+                    required: ["id", "question", "choices"]
+                }
+            },
             blocking: {
                 type: "boolean",
                 description: [
@@ -69,7 +131,7 @@ export const uiAskChoiceFunctionSchema = {
                 default: true
             }
         },
-        required: ["question", "choices"]
+        required: []
     }
 };
 export async function uiAskChoiceFunc(
@@ -81,15 +143,33 @@ export async function uiAskChoiceFunc(
         question: string;
         choices: any[];
         blocking: boolean;
+        questions?: any[];
     };
     displayData: string;
 }> {
-    const question = String(args?.question ?? "").trim();
-    const choices = Array.isArray(args?.choices) ? args.choices : [];
     const blocking = args?.blocking !== false;
 
+    // New multi-question format
+    if (Array.isArray(args?.questions) && args.questions.length > 0) {
+        const firstQ = args.questions[0];
+        return {
+            rawData: {
+                type: "ui_ask_choice",
+                question: firstQ?.question ?? "",
+                choices: firstQ?.choices ?? [],
+                blocking,
+                questions: args.questions,
+            },
+            displayData: args.questions.map((q: any) => q.question).join(" / "),
+        };
+    }
+
+    // Legacy single-question format
+    const question = String(args?.question ?? "").trim();
+    const choices = Array.isArray(args?.choices) ? args.choices : [];
+
     if (!question || choices.length === 0) {
-        throw new Error("ui_ask_choice 需要 question 和至少一个 choice。");
+        throw new Error("ui_ask_choice 需要 question+choices 或 questions。");
     }
 
     return {
@@ -114,7 +194,17 @@ export async function uiAskChoiceFunc(
 export type UiAskChoiceOption = {
     id?: string;
     label: string;
+    detail?: string;
     userMessage?: string;
+};
+
+export type UiAskChoiceQuestionPayload = {
+    id: string;
+    question: string;
+    choices: UiAskChoiceOption[];
+    multiSelect?: boolean;
+    allowOther?: boolean;
+    required?: boolean;
 };
 
 export type UiAskChoicePayload = {
@@ -122,11 +212,20 @@ export type UiAskChoicePayload = {
     question: string;
     choices: UiAskChoiceOption[];
     blocking: boolean;
+    /** Multi-question mode: present when the LLM sent a questions array. */
+    questions?: UiAskChoiceQuestionPayload[];
     /** Present when the tool was resolved interactively (CLI select dialog). */
     selected?: {
         label: string;
         userMessage: string;
     };
+    /** Multi-question resolved result. */
+    answers?: Array<{
+        questionId: string;
+        selectedIds: string[];
+        otherText: string;
+        userMessage: string;
+    }>;
     /** Present when the user dismissed the select dialog without choosing. */
     cancelled?: boolean;
     /** Server-side error marker (mirrors the executor's error shape). */

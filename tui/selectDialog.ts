@@ -96,7 +96,7 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
   return lines.join("\n");
 }
 
-function outputIsTty(output: NodeJS.WritableStream): boolean {
+export function outputIsTty(output: NodeJS.WritableStream): boolean {
   return (
     typeof output === "object" &&
     output !== null &&
@@ -105,13 +105,13 @@ function outputIsTty(output: NodeJS.WritableStream): boolean {
   );
 }
 
-function clearRenderedLines(output: NodeJS.WritableStream, lineCount: number) {
+export function clearRenderedLines(output: NodeJS.WritableStream, lineCount: number) {
   if (!outputIsTty(output) || lineCount <= 0) return;
   for (let index = 0; index < lineCount; index += 1) {
     output.write("\x1b[1A\x1b[2K");
   }
 }
-function clearAnchoredLines(
+export function clearAnchoredLines(
   output: NodeJS.WritableStream,
   bottomRow: number,
   lineCount: number
@@ -124,19 +124,19 @@ function clearAnchoredLines(
   }
 }
 
-function isArrowUp(sequence: string) {
+export function isArrowUp(sequence: string) {
   return sequence === CSI_ARROW_UP || sequence === CSI_ARROW_UP_APP;
 }
 
-function isArrowDown(sequence: string) {
+export function isArrowDown(sequence: string) {
   return sequence === CSI_ARROW_DOWN || sequence === CSI_ARROW_DOWN_APP;
 }
 
-function isSubmit(sequence: string) {
+export function isSubmit(sequence: string) {
   return sequence === "\r" || sequence === "\n";
 }
 
-function isCancel(sequence: string) {
+export function isCancel(sequence: string) {
   return sequence === "\u0003" || sequence === "\u001b";
 }
 

@@ -8,17 +8,40 @@
 export type UserChoiceOption = {
   id?: string;
   label: string;
+  detail?: string;
   userMessage?: string;
+};
+
+export type UserChoiceQuestion = {
+  id: string;
+  question: string;
+  choices: UserChoiceOption[];
+  multiSelect?: boolean;
+  allowOther?: boolean;
+  required?: boolean;
 };
 
 export type UserChoiceRequest = {
   question: string;
   choices: UserChoiceOption[];
   blocking: boolean;
+  /** Multi-question mode (new). When present, TUI renders tabs. */
+  questions?: UserChoiceQuestion[];
 };
 
 export type UserChoiceResult =
   | { kind: "selected"; userMessage: string; label: string }
+  | {
+      kind: "multi-submitted";
+      answers: Array<{
+        questionId: string;
+        selectedIds: string[];
+        otherText: string;
+        userMessage: string;
+      }>;
+      /** Combined userMessage for backward compat. */
+      userMessage: string;
+    }
   | { kind: "cancelled" };
 
 export type CliLocalRuntimeDb = {

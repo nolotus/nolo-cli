@@ -27,6 +27,7 @@ import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
 import { runSelectDialog, type SelectDialogItem } from "./selectDialog";
+import { runAskChoiceDialog } from "./askChoiceDialog";
 import { createDialogHost } from "./dialogHost";
 import { createActivityIndicator } from "./activityIndicator";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
@@ -808,26 +809,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const requestUserChoice =
       isInteractiveInput(input) && dialogHost
         ? async (req: UserChoiceRequest): Promise<UserChoiceResult> => {
-            const items: SelectDialogItem[] = req.choices.map((c) => ({
-              label: c.label,
-            }));
             try {
-              const pickResult = await dialogHost.run((anchor) =>
-                runSelectDialog({
-                  items,
-                  title: req.question,
+              return await dialogHost.run((anchor) =>
+                runAskChoiceDialog({
+                  request: req,
                   input: input as NodeJS.ReadStream,
                   output: output as NodeJS.WritableStream,
                   ...anchor,
                 }),
               );
-              if (pickResult.kind === "selected") {
-                const choice = req.choices[pickResult.index];
-                const userMessage =
-                  choice?.userMessage?.trim() || choice?.label || "";
-                return { kind: "selected", userMessage, label: choice?.label ?? "" };
-              }
-              return { kind: "cancelled" };
             } catch {
               return { kind: "cancelled" };
             }
@@ -1494,23 +1484,62 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           // enqueue.
           const submittedText = result.submit;
           const trimmedText = submittedText.trim();
-          if (trimmedText === "/context" || trimmedText === "/ctx") {
-            // Busy /context is a read-only probe, executed locally right now.
-            // It MUST NOT touch the shared history state machine: while a
-            // turn runs the assistant stream owns currentRole/currentContent,
-            // and calling startTurn("user") here would prematurely finalize
-            // the half-streamed reply; the tail chunks would then land under
-            // currentRole===null and be silently dropped by
-            // finalizeCurrentTurn, losing the end of the answer from the
-            // transcript permanently. It also shouldn't persist into history
-            // as a conversation turn (it's not one).
-            // Route through a transient render channel: write straight to the
-            // output stream. The next streaming repaint will overwrite it,
-            // which is the desired behavior for an ephemeral query.
+          // While a turn runs, a few slash commands are handled locally right
+          // now instead of being queued. Queuing them is wrong: the queue
+          // drains its head by feeding the raw text to the agent runner as a
+          // chat message, so a queued `/switch foo` would be sent to the model
+          // as conversation text instead of switching the model. These
+          // commands also MUST NOT touch the shared history state machine:
+          // while a turn runs the assistant stream owns currentRole /
+          // currentContent, and calling startTurn("user") here would
+          // prematurely finalize the half-streamed reply (its tail chunks
+          // would land under currentRole===null and be dropped by
+          // finalizeCurrentTurn). So we route them through the transient
+          // render channel: run handleTuiInput (which only mutates local TUI
+          // state + returns output for these commands, never a chat action)
+          // and write straight to the output stream. The next streaming
+          // repaint overwrites it, which is fine for an ephemeral notice.
+          const busySlashCommand = trimmedText.split(/\s+/)[0]?.toLowerCase();
+          const isBusyLocalSlash =
+            busySlashCommand === "/context" ||
+            busySlashCommand === "/ctx" ||
+            busySlashCommand === "/switch";
+          if (isBusyLocalSlash) {
+            const beforeAgentKey = state.agentKey;
             const res = handleTuiInput(submittedText, state);
-            state = res.nextState;
-            if (res.output) {
-              output.write(`${res.output}\n`);
+            if (res.action) {
+              // `/switch` with no target (interactive picker) and `/switch
+              // list` need to take over the screen, which races the in-flight
+              // streaming repaint. Don't open them while busy and don't queue
+              // them either: surface a one-line notice telling the user how
+              // to switch without the picker (the change takes effect on the
+              // next turn, not the in-flight one).
+              output.write(
+                "Model picker isn't available while a reply is running. " +
+                  "Use `/switch <name>` to switch now (takes effect on the " +
+                  "next turn), or wait for the reply to finish.\n",
+              );
+            } else {
+              state = res.nextState;
+              let msg = res.output;
+              if (
+                busySlashCommand === "/switch" &&
+                res.nextState.agentKey !== beforeAgentKey
+              ) {
+                // The switch succeeded. It can't affect the in-flight turn
+                // (its model/provider were captured at turn start), so it
+                // takes effect on the next turn / loop iteration. Warn that
+                // switching mid-conversation re-sends the context to the new
+                // model and therefore may burn extra tokens.
+                const hint =
+                  "Note: the new model takes effect on the next turn. " +
+                  "Switching models may consume more tokens because the " +
+                  "conversation context is re-sent to the new model.";
+                msg = msg ? `${msg}\n${hint}` : hint;
+              }
+              if (msg) {
+                output.write(`${msg}\n`);
+              }
             }
             buffer = "";
             cursorPos = 0;

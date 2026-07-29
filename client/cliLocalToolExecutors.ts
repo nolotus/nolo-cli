@@ -130,16 +130,21 @@ export function buildLocalToolExecutors(args: {
       })();
       const question = String(parsedArgs.question ?? "").trim();
       const choices = Array.isArray(parsedArgs.choices) ? parsedArgs.choices : [];
+      const questions = Array.isArray(parsedArgs.questions) ? parsedArgs.questions : undefined;
       const blocking = parsedArgs.blocking !== false;
-      if (!question || choices.length === 0) {
+
+      // Validate: need either questions[] or question+choices
+      const hasQuestions = questions && questions.length > 0;
+      if (!hasQuestions && (!question || choices.length === 0)) {
         return {
           content: JSON.stringify({
             error: "ui_ask_choice",
-            detail: "ui_ask_choice 需要 question 和至少一个 choice。",
+            detail: "ui_ask_choice 需要 question+choices 或 questions。",
           }),
           metadata: { uiAskChoice: true, error: true },
         };
       }
+
       // Interactive TUI: show an arrow-key select dialog docked above the
       // composer and resolve the user's pick into the next userMessage.
       // Headless / non-TTY / no-callback: fall back to the raw JSON payload so
@@ -147,10 +152,28 @@ export function buildLocalToolExecutors(args: {
       if (args.requestUserChoice) {
         try {
           const result = await args.requestUserChoice({
-            question,
-            choices,
+            question: hasQuestions ? questions[0].question : question,
+            choices: hasQuestions ? questions[0].choices : choices,
             blocking,
+            ...(hasQuestions ? { questions } : {}),
           });
+          if (result.kind === "multi-submitted") {
+            return {
+              content: JSON.stringify({
+                type: "ui_ask_choice",
+                question,
+                choices,
+                blocking,
+                ...(hasQuestions ? { questions } : {}),
+                answers: result.answers,
+                selected: {
+                  label: result.answers.map(a => a.userMessage).join(", "),
+                  userMessage: result.userMessage,
+                },
+              }),
+              metadata: { uiAskChoice: true, resolved: true },
+            };
+          }
           if (result.kind === "selected") {
             return {
               content: JSON.stringify({
@@ -158,6 +181,7 @@ export function buildLocalToolExecutors(args: {
                 question,
                 choices,
                 blocking,
+                ...(hasQuestions ? { questions } : {}),
                 selected: {
                   label: result.label,
                   userMessage: result.userMessage,
@@ -174,6 +198,7 @@ export function buildLocalToolExecutors(args: {
               question,
               choices,
               blocking,
+              ...(hasQuestions ? { questions } : {}),
               selected: { label: "", userMessage: "" },
               cancelled: true,
             }),
@@ -190,6 +215,7 @@ export function buildLocalToolExecutors(args: {
           question,
           choices,
           blocking,
+          ...(hasQuestions ? { questions } : {}),
         }),
         metadata: { uiAskChoice: true },
       };

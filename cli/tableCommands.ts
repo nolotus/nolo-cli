@@ -10,7 +10,7 @@ import {
   normalizeSpaceIdInput,
 } from "./cliSpaceHelpers";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
-import { includeTableActivityColumns } from "../render/table/activityColumns";
+import { includeTableActivityColumns } from "../core/table/activityColumns";
 import type { CliFetchImpl } from "./cliFetch";
 import { toErrorMessage } from "../core/errorMessage";
 import { isRecord } from "../core/isRecord";

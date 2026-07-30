@@ -18,7 +18,7 @@ import {
   buildDialogAttachmentPlan,
   extractFileContentIds,
   type DialogAttachmentMessage,
-} from "./dialogAttachmentCleanup";
+} from "../../core/chat/dialogAttachmentCleanup";
 import { cleanupCliSessionForDialog } from "./actions/cleanupCliSession";
 import { buildDialogAgentListIndexDeleteOps, createKey } from "../../database/keys";
 import { getActiveDialogKey } from "./dialogRuntimeStore";

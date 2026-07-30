@@ -9,7 +9,7 @@ import {
   resolveFireworksKimiModel,
 } from "../../ai/llm/kimi";
 import { Contexts } from "../../ai/types";
-import { generatePrompt } from "../../ai/agent/generatePrompt";
+import { generatePrompt, buildSystemPromptContext } from "../../ai/agent/generatePrompt";
 import { isLoopbackUrl } from "../../core/localOrigins";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { normalizeChatCompletionsBodyForProvider } from "./providerBodyCompatibility";
@@ -18,23 +18,25 @@ import { normalizeChatCompletionsBodyForProvider } from "./providerBodyCompatibi
 const isClaudeModel = (model: string | undefined): boolean =>
   !!model && (model.includes("claude") || model.includes("anthropic"));
 
-const applyClaudeCache = (content: any): any => {
-  if (typeof content === "string") {
-    return [
-      { type: "text", text: content, cache_control: { type: "ephemeral" } },
-    ];
-  }
-  if (Array.isArray(content)) {
-    // 已经是数组，给最后一个元素加上缓存标记
-    const lastIdx = content.length - 1;
-    return content.map((part, idx) => {
-      if (idx === lastIdx && typeof part === "object") {
-        return { ...part, cache_control: { type: "ephemeral" } };
-      }
-      return part;
+const applyClaudeCache = (
+  stableContent: string,
+  dynamicContent: string,
+): any => {
+  // Build a two-part system content array: the stable prefix gets
+  // cache_control: ephemeral; the dynamic suffix (summary, time, etc.)
+  // does not, so changing it won't invalidate the prefix cache.
+  const parts: any[] = [];
+  if (stableContent.trim()) {
+    parts.push({
+      type: "text",
+      text: stableContent,
+      cache_control: { type: "ephemeral" },
     });
   }
-  return content;
+  if (dynamicContent.trim()) {
+    parts.push({ type: "text", text: dynamicContent });
+  }
+  return parts.length > 0 ? parts : stableContent;
 };
 
 const prependPromptMessage = (
@@ -48,14 +50,28 @@ const prependPromptMessage = (
   if (!prependSystemPrompt) return messages;
   if (!contexts && !agentConfig.prompt) return messages;
 
+  // For Claude models, use the structured CompiledContext to split the
+  // system prompt into a stable prefix (cache_control: ephemeral) and a
+  // dynamic suffix (no cache_control).  Summary changes won't invalidate
+  // the prefix cache.
+  if (isClaudeModel(resolvedModel)) {
+    const compiled = buildSystemPromptContext({ agentConfig, language, contexts });
+    if (!compiled.content.trim()) return messages;
+    const content = applyClaudeCache(
+      compiled.stablePrefixContent,
+      compiled.dynamicContent,
+    );
+    const systemMessage: Message = { role: "system", content };
+    return [systemMessage, ...messages];
+  }
+
+  // For non-Claude models (DeepSeek, Gemini, etc.), keep a single string
+  // system message.  Their prefix cache is automatic and prefix-based —
+  // as long as the stable prefix text is identical between turns, the
+  // cache hits regardless of what follows.
   const promptContent = generatePrompt({ agentConfig, language, contexts });
   if (!promptContent.trim()) return messages;
-
-  const content = isClaudeModel(resolvedModel)
-    ? applyClaudeCache(promptContent)
-    : promptContent;
-
-  const systemMessage: Message = { role: "system", content };
+  const systemMessage: Message = { role: "system", content: promptContent };
   return [systemMessage, ...messages];
 };
 
@@ -194,13 +210,32 @@ export const generateOpenAIRequestBody = (
       : agentConfig.model ?? "";
 
   // 1. 处理 stableMessages 的缓存点 (仅针对 Claude)
+  //    在最后一条 stable message 上打 cache_control，使其之前的内容
+  //    （system prompt + 稳定历史消息）命中前缀缓存。
   let processedStable = [...stableMessages];
   if (isClaudeModel(resolvedModel) && processedStable.length > 0) {
     const lastStableIdx = processedStable.length - 1;
-    processedStable[lastStableIdx] = {
-      ...processedStable[lastStableIdx],
-      content: applyClaudeCache(processedStable[lastStableIdx].content),
-    };
+    const lastContent = processedStable[lastStableIdx].content;
+    // stableMessages 的 content 是 string 或已有的 content parts，
+    // 只需在末尾打一个 cache_control 断点。
+    if (typeof lastContent === "string") {
+      processedStable[lastStableIdx] = {
+        ...processedStable[lastStableIdx],
+        content: [
+          { type: "text", text: lastContent, cache_control: { type: "ephemeral" } },
+        ],
+      };
+    } else if (Array.isArray(lastContent)) {
+      const lastPartIdx = lastContent.length - 1;
+      processedStable[lastStableIdx] = {
+        ...processedStable[lastStableIdx],
+        content: lastContent.map((part, idx) =>
+          idx === lastPartIdx && typeof part === "object"
+            ? { ...part, cache_control: { type: "ephemeral" } }
+            : part
+        ),
+      };
+    }
   }
 
   // 2. 合并 stable + dynamic

@@ -29,8 +29,8 @@ import {
   getLoopStopReason,
   getPendingUserInputQueue,
 } from "../dialog/dialogRuntimeStore";
-import { createChatQueueRuntime, type ChatQueueRuntime } from "./chatQueueRuntime";
-import type { ChatQueueState } from "./chatQueueMachine";
+import { createChatQueueRuntime, type ChatQueueRuntime } from "../../core/chat/chatQueueRuntime";
+import type { ChatQueueState } from "../../core/chat/chatQueueMachine";
 
 export type ChatQueueReduxAdapterOptions = {
   /**

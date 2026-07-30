@@ -1,5 +1,5 @@
-import { asOptionalFiniteNumber } from "../../core/optionalNumber";
-import { asOptionalTrimmedString } from "../../core/optionalString";
+import { asOptionalFiniteNumber } from "../optionalNumber";
+import { asOptionalTrimmedString } from "../optionalString";
 import { dialogMessageKey } from "../../database/keys";
 
 const FILE_CONTENT_RE = /(?:https?:\/\/[^/"'\s]+)?\/api\/v1\/db\/file\/content\/([^?#"'\s)]+)/g;

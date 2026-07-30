@@ -7,7 +7,7 @@ import {
   extractFileContentIds,
   type DialogAttachmentCandidate,
   type DialogAttachmentPlan,
-} from "../chat/dialog/dialogAttachmentCleanup";
+} from "../core/chat/dialogAttachmentCleanup";
 
 export { buildDialogAttachmentPlan, extractFileContentIds };
 

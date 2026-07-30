@@ -12,7 +12,6 @@
 
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import { asTrimmedString } from "../../core/trimmedString";
-import { astro } from "iztro";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -521,7 +520,7 @@ function buildAnalysisContext(
 
 // ─── Main function ────────────────────────────────────────────────────────────
 
-export function runZiweiChart(input: ZiweiChartToolArgs): ZiweiChartToolResult {
+export async function runZiweiChart(input: ZiweiChartToolArgs): Promise<ZiweiChartToolResult> {
   const calendarType = normalizeCalendarType(input.calendarType);
   const language = normalizeLanguage(input.language);
   const dateStr = normalizeDateStr(input.dateStr);
@@ -530,6 +529,7 @@ export function runZiweiChart(input: ZiweiChartToolArgs): ZiweiChartToolResult {
   const fixLeap = input.fixLeap !== false;
   const isLeapMonth = input.isLeapMonth === true;
 
+  const { astro } = await import("iztro");
   const rawChart =
     calendarType === "lunar"
       ? astro.byLunar(dateStr, timeIndex, gender, isLeapMonth, fixLeap, language)

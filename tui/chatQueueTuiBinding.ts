@@ -18,12 +18,12 @@
 import {
   createChatQueueRuntime,
   type ChatQueueRuntime,
-} from "../chat/queue/chatQueueRuntime";
+} from "../core/chat/chatQueueRuntime";
 import {
   resolveChatSendDecision,
   type ChatSendDecision,
-} from "../chat/queue/resolveChatSendDecision";
-import { projectChatQueueStatus, type ChatQueueStatus } from "../chat/queue/chatQueueStatus";
+} from "../core/chat/resolveChatSendDecision";
+import { projectChatQueueStatus, type ChatQueueStatus } from "../core/chat/chatQueueStatus";
 
 export type RunDrainedTurn = (text: string) => Promise<{ ok: boolean; aborted: boolean }>;
 

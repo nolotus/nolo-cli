@@ -679,8 +679,12 @@ export async function runLocalAgentTurn(
   // provider（如 Cursor）在流内执行完所有工具时，output blocks 已含全部
   // 文本块（含最后一段）。break 后跳过通用最终 assistant 消息追加。
   let skipFinalAppend = false;
+  // 当前未完成轮的流式文本累加。每轮入口重置，只保留最新未完成轮的文本，
+  // 供 loopError 分支在 saveTurn 时写入，避免中断时丢失已生成的部分回复。
+  let partialContent = "";
   try {
     while (true) {
+      partialContent = "";
       throwIfAborted(input);
       // 空轮修复：把 repair user message 追加到本轮请求末尾重试一次（系统消息放在末尾会被大部分 Provider API 拒收或返回空消息）。
       const baseRequestMessages = filterImagePartsFromMessages(
@@ -710,7 +714,10 @@ export async function runLocalAgentTurn(
         messages: requestMessages,
         options: {
           ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
-          ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
+          ...(input.onTextDelta ? { onTextDelta: (chunk: string) => {
+            partialContent += chunk;
+            input.onTextDelta!(chunk);
+          } } : {}),
           ...(input.onReasoningDelta ? { onReasoningDelta: input.onReasoningDelta } : {}),
           ...(input.onToolEvent ? { onToolEvent: input.onToolEvent } : {}),
           ...(input.onToolEvent ? { toolEventRound: round } : {}),
@@ -889,11 +896,11 @@ export async function runLocalAgentTurn(
   if (loopError) {
     const errorMessage = toErrorMessage(loopError);
     const turnMessages = messages.slice(turnStartIndex);
-    await input.adapter.saveTurn({
+    const saved = await input.adapter.saveTurn({
       agentKey: agentConfig.key,
       messages: turnMessages,
       result: {
-        content: `[nolo] Agent run failed: ${errorMessage}`,
+        content: partialContent || `[nolo] Agent run failed: ${errorMessage}`,
         model: agentConfig.model ?? "unknown",
         toolCallCount,
         error: true,
@@ -906,6 +913,10 @@ export async function runLocalAgentTurn(
       ...(input.inheritedFromDialogKey ? { inheritedFromDialogKey: input.inheritedFromDialogKey } : {}),
       ...(input.parentDialogId ? { parentDialogId: input.parentDialogId } : {}),
     });
+    // 挂上 dialogId 让上层（CLI）可以拿到中断时的 dialog，支持 --continue
+    if (saved?.dialogId && typeof loopError === "object" && loopError !== null) {
+      (loopError as any).dialogId = saved.dialogId;
+    }
     throw loopError;
   }
 

@@ -32,6 +32,11 @@ export function generateResponseRequestBody(
   };
 
   if (prependSystemPrompt) {
+    // Responses API instructions is a single string — no cache_control
+    // breakpoints like Chat Completions.  The stable prefix (identity/persona/
+    // tools/contracts) naturally stays at the front of buildSystemPrompt's
+    // output, letting provider-side automatic prefix cache (DeepSeek/Gemini)
+    // hit across turns even when summary/time changes.
     const promptContent = generatePrompt({
       agentConfig,
       language,

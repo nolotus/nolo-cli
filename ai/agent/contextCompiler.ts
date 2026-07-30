@@ -44,6 +44,10 @@ export type CompiledContextLayer = {
 
 export type CompiledContext = {
   content: string;
+  /** Stable prefix (static + session layers before first turn) joined. */
+  stablePrefixContent: string;
+  /** Dynamic suffix (turn layers) joined. */
+  dynamicContent: string;
   layers: CompiledContextLayer[];
   cacheProfile: {
     stablePrefixHash: string;
@@ -92,8 +96,15 @@ export const compileContextLayers = (
     .map((layer) => layer.content)
     .join("\n\n");
 
+  const dynamicLayers = compiledLayers.slice(stablePrefixLayers.length);
+  const dynamicContent = dynamicLayers
+    .map((layer) => layer.content)
+    .join("\n\n");
+
   return {
     content: compiledLayers.map((layer) => layer.content).join("\n\n"),
+    stablePrefixContent,
+    dynamicContent,
     layers: compiledLayers,
     cacheProfile: {
       stablePrefixHash: createHash("sha256")

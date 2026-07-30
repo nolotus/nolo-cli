@@ -57,9 +57,9 @@ export const buildCurrentTimeBlock = (
 ): string => [
   "--- 当前时间 ---",
   `当前日期: ${zonedDateTime(now, timeZone).slice(0, 10)}`,
-  `当前本地时间: ${zonedDateTime(now, timeZone)}`,
+  `当前本地时间: ${zonedDateTime(now, timeZone).slice(0, 16)}`, // HH:MM only, no seconds
   `本地时区: ${timeZone} / ${timeZoneOffset(now, timeZone)}`,
-  `UTC 时间: ${now.toISOString()}`,
+  `UTC 时间: ${now.toISOString().slice(0, 16)}`, // YYYY-MM-DDTHH:MM only
   "当用户问“现在”“当前时间”“北京时间”等时间问题时，直接使用这里的当前时间；不要只回答日期。",
   "当用户说“今天”“今日”或 today 时，默认指当前本地日期，除非用户明确给出其它日期。",
 ].join("\n");

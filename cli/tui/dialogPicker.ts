@@ -13,7 +13,7 @@ import {
   sortDialogs,
   type ListedDialog,
 } from "../dialogCommands";
-import { serializeMessageContent } from "../../chat/messages/messageContentSerialize";
+import { serializeMessageContent } from "../../core/chat/messageContentSerialize";
 import { clipCompactText } from "../../core/clipCompactText";
 import { t } from "./i18n";
 import { runSelectDialog, type KeyReader, type SelectDialogItem } from "./selectDialog";

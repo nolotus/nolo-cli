@@ -165,4 +165,4 @@ export const normalizeAssistantContentBuffer = async (
   return updated;
 };
 
-export { serializeMessageContent } from "./messageContentSerialize";
+export { serializeMessageContent } from "../../core/chat/messageContentSerialize";

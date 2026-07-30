@@ -740,7 +740,14 @@ async function runLocalAgentTurnForCli(
       options.abortSignal?.aborted
     ) {
       // User-initiated stop: the TUI reports it; nothing failed.
-      return { exitCode: 0, streamInterrupted: true };
+      // If localLoop saved a partial dialog before rethrowing, expose its id
+      // so the caller can --continue the interrupted turn.
+      const stoppedDialogId = (error as { dialogId?: string })?.dialogId;
+      return {
+        exitCode: 0,
+        streamInterrupted: true,
+        ...(stoppedDialogId ? { dialogId: stoppedDialogId } : {}),
+      };
     }
     if (settings.reportFailure) {
       options.output.write(
@@ -771,6 +778,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
           ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
           ...(localResult.turnTokens
             ? { turnTokens: localResult.turnTokens }
+            : {}),
+          ...(localResult.streamInterrupted
+            ? { streamInterrupted: localResult.streamInterrupted }
             : {}),
         };
       }

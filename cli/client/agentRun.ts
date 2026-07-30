@@ -692,6 +692,9 @@ async function runLocalAgentTurnForCli(
       ...(options.extraContextBlocks?.length
         ? { contextBlocks: options.extraContextBlocks }
         : {}),
+      ...(options.contextBlockScopes?.length
+        ? { contextBlockScopes: options.contextBlockScopes }
+        : {}),
       ...(typeof options.timeoutMs === "number"
         ? { timeoutMs: options.timeoutMs }
         : {}),

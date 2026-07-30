@@ -1,4 +1,3 @@
-import serverDb from "../../database-engine/db";
 import { buildAgentSubjectTarget, resolveScopedMemoryTargets, type MemoryScope } from "./scope";
 import { createMemoryItem, writeMemoryItemWithIndexesToDb } from "./store";
 import { loadOwnerItemsFromDb } from "./queryShared";
@@ -83,7 +82,8 @@ export const rememberMemory = async (
     throw new Error("rememberMemory: no valid owner scope found");
   }
 
-  const db = input.db ?? serverDb;
+  const getDefaultDb = async () => (await import("../../database-engine/db")).default;
+  const db = input.db ?? await getDefaultDb();
   const kind = input.kind ?? "episodic";
   if (!MEMORY_KINDS.has(kind)) {
     throw new Error("rememberMemory: kind must be episodic, semantic, or procedural");

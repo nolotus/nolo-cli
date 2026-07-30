@@ -1,4 +1,3 @@
-import serverDb from "../../database-engine/db";
 import type { MemoryItem } from "./types";
 import {
   adjustMemoryConfidenceInDb,
@@ -15,12 +14,14 @@ export {
 };
 
 export const writeMemoryItemWithIndexes = async (item: MemoryItem): Promise<void> => {
-  return writeMemoryItemWithIndexesToDb(serverDb, item);
+  const getDefaultDb = async () => (await import("../../database-engine/db")).default;
+  return writeMemoryItemWithIndexesToDb(await getDefaultDb(), item);
 };
 
 export const touchMemoryItems = async (
   items: MemoryItem[],
   now = new Date().toISOString()
 ): Promise<void> => {
-  return touchMemoryItemsInDb(serverDb, items, now);
+  const getDefaultDb = async () => (await import("../../database-engine/db")).default;
+  return touchMemoryItemsInDb(await getDefaultDb(), items, now);
 };

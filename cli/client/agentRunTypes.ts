@@ -201,6 +201,14 @@ export type RunAgentTurnOptions = {
    */
   extraContextBlocks?: string[];
   /**
+   * Context blocks with cacheScope metadata — the CLI analogue of desktop's
+   * contextBlockScopes. When provided, localLoop.buildMessages splits the
+   * system message into a stable prefix (session-scope blocks + agent prompt)
+   * and a dynamic suffix (turn-scope blocks), enabling prefix-cache hits.
+   * Falls back to extraContextBlocks (plain strings, no scope split).
+   */
+  contextBlockScopes?: Array<{ content: string; cacheScope: "session" | "turn" }>;
+  /**
    * 当前活动标签的外部接收者（TUI 用来在 composer 上方画 docked 活动行）。
    * 传入时 Spinner 不再向 output 写帧，避免两个 live 指示重复。
    */

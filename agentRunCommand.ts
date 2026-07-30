@@ -57,6 +57,10 @@ import {
   shouldPrintLocalRunSummary,
   type LocalRunWorkspaceInspection,
 } from "./agentRunLocalWorkspace";
+import { buildMemoryOverlayLayer, buildMemoryUseGuidanceLayer } from "./agent-runtime/turnContext";
+import { resolveMemoryRuntime } from "./ai/memory/runtime";
+import { getDefaultCliLocalRuntimeDb } from "./localRuntimeDb";
+import { resolveMachineId } from "./connector-experimental/machineInfo";
 
 // Re-export the public surface so existing callers that import from
 // `./agentRunCommand` keep working without changes.
@@ -101,6 +105,13 @@ export type AgentRunCommandDeps = {
   processExit?: (code: number) => never;
   /** Override for tests; defaults to `NOLO_LOCAL_RUN_STALL_TIMEOUT_MS` env or 5 min. */
   stallTimeoutMs?: number;
+  /**
+   * Skip the memory recall route (T3456). Tests with tight watchdog budgets
+   * inject `true` to avoid the async overhead of opening the local LevelDB /
+   * HTTP fetch before the runner is invoked. Production callers leave this
+   * unset (defaults to false).
+   */
+  memoryRecallDisabled?: boolean;
 } & Pick<AgentRunControlDeps, "homedir" | "spawn" | "fs" | "now" | "generateRunId">;
 
 function resolvePositiveMs(value: unknown, fallback: number): number {
@@ -448,6 +459,98 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     extraContextBlocks.push(skillDiscoveryBlock);
   }
 
+  // T3456 — Memory injection route (CLI analogue of desktop T14).
+  // Logged-in state (authToken present): HTTP POST {serverUrl}/api/memory/query
+  //   to fetch the promptBlock from the server memory service.
+  // Anonymous state (no authToken): resolveMemoryRuntime local direct read
+  //   using the CLI local LevelDB (~/.nolo/data/leveldb) keyed by machineId.
+  // Network/local failures are visible-but-non-fatal: we warn and omit the
+  // memory layer rather than failing the whole turn (same contract as desktop).
+  // Tests with tight watchdog budgets inject `memoryRecallDisabled: true`.
+  let memoryPromptBlock: string | null = null;
+  if (!deps.memoryRecallDisabled) {
+  const memoryServerUrl = resolveServerUrl(env);
+  const memoryAuthToken = resolveAuthToken(env);
+  const memoryAgentKey = effectiveAgentKey;
+  const memorySpaceId = parsed.spaceId ?? undefined;
+  try {
+    if (memoryAuthToken && memoryServerUrl) {
+      // Logged-in: HTTP memory query (mirrors desktop :1204-1239).
+      const memoryResponse = await fetch(`${memoryServerUrl}/api/memory/query`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${memoryAuthToken}`,
+        },
+        body: JSON.stringify({
+          agentKey: memoryAgentKey,
+          userInput: effectiveMessage,
+          ...(memorySpaceId ? { spaceId: memorySpaceId } : {}),
+        }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (memoryResponse.ok) {
+        const memoryPayload = (await memoryResponse.json().catch(() => null)) as
+          | { promptBlock?: unknown }
+          | null;
+        const block =
+          typeof memoryPayload?.promptBlock === "string"
+            ? memoryPayload.promptBlock.trim()
+            : "";
+        memoryPromptBlock = block || null;
+      } else {
+        console.warn("[cli-memory] memory query returned non-ok status:", memoryResponse.status);
+      }
+    } else {
+      // Anonymous: local direct read via resolveMemoryRuntime.
+      const localDb = await getDefaultCliLocalRuntimeDb({ env });
+      const machineId = resolveMachineId();
+      const resolution = await resolveMemoryRuntime({
+        db: localDb,
+        userId: machineId,
+        agentKey: memoryAgentKey,
+        userInput: effectiveMessage,
+        ...(memorySpaceId ? { spaceId: memorySpaceId } : {}),
+      });
+      memoryPromptBlock = resolution.promptBlock;
+    }
+  } catch (memoryError) {
+    console.warn("[cli-memory] memory recall failed, omitting memory layer:", memoryError);
+  }
+  } // end if (!deps.memoryRecallDisabled)
+
+  const memoryOverlayLayer = buildMemoryOverlayLayer({ promptBlock: memoryPromptBlock });
+  const memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });
+
+  // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
+  // Scope assignment mirrors desktopAgentRuntimeTurnService.ts:1272:
+  //   AGENTS.md / memory-use-guidance = session (stable prefix for cache hits)
+  //   skill content / skill discovery / memory-overlay = turn (dynamic suffix)
+  type ContextBlockScope = { content: string; cacheScope: "session" | "turn" };
+  const contextBlockScopes: ContextBlockScope[] = [];
+  // session-scope: AGENTS.md (first N entries of extraContextBlocks are
+  // AGENTS.md content pushed before skill blocks — find it by marker).
+  const agentsMdMarker = "--- 项目指令（";
+  for (const block of extraContextBlocks) {
+    if (block.startsWith(agentsMdMarker)) {
+      contextBlockScopes.push({ content: block, cacheScope: "session" });
+    }
+  }
+  // session-scope: memory-use-guidance
+  if (memoryUseGuidanceLayer?.content?.trim()) {
+    contextBlockScopes.push({ content: memoryUseGuidanceLayer.content, cacheScope: "session" });
+  }
+  // turn-scope: skill content + skill discovery (all non-AGENTS.md blocks)
+  for (const block of extraContextBlocks) {
+    if (!block.startsWith(agentsMdMarker)) {
+      contextBlockScopes.push({ content: block, cacheScope: "turn" });
+    }
+  }
+  // turn-scope: memory-overlay
+  if (memoryOverlayLayer?.content?.trim()) {
+    contextBlockScopes.push({ content: memoryOverlayLayer.content, cacheScope: "turn" });
+  }
+
   // Build the runner options once; the same options (message, cwd,
   // subjectRefs, runtime mode, etc.) are reused for any quota fallback retry
   // so the fallback agent executes against an identical request surface.
@@ -498,6 +601,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     ...(parsed.eventsMode ? { eventsMode: parsed.eventsMode } : {}),
     ...(parsed.taskEvidence ? { taskEvidence: parsed.taskEvidence } : {}),
     ...(extraContextBlocks.length > 0 ? { extraContextBlocks } : {}),
+    ...(contextBlockScopes.length > 0 ? { contextBlockScopes } : {}),
   });
 
   let result: RunAgentTurnResult = await raceWithWatchdog(

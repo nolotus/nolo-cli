@@ -14,6 +14,9 @@ import { normalizeServerOrigin } from "./core/serverOrigin";
 import { resolveAuthTokenFromEnv } from "./cliEnvHelpers";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import type { CliFetchImpl } from "./cliFetch";
+import { performLocalMemoryRekey } from "./client/memoryRekey";
+import { getDefaultCliLocalRuntimeDb } from "./localRuntimeDb";
+import { resolveMachineId } from "./connector-experimental/machineInfo";
 
 export const LOGIN_HELP_TEXT = `Log in to Nolo and save a local profile.
 
@@ -146,6 +149,32 @@ async function saveTokenLogin(args: {
     authToken: args.authToken.trim(),
   });
   args.output.log(`Saved profile default -> ${args.serverUrl}`);
+
+  // Rekey: migrate local anonymous memories to the cloud account. Best-effort —
+  // failures are logged and never block login. Runs after the profile is saved
+  // so the user is already logged in even if this throws.
+  try {
+    const localDb = await getDefaultCliLocalRuntimeDb();
+    const machineId = resolveMachineId();
+    const result = await performLocalMemoryRekey({
+      localDb,
+      authToken: args.authToken.trim(),
+      serverUrl: args.serverUrl,
+      machineId,
+    });
+    if (result.migrated > 0 || result.merged > 0) {
+      args.output.log(
+        `[nolo] Migrated ${result.migrated} local memor${result.migrated === 1 ? "y" : "ies"} to your account` +
+          (result.merged > 0 ? ` (${result.merged} merged with existing)` : "") +
+          "."
+      );
+    }
+  } catch (error) {
+    args.error.error(
+      `[nolo] Local memory migration skipped: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
   return 0;
 }
 

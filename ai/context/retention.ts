@@ -59,20 +59,23 @@ export const planContextUsage = (params: {
 
   const iq = CACHE_FIRST_RETENTION_STRENGTH;
 
-  const isBigWindow = contextWindow >= 128000; // 例如 128k / 1M 等大模型
-  const isSmallWindow = contextWindow <= 32000; // 例如 8k / 16k 等小模型
+  const isLargeWindow = contextWindow >= 512000; // 512k+，如 1M 等大模型
+  const isSmallWindow = contextWindow <= 64000; // 64k 以下，本地模型为主
 
   // 基础历史比例（只考虑默认 cache-first 强度，不考虑对话负载）
-  // - 小窗口：历史占 35% ~ 70% 的 safeWindow
-  // - 中窗口：历史占 40% ~ 75%
-  // - 大窗口：历史占 80% ~ 100% 的 safeWindow，避免过早压缩破坏 prompt/KV cache。
+  // - small  (≤64k)：本地模型为主，无 provider cache，早压缩
+  //   历史占 35% ~ 65% 的 safeWindow
+  // - medium (64k~512k)：默认 256k 在这档
+  //   历史占 55% ~ 85%
+  // - large  (≥512k)：1M 模型，cache-first 极限
+  //   历史占 80% ~ 100%，避免过早压缩破坏 prompt/KV cache。
   let baseHistoryRatio: number;
-  if (isBigWindow) {
+  if (isLargeWindow) {
     baseHistoryRatio = 0.80 + 0.20 * iq; // 0.80 ~ 1.00
   } else if (isSmallWindow) {
-    baseHistoryRatio = 0.35 + 0.35 * iq; // 0.35 ~ 0.70
+    baseHistoryRatio = 0.35 + 0.30 * iq; // 0.35 ~ 0.65
   } else {
-    baseHistoryRatio = 0.40 + 0.35 * iq; // 0.40 ~ 0.75
+    baseHistoryRatio = 0.55 + 0.30 * iq; // 0.55 ~ 0.85
   }
 
   // 1. 历史比例：在 baseHistoryRatio 基础上，根据对话负载做微调
@@ -81,20 +84,20 @@ export const planContextUsage = (params: {
   switch (recentLoad) {
     case "light": {
       // 短句对话：可以多给一点历史空间，但仍保留少量余量给其他上下文
-      const maxRatio = isBigWindow ? 1.0 : 0.85;
+      const maxRatio = isLargeWindow ? 1.0 : isSmallWindow ? 0.75 : 0.85;
       historyRatio = clamp(historyRatio * 1.05, 0.3, maxRatio);
       break;
     }
     case "heavy": {
       // 重内容对话：适当收紧历史比例，为当前大块内容 / 工具描述等预留更多窗口
-      const maxRatio = isBigWindow ? 0.98 : 0.80;
-      const multiplier = isBigWindow ? 0.98 : 0.9;
+      const maxRatio = isLargeWindow ? 0.98 : isSmallWindow ? 0.70 : 0.80;
+      const multiplier = isLargeWindow ? 0.98 : isSmallWindow ? 0.9 : 0.9;
       historyRatio = clamp(historyRatio * multiplier, 0.3, maxRatio);
       break;
     }
     case "medium":
     default: {
-      const maxRatio = isBigWindow ? 1.0 : 0.85;
+      const maxRatio = isLargeWindow ? 1.0 : isSmallWindow ? 0.75 : 0.85;
       historyRatio = clamp(historyRatio, 0.3, maxRatio);
       break;
     }
@@ -108,7 +111,7 @@ export const planContextUsage = (params: {
   // 2. 在历史预算里分配给「原始消息」的预算
   //    - summary 已经占用一部分
   //    - 同时保证原始消息至少有一部分空间（heavy 用户更多一点）
-  const minRawRatio = recentLoad === "heavy" ? 0.4 : 0.2;
+  const minRawRatio = isSmallWindow ? 0.5 : isLargeWindow ? 0.2 : 0.3;
 
   const rawMessageBudget = Math.max(
     Math.floor(historyBudget * minRawRatio),

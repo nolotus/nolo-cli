@@ -13,7 +13,7 @@
 // 两份拷贝靠人工同步迟早会漂移，而 guard 一旦漂移就会静默失去防重放能力。
 //
 // bun-nolo 注入历史摘要的四个点都用这同一个 wrapper：
-//   1. buildSystemPrompt.ts 的 dialogSummary / proactiveSummary section
+//   1. buildSystemPrompt.ts 的 dialogSummary section
 //   2. buildReferenceContext.ts 的 Passive/Proactive Summary
 //   3. inheritedDialogPrompt.ts 的 checkpoint/passive/proactive summary
 //   4. 桌面本地 runtime 的 dialog 摘要 layer（经 agent-runtime/turnContext）

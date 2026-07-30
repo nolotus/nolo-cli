@@ -1236,8 +1236,6 @@ export const messageSlice = createSliceWithThunks({
               changes: {
                 summary: null,
                 summarizedBeforeId: null,
-                proactiveSummary: null,
-                proactiveSummaryBeforeId: null,
               },
             })
           ).unwrap();

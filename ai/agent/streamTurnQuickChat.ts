@@ -27,7 +27,6 @@ export const EMPTY_DYNAMIC_CONTEXTS = {
     appWorkingMemory: null,
     memoryOverlay: null,
     dialogSummary: null,
-    proactiveSummary: null,
     referenceKeys: [],
 };
 

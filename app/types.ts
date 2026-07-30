@@ -81,8 +81,6 @@ export interface DialogConfig {
   // --- 上下文压缩 ---
   summary?: string; // 对话摘要（单层覆盖式）
   summarizedBeforeId?: string; // 摘要覆盖到哪条消息 ID
-  proactiveSummary?: string; // 主动工作摘要（不裁剪原始消息，供被动压缩消费）
-  proactiveSummaryBeforeId?: string; // 主动工作摘要覆盖到哪条消息 ID
   compressionCount?: number; // 压缩次数（用于极端情况提示）
   referenceKeys?: string[]; // 消息中引用过的 pageKey/dialogKey（替代 historyKeys 扫描）
   inheritedFromDialogKey?: string; // 若从旧对话开启，记录来源对话 key 以便刷新后仍可提示

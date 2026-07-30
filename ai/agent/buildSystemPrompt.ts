@@ -453,10 +453,6 @@ export const buildSystemPromptContext = (options: {
     ? `--- 历史对话摘要 ---\n${wrapHistoricalSummaryWithReplayGuard(contexts.dialogSummary)}`
     : "";
 
-  const proactiveSummarySection = contexts.proactiveSummary?.trim()
-    ? `--- 阶段工作摘要 ---\n${wrapHistoricalSummaryWithReplayGuard(contexts.proactiveSummary)}`
-    : "";
-
   return compileContextLayers([
     { id: "identity", owner: "platform", cacheScope: "session", content: identitySection },
     { id: "startup-protocol", owner: "platform", cacheScope: "static", content: startupProtocol },
@@ -491,7 +487,6 @@ export const buildSystemPromptContext = (options: {
     { id: "memory-overlay", owner: "runtime", cacheScope: "turn", content: memoryOverlaySection },
     { id: "app-working-memory", owner: "runtime", cacheScope: "turn", content: appWorkingMemorySection },
     { id: "dialog-summary", owner: "runtime", cacheScope: "turn", content: dialogSummarySection },
-    { id: "proactive-summary", owner: "runtime", cacheScope: "turn", content: proactiveSummarySection },
     { id: "editing-context", owner: "runtime", cacheScope: "turn", content: editingContextSection },
     {
       id: "current-time",

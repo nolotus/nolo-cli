@@ -50,9 +50,6 @@ export interface Contexts {
   /** 对话增量摘要：已压缩的历史消息概要 */
   dialogSummary?: string | null;
 
-  /** 主动工作摘要：阶段性沉淀，不代表原始消息已被裁剪 */
-  proactiveSummary?: string | null;
-
   /** 压缩消息中提取的引用 Key */
   referenceKeys?: string[];
 }

@@ -198,7 +198,6 @@ const fetchDialogReference = async (
   const dialogId = extractCustomId(dbKey) || dbKey.replace(/^dialog-/, "");
   const checkpoint = (dialogConfig as any).runtimeCheckpoint || null;
   const summary = asTrimmedString((dialogConfig as any).summary);
-  const proactiveSummary = asTrimmedString((dialogConfig as any).proactiveSummary);
 
   const messages = await dispatch(
     async (_dispatch: any, getState: any, { db }: any) => {
@@ -256,7 +255,6 @@ const fetchDialogReference = async (
     `- Use this when continuing work, transferring to another Agent, comparing with the current task, or preparing a document/plan from the prior discussion.`,
     `- Current state source: ${checkpointLines.length ? "Runtime Checkpoint" : "summaries and recent transcript"}.`,
     summary ? `- Compressed background: passive summary is available below; treat it as lossy, not original wording.` : "",
-    proactiveSummary ? `- Recent work: proactive summary is available below; use it for current direction, not exact evidence.` : "",
     recentToolEvidence.length
       ? `- Recent tool evidence:\n${recentToolEvidence.join("\n")}`
       : `- Recent tool evidence: none loaded in the latest ${DIALOG_REFERENCE_MESSAGE_LIMIT} messages.`,
@@ -272,7 +270,6 @@ const fetchDialogReference = async (
     `Conversation Handoff:\n${handoffLines.join("\n")}`,
     checkpointLines.length ? `Runtime Checkpoint:\n${checkpointLines.join("\n")}` : "",
     summary ? `Passive Summary (compressed history, not original wording):\n${wrapHistoricalSummaryWithReplayGuard(summary)}` : "",
-    proactiveSummary ? `Proactive Summary (recent work summary, not original wording):\n${wrapHistoricalSummaryWithReplayGuard(proactiveSummary)}` : "",
     `Recent Transcript (original message excerpts, oldest to newest):\n${transcript || "[no recent messages loaded]"}`,
     [
       `Coverage Note: This reference intentionally loads only the latest ${DIALOG_REFERENCE_MESSAGE_LIMIT} messages plus summaries/checkpoint to control token load.`,

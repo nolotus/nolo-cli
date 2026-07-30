@@ -27,8 +27,6 @@ const OLD_DIALOG_RECORD = {
   // conversation summary/compression state that must NOT be carried to the fork
   summary: "This is a long summary of the old conversation.",
   summarizedBeforeId: "msg-old-summary-anchor",
-  proactiveSummary: "Short recap of prior topics.",
-  proactiveSummaryBeforeId: "msg-old-proactive-anchor",
   compressionCount: 3,
   summaryPending: true,
 };
@@ -179,13 +177,11 @@ describe("compactDialog", () => {
     const writeBody = calls[1]?.body as any;
     const forked = writeBody?.data ?? {};
 
-    // Conversation-state fields must be absent (undefined / not present)
-    expect(forked.summary).toBeUndefined();
-    expect(forked.summarizedBeforeId).toBeUndefined();
-    expect(forked.proactiveSummary).toBeUndefined();
-    expect(forked.proactiveSummaryBeforeId).toBeUndefined();
-    expect(forked.compressionCount).toBeUndefined();
-    expect(forked.summaryPending).toBeUndefined();
+    // Conversation summary/compression state IS now inherited so the forked
+    // dialog continues with the compressed context (matching Web /compact semantics).
+    expect(forked.summary).toBe(OLD_DIALOG_RECORD.summary);
+    expect(forked.summarizedBeforeId).toBe(OLD_DIALOG_RECORD.summarizedBeforeId);
+    expect(forked.compressionCount).toBe(OLD_DIALOG_RECORD.compressionCount);
 
     // Config/identity fields must still be carried forward
     expect(forked.cybots).toEqual(OLD_DIALOG_RECORD.cybots);
@@ -232,7 +228,142 @@ describe("parseTokenUserId", () => {
     const header = Buffer.from(JSON.stringify({ alg: "HS256" })).toString("base64");
     const payload = Buffer.from(JSON.stringify({ userId: 12345 })).toString("base64");
     const token = `${header}.${payload}.signature`;
-    
+
     expect(parseTokenUserId(token)).toBeNull();
+  });
+});
+
+describe("compactDialog with summary compression", () => {
+  test("generates summary, patches old dialog, and fork inherits compressed state", async () => {
+    // Build messages with enough tokens to trigger compression
+    // manual force needs isActiveSummaryWorthDoing: pendingTokens >= max(10000, contextWindow*0.05)
+    // DEFAULT_CONTEXT_WINDOW=256000 → minTokens=12800 → need >= 128 msgs * 100 tokens
+    const msgs = Array.from({ length: 140 }, (_, i) => ({
+      id: `m${i + 1}`,
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `message ${i + 1} with enough text to have tokens`,
+      usage: { completion_tokens: 100 },
+    }));
+
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    const fetchMock: import("../cliFetch").CliFetchImpl = async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const bodyStr = typeof init?.body === "string" ? init.body : undefined;
+      const body = bodyStr ? JSON.parse(bodyStr) : undefined;
+      calls.push({ url, method, body });
+
+      // GET → read dialog record
+      if (method === "GET") {
+        return new Response(JSON.stringify({
+          ...OLD_DIALOG_RECORD,
+          cybots: [], // no agent → DEFAULT_CONTEXT_WINDOW
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      // POST → could be dialog-read or write
+      if (method === "POST") {
+        if (url.includes("dialog-read")) {
+          return new Response(JSON.stringify({ ok: true, msgs }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        // write forked dialog
+        return new Response("{}", { status: 200 });
+      }
+      // PATCH → patch old dialog with summary
+      if (method === "PATCH") {
+        return new Response("{}", { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    };
+
+    const summaryLlmCaller = async (_content: string): Promise<string | null> => {
+      return "Compressed summary of the conversation.";
+    };
+
+    const result = await compactDialog({
+      serverUrl: "http://localhost:8080",
+      authToken: FAKE_TOKEN,
+      dialogId: OLD_DIALOG_ID,
+      fetchImpl: fetchMock,
+      summaryLlmCaller,
+    });
+
+    // Summary was generated
+    expect(result.summaryGenerated).toBe(true);
+
+    // PATCH was called to write summary back to old dialog
+    const patchCall = calls.find(c => c.method === "PATCH");
+    expect(patchCall).toBeDefined();
+    const patchBody = (patchCall as any)?.body?.data;
+    expect(patchBody.summary).toBe("Compressed summary of the conversation.");
+    expect(patchBody.summarizedBeforeId).toBeDefined();
+    expect(patchBody.compressionCount).toBe(4); // was 3, incremented
+
+    // Forked dialog inherits the new summary
+    const writeCall = calls.find(c => c.method === "POST" && !c.url.includes("dialog-read"));
+    expect(writeCall).toBeDefined();
+    const forkedData = (writeCall as any)?.body?.data;
+    expect(forkedData.summary).toBe("Compressed summary of the conversation.");
+    expect(forkedData.summarizedBeforeId).toBeDefined();
+    expect(forkedData.compressionCount).toBe(4);
+    // Fork inherits the updated referenceKeys (from current.referenceKeys)
+    expect(forkedData.referenceKeys).toBeDefined();
+  });
+
+  test("degrades to fork-only when summaryLlmCaller returns null", async () => {
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    const fetchMock: import("../cliFetch").CliFetchImpl = async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const bodyStr = typeof init?.body === "string" ? init.body : undefined;
+      const body = bodyStr ? JSON.parse(bodyStr) : undefined;
+      calls.push({ url, method, body });
+
+      if (method === "GET") {
+        return new Response(JSON.stringify(OLD_DIALOG_RECORD), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (method === "POST") {
+        if (url.includes("dialog-read")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            msgs: Array.from({ length: 120 }, (_, i) => ({
+              id: `m${i + 1}`,
+              role: i % 2 === 0 ? "user" : "assistant",
+              content: `message ${i + 1}`,
+              usage: { completion_tokens: 100 },
+            })),
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response("{}", { status: 200 });
+      }
+      if (method === "PATCH") return new Response("{}", { status: 200 });
+      return new Response("{}", { status: 404 });
+    };
+
+    const result = await compactDialog({
+      serverUrl: "http://localhost:8080",
+      authToken: FAKE_TOKEN,
+      dialogId: OLD_DIALOG_ID,
+      fetchImpl: fetchMock,
+      summaryLlmCaller: async () => null,
+    });
+
+    // No summary generated, but fork still succeeds
+    expect(result.summaryGenerated).toBe(false);
+
+    // No PATCH to dialog record (no summary to write back).
+    // addDialogToSpaceIfNeeded also PATCHes, so filter by URL.
+    const dialogPatchCall = calls.find(c => c.method === "PATCH" && c.url.includes(OLD_DIALOG_KEY));
+    expect(dialogPatchCall).toBeUndefined();
+
+    // Fork inherits old summary (from dialog record)
+    const writeCall = calls.find(c => c.method === "POST" && !c.url.includes("dialog-read"));
+    const forkedData = (writeCall as any)?.body?.data;
+    expect(forkedData.summary).toBe(OLD_DIALOG_RECORD.summary);
   });
 });

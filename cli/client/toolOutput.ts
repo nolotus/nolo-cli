@@ -3,13 +3,14 @@ export { clipPathAware };
 import { clipCompactText } from "../../core/clipCompactText";
 import { compactWhitespace } from "../../core/compactWhitespace";
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
+import { clipHeadAndTail } from "../../core/clipHeadAndTail";
+export { clipHeadAndTail };
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import { parseUiAskChoiceContent } from "../../ai/tools/uiAskChoiceTool";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 import { diffLineSequences, themeText } from "../tui/theme";
 import { t, toolLabel } from "../tui/i18n";
-
 
 export type ToolDisplayMode = "hide" | "compact" | "verbose";
 

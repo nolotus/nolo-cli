@@ -24,6 +24,7 @@ export default {
       name_placeholder: "Enter space name",
       description_placeholder: "Enter space description (optional)",
       description_max_length: "Description cannot exceed 200 characters",
+      description_too_long: "Description cannot exceed 500 characters",
 
       // === 创建空间 ===
       create_new_space: "New space",
@@ -63,6 +64,10 @@ export default {
       no_space_data: "Space data not found",
       try_repair: "Try to Repair",
       repair_success: "Repair operation completed successfully",
+      repair_space: "Repair Space",
+      repair_count_warn:
+        "This space has {{count}} content items. Repair will re-deduplicate and remove orphaned references. Continue?",
+      repair: "Repair",
       repair_error: "Repair operation failed",
       try_later: "Please try again later",
 
@@ -90,6 +95,7 @@ export default {
 
       // === 默认空间 ===
       save_changes: "Save Changes",
+      save_success: "Settings saved successfully",
       set_as_default: "Set as Default Space",
       current_default: "Current Default Space",
       cancel_changes: "Cancel Changes",
@@ -382,6 +388,7 @@ export default {
       name_placeholder: "输入空间名称",
       description_placeholder: "输入空间描述（可选）",
       description_max_length: "描述不能超过200个字符",
+      description_too_long: "描述不能超过 500 个字符",
 
       // === 创建空间 ===
       create_new_space: "新建空间",
@@ -420,6 +427,10 @@ export default {
       no_space_data: "未找到空间数据",
       try_repair: "尝试修复",
       repair_success: "修复操作成功完成",
+      repair_space: "修复空间",
+      repair_count_warn:
+        "此空间有 {{count}} 项内容。修复将重新去重并清除孤立的引用。是否继续？",
+      repair: "修复",
       repair_error: "修复操作失败",
       try_later: "请稍后重试",
 
@@ -445,6 +456,7 @@ export default {
 
       // === 默认空间 ===
       save_changes: "保存更改",
+      save_success: "设置保存成功",
       set_as_default: "设为默认空间",
       current_default: "当前默认空间",
       cancel_changes: "取消更改",
@@ -731,6 +743,7 @@ export default {
       name_placeholder: "輸入空間名稱",
       description_placeholder: "輸入空間描述（可選）",
       description_max_length: "描述不能超過200個字符",
+      description_too_long: "描述不能超過 500 個字元",
 
       // === 创建空间 ===
       create_new_space: "新建空間",
@@ -768,6 +781,10 @@ export default {
       no_space_data: "未找到空間資料",
       try_repair: "嘗試修復",
       repair_success: "修復操作成功完成",
+      repair_space: "修復空間",
+      repair_count_warn:
+        "此空間有 {{count}} 項內容。修復將重新去重並清除孤立的引用。是否繼續？",
+      repair: "修復",
       repair_error: "修復操作失敗",
       try_later: "請稍後重試",
 
@@ -793,6 +810,7 @@ export default {
 
       // === 默认空间 ===
       save_changes: "儲存變更",
+      save_success: "設定已儲存",
       set_as_default: "設為預設空間",
       current_default: "目前預設空間",
       cancel_changes: "取消變更",
@@ -1071,6 +1089,7 @@ export default {
       name_placeholder: "スペース名を入力",
       description_placeholder: "スペースの説明を入力（任意）",
       description_max_length: "説明は200文字以下にしてください",
+      description_too_long: "説明は500文字以内で入力してください",
 
       // === スペース作成 ===
       create_new_space: "スペースを作成",
@@ -1111,6 +1130,10 @@ export default {
       no_space_data: "スペースデータが見つかりません",
       try_repair: "修復を試行",
       repair_success: "修復操作が正常に完了しました",
+      repair_space: "スペースを修復",
+      repair_count_warn:
+        "このスペースには {{count}} 件のコンテンツがあります。修復は重複を整理し、孤立した参照を削除します。続行しますか？",
+      repair: "修復",
       repair_error: "修復操作に失敗しました",
       try_later: "しばらくしてから再度お試しください",
 
@@ -1139,6 +1162,7 @@ export default {
 
       // === デフォルトスペース ===
       save_changes: "変更を保存",
+      save_success: "設定を保存しました",
       set_as_default: "デフォルトスペースに設定",
       current_default: "現在のデフォルトスペース",
       cancel_changes: "変更をキャンセル",

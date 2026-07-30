@@ -172,11 +172,14 @@ type WorkspaceOptions = {
     serverUrl: string;
     authToken: string;
     dialogId: string;
+    summaryLlmCaller?: (content: string) => Promise<string | null>;
   }) => Promise<CompactDialogResult>;
   dialogPickerRunner?: typeof runDialogPicker;
   dialogHistoryLoader?: typeof loadDialogHistoryForDisplay;
   selfUpdater?: SelfUpdater;
   spawnRunner?: typeof spawnProcess;
+  /** Injected summary LLM caller for /compact compression. Wired by localRuntimeAdapter. */
+  summaryLlmCaller?: (content: string) => Promise<string | null>;
 };
 
 
@@ -1016,6 +1019,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           serverUrl: state.serverUrl,
           authToken,
           dialogId: result.action.dialogId,
+          summaryLlmCaller: options.summaryLlmCaller,
         });
         state = {
           ...state,

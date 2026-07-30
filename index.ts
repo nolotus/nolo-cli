@@ -35,7 +35,11 @@ async function runScript(script: string, forwardedArgs: string[], env: NodeJS.Pr
 /** TUI pulls agentRun → localRuntimeAdapter graph; only load when launching interactive shell. */
 async function launchTuiWorkspace(args: { scriptDir: string; env: NodeJS.ProcessEnv }) {
   const { startTuiWorkspace } = await import("./tui/readlineWorkspace");
-  return startTuiWorkspace(args);
+  const { createTuiSummaryLlmCaller } = await import("./client/tuiSummaryLlmCaller");
+  return startTuiWorkspace({
+    ...args,
+    summaryLlmCaller: createTuiSummaryLlmCaller(args.env),
+  });
 }
 
 const args = process.argv.slice(2);

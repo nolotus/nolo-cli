@@ -2,6 +2,7 @@
 
 import { isRecord } from "../../core/isRecord";
 import { asTrimmedString } from "../../core/trimmedString";
+import { clipHeadAndTail } from "../../core/clipHeadAndTail";
 
 export type MessagePart =
   | { type: "text"; text: string }
@@ -43,13 +44,6 @@ export interface InternalMessage extends Omit<Partial<OpenAIMessage>, "content">
   [key: string]: any;
 }
 
-const TOOL_CONTEXT_MAX_CHARS = 4000;
-
-const truncateText = (text: string, maxChars: number = TOOL_CONTEXT_MAX_CHARS): string => {
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n…[截断，原始长度 ${text.length} 字符]`;
-};
-
 export const isValidMessagePart = (part: any): part is MessagePart => {
   if (!part || typeof part !== "object") return false;
   if (part.type === "text") return typeof part.text === "string";
@@ -63,13 +57,13 @@ export const isValidMessagePart = (part: any): part is MessagePart => {
 const extractContent = (msg: InternalMessage): string | MessagePart[] | null => {
   if (msg.role === "tool") {
     const llmContext = asTrimmedString(msg.toolPayload?.llmContext);
-    if (llmContext) return truncateText(llmContext);
+    if (llmContext) return clipHeadAndTail(llmContext, { toolCallId: extractToolCallId(msg) ?? undefined }).content;
 
     const summary = asTrimmedString(msg.toolPayload?.summary);
-    if (summary) return truncateText(summary);
+    if (summary) return clipHeadAndTail(summary, { toolCallId: extractToolCallId(msg) ?? undefined }).content;
 
-    if (typeof msg.content === "string") return truncateText(msg.content);
-    if (msg.content != null) return truncateText(JSON.stringify(msg.content));
+    if (typeof msg.content === "string") return clipHeadAndTail(msg.content, { toolCallId: extractToolCallId(msg) ?? undefined }).content;
+    if (msg.content != null) return clipHeadAndTail(JSON.stringify(msg.content), { toolCallId: extractToolCallId(msg) ?? undefined }).content;
     return null;
   }
 

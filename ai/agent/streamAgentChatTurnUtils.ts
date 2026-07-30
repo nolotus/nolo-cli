@@ -494,7 +494,6 @@ export interface DynamicContexts {
     appWorkingMemory: string | null;
     memoryOverlay: string | null;
     dialogSummary: string | null;
-    proactiveSummary: string | null;
     referenceKeys: string[];
 }
 
@@ -732,7 +731,6 @@ export const buildDynamicContexts = async (
         appWorkingMemory,
         memoryOverlay,
         dialogSummary,
-        proactiveSummary: dialogConfig?.proactiveSummary || null,
         referenceKeys: dialogConfig?.referenceKeys || [],
     };
 };
@@ -755,7 +753,6 @@ export const mergeContexts = (
     appWorkingMemory: dynamicCtx.appWorkingMemory,
     memoryOverlay: dynamicCtx.memoryOverlay,
     dialogSummary: dynamicCtx.dialogSummary,
-    proactiveSummary: dynamicCtx.proactiveSummary,
     referenceKeys: dynamicCtx.referenceKeys,
 });
 

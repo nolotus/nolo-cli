@@ -31,8 +31,7 @@ export interface TurnContextLayer {
     | "skill-content"
     | "user-global-prompt"
     | "memory-overlay"
-    | "dialog-summary"
-    | "proactive-summary";
+    | "dialog-summary";
   owner: "runtime";
   /** session = stable across turns in the same dialog; turn = may change each turn. */
   cacheScope: "turn" | "session";
@@ -390,18 +389,16 @@ export const renderTurnContextBlocksWithScope = (
 export interface BuildDialogSummaryLayerArgs {
   /** Dialog record's compressed historical summary (`summary` field). */
   summary?: string | null;
-  /** Dialog record's proactive/recent-work summary (`proactiveSummary` field). */
-  proactiveSummary?: string | null;
 }
 
 /**
- * Dialog summary layer: historical conversation summary + proactive work
- * summary, each wrapped in the stale-replay guard so the model cannot replay
- * old task descriptions / skill calls as live instructions.
+ * Dialog summary layer: historical conversation summary wrapped in the
+ * stale-replay guard so the model cannot replay old task descriptions /
+ * skill calls as live instructions.
  *
- * Semantically equivalent to the renderer's `dialogSummary` / `proactiveSummary`
- * sections in `buildSystemPrompt.ts`. Returns one combined layer (with both
- * sections when present) or null when neither summary has content.
+ * Semantically equivalent to the renderer's `dialogSummary` section in
+ * `buildSystemPrompt.ts`. Returns the layer when the summary has content,
+ * or null when it is empty.
  *
  * Failure visibility: a missing/empty summary is a legitimate "no summary
  * yet" state (returns null), not a fault — unlike a space read failure, an
@@ -413,19 +410,9 @@ export const buildDialogSummaryLayer = (
   const historical = wrapHistoricalSummaryWithReplayGuard(
     asTrimmed(args.summary),
   );
-  const proactive = wrapHistoricalSummaryWithReplayGuard(
-    asTrimmed(args.proactiveSummary),
-  );
-  if (!historical && !proactive) return null;
+  if (!historical) return null;
 
-  const sections: string[] = [];
-  if (historical) {
-    sections.push(`--- 历史对话摘要 ---\n${historical}`);
-  }
-  if (proactive) {
-    sections.push(`--- 阶段工作摘要 ---\n${proactive}`);
-  }
-  return makeLayer("dialog-summary", sections.join("\n\n"));
+  return makeLayer("dialog-summary", `--- 历史对话摘要 ---\n${historical}`);
 };
 
 // ============================================================================

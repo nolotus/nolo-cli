@@ -12,6 +12,10 @@ type ToastOptions = {
   id?: string;
   /** Custom icon node — overrides the type default */
   icon?: ReactNode;
+  /** Optional description rendered below the title */
+  description?: ReactNode;
+  /** Optional action button rendered below the message */
+  action?: { label: string; onClick: () => void };
 };
 
 const DEFAULT_TIMEOUT = 4000;
@@ -27,6 +31,8 @@ function add(
     title: message,
     type,
     icon: options?.icon,
+    description: options?.description,
+    action: options?.action,
     // loading toasts stay until explicitly replaced/closed (timeout=0)
     timeout: type === "loading" ? (timeout ?? 0) : (timeout ?? DEFAULT_TIMEOUT),
   });

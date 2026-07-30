@@ -165,6 +165,37 @@
   }
 }
 
+/* ─── Action Button ─────────────────────────────────────────── */
+.toast-action {
+  align-self: flex-start;
+  margin-top: var(--space-2, 8px);
+  padding: var(--space-1, 4px) var(--space-3, 12px);
+  font: inherit;
+  font-size: var(--fontSize-sm, 13px);
+  font-weight: var(--fontWeight-semibold, 600);
+  color: var(--primary, #3b82f6);
+  background: var(--primaryGhost, rgba(59, 130, 246, 0.1));
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, var(--radius-xs, 6px));
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.toast-action:hover {
+  background: var(--primaryGhostHover, rgba(59, 130, 246, 0.18));
+}
+.toast-action:focus-visible {
+  outline: 2px solid var(--focus, var(--primaryGhost, rgba(22, 119, 255, 0.22)));
+  outline-offset: 2px;
+}
+.toast-action:active {
+  background: var(--primaryGhostActive, rgba(59, 130, 246, 0.26));
+}
+[data-theme="dark"] .toast-action {
+  color: var(--primary, #60a5fa);
+  background: var(--primaryGhost, rgba(96, 165, 250, 0.14));
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast-root,
   .toast-close {

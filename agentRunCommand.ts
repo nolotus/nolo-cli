@@ -470,7 +470,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   let memoryPromptBlock: string | null = null;
   if (!deps.memoryRecallDisabled) {
   const memoryServerUrl = resolveServerUrl(env);
-  const memoryAuthToken = resolveAuthToken(env);
+  const memoryAuthToken = resolveAuthToken(args, env);
   const memoryAgentKey = effectiveAgentKey;
   const memorySpaceId = parsed.spaceId ?? undefined;
   try {

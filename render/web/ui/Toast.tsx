@@ -21,6 +21,7 @@ interface InternalToast {
   id: string;
   title: ReactNode;
   description?: ReactNode;
+  action?: { label: string; onClick: () => void };
   type?: ToastType;
   icon?: ReactNode;
   timeout?: number;
@@ -49,6 +50,7 @@ class ToastStore {
     id?: string;
     title: ReactNode;
     description?: ReactNode;
+    action?: { label: string; onClick: () => void };
     type?: ToastType;
     icon?: ReactNode;
     timeout?: number;
@@ -130,6 +132,20 @@ function ToastItem({ toast }: { toast: InternalToast }) {
           <div className="toast-title">{toast.title}</div>
           {toast.description && (
             <div className="toast-description">{toast.description}</div>
+          )}
+          {toast.action && (
+            <button
+              type="button"
+              className="toast-action"
+              disabled={toast.phase === "exiting"}
+              onClick={() => {
+                if (toast.phase === "exiting") return;
+                toastManager.close(toast.id);
+                toast.action.onClick();
+              }}
+            >
+              {toast.action.label}
+            </button>
           )}
         </div>
       </div>

@@ -69,13 +69,8 @@ export const initialState: SettingState = {
   editorTabSize: 2,
   editorFontFamily: "SF Mono, Monaco, Cascadia Code, Roboto Mono, monospace",
   enableReadCurrentSpace: true,
-  globalPrompt:
-    "以下是关于我的通用说明，请在任意场景下都以此来理解和服务我：\n" +
-    "1. 我希望你用清晰、简洁的方式回答问题，并在必要时给出示例。\n" +
-    "2. 如果有多种解决方案，请先给出推荐方案，再简要说明其他方案的优缺点。\n" +
-    "3. 当你不确定答案时，请明确说明不确定，并推测可能的方向，而不是编造事实。\n" +
-    "4. 如果涉及代码，请优先使用现代、通用的最佳实践。",
-  userTonePreset: DEFAULT_USER_PREFERENCE_PROFILE.tone?.preset ?? "default",
+  globalPrompt: "",
+  userTonePreset: "",
   knowledgeCaptureLevel: DEFAULT_USER_PREFERENCE_PROFILE.knowledgeCaptureLevel,
   spaceContextLevel: DEFAULT_USER_PREFERENCE_PROFILE.spaceContextLevel,
   autoApproveSelfUpdateFields: [...DEFAULT_AUTO_APPROVED_SELF_UPDATE_FIELDS],

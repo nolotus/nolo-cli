@@ -434,9 +434,17 @@ export const buildSystemPromptContext = (options: {
   const appWorkingMemorySection = buildAppWorkingMemoryBlock(contexts);
   const spaceContextSection = buildSpaceContextBlock(contexts);
   const rawMemoryOverlay = asOptionalTrimmedString(contexts.memoryOverlay) ?? "";
-  const memoryOverlaySection = rawMemoryOverlay
-    ? rawMemoryOverlay + "\n\n" + MEMORY_USE_GUIDANCE
-    : "";
+  // Memory overlay content (turn-scope: changes when memory updates)
+  const memoryOverlaySection = rawMemoryOverlay;
+  // Memory use guidance (session-scope: fixed text, never changes between turns).
+  // Injected when the agent has memory-related tools, regardless of whether
+  // memory-overlay has content this turn. This keeps the guidance in the stable
+  // prefix — if it were conditional on memory-overlay being non-empty, the
+  // prefix would break when memory first appears or disappears.
+  const hasMemoryTools = Array.isArray(agentConfig.tools) && agentConfig.tools.some(
+    (t: string) => /memory/i.test(t),
+  );
+  const memoryUseGuidanceSection = hasMemoryTools ? MEMORY_USE_GUIDANCE : "";
 
   const skillGuidanceSection = buildSkillGuidanceBlock(agentConfig);
   const referenceMaterialsSection = buildReferenceMaterialsBlock(contexts);
@@ -478,6 +486,7 @@ export const buildSystemPromptContext = (options: {
     { id: "response-guidelines", owner: "platform", cacheScope: "session", content: responseGuidelinesSection },
     { id: "skill-guidance", owner: "runtime", cacheScope: "session", content: skillGuidanceSection },
     { id: "space-context", owner: "runtime", cacheScope: "session", content: spaceContextSection },
+    { id: "memory-use-guidance", owner: "platform", cacheScope: "session", content: memoryUseGuidanceSection },
     { id: "reference-materials", owner: "agent", cacheScope: "turn", content: referenceMaterialsSection },
     { id: "memory-overlay", owner: "runtime", cacheScope: "turn", content: memoryOverlaySection },
     { id: "app-working-memory", owner: "runtime", cacheScope: "turn", content: appWorkingMemorySection },

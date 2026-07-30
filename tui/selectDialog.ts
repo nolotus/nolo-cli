@@ -4,7 +4,7 @@ import {
   renderDialogTitle,
 } from "./dialogFrame";
 import { t } from "./i18n";
-import { parseScrollAction } from "./tuiScrollbar";
+import { consumeSgrMouseSequence, parseScrollAction } from "./tuiScrollbar";
 
 export type SelectDialogItem = {
   label: string;
@@ -152,6 +152,21 @@ export function createRawKeyReader(input: NodeJS.ReadStream): KeyReader {
       return sequence;
     }
     if (buffer.startsWith("\x1b")) {
+      // SGR mouse reports (ESC [ < button ; col ; row M/m) arrive as one
+      // multi-byte burst. Without a dedicated parser the bytes fell through
+      // to the 8-byte CSI bucket and returned null, which the dialog loop
+      // treats as "stream closed" → cancel. So a stray mouse click into the
+      // terminal (e.g. re-entering the window from another app) silently
+      // rejected the prompt before the user pressed anything. Recognize the
+      // report here: wheel events are returned so the dialog's
+      // parseScrollAction can scroll; plain clicks are swallowed (undefined →
+      // keep waiting) via the caller so they never reach the cancel path.
+      const mouse = consumeSgrMouseSequence(buffer);
+      if (mouse !== null) {
+        if (mouse === undefined) return undefined; // incomplete, wait
+        buffer = buffer.slice(mouse.length);
+        return mouse;
+      }
       for (const candidate of [
         CSI_ARROW_UP,
         CSI_ARROW_DOWN,

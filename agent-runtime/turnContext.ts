@@ -509,23 +509,37 @@ export interface BuildMemoryOverlayLayerArgs {
 }
 
 /**
- * Memory overlay layer: appends the memory-use guidance so the model knows
- * memory is a personalization enhancement layer subordinated to the current
- * input / dialog / system rules / agent prompt / user global prompt. Without
- * this guidance, stale memory can be treated as higher truth than fresh user
- * instructions.
+ * Memory overlay layer: the actual memory content (turn-scope, changes when
+ * memory updates). Does NOT include the memory-use guidance — that is a
+ * separate session-scope layer (buildMemoryUseGuidanceLayer) so the 92-token
+ * fixed guidance text enters the stable prefix instead of causing cache miss.
  *
- * Null when there is no memory promptBlock (no memory matched, or the host
- * omitted the layer after a network failure — see host wiring for the
- * failure-visibility policy).
+ * Null when there is no memory promptBlock.
  */
 export const buildMemoryOverlayLayer = (
   args: BuildMemoryOverlayLayerArgs,
 ): TurnContextLayer | null => {
   const promptBlock = asTrimmed(args.promptBlock);
   if (!promptBlock) return null;
+  return makeLayer("memory-overlay", promptBlock);
+};
+
+/**
+ * Memory use guidance layer (session-scope): fixed text telling the model how
+ * to weigh memory against current input. Never changes between turns, so it
+ * sits in the stable prefix for LLM prefix-cache hits.
+ *
+ * Null when there is no memory promptBlock — the guidance only matters when
+ * memory is active.
+ */
+export const buildMemoryUseGuidanceLayer = (
+  args: BuildMemoryOverlayLayerArgs,
+): TurnContextLayer | null => {
+  const promptBlock = asTrimmed(args.promptBlock);
+  if (!promptBlock) return null;
   return makeLayer(
-    "memory-overlay",
-    `${promptBlock}\n\n${MEMORY_USE_GUIDANCE}`,
+    "memory-use-guidance",
+    MEMORY_USE_GUIDANCE,
+    "session",
   );
 };

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 
 import {
+  createRawKeyReader,
   renderSelectDialog,
   runSelectDialog,
   type SelectDialogItem,
@@ -110,5 +112,43 @@ describe("selectDialog", () => {
     });
 
     expect(result).toEqual({ kind: "cancelled" });
+  });
+
+  test("a stray mouse click is swallowed, not treated as cancel", async () => {
+    // Regression: re-entering the terminal window from another app sends an
+    // SGR mouse-click report (ESC [ < button ; col ; row M). The raw key
+    // reader used to drop multi-byte CSI sequences into an 8-byte bucket and
+    // return null, which the dialog loop read as "stream closed" → cancel.
+    // Feed a real click sequence followed by Enter through createRawKeyReader
+    // and assert the dialog stays open and selects normally.
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    let settled: SelectDialogResult<SelectDialogItem> | undefined;
+    const resultPromise = runSelectDialog<SelectDialogItem>({
+      items: [{ label: "nolo" }, { label: "grok" }],
+      readKey,
+      input,
+      output: { isTTY: false, write() {} } as unknown as NodeJS.WritableStream,
+    });
+    resultPromise.then((r) => {
+      settled = r;
+    });
+
+    // Emit a plain left-click SGR mouse report, then arrow-down, then Enter.
+    // Wait a microtask between writes so the 'data' listener can deliver.
+    input.emit("data", "\x1b[<0;5;5M");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(settled).toBeUndefined(); // click must not cancel the dialog
+
+    input.emit("data", "\x1b[B");
+    await new Promise((r) => setTimeout(r, 10));
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toEqual({
+      kind: "selected",
+      index: 1,
+      item: { label: "grok" },
+    });
   });
 });

@@ -17,7 +17,50 @@ export type ScrollAction =
 
 /** SGR mouse report: ESC [ < button ; col ; row (M=press/wheel, m=release). */
 // eslint-disable-next-line no-control-regex
-const SGR_MOUSE_REGEX = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
+export const SGR_MOUSE_REGEX = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
+
+/**
+ * Whether an SGR mouse sequence is a wheel event (bit 6 set, 64=up / 65=down;
+ * 66/67 are horizontal). Non-wheel clicks/drags return false. Callers use
+ * this to decide whether to keep a mouse sequence (wheel → scroll) or drop
+ * it (click → ignore) so a stray click into the terminal doesn't get
+ * misparsed as a key and accidentally cancel the dialog.
+ */
+export function isSgrWheelEvent(sequence: string): boolean {
+  const mouse = SGR_MOUSE_REGEX.exec(sequence);
+  if (!mouse) return false;
+  const button = Number(mouse[1]);
+  if ((button & 64) === 0) return false; // not a wheel event
+  if ((button & 2) !== 0) return false; // horizontal wheel
+  return true;
+}
+
+/**
+ * Try to extract a complete SGR mouse report from `buffer`.
+ * Returns the matched sequence string when `buffer` starts with a complete
+ * `\x1b[<button;col;row M/m` report, otherwise `undefined` when the buffer
+ * could still grow into one, or `null` when the buffer clearly isn't a
+ * mouse report. Used by the raw key reader so mouse clicks (which arrive as
+ * multi-byte CSI sequences) aren't dropped into the 8-byte escape bucket and
+ * misread as a cancel.
+ */
+export function consumeSgrMouseSequence(
+  buffer: string,
+): string | null | undefined {
+  if (!buffer.startsWith("\x1b[")) return null;
+  // SGR mouse reports start with ESC [ < ; anything else is a non-mouse CSI.
+  if (!buffer.startsWith("\x1b[<")) {
+    // Could still be a different CSI we don't handle; let the caller's own
+    // CSI logic decide. Return null to signal "not a mouse sequence".
+    return null;
+  }
+  // The report ends with M (press/wheel) or m (release).
+  const endIndex = buffer.search(/[Mm]/);
+  if (endIndex === -1) return undefined; // incomplete, wait for more bytes
+  const candidate = buffer.slice(0, endIndex + 1);
+  if (SGR_MOUSE_REGEX.test(candidate)) return candidate;
+  return null;
+}
 
 export function parseScrollAction(sequence: string): ScrollAction | null {
   const mouse = SGR_MOUSE_REGEX.exec(sequence);

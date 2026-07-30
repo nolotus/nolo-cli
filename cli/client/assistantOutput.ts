@@ -14,7 +14,7 @@ const STYLE = {
  * per call chain so a single assistant reply stays internally consistent.
  */
 function colorSeq(
-  token: "accent" | "chrome" | "info" | "muted" | "success" | "warning",
+  token: "accent" | "chrome" | "info" | "muted" | "success" | "warning" | "danger",
   brightness: TuiBrightness
 ) {
   // "success" is added for syntax-highlight string literals; themeColorSequence
@@ -73,7 +73,7 @@ function readFenceLanguage(line: string): string {
   return m ? (m[1] ?? "").toLowerCase() : "";
 }
 
-type CodeLang = "js" | "py" | "sh" | "json" | "unknown";
+type CodeLang = "js" | "py" | "sh" | "json" | "diff" | "unknown";
 
 /** Normalize a fence language hint into one of the supported highlight langs. */
 function normalizeCodeLang(raw: string): CodeLang {
@@ -96,6 +96,8 @@ function normalizeCodeLang(raw: string): CodeLang {
       return "sh";
     case "json":
       return "json";
+    case "diff":
+      return "diff";
     default:
       return "unknown";
   }
@@ -117,6 +119,7 @@ const KEYWORDS: Record<Exclude<CodeLang, "unknown">, ReadonlySet<string>> = {
     "function", "export", "local", "return", "source", "echo", "cd",
   ]),
   json: new Set(["true", "false", "null"]),
+  diff: new Set([]),
 };
 
 // A single "segment" is a maximal run of plain (non-string, non-comment) text
@@ -182,6 +185,22 @@ function highlightCodeLine(line: string, lang: CodeLang, brightness: TuiBrightne
   const info = colorSeq("info", brightness);
   if (lang === "unknown") {
     return `${info}${line}${STYLE.reset}`;
+  }
+  if (lang === "diff") {
+    const added = colorSeq("success", brightness);
+    const deleted = colorSeq("danger", brightness);
+    const hunk = colorSeq("info", brightness);
+    const context = colorSeq("chrome", brightness);
+    const reset = STYLE.reset;
+    let color = context;
+    if (line.startsWith("@@")) {
+      color = hunk;
+    } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      color = added;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      color = deleted;
+    }
+    return `${color}${line}${reset}`;
   }
   const regions = scanStringCommentRegions(line, lang);
   const keywords = KEYWORDS[lang];

@@ -379,6 +379,32 @@ export function themeText(
   return `${themeColorSequence(token, env)}${text}\x1b[39m`;
 }
 
+function renderDiffCodeBlock(
+  code: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const border = themeText("│", "chrome", true, env);
+  const addedColor = themeColorSequence("success", env);
+  const deletedColor = themeColorSequence("danger", env);
+  const hunkColor = themeColorSequence("info", env);
+  const contextColor = themeColorSequence("chrome", env);
+  const reset = "\x1b[0m";
+
+  const lines = code.split("\n").map((line: string) => {
+    let color = contextColor;
+    if (line.startsWith("@@")) {
+      color = hunkColor;
+    } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      color = addedColor;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      color = deletedColor;
+    }
+    return ` ${border}  ${color}${line}${reset}`;
+  });
+
+  return ` ${themeText("┌───", "chrome", true, env)}\n${lines.join("\n")}\n ${themeText("└───", "chrome", true, env)}`;
+}
+
 export function highlightMarkdown(
   text: string,
   colorEnabled = resolveCliColorEnabled(),
@@ -389,7 +415,10 @@ export function highlightMarkdown(
   let result = text;
 
   // 1. Code blocks: ```[lang]\n([\s\S]*?)\n```
-  result = result.replace(/```[a-zA-Z-]*\n([\s\S]*?)\n```/g, (match, code) => {
+  result = result.replace(/```([a-zA-Z-]*)\n([\s\S]*?)\n```/g, (match, lang, code) => {
+    if (lang.toLowerCase() === "diff") {
+      return renderDiffCodeBlock(code, env);
+    }
     const infoColor = themeColorSequence("info", env);
     const reset = "\x1b[39m\x1b[22m";
     const border = themeText("│", "chrome", true, env);

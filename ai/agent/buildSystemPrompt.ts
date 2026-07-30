@@ -477,7 +477,7 @@ export const buildSystemPromptContext = (options: {
     { id: "user-global-prompt", owner: "user", cacheScope: "session", content: userGlobalPromptSection },
     { id: "response-guidelines", owner: "platform", cacheScope: "session", content: responseGuidelinesSection },
     { id: "skill-guidance", owner: "runtime", cacheScope: "session", content: skillGuidanceSection },
-    { id: "space-context", owner: "runtime", cacheScope: "turn", content: spaceContextSection },
+    { id: "space-context", owner: "runtime", cacheScope: "session", content: spaceContextSection },
     { id: "reference-materials", owner: "agent", cacheScope: "turn", content: referenceMaterialsSection },
     { id: "memory-overlay", owner: "runtime", cacheScope: "turn", content: memoryOverlaySection },
     { id: "app-working-memory", owner: "runtime", cacheScope: "turn", content: appWorkingMemorySection },

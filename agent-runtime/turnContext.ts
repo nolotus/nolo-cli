@@ -364,6 +364,25 @@ export const renderTurnContextBlocks = (
     .filter((layer): layer is TurnContextLayer => Boolean(layer?.content?.trim()))
     .map((layer) => layer.content.trim());
 
+/**
+ * Like `renderTurnContextBlocks` but preserves each layer's `cacheScope` so
+ * downstream consumers (e.g. `buildMessages` in localLoop) can split the
+ * system message into a cacheable stable prefix and a dynamic suffix.
+ *
+ * Layers with `cacheScope: "session"` go into the stable prefix; `cacheScope:
+ * "turn"` go into the dynamic suffix. The order is preserved within each
+ * group.
+ */
+export const renderTurnContextBlocksWithScope = (
+  layers: Array<TurnContextLayer | null | undefined>,
+): Array<{ content: string; cacheScope: "session" | "turn" }> =>
+  layers
+    .filter((layer): layer is TurnContextLayer => Boolean(layer?.content?.trim()))
+    .map((layer) => ({
+      content: layer.content.trim(),
+      cacheScope: layer.cacheScope,
+    }));
+
 // ============================================================================
 // T12 — Dialog summary layer
 // ============================================================================

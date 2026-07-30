@@ -31,6 +31,14 @@ export type LocalAgentTurnInput = {
    * system message so every host surface shares identical semantics.
    */
   contextBlocks?: string[];
+  /**
+   * Context blocks with cacheScope metadata. When provided, `buildMessages`
+   * splits the system message into a stable prefix (session-scope blocks +
+   * agent prompt) and a dynamic suffix (turn-scope blocks), enabling
+   * Claude cache_control breakpoints and DeepSeek auto prefix-cache hits.
+   * Falls back to `contextBlocks` (plain strings, no scope split).
+   */
+  contextBlockScopes?: Array<{ content: string; cacheScope: "session" | "turn" }>;
   category?: string;
   inheritedFromDialogKey?: string;
   parentDialogId?: string;
@@ -578,9 +586,37 @@ function filterImagePartsFromMessages(
 function buildMessages(args: {
   prompt?: string;
   contextBlocks?: string[];
+  contextBlockScopes?: Array<{ content: string; cacheScope: "session" | "turn" }>;
   history: AgentRuntimeChatMessage[];
   input: AgentRuntimeMessageContent;
 }): AgentRuntimeChatMessage[] {
+  // When contextBlockScopes is provided, split into stable (session) + dynamic (turn).
+  // The agent prompt is always part of the stable prefix.
+  if (args.contextBlockScopes?.length) {
+    const blocks = args.contextBlockScopes.filter((b) => b.content.trim());
+    const stableParts = [args.prompt?.trim(), ...blocks.filter((b) => b.cacheScope === "session").map((b) => b.content)]
+      .filter(Boolean);
+    const dynamicParts = blocks.filter((b) => b.cacheScope === "turn").map((b) => b.content).filter(Boolean);
+    const stableContent = stableParts.join("\n\n");
+    const dynamicContent = dynamicParts.join("\n\n");
+    // If there are dynamic blocks, we need to split the system message.
+    // For Claude: use content array with cache_control on the stable part.
+    // For non-Claude: join stable + dynamic into one string (prefix cache is automatic).
+    // The provider layer handles the actual cache_control injection;
+    // here we just ensure the stable prefix comes first.
+    const systemContent = dynamicContent
+      ? `${stableContent}\n\n${dynamicContent}`
+      : stableContent;
+    return [
+      ...(systemContent
+        ? [{ role: "system" as const, content: systemContent }]
+        : []),
+      ...prepareHistoryForNextTurn(args.history),
+      { role: "user" as const, content: args.input },
+    ];
+  }
+
+  // Fallback: plain contextBlocks (no scope split)
   const blocks = (args.contextBlocks ?? [])
     .map((block) => block.trim())
     .filter(Boolean);
@@ -641,6 +677,8 @@ export async function runLocalAgentTurn(
     : [];
   const hasContextBlocks = (input.contextBlocks ?? []).some((block) =>
     block.trim()
+  ) || (input.contextBlockScopes ?? []).some((block) =>
+    block.content.trim()
   );
   const promptMessageCount =
     agentConfig.prompt?.trim() || hasContextBlocks ? 1 : 0;
@@ -648,6 +686,7 @@ export async function runLocalAgentTurn(
   const messages = buildMessages({
     prompt: agentConfig.prompt,
     contextBlocks: input.contextBlocks,
+    contextBlockScopes: input.contextBlockScopes,
     history,
     input: input.input,
   });

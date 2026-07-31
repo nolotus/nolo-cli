@@ -360,14 +360,24 @@ export async function runAskChoiceDialog(args: {
             text: qs.otherText.slice(0, -1),
           };
         }
-      } else if (sequence.length === 1 && sequence.charCodeAt(0) >= 32) {
-        // Printable character → type into Other if focused
+      } else if (
+        sequence.length >= 1 &&
+        sequence.charCodeAt(0) >= 32 &&
+        !sequence.startsWith("\x1b")
+      ) {
+        // Printable text → type into Other if focused.
+        // Accept multi-char bursts so CJK IME commits (word groups / 整句)
+        // land in one piece instead of being swallowed by a length===1 guard.
+        // Strip control chars so a pasted "word\r" doesn't smuggle a submit.
         const qs = state.questionStates[state.activeIndex];
         if (qs.otherFocused) {
-          action = {
-            type: "SET_OTHER_TEXT",
-            text: qs.otherText + sequence,
-          };
+          const cleaned = sequence.replace(/[\x00-\x1f\x7f]/g, "");
+          if (cleaned) {
+            action = {
+              type: "SET_OTHER_TEXT",
+              text: qs.otherText + cleaned,
+            };
+          }
         }
       }
 

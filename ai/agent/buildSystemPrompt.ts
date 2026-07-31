@@ -12,6 +12,7 @@ import { wrapHistoricalSummaryWithReplayGuard } from "../context/staleReplayGuar
 // 记忆使用指引下沉到 agent-runtime：桌面本地 runtime 注入 memory overlay 时
 // 必须带同一份指引，两处各存一份迟早漂移。
 import { MEMORY_USE_GUIDANCE } from "../../agent-runtime/memoryUseGuidance";
+import { buildIdentityBlock } from "../../agent-runtime/identityBlock";
 import { PAGE_BUILDER_HANDOFF_INSTRUCTIONS } from "./pageBuilderHandoffRules";
 import { compileContextLayers, type CompiledContext } from "./contextCompiler";
 import { buildCurrentTimeBlock } from "./currentTimeContext";
@@ -391,15 +392,12 @@ export const buildSystemPromptContext = (options: {
   const { name, prompt: mainPrompt, dbKey, model } = agentConfig;
   const mappedLanguage = mapLanguage(safeLanguage);
 
-  const identitySection = [
-    "--- 身份信息 ---",
-    name ? `名称: ${name} ` : "",
-    dbKey ? `ID: ${dbKey} ` : "",
-    model ? `模型: ${model} ` : "",
-    mappedLanguage ? `回复语言: ${mappedLanguage} ` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const identitySection = buildIdentityBlock({
+    agentName: name,
+    agentId: dbKey,
+    model,
+    responseLanguage: mappedLanguage,
+  });
 
   const corePersonaSection = mainPrompt
     ? `-- - 核心角色与任务-- -\n${mainPrompt}`

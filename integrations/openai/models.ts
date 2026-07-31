@@ -37,21 +37,21 @@ const GPT_5_6_SOL_LONG_CONTEXT_PRICE: ModelPrice = {
 };
 
 const GPT_5_6_TERRA_STANDARD_PRICE: ModelPrice = {
-  input: 2.5 * 8,
-  output: 15 * 8,
-  inputCacheHit: 0.25 * 8,
+  input: 2 * 8,
+  output: 12 * 8,
+  inputCacheHit: 0.2 * 8,
 };
 
 const GPT_5_6_TERRA_LONG_CONTEXT_PRICE: ModelPrice = {
-  input: 5 * 8,
-  output: 22.5 * 8,
-  inputCacheHit: 0.5 * 8,
+  input: 4 * 8,
+  output: 18 * 8,
+  inputCacheHit: 0.4 * 8,
 };
 
 const GPT_5_6_LUNA_PRICE: ModelPrice = {
-  input: 1 * 8,
-  output: 6 * 8,
-  inputCacheHit: 0.1 * 8,
+  input: 0.2 * 8,
+  output: 1.2 * 8,
+  inputCacheHit: 0.02 * 8,
 };
 
 export const openAIModels: Model[] = [

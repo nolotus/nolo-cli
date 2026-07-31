@@ -58,6 +58,11 @@ import {
   setActiveBrightness,
 } from "./theme";
 import { detectTerminalBrightness } from "./detectBackground";
+import {
+  clearCollapsedPasteStore,
+  createCollapsedPasteStore,
+  expandCollapsedPastes,
+} from "../../core/collapsedPaste";
 import { toErrorMessage } from "../../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
@@ -647,6 +652,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // arrow-key move) instead of the `cursorPos ?? buffer.length` fallback in
   // renderInputArea snapping it to the line end.
   let cursorPos = 0;
+  // Oversized bracketed pastes collapse to `[paste #N · L lines]` chips in the
+  // draft; full bodies live here and are expanded right before submit/queue.
+  const pasteStore = createCollapsedPasteStore();
   // Cooperative stop for the in-flight agent turn (Esc while busy).
   let activeTurnAbort: AbortController | null = null;
   // 活动行状态机抽到 activityIndicator.ts：explicit 标签（working locally /
@@ -1474,7 +1482,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         activeTurnAbort.abort();
         return;
       }
-      const result = applyTuiInputKey(buffer, sequence, {}, cursorPos);
+      const result = applyTuiInputKey(buffer, sequence, {}, cursorPos, {
+        pasteStore,
+      });
       if (result.copyView) {
         if (busyLock) return;
         busy = true;
@@ -1495,6 +1505,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         return;
       }
       if (result.submit !== undefined) {
+        // Expand collapsed paste chips for the submit/queue payload. The store
+        // is cleared only when the draft is actually consumed (queued or sent);
+        // paths that keep the draft (e.g. queue-blocked) must leave the store
+        // intact so the placeholders still resolve on the next Enter.
+        const submittedText = expandCollapsedPastes(result.submit, pasteStore);
         if (busyLock) {
           // While an agent turn is running, Enter does not start a new turn.
           // Instead, route the draft through the shared queue resolver: pure
@@ -1502,7 +1517,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           // attachments are surfaced as a brief notice (the user can retry
           // once the turn ends). The draft is cleared only on a successful
           // enqueue.
-          const submittedText = result.submit;
           const trimmedText = submittedText.trim();
           // While a turn runs, a few slash commands are handled locally right
           // now instead of being queued. Queuing them is wrong: the queue
@@ -1561,6 +1575,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                 output.write(`${msg}\n`);
               }
             }
+            clearCollapsedPasteStore(pasteStore);
             buffer = "";
             cursorPos = 0;
             if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
@@ -1599,6 +1614,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             isRunning: true,
           });
           if (decision.kind === "queue-text") {
+            clearCollapsedPasteStore(pasteStore);
             binding.enqueue(decision.text);
             buffer = "";
             cursorPos = 0;
@@ -1634,7 +1650,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // turn. Reuses the same runOneAgentTurn + notifyTurnEnd path as a
         // direct send so the queue core stays consistent. Non-empty drafts
         // fall through to runSubmittedLine as before.
-        if (!result.submit.trim() && chatQueueBinding && chatQueueBinding.queueLength() > 0) {
+        if (!submittedText.trim() && chatQueueBinding && chatQueueBinding.queueLength() > 0) {
           const actionGateHandler = async (gate: LocalAgentActionGate) => {
             modalOwnsKeyboard = true;
             try {
@@ -1697,14 +1713,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             return;
           }
         }
+        clearCollapsedPasteStore(pasteStore);
         busy = true;
-        const submittedText = result.submit;
         buffer = "";
         cursorPos = 0;
         // Note: we intentionally keep the `data` listener attached. During the
         // agent turn the user can still type into the composer; submit is
         // gated by `busy` above. This avoids tearing the input chrome down
         // and lets the draft persist across the turn.
+        // `submittedText` was already expanded from collapsed paste chips above.
         fixedInput.enterOutputMode(submittedText);
         // `busy` gates whether Enter starts a turn or queues. It MUST be
         // released no matter how runSubmittedLine settles; leaving it stuck

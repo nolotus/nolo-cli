@@ -218,6 +218,7 @@ export {
   buildNoloWorkspaceCliToolExecutors,
   buildNoloWorkspaceOpenAiTools,
   buildNoloTableQueryRequest,
+  buildLoadSkillExecutor,
   clampNoloPositiveInteger,
   filterNoloWorkspaceToolNames,
   getNoloComparableUpdatedAt,

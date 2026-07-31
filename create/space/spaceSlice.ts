@@ -29,6 +29,28 @@ const createSliceWithThunks = buildCreateSlice({
 });
 
 const VIEW_MODE_STORAGE_KEY = "nolo-space-view-mode";
+const FAVORITES_COLLAPSED_STORAGE_KEY = "nolo-sidebar-favorites-collapsed";
+
+const readStoredFavoritesCollapsed = (): boolean => {
+  try {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(FAVORITES_COLLAPSED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
+const writeStoredFavoritesCollapsed = (collapsed: boolean): void => {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      FAVORITES_COLLAPSED_STORAGE_KEY,
+      collapsed ? "1" : "0",
+    );
+  } catch {
+    // localStorage 不可用时静默忽略
+  }
+};
 
 
 const initialState: SpaceState = {
@@ -46,6 +68,7 @@ const initialState: SpaceState = {
   // 第一层网页体验：对话切走后仍可在 sidebar 感知其运行中/已完成。
   // 多窗口/多 tab 的已读同步语义暂不在这里定义，等桌面端阶段统一设计。
   unreadDialogIds: {},
+  favoritesCollapsed: readStoredFavoritesCollapsed(),
 };
 
 const getSpaceUpdatedAt = (space: any): number => {
@@ -93,6 +116,7 @@ const spaceSlice = createSliceWithThunks({
       state.memberSpaces = null;
       state.collapsedCategories = {};
       state.viewMode = "all";
+      state.favoritesCollapsed = readStoredFavoritesCollapsed();
       state.initialized = false;
       state.loading = false;
       state.error = undefined;
@@ -107,6 +131,12 @@ const spaceSlice = createSliceWithThunks({
     /** 切换侧边栏视图模式：全部 vs 分类 */
     setViewMode: create.reducer<SpaceViewMode>((state, action) => {
       state.viewMode = action.payload;
+    }),
+
+    /** 切换侧边栏「我的收藏」专区折叠态，并持久化到 localStorage */
+    toggleFavoritesCollapse: create.reducer((state) => {
+      state.favoritesCollapsed = !state.favoritesCollapsed;
+      writeStoredFavoritesCollapsed(state.favoritesCollapsed);
     }),
 
     /** 用本地缓存先恢复空间列表，远端校验完成后再由 fetchUserSpaceMemberships.fulfilled 覆盖。 */
@@ -194,12 +224,12 @@ export const {
   fetchUserSpaceMemberships,
   addMember,
   removeMember,
-  fixSpace,
   fetchSpaceSidebarState,
   applySpaceEvent,
   markDialogRead,
   resetSpace,
   setViewMode,
+  toggleFavoritesCollapse,
   hydrateMemberSpacesFromLocal,
 } = spaceSlice.actions as any;
 
@@ -280,6 +310,11 @@ export const selectIsCategoryCollapsed = (categoryId: string) =>
       collapsed[categoryId] ??
       (DEFAULT_COLLAPSED_CATEGORIES[categoryId] ?? true)
   );
+
+export const selectFavoritesCollapsed = createSelector(
+  selectSpaceState,
+  (space) => space.favoritesCollapsed ?? false
+);
 
 export const selectDialogStatuses = createSelector(
   selectSpaceState,

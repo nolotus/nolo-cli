@@ -11,6 +11,7 @@ import { createAgentKey } from "../../database/keys";
 import { DataType } from "../../create/types";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { asRecordOrEmpty } from "../../core/recordOrEmpty";
+import { sanitizeOptionalModelString } from "../../core/sanitizeModelString";
 import { toTrimmedString } from "../../core/toTrimmedString";
 import { asTrimmedString } from "../../core/trimmedString";
 import { ulid } from "ulid";
@@ -200,6 +201,14 @@ const processAgentCreateForm = (formData: AgentFormData, userId: string) => {
     result.runtimeBinding = binding;
   }
 
+  // 防御性 sanitize：把可能来自非表单路径的伪字符串 "undefined"/"null"/"NaN" 清为空
+  if ("model" in result) {
+    result.model = sanitizeOptionalModelString(result.model);
+  }
+  if ("provider" in result) {
+    result.provider = sanitizeOptionalModelString(result.provider);
+  }
+
   return result;
 };
 
@@ -220,10 +229,10 @@ const processAgentUpdateChanges = (
     changes.name = String(data.name ?? "").trim();
   }
   if ("model" in data) {
-    changes.model = (data.model ?? "").trim();
+    changes.model = sanitizeOptionalModelString(data.model);
   }
   if ("provider" in data) {
-    changes.provider = (data.provider ?? "").trim();
+    changes.provider = sanitizeOptionalModelString(data.provider);
   }
   if ("prompt" in data) {
     changes.prompt = (data.prompt ?? "").trim();

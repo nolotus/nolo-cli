@@ -436,6 +436,25 @@ export function formatFetchTreeBlockForCli(
 
   return `${headerLine}${treeLines}\n`;
 }
+
+/**
+ * Resolve the skill name for a loadSkill tool event. The tool contract puts
+ * `{ name }` in the input; the success result content starts with
+ * `Skill "<name>" loaded inline.`. Prefer the explicit metadata/arg name,
+ * then fall back to extracting it from the result content so the renderer
+ * stays correct even when only `content` is populated.
+ */
+function resolveLoadSkillName(event: LocalAgentToolEvent): string {
+  const metaName = typeof event.metadata?.name === "string" ? event.metadata.name : undefined;
+  if (metaName) return metaName;
+  const argName = event.argumentsPreview?.trim();
+  if (argName && !argName.startsWith("{")) return argName;
+  const content = typeof event.content === "string" ? event.content : "";
+  const match = content.match(/Skill "([^"]+)" loaded inline/);
+  if (match?.[1]) return match[1];
+  return argName || "skill";
+}
+
 function formatCompactToolLine(
   event: LocalAgentToolEvent,
   pending: { toolName: string; argumentsPreview?: string } | undefined,
@@ -485,6 +504,31 @@ function formatCompactToolLine(
   if (event.type === "tool-error") {
     const message = clip(event.message ?? t("toolFailed"), 96);
     return formatToolTraceLine(`▸ ${label}  ✗ ${message}`, colorEnabled, "error");
+  }
+
+  // loadSkill: render Kimi-style "● Used Skill (<name>)" with the inline
+  // follow-instructions line indented below it. tool-error already returned
+  // above. not-found is a plain tool-result (executors return text, never
+  // throw), so detect it here — same minimal-prefix contract the web/RN
+  // renderers use — and render a failure line instead of the success bullet.
+  if (event.type === "tool-result" && toolName === "loadSkill") {
+    const skillName = resolveLoadSkillName(event);
+    const content = typeof event.content === "string" ? event.content : "";
+    const failed =
+      /^Skill\s+"[^"]*"\s+not found/.test(content) || isFailedToolResult(event);
+    if (failed) {
+      const message = clip(content.split("\n")[0] || t("toolFailed"), 96);
+      return formatToolTraceLine(`▸ Used Skill (${skillName})  ✗ ${message}`, colorEnabled, "error");
+    }
+    const resultLine = `Skill "${skillName}" loaded inline. Follow its instructions.`;
+    if (!colorEnabled) {
+      return `● Used Skill (${skillName})\n  ${resultLine}\n`;
+    }
+    const bullet = themeText("●", "success", true);
+    const labelPart = themeText("Used Skill", "muted", true);
+    const namePart = themeText(`(${skillName})`, "chrome", true);
+    const detail = themeText(`  ${resultLine}`, "muted", true);
+    return `${bullet} ${labelPart} ${namePart}\n${detail}\n`;
   }
 
   // ui_ask_choice: render question + numbered choices instead of a generic

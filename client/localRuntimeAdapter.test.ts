@@ -93,6 +93,7 @@ describe("CLI local runtime adapter", () => {
     "readSpace",
     "readDoc",
     "readSkillDoc",
+    "loadSkill",
     "listTables",
     "queryTableRows",
     "cliWhoami",
@@ -108,6 +109,22 @@ describe("CLI local runtime adapter", () => {
 
   function toolNamesFromRequest(request: any) {
     return request?.body?.tools?.map((tool: any) => tool.function.name) ?? [];
+  }
+
+  function expectMessagesWithEnrichedSystem(
+    request: any,
+    expected: Array<{ role: string; content?: string; contains?: string }>,
+  ) {
+    const messages = request?.body?.messages ?? [];
+    expect(messages).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(messages[i].role).toBe(expected[i].role);
+      if (expected[i].contains !== undefined) {
+        expect(messages[i].content).toContain(expected[i].contains);
+      } else {
+        expect(messages[i].content).toBe(expected[i].content);
+      }
+    }
   }
 
   function publicSchemaKeys(schema: any) {
@@ -1042,14 +1059,14 @@ describe("CLI local runtime adapter", () => {
       auth: "Bearer sk-local",
       body: {
         model: "gpt-4.1-mini",
-        messages: [
-          { role: "system", content: "Fix UI" },
-          { role: "assistant", content: "previous answer" },
-          { role: "user", content: "make it cleaner" },
-        ],
         stream: false,
       },
     });
+    expectMessagesWithEnrichedSystem(requests[0], [
+      { role: "system", contains: "Fix UI" },
+      { role: "assistant", content: "previous answer" },
+      { role: "user", content: "make it cleaner" },
+    ]);
     expect(toolNamesFromRequest(requests[0])).toEqual(DEFAULT_PRIVATE_LOCAL_TOOL_NAMES);
     expect(batchOps.map((op) => op.key)).toEqual([
       "dialog-user-1-dialog-existing",
@@ -1278,16 +1295,16 @@ describe("CLI local runtime adapter", () => {
       apiKeyHeader: "sk-agent-custom",
       body: {
         model: "custom-coder",
-        messages: [
-          { role: "system", content: "Use custom provider." },
-          { role: "user", content: "hello" },
-        ],
         stream: false,
         temperature: 0.2,
         max_tokens: 4096,
         reasoning_effort: "medium",
       },
     });
+    expectMessagesWithEnrichedSystem(requests[0], [
+      { role: "system", contains: "Use custom provider." },
+      { role: "user", content: "hello" },
+    ]);
     expect(toolNamesFromRequest(requests[0])).toEqual(DEFAULT_PRIVATE_LOCAL_TOOL_NAMES);
   });
 
@@ -1349,13 +1366,13 @@ describe("CLI local runtime adapter", () => {
       url: "http://127.0.0.1:8080/v1/chat/completions",
       body: {
         model: "Qwen3.6-27B-MTP-Q3_K_M.gguf",
-        messages: [
-          { role: "system", content: "Use localhost provider." },
-          { role: "user", content: "hello" },
-        ],
         stream: false,
       },
     });
+    expectMessagesWithEnrichedSystem(loopbackRequests[0], [
+      { role: "system", contains: "Use localhost provider." },
+      { role: "user", content: "hello" },
+    ]);
     expect(toolNamesFromRequest(loopbackRequests[0])).toEqual(DEFAULT_PRIVATE_LOCAL_TOOL_NAMES);
   });
 
@@ -1418,10 +1435,6 @@ describe("CLI local runtime adapter", () => {
       auth: "Bearer token-1",
       body: {
         model: "accounts/fireworks/models/kimi-k2p6",
-        messages: [
-          { role: "system", content: "Fix UI." },
-          { role: "user", content: "make notifications cleaner" },
-        ],
         stream: false,
         tool_choice: "auto",
         url: "https://api.fireworks.ai/inference/v1/chat/completions",
@@ -1429,6 +1442,10 @@ describe("CLI local runtime adapter", () => {
         agentKey: "agent-user-1-frontend",
       },
     });
+    expectMessagesWithEnrichedSystem(requests[0], [
+      { role: "system", contains: "Fix UI." },
+      { role: "user", content: "make notifications cleaner" },
+    ]);
     expect(toolNamesFromRequest(requests[0])).toEqual([
       "ui_ask_choice",
       ...LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES,

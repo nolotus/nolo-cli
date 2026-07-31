@@ -1,3 +1,11 @@
+import {
+  allocateCollapsedPaste,
+  expandRangeToCollapsedPasteChips,
+  findCollapsedPasteSpanAt,
+  releaseCollapsedPaste,
+  shouldCollapsePaste,
+  type CollapsedPasteStore,
+} from "../../core/collapsedPaste";
 import { compactWhitespace } from "../../core/compactWhitespace";
 import type { TuiKeyInfo, TuiInputKeyResult } from "./sessionTypes";
 
@@ -5,20 +13,39 @@ import type { TuiKeyInfo, TuiInputKeyResult } from "./sessionTypes";
 
 export const PASTE_TOKEN_PREFIX = "\x00PASTE\x00";
 
+export type ApplyTuiInputKeyOptions = {
+  /**
+   * When set, oversized bracketed-paste payloads collapse into a one-line
+   * `[paste #N · L lines]` placeholder; the full body lives in this store and
+   * must be expanded on submit via `expandCollapsedPastes`.
+   */
+  pasteStore?: CollapsedPasteStore;
+};
+
 export function applyTuiInputKey(
   buffer: string,
   sequence: string | undefined,
   key: TuiKeyInfo = {},
-  cursorPos?: number
+  cursorPos?: number,
+  options?: ApplyTuiInputKeyOptions,
 ): TuiInputKeyResult {
   const seq = sequence ?? "";
   const curPos = Math.max(0, Math.min(buffer.length, cursorPos ?? buffer.length));
+  const pasteStore = options?.pasteStore;
 
   if (seq.startsWith(PASTE_TOKEN_PREFIX)) {
     const rawPayload = seq.slice(PASTE_TOKEN_PREFIX.length);
     const normalized = rawPayload.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    const nextBuf = buffer.slice(0, curPos) + normalized + buffer.slice(curPos);
-    return { buffer: nextBuf, cursorPos: curPos + normalized.length };
+    const insertAt = snapCursorOutsidePasteChip(buffer, curPos);
+    if (pasteStore && shouldCollapsePaste(normalized)) {
+      const { placeholder } = allocateCollapsedPaste(pasteStore, normalized);
+      const nextBuf =
+        buffer.slice(0, insertAt) + placeholder + buffer.slice(insertAt);
+      return { buffer: nextBuf, cursorPos: insertAt + placeholder.length };
+    }
+    const nextBuf =
+      buffer.slice(0, insertAt) + normalized + buffer.slice(insertAt);
+    return { buffer: nextBuf, cursorPos: insertAt + normalized.length };
   }
   if (seq === "\u0003" || (key.ctrl && key.name === "c")) {
     return { buffer, cursorPos: curPos, abort: true };
@@ -34,18 +61,28 @@ export function applyTuiInputKey(
     seq === "\n" ||
     (key.ctrl && key.name === "j")
   ) {
-    const nextBuf = buffer.slice(0, curPos) + "\n" + buffer.slice(curPos);
-    return { buffer: nextBuf, cursorPos: curPos + 1 };
+    const insertAt = snapCursorOutsidePasteChip(buffer, curPos);
+    const nextBuf = buffer.slice(0, insertAt) + "\n" + buffer.slice(insertAt);
+    return { buffer: nextBuf, cursorPos: insertAt + 1 };
   }
   if (key.name === "enter" || key.name === "return" || seq === "\r") {
     return { buffer: "", cursorPos: 0, submit: buffer };
   }
 
   // Navigation: Left / Right / Home (Ctrl+A) / End (Ctrl+E)
+  // Collapsed paste placeholders are atomic — arrows jump over the whole chip.
   if (isLeftArrowSequence(seq, key)) {
+    const span = findCollapsedPasteSpanAt(buffer, curPos, { preferLeft: true });
+    if (span && curPos > span.start && curPos <= span.end) {
+      return { buffer, cursorPos: span.start };
+    }
     return { buffer, cursorPos: Math.max(0, curPos - 1) };
   }
   if (isRightArrowSequence(seq, key)) {
+    const span = findCollapsedPasteSpanAt(buffer, curPos);
+    if (span && curPos >= span.start && curPos < span.end) {
+      return { buffer, cursorPos: span.end };
+    }
     return { buffer, cursorPos: Math.min(buffer.length, curPos + 1) };
   }
   if (isHomeSequence(seq, key)) {
@@ -57,11 +94,21 @@ export function applyTuiInputKey(
 
   // Delete word left (Ctrl+W / Ctrl+Backspace / Alt+Backspace): readline-style word delete.
   // Skips trailing whitespace, then deletes one word (non-whitespace run, or one CJK char).
+  // Paste chips are atomic: never slice through a placeholder token.
   if (isDeleteWordSequence(seq, key)) {
     if (curPos === 0) return { buffer, cursorPos: curPos };
+    const pasteSpan = findCollapsedPasteSpanAt(buffer, curPos, {
+      preferLeft: true,
+    });
+    if (
+      pasteSpan &&
+      (curPos === pasteSpan.end ||
+        (curPos > pasteSpan.start && curPos < pasteSpan.end))
+    ) {
+      return removePasteSpan(buffer, pasteSpan, pasteStore);
+    }
     const cutIdx = findWordStartLeft(buffer, curPos);
-    const nextBuf = buffer.slice(0, cutIdx) + buffer.slice(curPos);
-    return { buffer: nextBuf, cursorPos: cutIdx };
+    return deleteBufferRange(buffer, cutIdx, curPos, pasteStore);
   }
 
   // Kill to line start (Ctrl+U): deletes from cursor to beginning of current line.
@@ -69,8 +116,7 @@ export function applyTuiInputKey(
   if (isKillToLineStartSequence(seq, key)) {
     if (curPos === 0) return { buffer, cursorPos: curPos };
     const lineStart = buffer.lastIndexOf("\n", curPos - 1) + 1;
-    const nextBuf = buffer.slice(0, lineStart) + buffer.slice(curPos);
-    return { buffer: nextBuf, cursorPos: lineStart };
+    return deleteBufferRange(buffer, lineStart, curPos, pasteStore);
   }
 
   // Kill to line end (Ctrl+K): deletes from cursor to end of current line.
@@ -78,13 +124,18 @@ export function applyTuiInputKey(
   if (isKillToLineEndSequence(seq, key)) {
     const nlIdx = buffer.indexOf("\n", curPos);
     const lineEnd = nlIdx === -1 ? buffer.length : nlIdx;
-    const nextBuf = buffer.slice(0, curPos) + buffer.slice(lineEnd);
-    return { buffer: nextBuf, cursorPos: curPos };
+    return deleteBufferRange(buffer, curPos, lineEnd, pasteStore);
   }
 
-  // Backspace (deletes character left of cursor)
+  // Backspace (deletes character left of cursor) — whole paste chip if at its end.
   if (isBackspaceSequence(seq, key)) {
     if (curPos > 0) {
+      const pasteSpan = findCollapsedPasteSpanAt(buffer, curPos, {
+        preferLeft: true,
+      });
+      if (pasteSpan && (curPos === pasteSpan.end || (curPos > pasteSpan.start && curPos < pasteSpan.end))) {
+        return removePasteSpan(buffer, pasteSpan, pasteStore);
+      }
       const nextBuf = buffer.slice(0, curPos - 1) + buffer.slice(curPos);
       return { buffer: nextBuf, cursorPos: curPos - 1 };
     }
@@ -94,6 +145,14 @@ export function applyTuiInputKey(
   // Forward Delete (deletes character at cursor; fallback to backspace if at end)
   if (isForwardDeleteSequence(seq, key)) {
     if (curPos < buffer.length) {
+      const pasteSpan = findCollapsedPasteSpanAt(buffer, curPos);
+      if (
+        pasteSpan &&
+        (curPos === pasteSpan.start ||
+          (curPos > pasteSpan.start && curPos < pasteSpan.end))
+      ) {
+        return removePasteSpan(buffer, pasteSpan, pasteStore);
+      }
       const nextBuf = buffer.slice(0, curPos) + buffer.slice(curPos + 1);
       return { buffer: nextBuf, cursorPos: curPos };
     }
@@ -113,8 +172,18 @@ export function applyTuiInputKey(
     return { buffer, cursorPos: curPos };
   }
 
-  const nextBuf = buffer.slice(0, curPos) + seq + buffer.slice(curPos);
-  return { buffer: nextBuf, cursorPos: curPos + seq.length };
+  // Never splice into the middle of a collapsed paste chip — that would
+  // break the placeholder token and orphan the stored body.
+  const insertAt = snapCursorOutsidePasteChip(buffer, curPos);
+  const nextBuf = buffer.slice(0, insertAt) + seq + buffer.slice(insertAt);
+  return { buffer: nextBuf, cursorPos: insertAt + seq.length };
+}
+
+/** If `pos` sits inside a paste chip, snap to the chip's end. */
+function snapCursorOutsidePasteChip(buffer: string, pos: number): number {
+  const span = findCollapsedPasteSpanAt(buffer, pos);
+  if (span && pos > span.start && pos < span.end) return span.end;
+  return pos;
 }
 
 function isLeftArrowSequence(seq: string, key: TuiKeyInfo): boolean {
@@ -143,6 +212,44 @@ function isEndSequence(seq: string, key: TuiKeyInfo): boolean {
   return false;
 }
 
+function removePasteSpan(
+  buffer: string,
+  span: { id: number; start: number; end: number },
+  pasteStore: CollapsedPasteStore | undefined,
+): TuiInputKeyResult {
+  if (pasteStore) releaseCollapsedPaste(pasteStore, span.id);
+  const nextBuf = buffer.slice(0, span.start) + buffer.slice(span.end);
+  return { buffer: nextBuf, cursorPos: span.start };
+}
+
+function deleteBufferRange(
+  buffer: string,
+  start: number,
+  end: number,
+  pasteStore: CollapsedPasteStore | undefined,
+): TuiInputKeyResult {
+  if (start >= end) return { buffer, cursorPos: start };
+  const range = expandRangeToCollapsedPasteChips(buffer, start, end);
+  releasePastesInRange(buffer, range.start, range.end, pasteStore);
+  const nextBuf = buffer.slice(0, range.start) + buffer.slice(range.end);
+  return { buffer: nextBuf, cursorPos: range.start };
+}
+
+function releasePastesInRange(
+  buffer: string,
+  start: number,
+  end: number,
+  pasteStore: CollapsedPasteStore | undefined,
+): void {
+  if (!pasteStore || start >= end) return;
+  const slice = buffer.slice(start, end);
+  const re = /\[paste #(\d+) · (\d+) lines\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(slice)) !== null) {
+    releaseCollapsedPaste(pasteStore, Number(match[1]));
+  }
+}
+
 // CJK + fullwidth forms: each character is treated as its own "word" for Ctrl+W.
 const CJK_CHAR = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
 
@@ -151,15 +258,32 @@ const CJK_CHAR = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
  * Skips trailing whitespace, then deletes one word:
  * - a single CJK char (each char is a word), or
  * - a run of non-whitespace ASCII-ish chars.
+ * Never scans into a collapsed paste chip — chips are atomic tokens.
  */
 function findWordStartLeft(buffer: string, curPos: number): number {
   let i = curPos;
   while (i > 0 && /\s/.test(buffer[i - 1])) i--;
   if (i === 0) return 0;
+
+  const spanAtCursor = findCollapsedPasteSpanAt(buffer, i, {
+    preferLeft: true,
+  });
+  if (
+    spanAtCursor &&
+    (i === spanAtCursor.end ||
+      (i > spanAtCursor.start && i < spanAtCursor.end))
+  ) {
+    return spanAtCursor.start;
+  }
+
   // CJK char is its own word — stop after deleting one.
   if (CJK_CHAR.test(buffer[i - 1])) return i - 1;
-  // ASCII word run — stop at whitespace OR CJK boundary (don't eat into CJK).
-  while (i > 0 && !/\s/.test(buffer[i - 1]) && !CJK_CHAR.test(buffer[i - 1])) i--;
+  // ASCII word run — stop at whitespace, CJK, or paste-chip boundary.
+  while (i > 0 && !/\s/.test(buffer[i - 1]) && !CJK_CHAR.test(buffer[i - 1])) {
+    const span = findCollapsedPasteSpanAt(buffer, i, { preferLeft: true });
+    if (span && i === span.end) break;
+    i--;
+  }
   return i;
 }
 

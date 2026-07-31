@@ -22,6 +22,7 @@ interface InternalToast {
   title: ReactNode;
   description?: ReactNode;
   action?: { label: string; onClick: () => void };
+  position?: { x: number; y: number };
   type?: ToastType;
   icon?: ReactNode;
   timeout?: number;
@@ -51,6 +52,7 @@ class ToastStore {
     title: ReactNode;
     description?: ReactNode;
     action?: { label: string; onClick: () => void };
+    position?: { x: number; y: number };
     type?: ToastType;
     icon?: ReactNode;
     timeout?: number;
@@ -114,6 +116,12 @@ function ToastItem({ toast }: { toast: InternalToast }) {
       data-starting-style={toast.phase === "entering" ? "" : undefined}
       data-ending-style={toast.phase === "exiting" ? "" : undefined}
       data-type={type}
+      data-positioned={toast.position ? "" : undefined}
+      style={
+        toast.position
+          ? { position: "fixed", left: `${toast.position.x}px`, top: `${toast.position.y}px` }
+          : undefined
+      }
     >
       <div className="toast-content">
         {icon ? (

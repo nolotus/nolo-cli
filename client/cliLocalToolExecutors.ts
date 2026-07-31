@@ -13,7 +13,10 @@ import type { PermissionRequest } from "../agent-runtime/actionGate";
 import {
   createLocalWorkspaceToolExecutors,
 } from "../agent-runtime/localWorkspaceTools";
-import { buildNoloWorkspaceCliToolExecutors } from "../agent-runtime/noloWorkspaceTools";
+import {
+  buildLoadSkillExecutor,
+  buildNoloWorkspaceCliToolExecutors,
+} from "../agent-runtime/noloWorkspaceTools";
 import { readXPostFunc } from "../ai/tools/readXPostTool";
 import { readXhsProfileFunc } from "../ai/tools/readXhsProfileTool";
 import type {
@@ -83,6 +86,10 @@ export function buildLocalToolExecutors(args: {
       env: args.env,
       cliEntrypoint: args.cliEntrypoint,
     }),
+    // loadSkill resolves SKILL.md from the agent's workspace root (local-fs,
+    // no `nolo` CLI subcommand), so it is wired here instead of inside
+    // buildCliWorkspaceToolExecutors.
+    loadSkill: buildLoadSkillExecutor({ cwd: args.workspaceRoot }),
     read_x_post: async (call: any) => {
       const parsedArgs = (() => {
         try {

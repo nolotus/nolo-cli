@@ -17,7 +17,11 @@ import type {
 } from "./types";
 import { sanitizeToolCallPairing } from "./toolCallPairing";
 import { summarizeToolArguments } from "./summarizeToolArguments";
+import { buildIdentityBlock } from "./identityBlock";
 import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
+import { buildRuntimeGuidanceBlocks } from "./runtimeGuidance";
+import { canonicalizeToolNames } from "./toolNameAliases";
+import { buildCurrentTimeBlock } from "./currentTimeContext";
 
 export type LocalAgentTurnInput = {
   adapter: AgentRuntimeHostAdapter;
@@ -721,9 +725,44 @@ export async function runLocalAgentTurn(
   const history = input.continueDialogId
     ? await input.adapter.loadDialogHistory(input.continueDialogId)
     : [];
+  // Identity block (名称/ID/模型/回复语言) — session-scope so it sits in the
+  // stable prefix. Built from the resolved agentConfig so subscribed/custom
+  // agents get their model name injected, matching the web and server paths
+  // (previously the local/desktop/TUI runtime omitted the identity block).
+  const identityBlock = buildIdentityBlock({
+    agentName: agentConfig.name,
+    agentId: agentConfig.key,
+    model: agentConfig.model,
+  });
+  // 与 web/server 对齐：为本地宿主注入 runtime guidance 块（startup-protocol /
+  // context-layer-contract / email-registration-workflow / web-research-tool-policy，
+  // 仅保留非空块）与 current-time 块。guidance 块作为 session-scope（稳定前缀，
+  // 利于 prefix cache），current-time 块作为 turn-scope（动态后缀）。
+  const agentTools = canonicalizeToolNames(agentConfig.toolNames ?? []);
+  const guidanceBlocks = buildRuntimeGuidanceBlocks(agentTools);
+  const guidanceScopes: Array<{ content: string; cacheScope: "session" | "turn" }> =
+    [
+      guidanceBlocks.startupProtocol,
+      guidanceBlocks.contextLayerContract,
+      guidanceBlocks.emailRegistrationWorkflow,
+      guidanceBlocks.webResearchToolPolicy,
+    ]
+      .map((content) => content.trim())
+      .filter((content): content is string => content.length > 0)
+      .map((content) => ({ content, cacheScope: "session" as const }));
+  const currentTimeScope: Array<{ content: string; cacheScope: "session" | "turn" }> = [
+    { content: buildCurrentTimeBlock(new Date(), undefined), cacheScope: "turn" as const },
+  ];
+  const mergedContextBlockScopes = [
+    { content: identityBlock, cacheScope: "session" as const },
+    ...guidanceScopes,
+    ...currentTimeScope,
+    ...(input.contextBlockScopes ?? []),
+  ];
+
   const hasContextBlocks = (input.contextBlocks ?? []).some((block) =>
     block.trim()
-  ) || (input.contextBlockScopes ?? []).some((block) =>
+  ) || mergedContextBlockScopes.some((block) =>
     block.content.trim()
   );
   const promptMessageCount =
@@ -732,7 +771,7 @@ export async function runLocalAgentTurn(
   const messages = buildMessages({
     prompt: agentConfig.prompt,
     contextBlocks: input.contextBlocks,
-    contextBlockScopes: input.contextBlockScopes,
+    contextBlockScopes: mergedContextBlockScopes,
     history,
     input: input.input,
   });

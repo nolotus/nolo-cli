@@ -16,6 +16,8 @@ type ToastOptions = {
   description?: ReactNode;
   /** Optional action button rendered below the message */
   action?: { label: string; onClick: () => void };
+  /** Optional fixed viewport position (x,y in px). When set, toast detaches from the bottom-right viewport and pins to this point. */
+  position?: { x: number; y: number };
 };
 
 const DEFAULT_TIMEOUT = 4000;
@@ -33,6 +35,7 @@ function add(
     icon: options?.icon,
     description: options?.description,
     action: options?.action,
+    position: options?.position,
     // loading toasts stay until explicitly replaced/closed (timeout=0)
     timeout: type === "loading" ? (timeout ?? 0) : (timeout ?? DEFAULT_TIMEOUT),
   });

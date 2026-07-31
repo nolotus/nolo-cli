@@ -461,6 +461,8 @@ const TOOL_LABELS: Record<string, { en: string; zh: string }> = {
   fetchWebpage: { en: "Fetch page", zh: "抓取网页" },
   readPage: { en: "Read page", zh: "读取网页" },
   exaSearch: { en: "Web search", zh: "联网搜索" },
+  // Skill loading
+  loadSkill: { en: "Used Skill", zh: "使用技能" },
 };
 
 /** Localized action label for a tool, falling back to the raw tool name. */

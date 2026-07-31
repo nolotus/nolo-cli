@@ -73,6 +73,12 @@
   opacity: 0;
 }
 
+/* Positioned toasts (anchored to a source element) get narrower width
+   and a clip to keep them inside the viewport right edge. */
+.toast-root[data-positioned] {
+  max-width: min(240px, calc(100vw - var(--space-4, 16px)));
+}
+
 /* ─── Content Layout ─────────────────────────────────────────── */
 .toast-content {
   display: flex;

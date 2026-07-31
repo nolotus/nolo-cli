@@ -4,9 +4,9 @@ import { DataType } from "../../create/types";
 import { createTokenKey } from "../../database/keys";
 import { write } from "../../database/dbSlice";
 import { toast } from "../../app/utils/toast";
-import { pino } from "pino";
+import { createClientLogger } from "../../core/clientLogger";
 
-const logger = pino({ name: "token-record", level: "info" });
+const logger = createClientLogger("token-record");
 
 type TokenCount = { input: number; output: number };
 

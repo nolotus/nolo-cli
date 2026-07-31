@@ -10,13 +10,13 @@ import {
   saveTokenRecord,
   ModelStats,
 } from "../../../ai/token/saveTokenRecord";
-import { pino } from "pino";
+import { createClientLogger } from "../../../core/clientLogger";
 import { deductBalance } from "../../../auth/authSlice"; // <--- 1. 导入新的 deductBalance action
 import { prepareTokenUsageData } from "../../../ai/token/prepareTokenUsageData";
 import { findModelConfig } from "../../../ai/llm/providers";
 import { resolveMessageOwner } from "../../messages/resolveMessageOwner";
 
-const logger = pino({ name: "token-usage", level: "info" });
+const logger = createClientLogger("token-usage");
 const dialogTokenPatchQueue = new Map<string, Promise<void>>();
 
 interface DayStats {

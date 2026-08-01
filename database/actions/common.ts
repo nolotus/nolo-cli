@@ -1,6 +1,6 @@
 // 文件路径: database/actions/common.ts
 
-import pino from "pino";
+import { createClientLogger } from "../../core/clientLogger";
 import { getIsDesktopApp } from "../../app/utils/env";
 import { fetchWithTransientReadRetry } from "../../app/utils/retryFetch";
 import {
@@ -14,24 +14,7 @@ import { isAbortError } from "../../core/abortError";
 import { normalizeServerOrigin } from "../../core/serverOrigin";
 import { isLevelNotFoundError } from "../levelNotFoundError";
 
-// RN 下 pino 的 browser 写法可能有兼容性问题
-// 使用简单的 console 封装作为 fallback
-const isRN = typeof navigator !== 'undefined' && (navigator as any).product === 'ReactNative';
-
-export const logger = isRN ? {
-  info: (...args: any[]) => console.log(...args),
-  warn: (...args: any[]) => console.warn(...args),
-  error: (...args: any[]) => console.error(...args),
-  debug: (...args: any[]) => console.log(...args), // console.debug in RN behaves like log
-  trace: (...args: any[]) => console.log(...args),
-  fatal: (...args: any[]) => console.error(...args),
-  child: () => logger // 简单返回自己
-} as unknown as pino.Logger : pino({
-  level: "info",
-  // transport: {
-  //   target: "pino-pretty",
-  // },
-});
+export const logger = createClientLogger("database");
 const normalizeServer = (server: string): string =>
   normalizeKnownServerOrigin(server) ?? normalizeServerOrigin(server);
 

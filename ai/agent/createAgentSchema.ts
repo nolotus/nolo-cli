@@ -24,7 +24,77 @@ export const DEFAULT_MAX_TOKENS = 4096;
 export const MAX_TOKENS_LIMIT = 500000;
 export const DEFAULT_REASONING_EFFORT = "medium";
 
-export const REASONING_EFFORT_OPTIONS = ["low", "medium", "high"] as const;
+/**
+ * 推理强度选项，覆盖 OpenAI 完整的 reasoning_effort 枚举。
+ * 不同 provider 实际支持的子集不同，发送链路负责做 provider-aware clamp。
+ *
+ * OpenAI:      none / minimal / low / medium / high / xhigh / max（全支持）
+ * xAI Grok:    low / medium / high（默认 high，不可关闭推理）
+ * DeepSeek:    none / low / medium / high（OpenAI 兼容格式）
+ * Anthropic:   不走 reasoning_effort，走 thinking.budget_tokens（见 enableThinking + thinkingBudget）
+ * Google:      不走 reasoning_effort，走 thinking_config（见 enableThinking + thinkingBudget）
+ * Kimi/Moonshot: low / medium / high（xhigh/max 被 clamp 到 high）
+ */
+export const REASONING_EFFORT_OPTIONS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number];
+
+/**
+ * 各 provider 实际支持的 reasoning_effort 值（精确集合，非上限）。
+ * 用于 UI 动态过滤和发送链路 clamp。
+ *
+ * OpenAI:           none / minimal / low / medium / high / xhigh / max
+ * DeepSeek V4:      low / high / max（跳过 medium、xhigh）
+ * Kimi K3/Moonshot: none / low / high / max（可关思考；默认 max；跳过 medium、xhigh）
+ *                   注意：kimi-code proxy 仍会把 max→high（上游 API 不认 max），见 enhanceKimiCodeBody
+ * xAI Grok:         low / medium / high（默认 high，不可关闭）
+ * Anthropic/Google: 不走 reasoning_effort 通道
+ */
+export const PROVIDER_REASONING_EFFORT_VALUES: Record<string, ReasoningEffort[]> = {
+  openai: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+  deepseek: ["low", "high", "max"],
+  xai: ["low", "medium", "high"],
+  grok: ["low", "medium", "high"],
+  // none：关闭思考；必须保留，否则上游 clamp 会把 none 抬成 low，
+  // kimi-code proxy 的 none/off → thinking.disabled 分支永远接不到。
+  kimi: ["none", "low", "high", "max"],
+  moonshot: ["none", "low", "high", "max"],
+  // Qwen 用 enable_thinking (bool) 而非 reasoning_effort → 隐藏下拉
+  qwen: [],
+  // MiniMax M3: 接受这些值但所有非 none 效果相同
+  minimax: ["none", "low", "medium", "high"],
+  // Cursor: 推理强度在模型名后缀 (如 -high)，不走独立参数
+  cursor: [],
+  // MiMo: 保守默认
+  mimo: ["low", "medium", "high"],
+};
+
+/**
+ * 根据 provider 返回 UI 中可选的 reasoning_effort 选项列表。
+ * 用于下拉框动态过滤：只显示当前 provider 实际支持的值。
+ *
+ * - openai → 全部 7 个
+ * - deepseek → low / high / max
+ * - kimi/moonshot → none / low / high / max
+ * - xai/grok → low / medium / high
+ * - anthropic/google → 空数组（走 thinking 机制）
+ * - 未知 provider → low / medium / high（保守默认）
+ */
+export function getAvailableReasoningEfforts(
+  provider: string | null | undefined,
+): ReasoningEffort[] {
+  const p = (provider ?? "").toLowerCase();
+  if (p === "anthropic" || p === "google") return [];
+  return PROVIDER_REASONING_EFFORT_VALUES[p] ?? ["low", "medium", "high"];
+}
 
 const greetingMenuItemSchema = z.object({
   id: z.string().min(1),

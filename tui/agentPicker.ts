@@ -89,6 +89,7 @@ export async function runAgentPicker(args: {
     kind: "selected" as const,
     name: selected.name,
     key: selected.key,
+    model: selected.model,
     entries,
   };
 }
@@ -103,6 +104,7 @@ export function resolveAgentSwitchTarget(
     return {
       name: aliasEntry?.name ?? asTrimmedLowercaseString(rawTarget),
       key: resolvedKey,
+      ...(aliasEntry?.model ? { model: aliasEntry.model } : {}),
     };
   }
   return findAgentCatalogEntry(catalogEntries, rawTarget);

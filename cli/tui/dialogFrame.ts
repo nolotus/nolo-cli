@@ -1,5 +1,6 @@
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 import { surfaceBackgroundSequence, themeColorSequence, themeText } from "./theme";
+import { t } from "./i18n";
 
 /**
  * Shared look for every dialog frame (single-select, multi-select).
@@ -63,6 +64,22 @@ export function renderDialogOverflow(
   colorEnabled = resolveCliColorEnabled(),
 ): string {
   return themeText(`  ${text}`, "chrome", colorEnabled);
+}
+
+/** Render "N more above" overflow indicator. */
+export function renderOverflowAbove(
+  count: number,
+  colorEnabled = resolveCliColorEnabled(),
+): string {
+  return renderDialogOverflow(t("dialogMoreAbove", String(count)), colorEnabled);
+}
+
+/** Render "N more below" overflow indicator. */
+export function renderOverflowBelow(
+  count: number,
+  colorEnabled = resolveCliColorEnabled(),
+): string {
+  return renderDialogOverflow(t("dialogMoreBelow", String(count)), colorEnabled);
 }
 
 export function renderDialogError(

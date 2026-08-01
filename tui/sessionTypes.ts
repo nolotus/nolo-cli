@@ -46,6 +46,12 @@ export type TuiState = {
   thinkingDisplay: ThinkingDisplayMode;
   toolDisplay: ToolDisplayMode;
   turnTokens?: TurnTokenUsage;
+  /**
+   * Measured estimate of built-in system+tools context (AGENTS.md, guidance,
+   * skill index, tool schemas). Used by the status chip until provider usage
+   * arrives in turnTokens.
+   */
+  estimatedContextTokens?: number;
   /** Resolved from agentName at init / agent-switch; fallback when turnTokens has no contextWindow. */
   contextWindow?: number;
 };
@@ -96,6 +102,10 @@ export type TuiAction =
     }
   | {
       type: "set-mouse";
+      enabled: boolean;
+    }
+  | {
+      type: "set-altscreen";
       enabled: boolean;
     }
   | {

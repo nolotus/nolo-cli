@@ -125,6 +125,37 @@ const CURSOR_REQUEST_PATH = "/agent.v1.AgentService/Run";
 const CONNECT_END_STREAM_FLAG = 0b00000010;
 const HEARTBEAT_INTERVAL_MS = 5_000;
 
+/**
+ * Map nolo catalog / legacy agent model ids onto Cursor GetUsableModels
+ * wire ids. Cursor Pro bills first-party models (Grok 4.5 / Composer 2.5)
+ * from the "Cursor Models" pool and third-party models from "Other Models".
+ * Sending an unknown id (e.g. bare `cursor-grok-4.5`) does not hit the
+ * first-party pool — Cursor falls through and burns Other Models instead.
+ *
+ * Source of truth: `POST /agent.v1.AgentService/GetUsableModels` for the
+ * authenticated account (verified 2026-07-31).
+ */
+const CURSOR_WIRE_MODEL_ALIASES: Record<string, string> = {
+  // First-party — Cursor Models pool
+  "cursor-grok-4.5": "cursor-grok-4.5-high",
+  "cursor-grok-4.5-fast": "cursor-grok-4.5-high-fast",
+  "grok-4.5": "cursor-grok-4.5-high",
+  "grok-4.5-fast": "cursor-grok-4.5-high-fast",
+  "cursor-composer-2.5": "composer-2.5-fast",
+  "composer-2.5": "composer-2.5",
+  // Third-party convenience aliases we previously published in the registry
+  "cursor-claude-4.6-sonnet": "claude-4.6-sonnet-medium",
+  "cursor-claude-4.6-opus": "claude-4.6-opus-high",
+  "cursor-gemini-3.1-pro": "gemini-3.1-pro",
+};
+
+/** Resolve a nolo/legacy model id to the wire id Cursor's AgentService accepts. */
+export function resolveCursorWireModelId(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed) return trimmed;
+  return CURSOR_WIRE_MODEL_ALIASES[trimmed] ?? trimmed;
+}
+
 // ---------------------------------------------------------------------------
 // Blob store — Cursor resolves `bytes` fields as sha256(blob) IDs into a
 // side-channel KV store the client serves via KvClientMessage getBlob/setBlob.
@@ -537,11 +568,11 @@ export function buildCursorRunRequestBytes(args: {
     readPaths: [],
   });
 
-  const wireModelId = args.model;
+  const wireModelId = resolveCursorWireModelId(args.model);
   const modelDetails = create(ModelDetailsSchema, {
     modelId: wireModelId,
-    displayModelId: args.model,
-    displayName: args.model,
+    displayModelId: wireModelId,
+    displayName: wireModelId,
   });
   const requestedModel = create(RequestedModelSchema, {
     modelId: wireModelId,
@@ -1082,6 +1113,9 @@ function toolResultText(result: AgentRuntimeToolResult): string {
 function toolResultIsError(result: AgentRuntimeToolResult): boolean {
   const meta = result.metadata as Record<string, unknown> | undefined;
   if (!meta) return false;
+  // localLoop / catch paths stamp `error: true`; some adapters stamp a
+  // non-empty error string. Accept both so MCP error replies stay accurate.
+  if (meta.error === true) return true;
   if (typeof meta.error === "string" && meta.error.length > 0) return true;
   if (typeof meta.exitCode === "number" && meta.exitCode !== 0) return true;
   if (typeof meta.reason === "string" && meta.reason === "error") return true;
@@ -1466,6 +1500,42 @@ function synthesizeCursorExecToolCall(
   return block as { type: "toolCall"; toolCall: AgentRuntimeToolCall; result?: AgentRuntimeToolResult };
 }
 
+function toErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
+/**
+ * Always fill `toolCallBlock.result` on throw/reject paths.
+ *
+ * localLoop treats `result.output` toolCall blocks without `result` as a hard
+ * bug ("unexecuted toolCall") — Cursor promised inline exec. If executeTool
+ * throws or tools are not configured, we must still stamp an error result so
+ * the block is considered executed and the turn can continue / persist.
+ */
+function fillToolCallBlockError(
+  toolCallBlock: { result?: AgentRuntimeToolResult },
+  error: unknown,
+  extras?: Record<string, unknown>,
+): AgentRuntimeToolResult {
+  const message = toErrorMessage(error);
+  const result: AgentRuntimeToolResult = {
+    content: message,
+    metadata: {
+      error: true,
+      message,
+      ...(extras ?? {}),
+    },
+  };
+  toolCallBlock.result = result;
+  return result;
+}
+
 /** Decode a single `McpArgs.args` map entry (protobuf Value → JSON value). */
 function decodeMcpArgValue(value: Uint8Array): unknown {
   try {
@@ -1566,6 +1636,7 @@ export async function handleExecServerMessage(
             ...(toolResult.metadata ? { metadata: toolResult.metadata } : {}),
           });
         } catch (e) {
+          fillToolCallBlockError(toolCallBlock, e);
           result = create(ReadResultSchema, {
             result: {
               case: "error",
@@ -1581,6 +1652,7 @@ export async function handleExecServerMessage(
           });
         }
       } else {
+        fillToolCallBlockError(toolCallBlock, "Tool execution not configured", { reason: "rejected" });
         result = create(ReadResultSchema, {
           result: {
             case: "rejected",
@@ -1635,6 +1707,7 @@ export async function handleExecServerMessage(
             ...(toolResult.metadata ? { metadata: toolResult.metadata } : {}),
           });
         } catch (e) {
+          fillToolCallBlockError(toolCallBlock, e);
           result = create(ShellResultSchema, {
             result: {
               case: "failure",
@@ -1659,6 +1732,7 @@ export async function handleExecServerMessage(
           });
         }
       } else {
+        fillToolCallBlockError(toolCallBlock, "Tool execution not configured", { reason: "rejected" });
         result = create(ShellResultSchema, {
           result: {
             case: "rejected",
@@ -1738,6 +1812,7 @@ export async function handleExecServerMessage(
             ...(toolResult.metadata ? { metadata: toolResult.metadata } : {}),
           });
         } catch (e) {
+          fillToolCallBlockError(toolCallBlock, e);
           result = create(GrepResultSchema, {
             result: {
               case: "error",
@@ -1753,6 +1828,7 @@ export async function handleExecServerMessage(
           });
         }
       } else {
+        fillToolCallBlockError(toolCallBlock, "Tool execution not configured", { reason: "rejected" });
         result = create(GrepResultSchema, {
           result: {
             case: "error",
@@ -1801,6 +1877,7 @@ export async function handleExecServerMessage(
             ...(toolResult.metadata ? { metadata: toolResult.metadata } : {}),
           });
         } catch (e) {
+          fillToolCallBlockError(toolCallBlock, e);
           result = create(WriteResultSchema, {
             result: {
               case: "error",
@@ -1816,6 +1893,7 @@ export async function handleExecServerMessage(
           });
         }
       } else {
+        fillToolCallBlockError(toolCallBlock, "Tool execution not configured", { reason: "rejected" });
         result = create(WriteResultSchema, {
           result: {
             case: "rejected",
@@ -1859,6 +1937,7 @@ export async function handleExecServerMessage(
             ...(toolResult.metadata ? { metadata: toolResult.metadata } : {}),
           });
         } catch (e) {
+          fillToolCallBlockError(toolCallBlock, e);
           result = create(DeleteResultSchema, {
             result: {
               case: "error",
@@ -1874,6 +1953,7 @@ export async function handleExecServerMessage(
           });
         }
       } else {
+        fillToolCallBlockError(toolCallBlock, "Tool execution not configured", { reason: "rejected" });
         result = create(DeleteResultSchema, {
           result: {
             case: "rejected",
@@ -1917,6 +1997,7 @@ export async function handleExecServerMessage(
             ...(toolResult.metadata ? { metadata: toolResult.metadata } : {}),
           });
         } catch (e) {
+          fillToolCallBlockError(toolCallBlock, e);
           result = create(LsResultSchema, {
             result: {
               case: "error",
@@ -1932,6 +2013,7 @@ export async function handleExecServerMessage(
           });
         }
       } else {
+        fillToolCallBlockError(toolCallBlock, "Tool execution not configured", { reason: "rejected" });
         result = create(LsResultSchema, {
           result: {
             case: "rejected",
@@ -1979,6 +2061,7 @@ export async function handleExecServerMessage(
             ...(toolResult.metadata ? { metadata: toolResult.metadata } : {}),
           });
         } catch (e) {
+          fillToolCallBlockError(toolCallBlock, e);
           result = create(McpResultSchema, {
             result: {
               case: "error",
@@ -1994,6 +2077,10 @@ export async function handleExecServerMessage(
           });
         }
       } else {
+        fillToolCallBlockError(toolCallBlock, `Tool not found: ${toolName}`, {
+          reason: "toolNotFound",
+          toolName,
+        });
         result = buildMcpToolNotFoundResult(toolName);
       }
       sendExecClientMessage(h2Request, execMsg, "mcpResult", result);
@@ -2006,16 +2093,6 @@ export async function handleExecServerMessage(
       console.warn(`[cursor-provider] unhandled exec case: ${execCase}`);
       return;
     }
-  }
-}
-
-function toErrorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === "string") return e;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return String(e);
   }
 }
 

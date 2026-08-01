@@ -34,6 +34,7 @@ describe("CLI local runtime dry run", () => {
     "readSpace",
     "readDoc",
     "readSkillDoc",
+    "loadSkill",
     "listTables",
     "queryTableRows",
     "cliWhoami",

@@ -457,7 +457,9 @@ export async function listAgentsFunc(args: any, thunkApi: any): Promise<ToolResu
     .sort((left: any, right: any) => getNoloComparableUpdatedAt(right) - getNoloComparableUpdatedAt(left))
     .map((record: any) => ({
       id: record?.id ?? null,
-      privateKey: record?.dbKey ?? null,
+      // 不返回 privateKey/dbKey：这是私有 workspace 工具，dbKey 属于敏感标识，
+      // 避免出现在公开/分享文本（与 readAgent 的 redactAgentRecordForWorkspaceTool
+      // 脱敏策略对齐）。后续读取走 readAgent（id/publicKey 已足够）。
       publicKey: typeof record?.id === "string" ? `agent-pub-${record.id}` : null,
       name: record?.name ?? "(unnamed)",
       model: record?.model ?? null,

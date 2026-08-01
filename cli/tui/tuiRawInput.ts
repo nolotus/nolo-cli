@@ -13,12 +13,85 @@
  * - ./sessionInput：completeSlashCommand
  * - ./session：PASTE_TOKEN_PREFIX
  */
+import {
+  COLLAPSED_PASTE_PLACEHOLDER_RE,
+  shouldCollapsePaste,
+} from "../../core/collapsedPaste";
 import { displayWidth, fitAnsiLine, wrapTextToLines } from "./tuiAnsi";
 import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
 import { themeColorSequence, themeText } from "./theme";
 import { t } from "./i18n";
 import { completeSlashCommand } from "./sessionInput";
 import { PASTE_TOKEN_PREFIX } from "./session";
+
+function normalizePasteNewlines(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
+ * Alternate-screen (DECSET 1049) bookkeeping, keyed per output stream.
+ *
+ * The TUI renders on the *main* screen by default, which shares scrollback
+ * with the shell: a wheel scroll moves the terminal's own scrollback while
+ * the TUI keeps its own `scrollTop`, and the next 150ms repaint lands in a
+ * shifted viewport. Entering the alternate screen gives the TUI a private
+ * buffer so the two scroll states can no longer desync.
+ *
+ * Idempotency matters because every exit path (disable(), SIGINT, SIGTERM,
+ * SIGHUP, process exit, uncaughtException, unhandledRejection) writes the
+ * leave sequence, and several can fire for one shutdown (e.g. SIGINT then
+ * exit). The map records whether each output is currently *on* the
+ * alternate screen so the enter/leave sequences are each written at most
+ * once per output. Non-TTY outputs (pipes, redirects, tests) are skipped
+ * entirely — entering/leaving an alternate screen there is a no-op.
+ */
+const altScreenOn = new WeakMap<NodeJS.WritableStream, boolean>();
+
+function outputIsTty(output: NodeJS.WritableStream): boolean {
+  return Boolean((output as { isTTY?: boolean }).isTTY);
+}
+
+/**
+ * Enter the alternate screen on `output` (idempotent). Returns true iff a
+ * sequence was actually written, so callers can pair it with a redraw.
+ */
+export function enterAltScreen(output: NodeJS.WritableStream): boolean {
+  if (!outputIsTty(output)) return false;
+  if (altScreenOn.get(output)) return false;
+  altScreenOn.set(output, true);
+  output.write("\x1b[?1049h");
+  return true;
+}
+
+/**
+ * Leave the alternate screen on `output` (idempotent). Safe to call from
+ * disable(), signal handlers, and process.exit — repeats are no-ops once
+ * the output has already returned to the main screen.
+ */
+export function leaveAltScreen(output: NodeJS.WritableStream): boolean {
+  if (!outputIsTty(output)) return false;
+  if (!altScreenOn.get(output)) return false;
+  altScreenOn.set(output, false);
+  output.write("\x1b[?1049l");
+  return true;
+}
+
+/** True iff `output` is currently on the alternate screen (mainly for tests). */
+export function isAltScreenOn(output: NodeJS.WritableStream): boolean {
+  return Boolean(altScreenOn.get(output));
+}
+
+/** Soft-highlight collapsed paste chips so they read as chips, not typed text. */
+function styleCollapsedPastePlaceholders(
+  text: string,
+  colorEnabled: boolean,
+): string {
+  if (!colorEnabled || !text.includes("[paste #")) return text;
+  COLLAPSED_PASTE_PLACEHOLDER_RE.lastIndex = 0;
+  return text.replace(COLLAPSED_PASTE_PLACEHOLDER_RE, (match) =>
+    themeText(match, "accent", true),
+  );
+}
 
 export type FixedInputController = {
   active: boolean;
@@ -47,6 +120,17 @@ export type FixedInputController = {
    * transcript; keyboard scrolling stays available.
    */
   setMouseEnabled(enabled: boolean): void;
+  /**
+   * Toggle the terminal alternate-screen buffer (DECSET 1049).
+   *
+   * On  = enter the private screen so the TUI's own scroll state is isolated
+   *        from the shell's scrollback (wheel no longer desyncs the viewport).
+   * Off = leave the alternate screen, restoring the shell's prior content.
+   *
+   * Both directions are idempotent (guarded per-output) so repeated disable()
+   * calls and process-exit/signal handlers never write the sequence twice.
+   */
+  setAltScreenEnabled(enabled: boolean): void;
 };
 
 export function createNoopFixedInput(): FixedInputController {
@@ -63,6 +147,7 @@ export function createNoopFixedInput(): FixedInputController {
     getInputLines: () => 1,
     isPaused: () => false,
     setMouseEnabled() {},
+    setAltScreenEnabled() {},
   };
 }
 
@@ -75,6 +160,14 @@ type FixedInputConfig = {
    * e.g. a preview of queued follow-up messages. Each entry is one line.
    */
   getQueueLines?: () => string[];
+  /**
+   * Composer 高度变化时通知外部，让 readlineWorkspace 触发一次历史重绘。
+   * 活动行首次出现时 composer 从 3 行变 4 行，repaintAt 据此 setScrollRegion
+   * 收缩历史可视区，但历史是按旧 inputLines 画的、最底行被盖住；这个回调
+   * 让外部在 scrollRegion 改变后补一次 renderHistory。在 setScrollRegion
+   * 之后调用，避免回调里又读旧 region。
+   */
+  onInputLinesChange?: (lines: number) => void;
 };
 
 export function createFixedInput(
@@ -195,7 +288,9 @@ export function createFixedInput(
       for (let j = 0; j < rows.length; j += 1) {
         const rowPrefix = j === 0 ? prefix : " ".repeat(promptWidth);
         const rowText = rows[j] ?? "";
-        sections.push(`${rowPrefix}${rowText}`);
+        sections.push(
+          `${rowPrefix}${styleCollapsedPastePlaceholders(rowText, colorEnabled)}`,
+        );
 
         const rowLen = rowText.length;
         if (!cursorFound) {
@@ -228,10 +323,19 @@ export function createFixedInput(
 
   const repaintAt = (buffer: string, cursorPos?: number) => {
     const { text, lines, cursorCol, cursorRow } = renderInputArea(buffer, cursorPos);
+    let linesChanged = false;
     if (lines !== inputLines) {
       inputLines = lines;
+      linesChanged = true;
     }
     setScrollRegion(inputLines);
+    // composer 高度变化后通知外部补一次历史重绘：历史是按旧 inputLines 画的，
+    // repaintAt 只重画 composer 不重画历史，活动行首次出现那帧历史最底行会被
+    // 长高一行的 composer 盖住（刚提交的用户消息正好在那）。必须在
+    // setScrollRegion 之后回调，否则回调里读到的还是旧 region。
+    if (linesChanged) {
+      config.onInputLinesChange?.(inputLines);
+    }
     const startRow = getRows() - inputLines + 1;
     write(`\x1b[${startRow};1H`);
     write("\x1b[J");
@@ -286,8 +390,12 @@ export function createFixedInput(
     disable() {
       disableMouse();
       resetScrollRegion();
-      const rows = getRows();
-      write(`\x1b[${rows};1H\x1b[2K\x1b[${Math.max(1, rows - 1)};1H`);
+      // Leave the alternate screen last: mouse reporting and the scroll
+      // region belong to the private buffer, so they must be reset while we
+      // still own it. Switching back to the main screen restores the shell's
+      // prior content, so the old cursor-positioning write below is dropped
+      // (it cleared a row that the main screen already repopulated).
+      leaveAltScreen(output);
     },
     getInputLines: () => inputLines,
     isPaused: () => paused,
@@ -297,6 +405,13 @@ export function createFixedInput(
         write("\x1b[?1006h\x1b[?1000h");
       } else {
         write("\x1b[?1000l\x1b[?1006l");
+      }
+    },
+    setAltScreenEnabled(enabled: boolean) {
+      if (enabled) {
+        enterAltScreen(output);
+      } else {
+        leaveAltScreen(output);
       }
     },
   };
@@ -350,26 +465,68 @@ export function isIncompleteTail(input: string, start: number): boolean {
   return false;
 }
 
-const PASTE_START = "\x1b[?2004h";
-const PASTE_END = "\x1b[?2004l";
+/**
+ * Bracketed-paste markers the *terminal sends* around clipboard content.
+ *
+ * Do not confuse with DECSET 2004 enable/disable (`\x1b[?2004h` / `\x1b[?2004l`),
+ * which the app writes *to* the terminal. Using those here silently disables
+ * paste detection: real pastes arrive as `\x1b[200~…\x1b[201~` and get treated
+ * as ordinary keystrokes, so collapse-to-chip never fires.
+ */
+const PASTE_START = "\x1b[200~";
+const PASTE_END = "\x1b[201~";
 
-export function splitRawInputWithTail(input: string): { tokens: string[]; tail: string } {
+/**
+ * xterm bracketed-paste end marker. Per protocol the *first* CSI 201~ after
+ * CSI 200~ terminates the paste — a literal `\x1b[201~` inside the payload
+ * therefore closes early (inherent limitation; remainder is reparsed and may
+ * still collapse via the unmarked-burst heuristic below).
+ */
+function findBracketedPasteEnd(input: string, contentStart: number): number {
+  return input.indexOf(PASTE_END, contentStart);
+}
+
+function emitPlainRunAsTokens(run: string): string[] {
+  if (run.length === 0) return [];
+  if (shouldCollapsePaste(normalizePasteNewlines(run))) {
+    return [`${PASTE_TOKEN_PREFIX}${run}`];
+  }
   const tokens: string[] = [];
-  for (let index = 0; index < input.length;) {
+  for (let index = 0; index < run.length; ) {
+    const codePoint = run.codePointAt(index);
+    if (codePoint === undefined) break;
+    const value = String.fromCodePoint(codePoint);
+    tokens.push(value);
+    index += value.length;
+  }
+  return tokens;
+}
+
+export function splitRawInputWithTail(
+  input: string,
+  options?: { forceCompleteOpenPaste?: boolean },
+): { tokens: string[]; tail: string } {
+  const tokens: string[] = [];
+  for (let index = 0; index < input.length; ) {
     if (isIncompleteTail(input, index)) {
       return { tokens, tail: input.slice(index) };
     }
     if (input.startsWith(PASTE_START, index)) {
       const contentStart = index + PASTE_START.length;
-      const endPos = input.indexOf(PASTE_END, contentStart);
+      const endPos = findBracketedPasteEnd(input, contentStart);
       if (endPos !== -1) {
         const payload = input.slice(contentStart, endPos);
         tokens.push(`${PASTE_TOKEN_PREFIX}${payload}`);
         index = endPos + PASTE_END.length;
-      } else {
+      } else if (options?.forceCompleteOpenPaste) {
+        // Explicit flush / non-streaming callers only: terminal dropped the
+        // end marker. Treat remainder as paste.
         const payload = input.slice(contentStart);
         tokens.push(`${PASTE_TOKEN_PREFIX}${payload}`);
         index = input.length;
+      } else {
+        // Paste start seen but end not yet — keep buffered across data chunks.
+        return { tokens, tail: input.slice(index) };
       }
       continue;
     }
@@ -394,27 +551,35 @@ export function splitRawInputWithTail(input: string): { tokens: string[]; tail: 
       index += csi.length;
       continue;
     }
-    const codePoint = input.codePointAt(index);
-    if (codePoint === undefined) break;
-    const value = String.fromCodePoint(codePoint);
-    tokens.push(value);
-    index += value.length;
+
+    // Plain run until next ESC (or end). Oversized unmarked bursts become one
+    // PASTE token here — this is the real unmarked-paste path (decoder feeds
+    // whole chunks; per-code-point applyTuiInputKey never sees them).
+    const nextEsc = input.indexOf("\x1b", index);
+    const runEnd = nextEsc === -1 ? input.length : nextEsc;
+    const run = input.slice(index, runEnd);
+    if (run.length === 0) {
+      const codePoint = input.codePointAt(index);
+      if (codePoint === undefined) break;
+      const value = String.fromCodePoint(codePoint);
+      tokens.push(value);
+      index += value.length;
+      continue;
+    }
+    tokens.push(...emitPlainRunAsTokens(run));
+    index = runEnd;
   }
   return { tokens, tail: "" };
 }
 
 export function splitRawInput(input: string): string[] {
-  const { tokens, tail } = splitRawInputWithTail(input);
+  // Force-complete an open paste so callers that don't stream (tests / flush)
+  // still get a PASTE token instead of leaking raw `\x1b[200~` + body chars.
+  const { tokens, tail } = splitRawInputWithTail(input, {
+    forceCompleteOpenPaste: true,
+  });
   if (!tail) return tokens;
-  const tailTokens: string[] = [];
-  for (let index = 0; index < tail.length;) {
-    const codePoint = tail.codePointAt(index);
-    if (codePoint === undefined) break;
-    const value = String.fromCodePoint(codePoint);
-    tailTokens.push(value);
-    index += value.length;
-  }
-  return [...tokens, ...tailTokens];
+  return [...tokens, ...emitPlainRunAsTokens(tail)];
 }
 
 export type RawInputDecoder = {
@@ -425,12 +590,19 @@ export type RawInputDecoder = {
 
 export function createRawInputDecoder(
   onToken: (token: string) => void,
-  options?: { escTimeoutMs?: number }
+  options?: {
+    escTimeoutMs?: number;
+    /** @deprecated Open pastes no longer force-complete on a timer. */
+    openPasteTimeoutMs?: number;
+    /** Debounce for coalescing multi-chunk unmarked paste bursts. */
+    unmarkedPasteDebounceMs?: number;
+  },
 ): RawInputDecoder {
   const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
   let pendingBuffer = "";
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutMs = options?.escTimeoutMs ?? 15;
+  const unmarkedPasteDebounceMs = options?.unmarkedPasteDebounceMs ?? 40;
 
   const clearTimer = () => {
     if (timer !== null) {
@@ -439,15 +611,45 @@ export function createRawInputDecoder(
     }
   };
 
-  const flush = () => {
-    clearTimer();
-    if (pendingBuffer.length > 0) {
-      const textToFlush = pendingBuffer;
-      pendingBuffer = "";
-      for (const token of splitRawInput(textToFlush)) {
-        onToken(token);
-      }
+  const emitCodePoints = (text: string) => {
+    for (let index = 0; index < text.length; ) {
+      const codePoint = text.codePointAt(index);
+      if (codePoint === undefined) break;
+      const value = String.fromCodePoint(codePoint);
+      onToken(value);
+      index += value.length;
     }
+  };
+
+  const flushPlainPending = () => {
+    clearTimer();
+    if (pendingBuffer.length === 0) return;
+    const text = pendingBuffer;
+    pendingBuffer = "";
+    for (const token of emitPlainRunAsTokens(text)) {
+      onToken(token);
+    }
+  };
+
+  const flushEscPending = (forceCompleteOpenPaste: boolean) => {
+    clearTimer();
+    if (pendingBuffer.length === 0) return;
+    const textToFlush = pendingBuffer;
+    pendingBuffer = "";
+    const { tokens, tail } = splitRawInputWithTail(textToFlush, {
+      forceCompleteOpenPaste,
+    });
+    for (const token of tokens) {
+      onToken(token);
+    }
+    if (!tail) return;
+    if (forceCompleteOpenPaste) {
+      // Stream/explicit end: never stall on a partial CSI — emit raw.
+      emitCodePoints(tail);
+      return;
+    }
+    // Keep incomplete open-paste / CSI buffered.
+    pendingBuffer = tail;
   };
 
   const decodeFn = (chunk: Buffer | string) => {
@@ -456,19 +658,62 @@ export function createRawInputDecoder(
     const text = decoder.decode(bytes, { stream: true });
     pendingBuffer += text;
 
-    const { tokens, tail } = splitRawInputWithTail(pendingBuffer);
-    pendingBuffer = tail;
-
-    for (const token of tokens) {
-      onToken(token);
+    // Open bracketed paste: keep buffering until 201~ (or explicit flush).
+    // Never arm a force-complete timer — slow SSH would tear the paste into
+    // a half chip + keystroke flood.
+    if (pendingBuffer.startsWith(PASTE_START)) {
+      const endPos = findBracketedPasteEnd(
+        pendingBuffer,
+        PASTE_START.length,
+      );
+      if (endPos === -1) return;
+      const { tokens, tail } = splitRawInputWithTail(pendingBuffer);
+      pendingBuffer = tail;
+      for (const token of tokens) onToken(token);
+      if (pendingBuffer.startsWith(PASTE_START)) return;
+      // Fall through to handle any plain remainder (e.g. early 201~ close).
     }
 
-    if (pendingBuffer.length > 0) {
-      timer = setTimeout(flush, timeoutMs);
+    if (pendingBuffer.includes("\x1b")) {
+      const { tokens, tail } = splitRawInputWithTail(pendingBuffer);
+      pendingBuffer = tail;
+      for (const token of tokens) onToken(token);
+      if (pendingBuffer.startsWith(PASTE_START)) return;
+      if (pendingBuffer.length > 0) {
+        // Incomplete CSI only — short timeout, then force emit.
+        timer = setTimeout(() => flushEscPending(true), timeoutMs);
+      }
+      return;
     }
+
+    // Pure plain text: coalesce briefly so multi-chunk unmarked pastes merge,
+    // then promote oversized bursts to a PASTE token.
+    if (shouldCollapsePaste(normalizePasteNewlines(pendingBuffer))) {
+      timer = setTimeout(flushPlainPending, unmarkedPasteDebounceMs);
+      return;
+    }
+
+    if (!pendingBuffer.includes("\n") && !pendingBuffer.includes("\r")) {
+      emitCodePoints(pendingBuffer);
+      pendingBuffer = "";
+      return;
+    }
+
+    // Some newlines but below collapse threshold — wait one debounce tick in
+    // case more chunks arrive and push it over the threshold.
+    timer = setTimeout(flushPlainPending, unmarkedPasteDebounceMs);
   };
 
-  decodeFn.flush = flush;
+  decodeFn.flush = () => {
+    if (
+      pendingBuffer.startsWith(PASTE_START) ||
+      pendingBuffer.includes("\x1b")
+    ) {
+      flushEscPending(true);
+      return;
+    }
+    flushPlainPending();
+  };
   decodeFn.destroy = () => {
     clearTimer();
     pendingBuffer = "";

@@ -121,6 +121,9 @@ function buildDialogMessageWriteOps(args: {
           dialogId: args.dialogId,
           role: message.role,
           content: message.content ?? "",
+          ...(message.context_reference !== undefined
+            ? { contextReference: message.context_reference }
+            : {}),
           // 持久化思维链(reasoning):空轮/异常排查的关键证据,
           // 回读由 dialogMessageRecordToAgentRuntimeMessage 还原。
           ...(typeof message.reasoning_content === "string"

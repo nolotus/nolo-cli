@@ -98,12 +98,18 @@ export function renderStatusLine(state: TuiState) {
     parts.push(`${branchText}${modifiedText}${untrackedText}`);
   }
 
+  const credits =
+    state.apiSource === "platform" ? state.turnTokens?.credits : undefined;
+  const creditsSuffix =
+    credits !== undefined && credits > 0
+      ? ` · ⚡ ${credits.toFixed(2)} 积分`
+      : "";
   const tokenSegment = themeText(
     renderComposerTokenChip(
       state.turnTokens,
       state.contextWindow,
       state.estimatedContextTokens,
-    ),
+    ) + creditsSuffix,
     "muted",
     colorEnabled,
   );

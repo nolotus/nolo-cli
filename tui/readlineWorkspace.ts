@@ -13,8 +13,10 @@ import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPromp
 import { buildSkillDiscoveryContextBlock } from "../agent-runtime/skillDiscovery";
 import {
   classifyCliAutoRoute,
+  CLI_AUTO_TIER_AGENT_KEYS,
   CLI_AUTO_TIER_AGENT_KEY_TABLE,
   CLI_IMAGE_AGENT_KEY,
+  resolveCliAutoFallbackTier,
 } from "../client/autoModelRouter";
 import { readDbRecord } from "../agentRecordHelpers";
 import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../ai/llm/agentCapabilities";
@@ -397,10 +399,21 @@ async function runAgentChat(
     // 若用户已显式选择 agent（如通过 /agent 或 NOLO_AGENT），完全跳过 auto 路由。
     const authToken =
       env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
-    const route = await classifyCliAutoRoute(message, {
-      serverUrl: state.serverUrl,
-      authToken,
-    });
+    // The unauthenticated fallback is synchronous in practice. Avoid an
+    // otherwise unnecessary promise yield before invoking the runner: raw TTY
+    // input can arrive while the first turn is being prepared, and an Enter
+    // meant for a terminal action gate must not be consumed by the composer
+    // before the gate listener is attached.
+    const route = authToken
+      ? await classifyCliAutoRoute(message, {
+          serverUrl: state.serverUrl,
+          authToken,
+        })
+      : {
+          agentKey: CLI_AUTO_TIER_AGENT_KEYS[resolveCliAutoFallbackTier(message)],
+          tier: resolveCliAutoFallbackTier(message),
+          classified: false,
+        };
     effectiveAgentKey = route.agentKey;
     effectiveAgentName = `auto→${route.tier}`;
     if (effectiveAgentKey !== state.agentKey) {
@@ -709,7 +722,12 @@ function waitForRawActionGate(
   output: NodeJS.WritableStream,
   gate: LocalAgentActionGate,
   spawnRunner: typeof spawnProcess,
-  hooks?: { beforeSubprocess?: () => void; afterSubprocess?: () => void },
+  hooks?: {
+    beforeSubprocess?: () => void;
+    afterSubprocess?: () => void;
+    /** Route decoded TTY tokens through the workspace decoder. */
+    registerToken?: (handler: ((token: string) => void) | null) => void;
+  },
 ): Promise<AgentRuntimeToolResult> {
   const commandPayload = gate.kind === "handoff"
     ? readCommandActionGatePayload(gate.payload)
@@ -723,7 +741,12 @@ function waitForRawActionGate(
 
   return new Promise((resolve) => {
     const rawInput = input as RawModeInput;
+    let settled = false;
+    let commandRunning = false;
     const finish = (result: AgentRuntimeToolResult) => {
+      if (settled) return;
+      settled = true;
+      hooks?.registerToken?.(null);
       input.off("data", onData);
       resolve(result);
     };
@@ -743,13 +766,9 @@ function waitForRawActionGate(
           actionGateResult: { gateId: gate.id, status: "failed", output: message },
         },
       });
-    const onData = async (chunk: Buffer | string) => {
-      const text = String(chunk);
-      if (text.includes("\u0003")) {
-        cancel("interrupted");
-        return;
-      }
-      if (!text.includes("\r") && !text.includes("\n")) return;
+    const runCommand = async () => {
+      if (settled || commandRunning) return;
+      commandRunning = true;
       if (!commandPayload) {
         fail("unsupported gate payload");
         return;
@@ -791,7 +810,25 @@ function waitForRawActionGate(
         },
       });
     };
-    input.on("data", onData);
+    const handleToken = (text: string) => {
+      if (settled || commandRunning) return;
+      if (text.includes("\u0003")) {
+        cancel("interrupted");
+        return;
+      }
+      if (text.includes("\r") || text.includes("\n")) {
+        void runCommand();
+      }
+    };
+    const onData = (chunk: Buffer | string) => {
+      const text = String(chunk);
+      handleToken(text);
+    };
+    if (hooks?.registerToken) {
+      hooks.registerToken(handleToken);
+    } else {
+      input.on("data", onData);
+    }
   });
 }
 
@@ -1040,6 +1077,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // Hoisted above runOneAgentTurn so the requestUserChoice closure (which
   // wraps an ask_choice dialog) can set/clear it without a forward-reference.
   let modalOwnsKeyboard = false;
+  let rawActionGateTokenHandler: ((token: string) => void) | null = null;
 
   // --- Chat queue (TUI binding, no Redux) ---
   //
@@ -1376,6 +1414,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               agentName: pickResult.name,
               model: pickResult.model,
             }),
+            ...(pickResult.apiSource ? { apiSource: pickResult.apiSource } : {}),
           };
           // 用户显式切换 agent：清掉这条对话首轮 auto-route 的缓存，否则
           // 下一轮会被缓存切回原 agent（典型场景：原 agent 429 后想换一个）。
@@ -1760,7 +1799,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       // everything else so random keys do not accumulate in the composer
       // draft buffer and corrupt the next submitted line, and so Esc meant
       // to cancel an ask_choice popup does not also abort the running turn.
-      if (modalOwnsKeyboard) return;
+      if (modalOwnsKeyboard) {
+        rawActionGateTokenHandler?.(sequence);
+        return;
+      }
       // While an agent turn is running we let the user keep typing into the
       // docked composer (draft buffer) but ignore submit so a second turn
       // cannot race the in-flight one. The draft is preserved and shown
@@ -1820,10 +1862,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         pasteStore,
       });
       if (result.copyView) {
-        if (busyLock) return;
-        busy = true;
         const opened = await openCopyView();
-        busy = false;
         if (!opened) {
           history.followBottom = true;
           startTurn(history, "assistant");
@@ -1846,6 +1885,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           result.submit,
           pasteStore,
         );
+        const submittedTrimmed = submittedText.trim();
+        // `busy` means an agent turn is occupying the composer. Slash/shell
+        // commands (including /history) may await a picker or subprocess, but
+        // they must not make a later /exit look like a queued chat message.
+        const startsChatTurn =
+          submittedTrimmed.length > 0 &&
+          !submittedTrimmed.startsWith("/") &&
+          !submittedTrimmed.startsWith("!");
         if (busyLock) {
           // While an agent turn is running, Enter does not start a new turn.
           // Instead, route the draft through the shared queue resolver: pure
@@ -1924,6 +1971,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                 return await waitForRawActionGate(input, output, gate, spawnRunner, {
                   beforeSubprocess: () => fixedInput.pause(),
                   afterSubprocess: () => fixedInput.resumeFromSubprocess(),
+                  registerToken: (handler) => { rawActionGateTokenHandler = handler; },
                 });
               } finally {
                 modalOwnsKeyboard = false;
@@ -1992,6 +2040,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               return await waitForRawActionGate(input, output, gate, spawnRunner, {
                 beforeSubprocess: () => fixedInput.pause(),
                 afterSubprocess: () => fixedInput.resumeFromSubprocess(),
+                registerToken: (handler) => { rawActionGateTokenHandler = handler; },
               });
             } finally {
               modalOwnsKeyboard = false;
@@ -2048,7 +2097,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             return;
           }
         }
-        busy = true;
+        busy = startsChatTurn;
         buffer = "";
         cursorPos = 0;
         // Note: we intentionally keep the `data` listener attached. During the
@@ -2073,6 +2122,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                 return await waitForRawActionGate(input, output, gate, spawnRunner, {
                   beforeSubprocess: () => fixedInput.pause(),
                   afterSubprocess: () => fixedInput.resumeFromSubprocess(),
+                  registerToken: (handler) => { rawActionGateTokenHandler = handler; },
                 });
               } finally {
                 modalOwnsKeyboard = false;

@@ -1,4 +1,5 @@
 import { BUILTIN_NOLO_AGENT_KEY } from "../core/builtinAgents";
+import { API_REPORTED_COST_MULTIPLIER } from "../ai/token/calculatePrice";
 import { findModelConfig } from "../ai/llm/providers";
 import {
   DEFAULT_CONTEXT_WINDOW,
@@ -15,6 +16,8 @@ export type TurnTokenUsage = {
   output: number;
   contextWindow?: number;
   remaining?: number;
+  /** 本轮累计消耗的平台积分（provider 返回 cost 按 7 credits/USD 换算；非平台计费无此值）。 */
+  credits?: number;
 };
 
 const isUsableModelId = (model?: string | null): model is string => {
@@ -125,10 +128,16 @@ export function buildTurnTokenUsage(
     contextWindow && parsed.input > 0
       ? Math.max(0, contextWindow - parsed.input)
       : undefined;
+  const rawCost = typeof usage?.cost === "number" ? usage.cost : undefined;
+  const credits =
+    rawCost !== undefined && rawCost > 0
+      ? rawCost * API_REPORTED_COST_MULTIPLIER
+      : undefined;
   return {
     ...parsed,
     ...(contextWindow ? { contextWindow } : {}),
     ...(remaining != null ? { remaining } : {}),
+    ...(credits !== undefined ? { credits } : {}),
   };
 }
 

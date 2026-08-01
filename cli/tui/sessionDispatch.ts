@@ -13,6 +13,7 @@ import {
 } from "../client/toolOutput";
 import {
   DEFAULT_TUI_AGENT_KEY,
+  PLATFORM_AGENTS,
   resolveCatalogPlatformAgents,
 } from "./agentCatalog";
 import { resolveAgentSwitchTarget } from "./agentPicker";
@@ -107,13 +108,16 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
       agentName: autoRouteDefault ? "DeepSeek V4 Flash" : agentName,
       model: autoRouteDefault ? "deepseek-v4-flash" : undefined,
     }),
+    apiSource: PLATFORM_AGENTS.some((entry) => entry.key === agentKey)
+      ? "platform"
+      : undefined,
   };
 }
 
 
 function applyAgentSwitch(
   state: TuiState,
-  target: { name: string; key: string; model?: string },
+  target: { name: string; key: string; model?: string; apiSource?: string },
   opts?: { autoRouteDefault?: boolean },
 ) {
   const autoRouteDefault = opts?.autoRouteDefault ?? process.env.NOLO_AUTO_ROUTE !== "0";
@@ -135,6 +139,7 @@ function applyAgentSwitch(
         agentName: target.name,
         model: target.model,
       }),
+      apiSource: target.apiSource,
     },
     output: `Switched to ${target.name}. ${
       state.dialogId ? `Dialog kept: ${state.dialogId}` : "Dialog kept: new"

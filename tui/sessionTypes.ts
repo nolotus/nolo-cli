@@ -54,6 +54,8 @@ export type TuiState = {
   estimatedContextTokens?: number;
   /** Resolved from agentName at init / agent-switch; fallback when turnTokens has no contextWindow. */
   contextWindow?: number;
+  /** 执行来源：platform=平台API(计费) custom=自定义API cli=订阅制。platform 时状态行显示积分。 */
+  apiSource?: string;
 };
 
 export type TuiAction =

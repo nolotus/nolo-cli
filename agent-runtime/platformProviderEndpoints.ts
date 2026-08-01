@@ -10,6 +10,8 @@ import { getModelConfig } from "../ai/llm/providers";
 
 export const OPENAI_RESPONSES_ENDPOINT =
   "https://api.openai.com/v1/responses";
+export const DEEPSEEK_RESPONSES_ENDPOINT =
+  "https://api.deepseek.com/v1/responses";
 
 /** Known platform chat.completions endpoints keyed by provider id. */
 export const PLATFORM_CHAT_COMPLETIONS_ENDPOINTS: Readonly<
@@ -40,13 +42,28 @@ export function isOpenAiResponsesModel(args: {
   model?: string;
   endpointKey?: string;
 }): boolean {
-  if (asTrimmedLowercaseString(args.provider) !== "openai") return false;
+  const provider = asTrimmedLowercaseString(args.provider);
+  if (provider === "deepseek") {
+    return asTrimmedLowercaseString(args.model) === "deepseek-v4-flash";
+  }
+  if (provider !== "openai") return false;
   if (args.endpointKey === "responses") return true;
   if (!args.model) return false;
   try {
     return getModelConfig("openai", args.model).endpointKey === "responses";
   } catch {
     return false;
+  }
+}
+
+export function resolvePlatformResponsesEndpoint(provider: string): string | undefined {
+  switch (asTrimmedLowercaseString(provider)) {
+    case "openai":
+      return OPENAI_RESPONSES_ENDPOINT;
+    case "deepseek":
+      return DEEPSEEK_RESPONSES_ENDPOINT;
+    default:
+      return undefined;
   }
 }
 

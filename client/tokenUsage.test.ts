@@ -81,4 +81,17 @@ describe("tokenUsage", () => {
       }),
     ).toBe(256_000);
   });
+
+  test("calculates platform credits from provider raw cost when cost > 0", () => {
+    expect(
+      buildTurnTokenUsage(
+        { input_tokens: 100, output_tokens: 50, cost: 0.5 },
+        "nolo"
+      )?.credits
+    ).toBe(3.5);
+    expect(
+      buildTurnTokenUsage({ input_tokens: 100, output_tokens: 50 }, "nolo")
+        ?.credits
+    ).toBeUndefined();
+  });
 });

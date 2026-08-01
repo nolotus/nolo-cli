@@ -13,6 +13,7 @@ import { generatePrompt, buildSystemPromptContext } from "../../ai/agent/generat
 import { isLoopbackUrl } from "../../core/localOrigins";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { normalizeChatCompletionsBodyForProvider } from "./providerBodyCompatibility";
+import { preserveAgentStateFields } from "../../agent-runtime/openAiCompatibleMessages";
 
 // model 理论上不应为空（schema 已强制必填），但防御性处理 undefined
 const isClaudeModel = (model: string | undefined): boolean =>
@@ -129,22 +130,7 @@ const sanitizeChatCompletionsMessage = (message: Message & Record<string, any>) 
   const name = asOptionalTrimmedString(message.name);
   if (name) sanitized.name = name;
 
-  const toolCallId = asOptionalTrimmedString(message.tool_call_id);
-  if (toolCallId) sanitized.tool_call_id = toolCallId;
-
-  if (Array.isArray(message.tool_calls)) {
-    sanitized.tool_calls = message.tool_calls;
-  }
-
-  if (
-    message.role === "assistant" &&
-    typeof message.reasoning_content === "string" &&
-    message.reasoning_content
-  ) {
-    sanitized.reasoning_content = message.reasoning_content;
-  }
-
-  return sanitized;
+  return preserveAgentStateFields(message, sanitized);
 };
 
 const buildRequestBody = (options: BuildRequestBodyOptions): any => {

@@ -328,7 +328,16 @@ export function findAgentCatalogEntry(
   if (/^\d+$/.test(target)) {
     const entry = entries[Number(target) - 1];
     return entry
-      ? { name: entry.name, key: entry.key, model: entry.model }
+      ? {
+          name: entry.name,
+          key: entry.key,
+          model: entry.model,
+          ...(entry.apiSource
+            ? { apiSource: entry.apiSource }
+            : entry.kind === "platform"
+              ? { apiSource: "platform" }
+              : {}),
+        }
       : null;
   }
 
@@ -340,7 +349,16 @@ export function findAgentCatalogEntry(
       entry.key.toLowerCase().endsWith(`-${lower}`)
   );
   if (byName) {
-    return { name: byName.name, key: byName.key, model: byName.model };
+    return {
+      name: byName.name,
+      key: byName.key,
+      model: byName.model,
+      ...(byName.apiSource
+        ? { apiSource: byName.apiSource }
+        : byName.kind === "platform"
+          ? { apiSource: "platform" }
+          : {}),
+    };
   }
 
   if (target.startsWith("agent-") || target.startsWith("agent-pub-")) {

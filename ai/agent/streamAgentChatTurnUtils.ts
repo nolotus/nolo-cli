@@ -247,9 +247,10 @@ export const trimMessagesWithSummary = (
     let cutIndex = messages.length - keepCount;
     if (cutIndex < 0) cutIndex = 0;
 
-    // 避免从 tool 消息中间开始，丢失其调用方 assistant
-    while (cutIndex < messages.length && messages[cutIndex].role === "tool") {
-        cutIndex++;
+    // 避免从 tool 消息中间开始：向前带上调用方 assistant 和完整的
+    // tool-result 配对，不能为了规避孤儿结果而把这一轮工具状态直接丢掉。
+    while (cutIndex > 0 && messages[cutIndex]?.role === "tool") {
+        cutIndex--;
     }
 
     return messages.slice(cutIndex);

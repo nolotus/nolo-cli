@@ -54,6 +54,19 @@ export interface AgentRuntimeChatMessage {
   agentName?: string;
 }
 
+/**
+ * Durable continuation identity for the OpenAI Responses wire.
+ *
+ * This is deliberately separate from usage.audit `provider_response_ids`:
+ * only the latest response for the same provider/model can be used as the
+ * next turn's `previous_response_id`.
+ */
+export interface ResponsesConversationState {
+  provider: string;
+  model: string;
+  responseId: string;
+}
+
 export type AgentRuntimeOutputBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
@@ -73,6 +86,7 @@ export interface AgentRuntimeResult {
   inputPrice?: number;
   outputPrice?: number;
   usage?: Record<string, any>;
+  responsesState?: ResponsesConversationState | null;
   trace?: AgentRuntimeChatMessage[];
   tool_calls?: AgentRuntimeToolCall[];
   reasoning_content?: string;

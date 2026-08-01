@@ -39,11 +39,16 @@ type ResponseFunctionCallOutput = {
   call_id: string;
   output: string;
 };
+type ResponseReasoning = {
+  type: "reasoning";
+  content: string;
+};
 
 export type ResponseInputItem =
   | ResponseInputMessage
   | ResponseFunctionCall
-  | ResponseFunctionCallOutput;
+  | ResponseFunctionCallOutput
+  | ResponseReasoning;
 
 export type AssistantToolCall = ToolCall;
 
@@ -139,7 +144,7 @@ export const toResponsesTools = (tools: any[] | undefined): any[] | undefined =>
 };
 
 export const convertMessagesToResponsesInput = (
-  messages: Array<Pick<Message, "role" | "content" | "tool_calls" | "tool_call_id">>
+  messages: Array<Pick<Message, "role" | "content" | "tool_calls" | "tool_call_id"> & { reasoning_content?: unknown }>
 ): ResponseInputItem[] => {
   const input: ResponseInputItem[] = [];
 
@@ -157,6 +162,13 @@ export const convertMessagesToResponsesInput = (
     }
 
     const role = message.role as ResponseInputMessage["role"];
+    if (
+      role === "assistant" &&
+      typeof message.reasoning_content === "string" &&
+      message.reasoning_content
+    ) {
+      input.push({ type: "reasoning", content: message.reasoning_content });
+    }
     const contentParts = normalizeMessageParts(message.content, role);
     if (contentParts.length > 0) {
       input.push({
@@ -217,6 +229,22 @@ export const extractTextFromResponseOutput = (response: any): string => {
       if (content?.type === "output_text" && typeof content.text === "string") {
         parts.push(content.text);
       }
+    }
+  }
+  return parts.join("");
+};
+
+export const extractReasoningFromResponseOutput = (response: any): string => {
+  const parts: string[] = [];
+  for (const item of response?.output ?? []) {
+    if (item?.type !== "reasoning") continue;
+    if (typeof item.content === "string") {
+      parts.push(item.content);
+      continue;
+    }
+    for (const content of item.content ?? []) {
+      if (typeof content === "string") parts.push(content);
+      else if (typeof content?.text === "string") parts.push(content.text);
     }
   }
   return parts.join("");

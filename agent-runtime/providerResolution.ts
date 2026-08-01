@@ -7,7 +7,7 @@ import { pickAgentRuntimeInferenceOptions } from "./agentConfigOptions";
 import type { CredentialBroker } from "./credentialBroker";
 import {
   isOpenAiResponsesModel,
-  OPENAI_RESPONSES_ENDPOINT,
+  resolvePlatformResponsesEndpoint,
   resolvePlatformChatCompletionsEndpoint,
 } from "./platformProviderEndpoints";
 
@@ -28,7 +28,7 @@ function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
     model: agentConfig.model,
     endpointKey: (agentConfig as any).endpointKey,
   })) {
-    return OPENAI_RESPONSES_ENDPOINT;
+    return resolvePlatformResponsesEndpoint(provider) ?? "";
   }
   const endpoint = resolvePlatformChatCompletionsEndpoint(provider);
   if (!endpoint) {

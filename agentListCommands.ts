@@ -1,10 +1,13 @@
 import { toErrorMessage } from "./core/errorMessage";
+import { toSafeAgentSummary, sortSafeAgentSummaries } from "./ai/agent/safeAgentSummary";
 import { getReadableCliDb, type AgentCommandDeps } from "./agentCommandSupport";
 import {
   decorateAgentsWithPublicStatusAcrossServers,
+  listFavoriteAgentIdsAcrossServers,
   listLocalCachedAgents,
   listRemoteAgentsAcrossServers,
   listRemoteAgents,
+  normalizeListedAgent,
   parseAgentListArgs,
   type ListedAgent,
 } from "./agentListHelpers";
@@ -28,7 +31,7 @@ export async function runAgentListCommand(
 ) {
   const env = deps.env ?? process.env;
   const output = deps.output ?? process.stdout;
-  const { wantJson, publicOnly, idsOnly } = parseAgentListArgs(args);
+  const { wantJson, wantSafe, publicOnly, idsOnly } = parseAgentListArgs(args);
   const spaceInput = readOption(args, "--space") ?? readOption(args, "--space-id");
 
   const authToken = resolveAuthToken(args, env);
@@ -84,6 +87,7 @@ export async function runAgentListCommand(
 
     agents = agents.filter((agent) => agent.privateKey.startsWith("agent-"));
     let resolvedSpaceId: string | null = null;
+    let spaceContentKeys: Set<string> | null = null;
     if (spaceInput) {
       const { spaceId, spaceKey } = buildSpaceLookup(spaceInput);
       resolvedSpaceId = spaceId;
@@ -96,11 +100,12 @@ export async function runAgentListCommand(
       });
       serverFailures = [...serverFailures, ...spaceRead.failures];
       const spaceRecord = spaceRead.record;
-      const spaceContentKeys = getSpaceContentKeys(spaceRecord);
+      const currentSpaceContentKeys = getSpaceContentKeys(spaceRecord);
+      spaceContentKeys = currentSpaceContentKeys;
       agents = agents.filter((agent) =>
-        spaceContentKeys.has(agent.privateKey) ||
-        spaceContentKeys.has(agent.publicKey) ||
-        spaceContentKeys.has(agent.id)
+        currentSpaceContentKeys.has(agent.privateKey) ||
+        currentSpaceContentKeys.has(agent.publicKey) ||
+        currentSpaceContentKeys.has(agent.id)
       );
     }
     if (source === "global-cache") {
@@ -118,6 +123,92 @@ export async function runAgentListCommand(
 
     if (idsOnly) {
       output.write(`${agents.map((agent) => agent.id).join("\n")}\n`);
+      return 0;
+    }
+
+    if (wantSafe) {
+      const favoritesMap = await listFavoriteAgentIdsAcrossServers({
+        authToken,
+        fetchImpl,
+        serverUrls,
+      }).catch(() => ({} as Record<string, number>));
+
+      const existingKeys = new Set<string>();
+      for (const agent of agents) {
+        existingKeys.add(agent.privateKey);
+        existingKeys.add(agent.publicKey);
+        existingKeys.add(agent.id);
+      }
+      const extraFavoriteRecords: any[] = [];
+      const hydratedFavoriteAgents: ListedAgent[] = [];
+
+      for (const favKey of Object.keys(favoritesMap)) {
+        if (existingKeys.has(favKey)) continue;
+        try {
+          const favRead = await readLiveDbRecordAfterTombstoneMerge({
+            authToken,
+            dbKey: favKey,
+            fallbackFetchImpl,
+            fetchImpl,
+            serverUrls,
+          });
+          const record = favRead.record;
+          if (!record || (record.type && record.type !== "agent")) continue;
+          const norm = normalizeListedAgent(record);
+          const candidateKeys = [record.dbKey, record.publicKey, record.id]
+            .filter((key): key is string => typeof key === "string" && key.length > 0);
+          if (
+            spaceContentKeys &&
+            !candidateKeys.some((key) => spaceContentKeys?.has(key))
+          ) {
+            continue;
+          }
+          if (norm) {
+            agents.push(norm);
+            hydratedFavoriteAgents.push(norm);
+            existingKeys.add(norm.privateKey);
+            existingKeys.add(norm.publicKey);
+            existingKeys.add(norm.id);
+          } else {
+            extraFavoriteRecords.push(record);
+            for (const key of candidateKeys) existingKeys.add(key);
+          }
+        } catch {
+          // orphan favorite key, skip it.
+        }
+      }
+
+      if (source === "global-cache" && hydratedFavoriteAgents.length > 0) {
+        await decorateAgentsWithPublicStatusAcrossServers({
+          agents: hydratedFavoriteAgents,
+          authToken,
+          fallbackFetchImpl,
+          fetchImpl,
+          serverUrls,
+        });
+      }
+
+      let safeAgents = agents.map((agent) =>
+        toSafeAgentSummary(agent, { favoritesMap, userId })
+      );
+      safeAgents.push(
+        ...extraFavoriteRecords.map((record) =>
+          toSafeAgentSummary(record, { favoritesMap, userId })
+        )
+      );
+      if (publicOnly) {
+        safeAgents = safeAgents.filter((agent) => agent.isPublic);
+      }
+      safeAgents = sortSafeAgentSummaries(safeAgents);
+
+      output.write(JSON.stringify({
+        success: true,
+        userId,
+        ...(resolvedSpaceId ? { spaceId: resolvedSpaceId } : {}),
+        total: safeAgents.length,
+        agents: safeAgents,
+      }, null, 2));
+      output.write("\n");
       return 0;
     }
 
@@ -166,7 +257,8 @@ export async function runAgentListCommand(
           `type=${agent.type ?? "-"}`,
           `model=${agent.model}`,
           `updatedAt=${agent.updatedAt ?? "-"}`,
-          `privateKey=${agent.privateKey}`,
+          // 不输出 privateKey（dbKey 属敏感标识，与 web 端 listAgentsFunc 降权
+          // 对齐；需要完整记录请用 --json）。
           `publicKey=${agent.publicKey}${flagMismatch}`,
           `tools=${agent.tools.join(", ") || "-"}`,
           credentialLine,

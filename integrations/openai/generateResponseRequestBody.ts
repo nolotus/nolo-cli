@@ -4,6 +4,41 @@ import { generatePrompt } from "../../ai/agent/generatePrompt";
 import { getUsageRequestOptions } from "../../ai/llm/usageRequestOptions";
 import { Contexts } from "../../ai/types";
 import { convertMessagesToResponsesInput } from "./responsesHelpers";
+import {
+    selectResponsesConversationState,
+    supportsResponsesConversationState,
+} from "../../agent-runtime/responsesConversationState";
+import type { ResponsesConversationState } from "../../agent-runtime/types";
+
+const DEFAULT_RESPONSES_COMPACTION_THRESHOLD = 200_000;
+
+function resolveResponsesCompactionThreshold(agentConfig: Agent): number {
+  const configured = Number(
+    agentConfig.responsesCompactionThreshold ??
+      agentConfig.responses_compaction_threshold,
+  );
+  return Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : DEFAULT_RESPONSES_COMPACTION_THRESHOLD;
+}
+
+/**
+ * With previous_response_id the upstream already owns the prior response
+ * items. Only the current user turn or the tool outputs after the latest
+ * assistant call belong in the next input array.
+ */
+export function selectResponsesContinuationMessages(msgs: Message[]): Message[] {
+  let lastAssistantIndex = -1;
+  for (let index = msgs.length - 1; index >= 0; index -= 1) {
+    if (msgs[index]?.role === "assistant") {
+      lastAssistantIndex = index;
+      break;
+    }
+  }
+  const candidates =
+    lastAssistantIndex >= 0 ? msgs.slice(lastAssistantIndex + 1) : msgs;
+  return candidates.filter((message) => message.role !== "system");
+}
 
 /**
  * 生成新版 Response API 请求体
@@ -17,13 +52,22 @@ export function generateResponseRequestBody(
   agentConfig: Agent,
   msgs: Message[],
   contexts?: Contexts,
-  prependSystemPrompt = true
+  prependSystemPrompt = true,
+  responsesState?: ResponsesConversationState | null,
 ) {
   const language =
     typeof navigator !== "undefined" && navigator.language
       ? navigator.language
       : "zh-CN";
-  const input = convertMessagesToResponsesInput(msgs);
+  const state =
+    responsesState !== undefined
+      ? responsesState
+      : selectResponsesConversationState(agentConfig.responsesState, agentConfig);
+  const supportsServerState = supportsResponsesConversationState(agentConfig);
+  const stateful = supportsServerState && state && agentConfig.store !== false ? state : null;
+  const input = convertMessagesToResponsesInput(
+    stateful ? selectResponsesContinuationMessages(msgs) : msgs,
+  );
   const body: Record<string, any> = {
     model: agentConfig.model,
     input,
@@ -67,6 +111,35 @@ export function generateResponseRequestBody(
   }
   if (agentConfig.metadata !== undefined) {
     body.metadata = agentConfig.metadata;
+  }
+
+  // Stateful continuation is explicitly enabled by a provider/model-bound
+  // response state. The compaction shape mirrors the official Responses API
+  // contract and is intentionally unreachable from Chat Completions.
+  if (stateful) {
+    body.previous_response_id = stateful.responseId;
+    if (agentConfig.context_management === undefined) {
+      body.context_management = [
+        {
+          type: "compaction",
+          compact_threshold: resolveResponsesCompactionThreshold(agentConfig),
+        },
+      ];
+    }
+  } else if (
+    supportsServerState &&
+    responsesState === undefined &&
+    agentConfig.previous_response_id !== undefined
+  ) {
+    // Keep the old explicit seam backwards-compatible for callers that have
+    // not migrated to the typed dialog state yet.
+    body.previous_response_id = agentConfig.previous_response_id;
+  }
+  if (supportsServerState && agentConfig.store !== undefined) {
+    body.store = agentConfig.store;
+  }
+  if (supportsServerState && agentConfig.context_management !== undefined) {
+    body.context_management = agentConfig.context_management;
   }
 
   return body;

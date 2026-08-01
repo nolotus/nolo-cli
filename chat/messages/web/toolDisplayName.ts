@@ -42,6 +42,7 @@ const TOOL_DISPLAY_NAME_DEFAULTS: Record<string, string> = {
   captureVisualState: "截图检查",
   fetchWebpage: "抓取网页",
   fetch_webpage: "抓取网页",
+  loadSkill: "加载技能",
 };
 
 /** Strip provider prefixes and normalize casing for known tools. */
@@ -262,6 +263,9 @@ export function formatToolRowHeaderSummary(args: {
         asOptionalTrimmedString(toolArgs?.cmd) ??
         asOptionalTrimmedString(toolArgs?.command);
       if (detail) detail = truncateWithEllipsis(detail, 80);
+      break;
+    case "loadSkill":
+      detail = asOptionalTrimmedString(toolArgs?.name);
       break;
     case "listAgents":
     case "readAgent":
@@ -527,6 +531,10 @@ export function buildFallbackActivity(
         detail: path,
         refs: [{ type: "file", path }],
       };
+    }
+    case "loadSkill": {
+      const name = asTrimmedString(args.name);
+      return name ? { title: "加载技能", detail: name } : undefined;
     }
     case "execShell": {
       const command = asTrimmedString(

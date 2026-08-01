@@ -39,6 +39,13 @@ const DEFAULT_LOCAL_TOOLS = new Set([
   "execShell",
   "launchProcess",
   "listProcesses",
+  // Scheduling tools: forking/observing sub-agents is a declared capability
+  // of capable agents, and the blast radius is strictly narrower than
+  // execShell (already default-enabled). Requiring an env allowlist for these
+  // while execShell is open by default inverted the risk model and forced every
+  // new local user to hand-edit .env files before sub-agent tasks worked.
+  "startAgentRun",
+  "controlAgentRun",
 ]);
 
 function parseToolAllowlist(value: string | undefined) {
@@ -154,7 +161,7 @@ export function resolveLocalToolPolicy(args: {
     toolName,
     reason:
       `${toolName} is not enabled for local runtime runs. ` +
-      "Set NOLO_LOCAL_ALLOWED_TOOLS and make sure the agent declares the tool before using it locally.",
+      "The agent must declare the tool in its manifest; in restricted mode (NOLO_LOCAL_TOOL_MODE=restricted) non-default tools also require adding to NOLO_LOCAL_ALLOWED_TOOLS (e.g. NOLO_LOCAL_ALLOWED_TOOLS=someCustomTool) and restarting the session so the env var loads.",
   };
 }
 

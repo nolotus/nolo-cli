@@ -10,6 +10,9 @@ export function dialogMessageRecordToAgentRuntimeMessage(
   return {
     role: record.role,
     content: record.content ?? "",
+    ...(record.contextReference !== undefined
+      ? { context_reference: record.contextReference }
+      : {}),
     ...(typeof record.reasoning_content === "string"
       ? { reasoning_content: record.reasoning_content }
       : {}),

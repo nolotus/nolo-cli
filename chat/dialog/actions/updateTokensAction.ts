@@ -154,7 +154,7 @@ export const updateTokensAction = async (
     agentConfig,
     userId: ownerUserId,
     username: currentUser?.username,
-    cybotId: agentConfig.id,
+    agentId: agentConfig.id,
     dialogId,
     timestamp,
   });

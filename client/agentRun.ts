@@ -42,6 +42,7 @@ import {
   isKnownServerPlatformAgent,
 } from "./agentRunPlatformTools";
 import { isGatewayHttpStatus } from "../core/gatewayHttpStatus";
+import { expandCollapsedPastes } from "../core/collapsedPaste";
 
 import { ulid } from "ulid";
 import { asOptionalTrimmedString } from "../core/optionalString";
@@ -70,6 +71,16 @@ function resolveRequestedRuntimeMode(options: RunAgentTurnOptions) {
   return "auto";
 }
 
+function canResolveCollapsedPasteReference(
+  store: import("../core/collapsedPaste").CollapsedPasteStore,
+  content: import("../agent-runtime/types").AgentRuntimeMessageContent,
+) {
+  const expand = (text: string) => expandCollapsedPastes(text, store) !== text;
+  if (typeof content === "string") return expand(content);
+  if (!Array.isArray(content)) return false;
+  return content.some((part) => part.type === "text" && expand(part.text));
+}
+
 function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
   return createCliLocalRuntimeAdapter({
     env: options.env,
@@ -81,6 +92,9 @@ function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
       : {}),
     ...(options.requestUserChoice
       ? { requestUserChoice: options.requestUserChoice }
+      : {}),
+    ...(options.pastedTextStore?.items.size
+      ? { pastedTextStore: options.pastedTextStore }
       : {}),
   });
 }
@@ -461,15 +475,26 @@ async function runHttpAgentTurn(
     name.trim(),
   );
   const shouldStream = !options.noStream && !options.background;
+  const expandedMessage = options.pastedTextStore?.items.size
+    ? expandCollapsedPastes(options.message, options.pastedTextStore)
+    : options.message;
+  // Server path: pass context blocks as canonical contextBlockScopes request
+  // field instead of prepending to userInput. Prefer the already-scoped
+  // representation; fall back to converting plain extraContextBlocks to
+  // turn-scope blocks (the CLI client doesn't know session vs turn).
+  const serverContextBlockScopes =
+    options.contextBlockScopes && options.contextBlockScopes.length > 0
+      ? options.contextBlockScopes
+      : options.extraContextBlocks && options.extraContextBlocks.length > 0
+        ? options.extraContextBlocks.map((block) => ({
+            content: block,
+            cacheScope: "turn" as const,
+          }))
+        : undefined;
   const buildRequestBody = (stream: boolean) =>
     JSON.stringify({
       agentKey: options.agentKey,
-      userInput: buildUserInputContent(
-        options.extraContextBlocks?.length
-          ? [...options.extraContextBlocks, "", options.message].join("\n")
-          : options.message,
-        options.imageUrls,
-      ),
+      userInput: buildUserInputContent(expandedMessage, options.imageUrls),
       runtimeContext: {
         surface: "cli",
         host: "terminal",
@@ -499,6 +524,7 @@ async function runHttpAgentTurn(
       ...(options.modelOverride
         ? { runtimeOptions: { quickChatModelOverride: options.modelOverride } }
         : {}),
+      ...(serverContextBlockScopes ? { contextBlockScopes: serverContextBlockScopes } : {}),
       stream,
     });
   const postAgentRun = (stream: boolean) =>
@@ -739,6 +765,9 @@ async function runLocalAgentTurnForCli(
     spaceId: options.spaceId,
     runtimeContext,
   });
+  const expandedMessage = options.pastedTextStore?.items.size
+    ? expandCollapsedPastes(options.message, options.pastedTextStore)
+    : options.message;
 
   const workingLabel = `${options.agentName} -> working locally`;
   const turnOutput = createCliTurnOutput({
@@ -752,6 +781,24 @@ async function runLocalAgentTurnForCli(
       adapter,
       agentRef: options.agentKey,
       input: buildUserInputContent(options.message, options.imageUrls),
+      ...(expandedMessage !== options.message
+        ? {
+            persistedInput: buildUserInputContent(
+              expandedMessage,
+              options.imageUrls,
+            ),
+            persistedInputReference: buildUserInputContent(
+              options.message,
+              options.imageUrls,
+            ),
+          }
+        : {}),
+      ...(options.pastedTextStore
+        ? {
+            contextReferenceResolver: (reference: LocalAgentTurnInput["input"]) =>
+              canResolveCollapsedPasteReference(options.pastedTextStore!, reference),
+          }
+        : {}),
       continueDialogId: currentDialogId,
       spaceId: options.spaceId,
       category: options.category,
@@ -760,12 +807,11 @@ async function runLocalAgentTurnForCli(
       background: options.background,
       noStream: options.noStream,
       ...(runtimeContext ? { runtimeContext } : {}),
-      ...(options.extraContextBlocks?.length
-        ? { contextBlocks: options.extraContextBlocks }
-        : {}),
       ...(options.contextBlockScopes?.length
         ? { contextBlockScopes: options.contextBlockScopes }
-        : {}),
+        : options.extraContextBlocks?.length
+          ? { contextBlocks: options.extraContextBlocks }
+          : {}),
       ...(typeof options.timeoutMs === "number"
         ? { timeoutMs: options.timeoutMs }
         : {}),
@@ -818,10 +864,16 @@ async function runLocalAgentTurnForCli(
       options.abortSignal?.aborted
     ) {
       // User-initiated stop: the TUI reports it; nothing failed.
+      // If a tool was still running when the stop landed, localLoop attaches
+      // its name (error.pendingToolName) so the caller can tell the user the
+      // tool may still finish in the background.
+      const pendingToolName = (error as { pendingToolName?: string })
+        ?.pendingToolName;
       return {
         exitCode: 0,
         streamInterrupted: true,
         ...(savedDialogId ? { dialogId: savedDialogId } : {}),
+        ...(pendingToolName ? { pendingToolName } : {}),
       };
     }
     if (settings.reportFailure) {
@@ -860,6 +912,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
             : {}),
           ...(localResult.streamInterrupted
             ? { streamInterrupted: localResult.streamInterrupted }
+            : {}),
+          ...(localResult.pendingToolName
+            ? { pendingToolName: localResult.pendingToolName }
             : {}),
         };
       }

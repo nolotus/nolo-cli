@@ -36,19 +36,12 @@ export function formatElapsedSeconds(totalSeconds: number): string {
 }
 
 /** Soft token chip for the composer status line (no powerline background). */
-export function renderComposerTokenChip(
-  tokens: TurnTokenUsage | undefined,
-  fallbackContextWindow?: number,
-  estimatedContextTokens?: number,
-) {
+function renderComposerTokenChip(tokens: TurnTokenUsage | undefined, fallbackContextWindow?: number) {
   const cw = tokens?.contextWindow ?? fallbackContextWindow;
   if (!cw) {
     return "context: —";
   }
-  // Prefer provider usage; otherwise show the measured system+tools estimate.
-  const used = tokens
-    ? tokens.input + tokens.output
-    : Math.max(0, estimatedContextTokens ?? 0);
+  const used = tokens ? tokens.input + tokens.output : 0;
   const pct = Math.min(100, (used / cw) * 100);
   const pctText = pct > 0 && pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
   return `context: ${pctText}% (${formatTokenCount(used)}/${formatTokenCount(cw)})`;
@@ -98,15 +91,7 @@ export function renderStatusLine(state: TuiState) {
     parts.push(`${branchText}${modifiedText}${untrackedText}`);
   }
 
-  const tokenSegment = themeText(
-    renderComposerTokenChip(
-      state.turnTokens,
-      state.contextWindow,
-      state.estimatedContextTokens,
-    ),
-    "muted",
-    colorEnabled,
-  );
+  const tokenSegment = themeText(renderComposerTokenChip(state.turnTokens, state.contextWindow), "muted", colorEnabled);
   parts.push(tokenSegment);
 
   const runningCount = getProcessRegistry().list().filter(p => p.status === "running").length;

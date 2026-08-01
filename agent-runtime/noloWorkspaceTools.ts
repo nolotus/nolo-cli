@@ -16,7 +16,6 @@ export const NOLO_WORKSPACE_TOOL_NAMES = [
   "readSpace",
   "readDoc",
   "readSkillDoc",
-  "loadSkill",
   "listTables",
   "queryTableRows",
   "cliWhoami",
@@ -26,7 +25,7 @@ export const NOLO_WORKSPACE_TOOL_NAMES = [
 export type NoloWorkspaceToolName = typeof NOLO_WORKSPACE_TOOL_NAMES[number];
 
 export const NOLO_WORKSPACE_TOOL_PROMPT =
-  "Nolo workspace tools are available for Nolo data: use listDialogs/readDialog/queryDialogsBySubjectRef, listAgents/readAgent, listSpaces/readSpace, readDoc/readSkillDoc, loadSkill, listTables/queryTableRows, cliWhoami, and cliDoctor when the user asks to inspect Nolo workspace data. Use deleteDialogs only when the user explicitly asks to delete dialogs; it must preview matches and wait for user confirmation before deleting. Prefer tools over guessing, and combine tool results when the user asks for summaries or analysis.";
+  "Nolo workspace tools are available for Nolo data: use listDialogs/readDialog/queryDialogsBySubjectRef, listAgents/readAgent, listSpaces/readSpace, readDoc/readSkillDoc, listTables/queryTableRows, cliWhoami, and cliDoctor when the user asks to inspect Nolo workspace data. Use deleteDialogs only when the user explicitly asks to delete dialogs; it must preview matches and wait for user confirmation before deleting. Prefer tools over guessing, and combine tool results when the user asks for summaries or analysis.";
 
 const NOLO_WORKSPACE_TOOL_NAME_SET = new Set<string>(NOLO_WORKSPACE_TOOL_NAMES);
 const DIALOG_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
@@ -98,10 +97,6 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
   add("listAgents", "List the current user's agents in the Nolo workspace.", {
     space: stringToolParam("Optional space id or URL."),
     publicOnly: { type: "boolean", description: "Only show public agents." },
-    // 端间差异（LOW-R2-3）：CLI 命令 `nolo agent list` 无 --limit（parseAgentListArgs
-    // 仅支持 --json/--public-only/--ids-only），本地缓存全量列出；web 端
-    // listAgentsFunc 另有 limit（默认 100，最大 500）。如后续对齐需在
-    // parseAgentListArgs / agentListCommands 增加 --limit 透传。
   });
   add("readAgent", "Read one agent config in the Nolo workspace.", {
     agent: stringToolParam("Agent key, id, alias, or URL."),
@@ -118,9 +113,6 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
   add("readSkillDoc", "Read one skill doc in the Nolo workspace.", {
     doc: stringToolParam("Skill doc/page key."),
   }, ["doc"]);
-  add("loadSkill", "Load a Skill by name from the workspace skill directories (.agents/skills/<name>/SKILL.md, then docs/skills/<name>.md) and return its full SKILL.md content inline so you can follow its instructions. Use this instead of readFile when you want to activate a skill. On an unknown name the tool returns a plain text list of available skill names rather than failing.", {
-    name: stringToolParam("Skill name (the name advertised in the skill-discovery layer)."),
-  }, ["name"]);
   add("listTables", "List tables in the current user scope or an optional space scope.", {
     limit: { type: "integer", description: "Maximum tables to return." },
     space: stringToolParam("Optional space id or URL."),
@@ -534,23 +526,13 @@ export function buildNoloWorkspaceCommandArgs(call: { name: string; arguments: s
     case "readDoc": {
       const doc = noloStringArg(args.doc ?? args.docKey ?? args.pageKey ?? args.key);
       if (!doc) throw new Error("readDoc requires doc.");
-      // `doc read` 只接受 --id（pageId）或 --key（完整 dbKey page-<userId>-<pageId>）。
-      return doc.startsWith("page-") ? ["doc", "read", "--key", doc] : ["doc", "read", "--id", doc];
+      return ["doc", "read", doc];
     }
     case "readSkillDoc": {
       const doc = noloStringArg(args.doc ?? args.docKey ?? args.pageKey ?? args.key);
       if (!doc) throw new Error("readSkillDoc requires doc.");
-      // `skill-doc read` 只接受 --id（skillId）或 --key（完整 dbKey page-<userId>-<skillId>）。
-      return doc.startsWith("page-") ? ["skill-doc", "read", "--key", doc] : ["skill-doc", "read", "--id", doc];
+      return ["skill-doc", "read", doc];
     }
-    case "loadSkill":
-      // loadSkill resolves SKILL.md from the agent's workspace cwd and reads
-      // it inline — it cannot be implemented as a `nolo` CLI subcommand because
-      // the CLI subprocess has no knowledge of the agent's bound workspace.
-      // Callers must wire buildLoadSkillExecutor (local fs) into their executor
-      // map; the CLI-bridge path is intentionally unsupported here so a miswired
-      // host fails loudly instead of silently shelling out.
-      throw new Error("loadSkill is a local-fs tool and has no CLI mapping; wire buildLoadSkillExecutor instead.");
     case "listTables": {
       const cliArgs = ["table", "list"];
       const limit = noloPositiveIntegerString(args.limit);
@@ -663,81 +645,9 @@ export function buildNoloWorkspaceCliToolExecutors(args: {
     metadata?: Record<string, unknown>;
   }>> = {};
   for (const toolName of NOLO_WORKSPACE_TOOL_NAMES) {
-    // loadSkill is a local-fs tool (resolves SKILL.md from the agent's bound
-    // workspace and reads it inline). It has no `nolo` CLI subcommand, so the
-    // CLI-bridge executor must not register it — hosts wire
-    // buildLoadSkillExecutor separately. Registering it here would route the
-    // call into buildNoloWorkspaceCommandArgs, which throws "no CLI mapping".
-    if (toolName === "loadSkill") continue;
     executors[toolName] = (call) => runNoloWorkspaceCliTool(call, args);
   }
   return executors;
-}
-
-/**
- * Build the local executor for the `loadSkill` tool. Resolves `<name>` against
- * the same skill scan sources as discovery (`.agents/skills/<name>/SKILL.md`
- * → `docs/skills/<name>.md`) via `resolveSkillByName`, reads the file inline,
- * and returns the contract content:
- *   `Skill "<name>" loaded inline. Follow its instructions.\n\n<SKILL.md 全文>`
- *
- * On an unknown name the contract forbids throwing: this returns a plain text
- * tool result listing the discovered skill names (reusing `discoverSkills` so
- * there is a single scan source of truth). On a read failure it also returns
- * a plain text result rather than throwing, so a malformed SKILL.md can never
- * crash the agent loop.
- *
- * Hosts (CLI localRuntimeAdapter, desktop turn service) spread this into their
- * executor map alongside `buildNoloWorkspaceCliToolExecutors` — that wiring
- * lives outside this package per the agent-runtime boundary.
- */
-export function buildLoadSkillExecutor(args: { cwd: string }) {
-  return async (call: { name: string; arguments: string }): Promise<{
-    content: string;
-    metadata?: Record<string, unknown>;
-  }> => {
-    const parsed = parseNoloWorkspaceToolArguments(call.arguments);
-    const name = noloStringArg(parsed.name ?? parsed.skillName ?? parsed.skill);
-    if (!name) {
-      return {
-        content: await formatUnknownSkillMessage(args.cwd, "(no name provided)"),
-        metadata: { loadSkill: true, resolved: false },
-      };
-    }
-    const { resolveSkillByName } = await import("./skillDiscovery");
-    const resolved = resolveSkillByName(args.cwd, name);
-    if (!resolved) {
-      return {
-        content: await formatUnknownSkillMessage(args.cwd, name),
-        metadata: { loadSkill: true, resolved: false, name, requestedName: name },
-      };
-    }
-    try {
-      const { readFileSync } = await import("node:fs");
-      const body = readFileSync(resolved, "utf8");
-      return {
-        content: `Skill "${name}" loaded inline. Follow its instructions.\n\n${body}`,
-        metadata: { loadSkill: true, resolved: true, name, requestedName: name, path: resolved },
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: `Skill "${name}" could not be read: ${message}`,
-        metadata: { loadSkill: true, resolved: true, name, requestedName: name, path: resolved, readError: message },
-      };
-    }
-  };
-}
-
-async function formatUnknownSkillMessage(cwd: string, requestedName: string): Promise<string> {
-  const { discoverSkills } = await import("./skillDiscovery");
-  let available: string[] = [];
-  try {
-    available = discoverSkills(cwd).map((s) => s.name);
-  } catch { /* best-effort, mirror buildSkillDiscoveryContextBlock */ }
-  const header = `Skill "${requestedName}" not found in this workspace's skill directories (.agents/skills/<name>/SKILL.md, docs/skills/<name>.md).`;
-  if (available.length === 0) return `${header}\n\nNo skills were discovered in this workspace.`;
-  return `${header}\n\nAvailable skills: ${available.join(", ")}`;
 }
 
 const nodeSpawnFallback: NoloSpawn = (options) => {

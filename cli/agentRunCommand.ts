@@ -13,7 +13,6 @@ import {
   buildModelLayerOverride,
   type ModelLayerOverride,
 } from "../agent-runtime/modelLayerOverride";
-import type { ContextBlockScope } from "../agent-runtime/contextBlockScope";
 import { buildSkillDiscoveryContextBlock } from "../agent-runtime/skillDiscovery";
 import { CliProviderQuotaError } from "../ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
@@ -427,7 +426,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
 
   // Build cache-friendly context blocks: AGENTS.md (session-scope) + skill
-  // content (turn-scope). Placed in the system message via contextBlockScopes
+ // content (turn-scope). Placed in the system message via extraContextBlocks
  // instead of prepending to the user message, preserving LLM prefix-cache.
   const cliCwd = parsed.cwd ?? process.cwd();
   const extraContextBlocks: string[] = [];
@@ -527,6 +526,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // Scope assignment mirrors desktopAgentRuntimeTurnService.ts:1272:
   //   AGENTS.md / memory-use-guidance = session (stable prefix for cache hits)
   //   skill content / skill discovery / memory-overlay = turn (dynamic suffix)
+  type ContextBlockScope = { content: string; cacheScope: "session" | "turn" };
   const contextBlockScopes: ContextBlockScope[] = [];
   // session-scope: AGENTS.md (first N entries of extraContextBlocks are
   // AGENTS.md content pushed before skill blocks — find it by marker).
@@ -600,11 +600,8 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     traceTools: parsed.traceTools,
     ...(parsed.eventsMode ? { eventsMode: parsed.eventsMode } : {}),
     ...(parsed.taskEvidence ? { taskEvidence: parsed.taskEvidence } : {}),
-    ...(contextBlockScopes.length > 0
-      ? { contextBlockScopes }
-      : extraContextBlocks.length > 0
-        ? { extraContextBlocks }
-        : {}),
+    ...(extraContextBlocks.length > 0 ? { extraContextBlocks } : {}),
+    ...(contextBlockScopes.length > 0 ? { contextBlockScopes } : {}),
   });
 
   let result: RunAgentTurnResult = await raceWithWatchdog(
@@ -625,28 +622,14 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     output.write(
       `[nolo] quota exhausted on ${agentKey}, falling back to ${fallbackAgentKey}\n`
     );
-    // First failure may already have saveTurn()'d a dialog — continue THAT
-    // dialog so the fallback retry stays in one conversation instead of
-    // forking a second dialog and looking like amnesia.
-    const fallbackResult: RunAgentTurnResult = await raceWithWatchdog(
-      runner({
-        ...buildRunOptions(fallbackAgentKey),
-        ...(result.dialogId ? { continueDialogId: result.dialogId } : {}),
-      }),
-    );
+    const fallbackResult: RunAgentTurnResult = await raceWithWatchdog(runner(buildRunOptions(fallbackAgentKey)));
     clearWatchdogs();
     if (fallbackResult.exitCode === 0) {
       result = fallbackResult;
     } else {
       // Fallback also failed: report the fallback failure normally and keep
-      // the fallback's error for downstream surfacing. Prefer whichever
-      // dialogId we have so the caller can still --continue.
-      result = {
-        ...fallbackResult,
-        ...(fallbackResult.dialogId || result.dialogId
-          ? { dialogId: fallbackResult.dialogId ?? result.dialogId }
-          : {}),
-      };
+      // the fallback's error for downstream surfacing.
+      result = fallbackResult;
       output.write(
         `[nolo] fallback to ${fallbackAgentKey} also failed: ${
           fallbackResult.localError instanceof Error
@@ -738,23 +721,4 @@ export function isQuotaExhaustedError(error: unknown): boolean {
   const maybeStatusCode = (error as { statusCode?: unknown }).statusCode;
   if (typeof maybeStatusCode === "number" && maybeStatusCode === 429) return true;
   return false;
-}
-
-const BALANCE_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
-  /UPSTREAM_402/i,
-  /Insufficient Balance/i,
-  /insufficient\s+balance/i,
-  /余额不足/,
-];
-
-/** Balance/402 — distinct from quota/429; UX should say "top up", not "switch agent". */
-export function isBalanceExhaustedError(error: unknown): boolean {
-  if (!error) return false;
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : String((error as { message?: unknown })?.message ?? "");
-  return BALANCE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }

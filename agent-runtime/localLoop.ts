@@ -1,4 +1,5 @@
 import { clipCompactText } from "../core/clipCompactText";
+import { compactWhitespace } from "../core/compactWhitespace";
 import { toErrorMessage } from "../core/errorMessage";
 
 import type {
@@ -21,27 +22,11 @@ import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
 import { buildRuntimeGuidanceBlocks } from "./runtimeGuidance";
 import { canonicalizeToolNames } from "./toolNameAliases";
 import { buildCurrentTimeBlock } from "./currentTimeContext";
-import type { ContextBlockScope } from "./contextBlockScope";
-import { normalizeContextBlockScopes } from "./contextBlockScope";
 
 export type LocalAgentTurnInput = {
   adapter: AgentRuntimeHostAdapter;
   agentRef: string;
   input: AgentRuntimeMessageContent;
-  /**
-   * Optional expanded input used only when persisting a runtime reference
-   * (for example a TUI paste). Provider messages keep the compact reference;
-   * the durable dialog keeps the complete user input.
-   */
-  persistedInput?: AgentRuntimeMessageContent;
-  /** Compact provider-visible form for the durable persistedInput. */
-  persistedInputReference?: AgentRuntimeMessageContent;
-  /**
-   * Returns true only when the current host can resolve a persisted context
-   * reference. Unresolvable references fall back to durable content so a
-   * resumed dialog never sends a dead pointer to a model.
-   */
-  contextReferenceResolver?: (reference: AgentRuntimeMessageContent) => boolean;
   continueDialogId?: string;
   spaceId?: string;
   /**
@@ -55,10 +40,9 @@ export type LocalAgentTurnInput = {
    * splits the system message into a stable prefix (session-scope blocks +
    * agent prompt) and a dynamic suffix (turn-scope blocks), enabling
    * Claude cache_control breakpoints and DeepSeek auto prefix-cache hits.
-   * Falls back to `contextBlocks` by converting each legacy block to a
-   * turn-scope block once.
+   * Falls back to `contextBlocks` (plain strings, no scope split).
    */
-  contextBlockScopes?: ContextBlockScope[];
+  contextBlockScopes?: Array<{ content: string; cacheScope: "session" | "turn" }>;
   category?: string;
   inheritedFromDialogKey?: string;
   parentDialogId?: string;
@@ -108,24 +92,8 @@ export type LocalAgentToolEvent = {
   metadata?: Record<string, unknown>;
 };
 
-export type LocalAgentContextMetrics = {
-  messageCount: number;
-  contentChars: number;
-  toolMessageCount: number;
-  rawToolContentChars: number;
-  projectedToolContentChars: number;
-  truncatedToolResults: number;
-  stableContextChars: number;
-  dynamicContextChars: number;
-};
-
 export type LocalAgentLoopEvent =
-  | {
-      kind: "llm-start";
-      round: number;
-      atMs: number;
-      context?: LocalAgentContextMetrics;
-    }
+  | { kind: "llm-start"; round: number; atMs: number }
   | {
       kind: "llm-end";
       round: number;
@@ -323,47 +291,6 @@ function throwIfAborted(input: LocalAgentTurnInput) {
   if (input.abortSignal?.aborted) throw buildAbortedError();
 }
 
-/**
- * 与 runCompleteWithTimeout 里的 abort racer 同构：signal 触发即抛
- * LOCAL_TURN_ABORTED，不等被 race 的 promise 结束。用于工具执行——
- * executeTool 大多不接收 abortSignal，abort 后必须放弃等待、把控制权
- * 交还给上层（execShell 自己消费 signal，会真被 SIGTERM/SIGKILL 掉）。
- *
- * 被放弃的 promise 不取消（取消是各工具自己的契约），只挂空 catch 防
- * unhandled rejection；pendingToolName 透出「中止时 <toolName> 仍在进行，
- * 它可能已经完成」。
- */
-async function raceWithAbort<T>(
-  input: LocalAgentTurnInput,
-  promise: Promise<T>,
-  pendingToolName?: string,
-): Promise<T> {
-  const signal = input.abortSignal;
-  if (!signal) return promise;
-  let abortListener: (() => void) | undefined;
-  const abortPromise = new Promise<never>((_resolve, reject) => {
-    abortListener = () => {
-      const error = buildAbortedError() as Error & { pendingToolName?: string };
-      if (pendingToolName) error.pendingToolName = pendingToolName;
-      promise.catch(() => {});
-      reject(error);
-    };
-    if (signal.aborted) {
-      abortListener();
-      return;
-    }
-    signal.addEventListener("abort", abortListener, { once: true });
-  });
-  try {
-    return await Promise.race([promise, abortPromise]);
-  } finally {
-    // 与 runCompleteWithTimeout 一致：必须清 listener，否则多轮 turn 会在
-    // 同一个 signal 上堆积几十个 listener（Node 到 11 个即打
-    // MaxListenersExceededWarning）。
-    if (signal && abortListener) signal.removeEventListener("abort", abortListener);
-  }
-}
-
 function resolveLlmRequestTimeoutMs(input: LocalAgentTurnInput): number | undefined {
   const raw = input.llmRequestTimeoutMs ?? input.timeoutMs;
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
@@ -378,16 +305,10 @@ async function runCompleteWithTimeout(args: {
   timeoutMs?: number;
   round: number;
   input: LocalAgentTurnInput;
-  context?: LocalAgentContextMetrics;
 }): Promise<AgentRuntimeResult> {
-  const { provider, messages, options, timeoutMs, round, input, context } = args;
+  const { provider, messages, options, timeoutMs, round, input } = args;
 
-  emitLoopEvent(input, {
-    kind: "llm-start",
-    round,
-    atMs: Date.now(),
-    ...(context ? { context } : {}),
-  });
+  emitLoopEvent(input, { kind: "llm-start", round, atMs: Date.now() });
   const complete = provider.complete(messages, options);
   let ok = false;
 
@@ -598,289 +519,74 @@ function buildActionGate(args: {
 const MAX_HISTORICAL_TOOL_CONTENT_CHARS = 1600;
 // Aligns with server read_file upstream compaction so multi-round tool loops do
 // not resend huge tool payloads on every LLM call within the same turn.
-// The in-turn budget is now selected by tool type below. Keep the historical
-// budget lower because old tool results are less likely to be immediately
-// relevant and are still recoverable from the persisted dialog.
+// Reduced from 6000→4000: benchmark shows same cache hit ratio (97%+) with
+// 20% fewer input tokens per round.
 const MAX_IN_TURN_TOOL_CONTENT_CHARS = 4000;
 
-type ToolOutputProjectionProfile = {
-  maxChars: number;
-  headRatio: number;
-};
-
-const DEFAULT_TOOL_OUTPUT_PROFILE: ToolOutputProjectionProfile = {
-  maxChars: MAX_IN_TURN_TOOL_CONTENT_CHARS,
-  headRatio: 0.5,
-};
-
-const TOOL_OUTPUT_PROFILES: Record<string, ToolOutputProjectionProfile> = {
-  readFile: { maxChars: 4800, headRatio: 0.68 },
-  read_file: { maxChars: 4800, headRatio: 0.68 },
-  readWorkspaceFile: { maxChars: 4800, headRatio: 0.68 },
-  searchFiles: { maxChars: 3600, headRatio: 0.78 },
-  search_files: { maxChars: 3600, headRatio: 0.78 },
-  listFiles: { maxChars: 2800, headRatio: 0.85 },
-  globFiles: { maxChars: 2800, headRatio: 0.85 },
-  execShell: { maxChars: 4000, headRatio: 0.35 },
-  runCommand: { maxChars: 4000, headRatio: 0.35 },
-  launchProcess: { maxChars: 2800, headRatio: 0.35 },
-  editFile: { maxChars: 2800, headRatio: 0.62 },
-  writeFile: { maxChars: 2400, headRatio: 0.62 },
-  readPastedText: { maxChars: 4800, headRatio: 0.5 },
-};
-
-const TOOL_METADATA_KEYS = [
-  "path",
-  "query",
-  "effectivePattern",
-  "startLine",
-  "endLine",
-  "totalLines",
-  "totalBytes",
-  "bytes",
-  "totalChars",
-  "count",
-  "matchCount",
-  "matchedFiles",
-  "truncated",
-  "limitedByMaxResults",
-  "limitedByMaxDepth",
-  "visitedEntries",
-  "maxResults",
-  "exitCode",
-  "status",
-  "timedOut",
-  "aborted",
-  "replacements",
-  "code",
-  "error",
-  "message",
-  "pasteId",
-  "source",
-] as const;
-
-function resolveToolOutputProfile(toolName?: string): ToolOutputProjectionProfile {
-  return (toolName ? TOOL_OUTPUT_PROFILES[toolName] : undefined) ?? DEFAULT_TOOL_OUTPUT_PROFILE;
-}
-
-function contentCharCount(content: AgentRuntimeMessageContent): number {
-  if (typeof content === "string") return content.length;
-  if (!Array.isArray(content)) return 0;
-  return content.reduce((total, part) => {
-    if (part?.type === "text") return total + part.text.length;
-    if (part?.type === "image_url") return total + part.image_url.url.length;
-    return total;
-  }, 0);
-}
-
-function compactToolMetadata(
-  metadata: Record<string, unknown> | undefined,
-): string {
-  if (!metadata) return "";
-  const selected: Record<string, unknown> = {};
-  for (const key of TOOL_METADATA_KEYS) {
-    const value = metadata[key];
-    if (value === undefined) continue;
-    if (typeof value === "string") {
-      selected[key] = clipCompactText(value, 240);
-      continue;
-    }
-    if (Array.isArray(value)) {
-      selected[key] = value.slice(0, 20).map((item) =>
-        typeof item === "string"
-          ? clipCompactText(item, 180)
-          : clipCompactText(JSON.stringify(item), 180),
-      );
-      continue;
-    }
-    selected[key] = value;
-  }
-  return Object.keys(selected).length > 0
-    ? clipCompactText(JSON.stringify(selected), 1200)
-    : "";
-}
-
-function clipToolText(
-  content: string,
-  maxChars: number,
-  headRatio: number,
-): string {
-  const normalized = content.replace(/\r\n/g, "\n").trim();
-  if (normalized.length <= maxChars) return normalized;
-  const marker = "\n\n[... tool output middle omitted; head/tail preserved ...]\n\n";
-  if (maxChars <= marker.length + 2) return normalized.slice(0, maxChars);
-  const available = maxChars - marker.length;
-  const headChars = Math.max(1, Math.floor(available * headRatio));
-  const tailChars = Math.max(1, available - headChars);
-  return `${normalized.slice(0, headChars)}${marker}${normalized.slice(-tailChars)}`;
-}
-
-function projectToolContentForProvider(args: {
-  content: AgentRuntimeMessageContent;
-  toolName?: string;
-  metadata?: Record<string, unknown>;
-  maxChars: number;
-  label: string;
-}): AgentRuntimeMessageContent {
-  const content = args.content;
-  if (typeof content !== "string") return content;
-  const metadataText = compactToolMetadata(args.metadata);
-  // Some tool formatters already append the full metadata JSON to the durable
-  // content. Remove that provider-side duplicate and re-add the bounded
-  // projection below so metadata cannot disappear in the clipped middle/tail.
-  const embeddedMetadataIndex = metadataText
-    ? content.indexOf("\n\n[tool metadata]\n")
-    : -1;
-  const contentForProjection = embeddedMetadataIndex >= 0
-    ? content.slice(0, embeddedMetadataIndex)
-    : content;
-  const metadataSuffix = metadataText
-    ? `\n\n[tool metadata]\n${metadataText}`
-    : "";
-  // Keep already-bounded durable tool messages byte-for-byte stable. This is
-  // important for short read/search results whose metadata is already part of
-  // the canonical message; projection is only needed once the provider bound
-  // would actually be exceeded.
-  if (embeddedMetadataIndex >= 0 && content.length <= args.maxChars) {
-    return content;
-  }
-  const headRatio = resolveToolOutputProfile(args.toolName).headRatio;
-  const diagnostic = (clippedLength: number) =>
-    `[${args.label}; originalChars=${content.length}; omittedChars=${Math.max(
-      0,
-      content.length - clippedLength,
-    )}]`;
-  const suffix = (clippedLength: number) =>
-    [diagnostic(clippedLength), metadataSuffix.trimStart()]
-      .filter(Boolean)
-      .join("\n\n");
-  const initialBudget = Math.max(
-    1,
-    args.maxChars - suffix(contentForProjection.length).length - 2,
-  );
-  let clipped = clipToolText(contentForProjection, initialBudget, headRatio);
-  const wasClipped = clipped.length < contentForProjection.trim().length;
-  const needsProjection = wasClipped || Boolean(metadataSuffix) || embeddedMetadataIndex >= 0;
-  if (!needsProjection) return args.content;
-
-  let projected = wasClipped || metadataSuffix
-    ? `${clipped}\n\n${suffix(clipped.length)}`
-    : clipped;
-  // The first budget is conservative, but the omitted-char count changes the
-  // diagnostic length. Tighten once more so maxChars is a real provider bound,
-  // including metadata and the truncation marker.
-  if (projected.length > args.maxChars) {
-    const boundedBudget = Math.max(
-      1,
-      args.maxChars - suffix(clipped.length).length - 2,
-    );
-    clipped = clipToolText(contentForProjection, boundedBudget, headRatio);
-    projected = `${clipped}\n\n${suffix(clipped.length)}`;
-  }
-  return projected.length <= args.maxChars
-    ? projected
-    : projected.slice(0, args.maxChars);
-}
-
-type PreparedProviderMessages = {
-  messages: AgentRuntimeChatMessage[];
-  metrics: LocalAgentContextMetrics;
-};
-
-function summarizeHistoricalToolContent(
+function summarizeToolContentForProvider(
   content: AgentRuntimeMessageContent,
-  toolName?: string,
-  metadata?: Record<string, unknown>,
+  maxChars: number,
+  label: string,
 ): AgentRuntimeMessageContent {
-  const profile = resolveToolOutputProfile(toolName);
-  return projectToolContentForProvider({
+  if (typeof content !== "string") return content;
+  if (content.length <= maxChars) return content;
+
+  const compact = compactWhitespace(content);
+  const clipped = compact.length > maxChars
+    ? compact.slice(0, maxChars - 160)
+    : compact;
+  return [
+    `[${label}]`,
+    `originalChars=${content.length}`,
+    clipped,
+  ].join("\n");
+}
+
+function summarizeHistoricalToolContent(content: AgentRuntimeMessageContent): AgentRuntimeMessageContent {
+  return summarizeToolContentForProvider(
     content,
-    toolName,
-    metadata,
-    maxChars: Math.min(profile.maxChars, MAX_HISTORICAL_TOOL_CONTENT_CHARS),
-    label: "historical tool result truncated for the next turn",
-  });
+    MAX_HISTORICAL_TOOL_CONTENT_CHARS,
+    "historical tool result truncated for the next turn",
+  );
 }
 
 function prepareMessagesForProviderCall(
   messages: AgentRuntimeChatMessage[],
-): PreparedProviderMessages {
+): AgentRuntimeChatMessage[] {
   // 发 provider 前的唯一咽喉点：先修掉 tool_calls/tool 配对违规（孤儿 tool、悬空 tool_calls），
   // 再走原 map。脏历史不能原样发给 OpenAI 兼容接口。
   const paired = sanitizeToolCallPairing(messages);
-  let toolMessageCount = 0;
-  let rawToolContentChars = 0;
-  let projectedToolContentChars = 0;
-  let truncatedToolResults = 0;
-  const projected = paired.map((message) => {
-    const { context_reference: _contextReference, ...providerMessage } = message;
+  return paired.map((message) => {
     const sanitizedContent =
-      providerMessage.content == null
+      message.content == null
         ? ""
-        : typeof providerMessage.content === "string"
-          ? providerMessage.content
-          : providerMessage.content;
+        : typeof message.content === "string"
+          ? message.content
+          : message.content;
 
-    if (providerMessage.role !== "tool") {
+    if (message.role !== "tool") {
       return {
-        ...providerMessage,
+        ...message,
         content: sanitizedContent,
       };
     }
-    toolMessageCount += 1;
-    rawToolContentChars += contentCharCount(sanitizedContent);
-    const profile = resolveToolOutputProfile(providerMessage.toolName);
-    const projectedContent = projectToolContentForProvider({
-      content: sanitizedContent,
-      toolName: providerMessage.toolName,
-      metadata: providerMessage.tool_result_metadata,
-      maxChars: profile.maxChars,
-      label: "in-turn tool result truncated/projected before next provider call",
-    });
-    projectedToolContentChars += contentCharCount(projectedContent);
-    if (contentCharCount(projectedContent) < contentCharCount(sanitizedContent)) {
-      truncatedToolResults += 1;
-    }
     return {
-      ...providerMessage,
-      content: projectedContent,
+      ...message,
+      content: summarizeToolContentForProvider(
+        sanitizedContent,
+        MAX_IN_TURN_TOOL_CONTENT_CHARS,
+        "in-turn tool result truncated before next provider call",
+      ),
     };
   });
-  return {
-    messages: projected,
-    metrics: {
-      messageCount: projected.length,
-      contentChars: projected.reduce((total, message) => total + contentCharCount(message.content), 0),
-      toolMessageCount,
-      rawToolContentChars,
-      projectedToolContentChars,
-      truncatedToolResults,
-      stableContextChars: 0,
-      dynamicContextChars: 0,
-    },
-  };
 }
 
-function prepareHistoryForNextTurn(
-  history: AgentRuntimeChatMessage[],
-  contextReferenceResolver?: (reference: AgentRuntimeMessageContent) => boolean,
-): AgentRuntimeChatMessage[] {
+function prepareHistoryForNextTurn(history: AgentRuntimeChatMessage[]): AgentRuntimeChatMessage[] {
   return history.map((message) => {
-    if (
-      message.role === "user" &&
-      message.context_reference !== undefined &&
-      contextReferenceResolver?.(message.context_reference)
-    ) {
-      return { ...message, content: message.context_reference };
-    }
     if (message.role !== "tool") return message;
     return {
       ...message,
-      content: summarizeHistoricalToolContent(
-        message.content,
-        message.toolName,
-        message.tool_result_metadata,
-      ),
+      content: summarizeHistoricalToolContent(message.content),
     };
   });
 }
@@ -919,31 +625,20 @@ function filterImagePartsFromMessages(
   }));
 }
 
-type BuiltMessages = {
-  messages: AgentRuntimeChatMessage[];
-  stableContextChars: number;
-  dynamicContextChars: number;
-};
-
 function buildMessages(args: {
   prompt?: string;
   contextBlocks?: string[];
-  contextBlockScopes?: ContextBlockScope[];
+  contextBlockScopes?: Array<{ content: string; cacheScope: "session" | "turn" }>;
   history: AgentRuntimeChatMessage[];
   input: AgentRuntimeMessageContent;
-  contextReferenceResolver?: (reference: AgentRuntimeMessageContent) => boolean;
-}): BuiltMessages {
+}): AgentRuntimeChatMessage[] {
   // When contextBlockScopes is provided, split into stable (session) + dynamic (turn).
   // The agent prompt is always part of the stable prefix.
   if (args.contextBlockScopes?.length) {
     const blocks = args.contextBlockScopes.filter((b) => b.content.trim());
     const stableParts = [args.prompt?.trim(), ...blocks.filter((b) => b.cacheScope === "session").map((b) => b.content)]
       .filter(Boolean);
-    const dynamicParts = blocks
-      .filter((b) => b.cacheScope === "turn")
-      .map((b) => b.content)
-      .map((block) => block.trim())
-      .filter(Boolean);
+    const dynamicParts = blocks.filter((b) => b.cacheScope === "turn").map((b) => b.content).filter(Boolean);
     const stableContent = stableParts.join("\n\n");
     const dynamicContent = dynamicParts.join("\n\n");
     // If there are dynamic blocks, we need to split the system message.
@@ -954,17 +649,13 @@ function buildMessages(args: {
     const systemContent = dynamicContent
       ? `${stableContent}\n\n${dynamicContent}`
       : stableContent;
-    return {
-      messages: [
-        ...(systemContent
-          ? [{ role: "system" as const, content: systemContent }]
-          : []),
-        ...prepareHistoryForNextTurn(args.history, args.contextReferenceResolver),
-        { role: "user" as const, content: args.input },
-      ],
-      stableContextChars: stableContent.length,
-      dynamicContextChars: dynamicContent.length,
-    };
+    return [
+      ...(systemContent
+        ? [{ role: "system" as const, content: systemContent }]
+        : []),
+      ...prepareHistoryForNextTurn(args.history),
+      { role: "user" as const, content: args.input },
+    ];
   }
 
   // Fallback: plain contextBlocks (no scope split)
@@ -974,17 +665,13 @@ function buildMessages(args: {
   const systemContent = [args.prompt?.trim(), ...blocks]
     .filter(Boolean)
     .join("\n\n");
-  return {
-    messages: [
-      ...(systemContent
-        ? [{ role: "system" as const, content: systemContent }]
-        : []),
-      ...prepareHistoryForNextTurn(args.history, args.contextReferenceResolver),
-      { role: "user" as const, content: args.input },
-    ],
-    stableContextChars: (args.prompt?.trim() ?? "").length,
-    dynamicContextChars: blocks.join("\n\n").length,
-  };
+  return [
+    ...(systemContent
+      ? [{ role: "system" as const, content: systemContent }]
+      : []),
+    ...prepareHistoryForNextTurn(args.history),
+    { role: "user" as const, content: args.input },
+  ];
 }
 
 function mergeTurnUsage(
@@ -1021,84 +708,6 @@ function extractUserInputText(content: AgentRuntimeMessageContent): string {
     .trim();
 }
 
-function attachDialogIdToError(error: unknown, dialogId: string | undefined) {
-  if (!dialogId) return;
-  if (typeof error === "object" && error !== null) {
-    (error as { dialogId?: string }).dialogId = dialogId;
-  }
-}
-
-/**
- * Persist a failed/aborted turn so TUI can keep `state.dialogId` and the next
- * user message continues the same conversation instead of opening a fresh one.
- * If saveTurn itself fails, fall back to continueDialogId when present.
- */
-async function persistFailedLocalTurn(args: {
-  adapter: AgentRuntimeHostAdapter;
-  agentKey: string;
-  messages: AgentRuntimeChatMessage[];
-  error: unknown;
-  model?: string;
-  toolCallCount?: number;
-  partialContent?: string;
-  input: LocalAgentTurnInput;
-}): Promise<string | undefined> {
-  const errorMessage = toErrorMessage(args.error);
-  try {
-    const saved = await args.adapter.saveTurn({
-      agentKey: args.agentKey,
-      messages: args.messages,
-      result: {
-        content:
-          args.partialContent ||
-          `[nolo] Agent run failed: ${errorMessage}`,
-        model: args.model ?? "unknown",
-        toolCallCount: args.toolCallCount ?? 0,
-        error: true,
-        errorMessage,
-      },
-      ...(args.input.runtimeContext
-        ? { runtimeContext: args.input.runtimeContext }
-        : {}),
-      ...(args.input.continueDialogId
-        ? { continueDialogId: args.input.continueDialogId }
-        : {}),
-      ...(args.input.spaceId ? { spaceId: args.input.spaceId } : {}),
-      ...(args.input.category ? { category: args.input.category } : {}),
-      ...(args.input.inheritedFromDialogKey
-        ? { inheritedFromDialogKey: args.input.inheritedFromDialogKey }
-        : {}),
-      ...(args.input.parentDialogId
-        ? { parentDialogId: args.input.parentDialogId }
-        : {}),
-    });
-    return saved?.dialogId;
-  } catch {
-    return args.input.continueDialogId;
-  }
-}
-function applyPersistedTurnInput(
-  messages: AgentRuntimeChatMessage[],
-  persistedInput: AgentRuntimeMessageContent | undefined,
-  persistedInputReference: AgentRuntimeMessageContent | undefined,
-): AgentRuntimeChatMessage[] {
-  if (persistedInput === undefined && persistedInputReference === undefined) {
-    return messages;
-  }
-  let replaced = false;
-  return messages.map((message) => {
-    if (replaced || message.role !== "user") return message;
-    replaced = true;
-    return {
-      ...message,
-      ...(persistedInput !== undefined ? { content: persistedInput } : {}),
-      ...(persistedInputReference !== undefined
-        ? { context_reference: persistedInputReference }
-        : {}),
-    };
-  });
-}
-
 export async function runLocalAgentTurn(
   input: LocalAgentTurnInput
 ): Promise<LocalAgentTurnResult> {
@@ -1113,25 +722,9 @@ export async function runLocalAgentTurn(
     throw error;
   }
 
-  let history: AgentRuntimeChatMessage[] = [];
-  try {
-    history = input.continueDialogId
-      ? await input.adapter.loadDialogHistory(input.continueDialogId)
-      : [];
-  } catch (error) {
-    // History load failed mid-continue: still park the user's message on the
-    // existing dialog so the next "继续" keeps the same pointer.
-    const dialogId = await persistFailedLocalTurn({
-      adapter: input.adapter,
-      agentKey: agentConfig.key,
-      messages: [{ role: "user", content: input.input }],
-      error,
-      model: agentConfig.model,
-      input,
-    });
-    attachDialogIdToError(error, dialogId);
-    throw error;
-  }
+  const history = input.continueDialogId
+    ? await input.adapter.loadDialogHistory(input.continueDialogId)
+    : [];
   // Identity block (名称/ID/模型/回复语言) — session-scope so it sits in the
   // stable prefix. Built from the resolved agentConfig so subscribed/custom
   // agents get their model name injected, matching the web and server paths
@@ -1147,7 +740,7 @@ export async function runLocalAgentTurn(
   // 利于 prefix cache），current-time 块作为 turn-scope（动态后缀）。
   const agentTools = canonicalizeToolNames(agentConfig.toolNames ?? []);
   const guidanceBlocks = buildRuntimeGuidanceBlocks(agentTools);
-  const guidanceScopes: ContextBlockScope[] =
+  const guidanceScopes: Array<{ content: string; cacheScope: "session" | "turn" }> =
     [
       guidanceBlocks.startupProtocol,
       guidanceBlocks.contextLayerContract,
@@ -1157,40 +750,32 @@ export async function runLocalAgentTurn(
       .map((content) => content.trim())
       .filter((content): content is string => content.length > 0)
       .map((content) => ({ content, cacheScope: "session" as const }));
-  const currentTimeScope: ContextBlockScope[] = [
+  const currentTimeScope: Array<{ content: string; cacheScope: "session" | "turn" }> = [
     { content: buildCurrentTimeBlock(new Date(), undefined), cacheScope: "turn" as const },
   ];
-  // Built-in scopes (identity/guidance/time) always come first; the caller's
-  // normalized scopes follow. normalizeContextBlockScopes reconciles
-  // input.contextBlockScopes (authoritative) with input.contextBlocks
-  // (legacy plain strings → turn-scope) so a caller that only supplies
-  // contextBlocks still gets its blocks included exactly once.
-  const callerScopes = normalizeContextBlockScopes(
-    input.contextBlocks,
-    input.contextBlockScopes,
-  );
-  const mergedContextBlockScopes: ContextBlockScope[] = [
+  const mergedContextBlockScopes = [
     { content: identityBlock, cacheScope: "session" as const },
     ...guidanceScopes,
     ...currentTimeScope,
-    ...callerScopes,
+    ...(input.contextBlockScopes ?? []),
   ];
 
-  const hasContextBlocks =
-    callerScopes.some((block) => block.content.trim()) ||
-    mergedContextBlockScopes.some((block) => block.content.trim());
+  const hasContextBlocks = (input.contextBlocks ?? []).some((block) =>
+    block.trim()
+  ) || mergedContextBlockScopes.some((block) =>
+    block.content.trim()
+  );
   const promptMessageCount =
     agentConfig.prompt?.trim() || hasContextBlocks ? 1 : 0;
   const turnStartIndex = promptMessageCount + history.length;
-  const builtMessages = buildMessages({
+  const messages = buildMessages({
     prompt: agentConfig.prompt,
+    contextBlocks: input.contextBlocks,
     contextBlockScopes: mergedContextBlockScopes,
     history,
     input: input.input,
-    contextReferenceResolver:
-      input.adapter.host === "cli" ? input.contextReferenceResolver : undefined,
   });
-  const messages = builtMessages.messages;
+  const provider = await input.adapter.resolveProvider(agentConfig);
   // vision 能力检测：catalog 已知模型按 hasVision 判定，未知模型默认 true。
   // 不支持图片时，buildMessages 产出的 image_url parts 必须在发给 provider 前剥离，
   // 否则上游 400 "this model does not support image input" → local 判失败 → fallback
@@ -1222,17 +807,12 @@ export async function runLocalAgentTurn(
   // 供 loopError 分支在 saveTurn 时写入，避免中断时丢失已生成的部分回复。
   let partialContent = "";
   try {
-    // resolveProvider used to sit outside the try: credential / provider-init
-    // failures then skipped saveTurn, so TUI lost dialogId and the next
-    // message opened a fresh conversation ("amnesia").
-    const provider = await input.adapter.resolveProvider(agentConfig);
     while (true) {
       partialContent = "";
       throwIfAborted(input);
       // 空轮修复：把 repair user message 追加到本轮请求末尾重试一次（系统消息放在末尾会被大部分 Provider API 拒收或返回空消息）。
-      const preparedMessages = prepareMessagesForProviderCall(messages);
       const baseRequestMessages = filterImagePartsFromMessages(
-        preparedMessages.messages,
+        prepareMessagesForProviderCall(messages),
         supportsImages,
       );
       // 首次实际降级（模型不支持图片且本轮消息里确实含 image_url part）时通知一次，
@@ -1252,16 +832,6 @@ export async function runLocalAgentTurn(
       const requestMessages: AgentRuntimeChatMessage[] = emptyAssistantRepairPending
         ? [...baseRequestMessages, { role: "user", content: EMPTY_ASSISTANT_REPAIR_PROMPT }]
         : baseRequestMessages;
-      const contextMetrics: LocalAgentContextMetrics = {
-        ...preparedMessages.metrics,
-        messageCount: requestMessages.length,
-        contentChars: requestMessages.reduce(
-          (total, message) => total + contentCharCount(message.content),
-          0,
-        ),
-        stableContextChars: builtMessages.stableContextChars,
-        dynamicContextChars: builtMessages.dynamicContextChars,
-      };
       emptyAssistantRepairPending = false;
       result = await runCompleteWithTimeout({
         provider,
@@ -1279,7 +849,6 @@ export async function runLocalAgentTurn(
         timeoutMs: resolveLlmRequestTimeoutMs(input),
         round,
         input,
-        context: contextMetrics,
       });
       turnUsage = mergeTurnUsage(turnUsage, result.usage);
       const toolCalls = result.tool_calls ?? [];
@@ -1369,14 +938,13 @@ export async function runLocalAgentTurn(
           argumentsPreview: summarizeToolArguments(toolName, toolCall.function.arguments),
         });
         try {
-          const executePromise = input.adapter.executeTool({
+          toolResult = await input.adapter.executeTool({
             id: toolCall.id,
             name: toolName,
             arguments: toolCall.function.arguments,
             ...(userInputText ? { userInput: userInputText } : {}),
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
           });
-          toolResult = await raceWithAbort(input, executePromise, toolName);
           const actionGate = buildActionGate({
             toolName,
             toolCallId: toolCall.id,
@@ -1403,15 +971,6 @@ export async function runLocalAgentTurn(
           });
         } catch (error) {
           emitLoopEvent(input, { kind: "tool-end", name: toolName, atMs: Date.now(), ok: false });
-          // abort 优先：race 赢后必须原样上抛（error 上带 pendingToolName），
-          // 不能被 shouldReturnToolExecutionErrors 转成 tool result 吞掉。
-          if (
-            error &&
-            typeof error === "object" &&
-            (error as { code?: unknown }).code === LOCAL_TURN_ABORTED_CODE
-          ) {
-            throw error;
-          }
           if (!shouldReturnToolExecutionErrors(input.adapter)) throw error;
           emitToolEvent(input, {
             type: "tool-error",
@@ -1457,24 +1016,31 @@ export async function runLocalAgentTurn(
     loopError = error;
   }
 
-  // 即使 provider 循环失败（超时/额度/凭证等），也保存 dialog 以便续聊与复盘
+  // 即使 provider 循环失败（超时等），也保存 dialog 以便复盘
   if (loopError) {
-    const turnMessages = applyPersistedTurnInput(
-      messages.slice(turnStartIndex),
-      input.persistedInput,
-      input.persistedInputReference,
-    );
-    const dialogId = await persistFailedLocalTurn({
-      adapter: input.adapter,
+    const errorMessage = toErrorMessage(loopError);
+    const turnMessages = messages.slice(turnStartIndex);
+    const saved = await input.adapter.saveTurn({
       agentKey: agentConfig.key,
       messages: turnMessages,
-      error: loopError,
-      model: agentConfig.model,
-      toolCallCount,
-      partialContent,
-      input,
+      result: {
+        content: partialContent || `[nolo] Agent run failed: ${errorMessage}`,
+        model: agentConfig.model ?? "unknown",
+        toolCallCount,
+        error: true,
+        errorMessage,
+      },
+      ...(input.runtimeContext ? { runtimeContext: input.runtimeContext } : {}),
+      ...(input.continueDialogId ? { continueDialogId: input.continueDialogId } : {}),
+      ...(input.spaceId ? { spaceId: input.spaceId } : {}),
+      ...(input.category ? { category: input.category } : {}),
+      ...(input.inheritedFromDialogKey ? { inheritedFromDialogKey: input.inheritedFromDialogKey } : {}),
+      ...(input.parentDialogId ? { parentDialogId: input.parentDialogId } : {}),
     });
-    attachDialogIdToError(loopError, dialogId);
+    // 挂上 dialogId 让上层（CLI）可以拿到中断时的 dialog，支持 --continue
+    if (saved?.dialogId && typeof loopError === "object" && loopError !== null) {
+      (loopError as any).dialogId = saved.dialogId;
+    }
     throw loopError;
   }
 
@@ -1490,11 +1056,7 @@ export async function runLocalAgentTurn(
         : {}),
     });
   }
-  const turnMessages = applyPersistedTurnInput(
-    messages.slice(turnStartIndex),
-    input.persistedInput,
-    input.persistedInputReference,
-  );
+  const turnMessages = messages.slice(turnStartIndex);
   const saved = await input.adapter.saveTurn({
     agentKey: agentConfig.key,
     messages: turnMessages,

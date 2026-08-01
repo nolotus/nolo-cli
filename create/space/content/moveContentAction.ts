@@ -13,9 +13,12 @@ import {
   localSpaceAuthorityPatchStamp,
 } from "../utils/permissions";
 import { UNCATEGORIZED_ID } from "../../space/constants"; // 导入常量
-import { createClientLogger } from "../../../core/clientLogger";
+import pino from "pino"; // 引入日志
 
-const logger = createClientLogger("move-content");
+const logger = pino({
+  level: "info", // 或根据环境调整
+  // transport: { target: "pino-pretty" },
+});
 
 // 定义移动操作的输入类型
 interface MoveContentInput {

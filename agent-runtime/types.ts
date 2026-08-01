@@ -37,12 +37,6 @@ export interface AgentRuntimeToolCall {
 export interface AgentRuntimeChatMessage {
   role: (typeof AGENT_RUNTIME_MESSAGE_ROLES)[number];
   content: AgentRuntimeMessageContent;
-  /**
-   * Provider-visible replacement for a durable message body. The complete
-   * `content` remains the source of truth; local runtime history projection
-   * uses this reference and removes the field before sending it to a provider.
-   */
-  context_reference?: AgentRuntimeMessageContent;
   tool_call_id?: string;
   tool_calls?: AgentRuntimeToolCall[];
   /** 工具名：tool 行的语义字段，落库 / 回读 / 折叠头显示都依赖它。 */

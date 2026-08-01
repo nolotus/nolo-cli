@@ -50,23 +50,11 @@ export function isOpenAiResponsesModel(args: {
   }
 }
 
-/**
- * Legacy agent records may still store provider `ollama-cloud` (the retired
- * public product id, now canonicalised to `nolo`). Treat it as an alias of
- * `nolo` so the endpoint resolver never throws on records that predate the
- * rename. The catalog/provider layer (`packages/ai/llm`) also normalises
- * `ollama-cloud` → `nolo`; this keeps the execution seam consistent.
- */
-const PLATFORM_PROVIDER_ENDPOINT_ALIASES: Readonly<Record<string, string>> = {
-  "ollama-cloud": "nolo",
-};
-
 /** Lookup a known platform chat.completions endpoint; undefined if unknown. */
 export function resolvePlatformChatCompletionsEndpoint(
   provider: string,
 ): string | undefined {
   const key = asTrimmedLowercaseString(provider);
   if (!key) return undefined;
-  const aliased = PLATFORM_PROVIDER_ENDPOINT_ALIASES[key] ?? key;
-  return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS[aliased];
+  return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS[key];
 }

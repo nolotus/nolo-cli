@@ -1,17 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 import {
   renderMultiSelectFrame,
   runMultiSelectDialog,
   type MultiSelectDialogItem,
 } from "./multiSelectDialog";
-import { getCliLocale, setCliLocale } from "./i18n";
-
-// String assertions target the English strings; pin the locale for machines
-// whose LANG resolves to zh.
-const originalLocale = getCliLocale();
-beforeAll(() => setCliLocale("en"));
-afterAll(() => setCliLocale(originalLocale));
 
 const ARROW_DOWN = "\x1b[B";
 const ENTER = "\r";

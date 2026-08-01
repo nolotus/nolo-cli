@@ -769,8 +769,7 @@ export const mergeAgentToolsWithRuntime = (
         : [];
     // Expand capability packs into tool names, merged with explicit tools.
     // 非 inline-artifact agent 且 enabledPacks 为空时，fallback 补 long-term-memory
-    // + agent-orchestration 包——保证历史 agent（enabledPacks: []）仍默认获得长期
-    // 记忆与多 agent 编排（startAgentRun/controlAgentRun/listAgents）能力，与「默认全挂、
+    // 包——保证历史 agent（enabledPacks: []）仍默认获得长期记忆能力，与「默认全挂、
     // 可单关」定位一致。inline-artifact agent 不 fallback，保持「纯产物生成、无交互
     // 工具」语义。
     // 注意：不 fallback web-search 和其他 DEFAULT_ENABLED_PACKS——避免改变空配置
@@ -782,12 +781,10 @@ export const mergeAgentToolsWithRuntime = (
     const isInlineArtifact = isInlineVisualArtifactAgent(agentConfig);
     const effectiveEnabledPacks =
       Array.isArray(agentEnabledPacks) && agentEnabledPacks.length > 0
-        ? agentEnabledPacks.includes("agent-orchestration")
-          ? agentEnabledPacks
-          : [...agentEnabledPacks, "agent-orchestration"]
+        ? agentEnabledPacks
         : isInlineArtifact
           ? (agentEnabledPacks ?? [])
-          : ["long-term-memory", "agent-orchestration"];
+          : ["long-term-memory"];
     const expandedPackTools = expandEnabledPacks(
         effectiveEnabledPacks,
         rawBaseTools,

@@ -4,11 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { runAgentTurn, type RunAgentTurnResult } from "../client/agentRun";
-import {
-  createCliLocalRuntimeAdapter,
-  type UserChoiceRequest,
-  type UserChoiceResult,
-} from "../client/localRuntimeAdapter";
+import type { UserChoiceRequest, UserChoiceResult } from "../client/localRuntimeAdapter";
 import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPrompts";
 import { buildSkillDiscoveryContextBlock } from "../../agent-runtime/skillDiscovery";
 import {
@@ -18,15 +14,14 @@ import {
 } from "../client/autoModelRouter";
 import { readDbRecord } from "../agentRecordHelpers";
 import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../../ai/llm/agentCapabilities";
-import { resolveAgentContextWindow } from "../client/tokenUsage";
-import { estimateDefaultCliContextTokens } from "../client/estimateCliContext";
+import { getModelContextWindow } from "../../ai/llm/getModelContextWindow";
 import type { LocalAgentActionGate } from "../../agent-runtime/localLoop";
-import type { ContextBlockScope } from "../../agent-runtime/contextBlockScope";
 import { readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
 import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
-import { isBalanceExhaustedError, isQuotaExhaustedError } from "../agentRunCommand";
+import { formatAssistantDisplay } from "../client/assistantOutput";
+import { isQuotaExhaustedError } from "../agentRunCommand";
 import { saveProfileAgentSelection } from "../client/profileConfig";
 import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
@@ -58,18 +53,11 @@ import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
 import {
   themeColorSequence,
   themeText,
+  highlightMarkdown,
   getActiveDensity,
   setActiveBrightness,
-  setActiveTerminalBaseHex,
 } from "./theme";
-import { detectTerminalBackground } from "./detectBackground";
-import {
-  clearCollapsedPasteStore,
-  createCollapsedPasteStore,
-  releaseCollapsedPasteReferences,
-  replaceCollapsedPastesWithReferences,
-  type CollapsedPasteStore,
-} from "../../core/collapsedPaste";
+import { detectTerminalBrightness } from "./detectBackground";
 import { toErrorMessage } from "../../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
@@ -136,168 +124,17 @@ export {
   createFixedInput,
   splitRawInput,
   createRawInputDecoder,
-  enterAltScreen,
-  leaveAltScreen,
-  isAltScreenOn,
 } from "./tuiRawInput";
 import {
   createFixedInput,
   createNoopFixedInput,
   createRawInputDecoder,
   splitRawInput,
-  enterAltScreen,
-  leaveAltScreen,
   type FixedInputController,
 } from "./tuiRawInput";
 
 /** Max bytes of AGENTS.md/CLAUDE.md to inject — prevents context window overflow. */
 const AGENTS_MD_MAX_BYTES = 8192;
-
-/**
- * Alternate-screen restore for non-normal exit paths.
- *
- * `disable()` (the normal exit) restores the terminal itself; but SIGINT /
- * SIGTERM / SIGHUP, an uncaught exception, an unhandled rejection, or a raw
- * `process.exit` can bypass it. Without a restore on those paths the user's
- * terminal stays on the alternate screen and the shell prompt is invisible
- * — they can only recover with a manual `reset`. So every abnormal path
- * leaves the alternate screen *before* the error is surfaced / the process
- * dies, so the message prints on the main screen where the user can see it.
- *
- * Single registration guard: `startTuiWorkspace` may be called more than
- * once (tests, re-entry), and stacking process listeners trips Node's
- * MaxListenersExceededWarning. `altScreenHandlersInstalled` makes the
- * install block idempotent. The handlers themselves are safe to fire
- * repeatedly: `leaveAltScreen` is idempotent, and the signal handler is
- * prepended once (the pre-existing listeners are re-attached after it so
- * each runs exactly once per signal).
- */
-let altScreenRestoreOutput: NodeJS.WritableStream | null = null;
-let altScreenHandlersInstalled = false;
-
-/**
- * Snapshot of pre-existing signal listeners captured at install time, for
- * which we guarantee exactly-once delivery after our own restore runs. They
- * are detached from the emitter (so Node does not dispatch them itself) and
- * re-attached *after* our restore handler — Node then walks the listener
- * array in order on the signal: restore (once) → each original (once).
- */
-const preExistingSignalListeners: Partial<
-  Record<NodeJS.Signals, NodeJS.SignalsListener[]>
-> = {};
-
-/**
- * Signal → conventional shell exit code (128 + signum). SIGINT=2 → 130,
- * SIGTERM=15 → 143, SIGHUP=1 → 129. Used only when there are no pre-existing
- * listeners for that signal: registering *any* listener suppresses Node's
- * default "terminate on signal", so we must terminate explicitly to avoid a
- * zombie process that `kill` cannot reach.
- */
-const SIGNAL_EXIT_CODE: Partial<Record<NodeJS.Signals, number>> = {
-  SIGINT: 130,
-  SIGTERM: 143,
-  SIGHUP: 129,
-};
-
-/**
- * Restore the alternate screen to the main screen. Never throws: the output
- * stream may already be destroyed (e.g. after a crash), in which case the
- * write silently fails — the terminal is gone, nothing more to do.
- */
-const restoreAltScreen = () => {
-  try {
-    if (altScreenRestoreOutput) leaveAltScreen(altScreenRestoreOutput);
-  } catch {
-    // Stream destroyed / write failed: the terminal is already gone.
-  }
-};
-
-export function installAltScreenRestoreHandlers(
-  output: NodeJS.WritableStream,
-): void {
-  altScreenRestoreOutput = output;
-  if (altScreenHandlersInstalled) return;
-  altScreenHandlersInstalled = true;
-
-  process.on("exit", restoreAltScreen);
-
-  // For signals: restore the terminal FIRST (so the shell prompt is visible
-  // / the error prints on the main screen), then let any pre-existing
-  // listeners run. We do not swallow the signal, we only prepend the restore.
-  //
-  // Design (exactly-once for originals): we PREPEND our handler and leave the
-  // pre-existing listeners attached. On the signal Node walks the listener
-  // array in order — our restore handler first, then each pre-existing
-  // listener exactly once (Node invokes them itself; we never call them
-  // manually, so there is no double-fire, which the prior cache-and-replay
-  // design suffered: Node fired the original AND our handler fired it again).
-  // If there are no pre-existing listeners we must terminate explicitly,
-  // because registering *any* listener suppresses Node's default
-  // "terminate on signal" behavior — otherwise the process hangs on the main
-  // screen and `kill` cannot reach it.
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    const existing = process.listeners(sig) as NodeJS.SignalsListener[];
-    preExistingSignalListeners[sig] = [...existing];
-
-    const handler: NodeJS.SignalsListener = () => {
-      restoreAltScreen();
-      // Query live rather than using a snapshot taken at install time: a
-      // listener attached after us (the common case — the TUI installs early,
-      // callers register their own cleanup later) would otherwise be invisible
-      // here, and we would exit out from under it before it ever ran.
-      const others = process
-        .listeners(sig)
-        .filter((fn) => fn !== (handler as unknown as (...a: unknown[]) => void));
-      if (others.length === 0) {
-        // No pre-existing listener: Node's default "terminate on signal" was
-        // suppressed the moment we registered this handler. Re-terminate
-        // explicitly so the process dies with the conventional 128+signum
-        // code instead of hanging on the main screen.
-        process.exit(SIGNAL_EXIT_CODE[sig] ?? 128 + 1);
-        return;
-      }
-      // Pre-existing listeners present: they remain attached to the emitter
-      // and will be invoked by Node itself (once each, after us). We do NOT
-      // re-dispatch — that would double-fire. They decide whether the
-      // process exits (e.g. a framework's SIGINT handler that calls
-      // process.exit).
-    };
-    // Prepend so restore runs before the pre-existing (and any later-attached)
-    // listeners.
-    process.prependListener(sig, handler);
-  }
-
-  // Restore first, then surface the error on the MAIN screen (the alternate
-  // screen is about to vanish, so anything printed there is invisible).
-  // We do NOT swallow the error: print the original error to stderr so the
-  // owner can see the crash reason, then exit non-zero. Registering this
-  // listener cancels Node's default "print stack + exit(1)" — so we must
-  // re-create it explicitly, otherwise the process hangs on the main screen
-  // while the 150ms render timer keeps overwriting it.
-  process.on("uncaughtException", (err) => {
-    restoreAltScreen();
-    try {
-      process.stderr.write(
-        `uncaughtException: ${err?.stack ?? String(err)}\n`,
-      );
-    } catch {
-      // stderr write failing must not mask the restore.
-    }
-    process.exit(1);
-  });
-  process.on("unhandledRejection", (reason) => {
-    restoreAltScreen();
-    try {
-      const text = reason instanceof Error
-        ? reason.stack ?? String(reason)
-        : String(reason);
-      process.stderr.write(`unhandledRejection: ${text}\n`);
-    } catch {
-      // ignore stderr write failures
-    }
-    process.exit(1);
-  });
-}
 
 /**
  * Read AGENTS.md (or CLAUDE.md fallback) from the workspace root.
@@ -373,7 +210,6 @@ async function runAgentChat(
     confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
     requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
     abortSignal?: AbortSignal;
-    pastedTextStore?: CollapsedPasteStore;
     /** True when the user just explicitly switched agent (via /agent or /switch).
      *  Suppresses the cached auto-route so the chosen agent actually runs. */
     explicitAgentSwitch?: boolean;
@@ -506,22 +342,6 @@ async function runAgentChat(
   if (skillDiscoveryBlock) {
     extraContextBlocks.push(skillDiscoveryBlock);
   }
-  // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
-  // Scope assignment uses the same cache-friendly rule as agentRunCommand.ts:
-  // AGENTS.md = session (stable prefix for cache hits)
-  // skill content / skill discovery = turn (dynamic suffix)
-  const agentsMdMarker = "--- 项目指令（";
-  const contextBlockScopes: ContextBlockScope[] = [];
-  for (const block of extraContextBlocks) {
-    if (block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "session" });
-    }
-  }
-  for (const block of extraContextBlocks) {
-    if (!block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "turn" });
-    }
-  }
   const result: RunAgentTurnResult = await agentRunner({
     agentName: effectiveAgentName,
     agentKey: effectiveAgentKey,
@@ -548,26 +368,12 @@ async function runAgentChat(
       ? { requestUserChoice: options.requestUserChoice }
       : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-    ...(options.pastedTextStore?.items.size
-      ? {
-          pastedTextStore: options.pastedTextStore,
-          localRuntimeAdapterFactory: (
-            factoryEnv: Record<string, string | undefined>,
-            factoryOptions?: { cwd?: string },
-          ) =>
-            createCliLocalRuntimeAdapter({
-              env: factoryEnv,
-              cwd: factoryOptions?.cwd ?? state.cwd,
-              pastedTextStore: options.pastedTextStore,
-            }),
-        }
-      : {}),
     ...(options.activityReporter ? { activityReporter: options.activityReporter } : {}),
     ...(skillAllowedTools !== undefined
       ? { allowedToolNames: skillAllowedTools }
       : {}),
-    ...(contextBlockScopes.length > 0
-      ? { contextBlockScopes }
+    ...(extraContextBlocks.length > 0
+      ? { extraContextBlocks }
       : {}),
   });
   // 首轮分类完成后按对话缓存，同一段对话的后续轮直接复用、不再分类。
@@ -581,14 +387,7 @@ async function runAgentChat(
       agentName: effectiveAgentName,
     });
   }
-  return {
-    ...result,
-    contextWindow: resolveAgentContextWindow({
-      agentKey: effectiveAgentKey,
-      agentName: effectiveAgentName,
-      autoRouteDefault: env.NOLO_AUTO_ROUTE !== "0",
-    }),
-  };
+  return result;
 }
 
 function waitForActionGate(
@@ -809,37 +608,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     options.selfUpdater ?? ((target) => runSelfUpdate({ output: target }));
 
   if ((output as { isTTY?: boolean }).isTTY) {
-    // Enter the alternate screen first so the TUI owns a private buffer.
-    // The TUI keeps its own scroll state (tuiHistory scrollTop / PgUp / PgDn),
-    // so giving up the shared scrollback loses nothing — and it stops the
-    // terminal wheel from desyncing the viewport against the TUI's own
-    // scroll state (the root cause of the garbled repaint bug). Must happen
-    // before the clear so we clear the *alternate* screen, not the shell's.
-    enterAltScreen(output);
-    // Register the terminal-restore handlers (exit / signals / exceptions)
-    // once per process. Installing here (after we know we're on a TTY) keeps
-    // the no-op guarantee for non-TTY runs: pipes/redirects/tests never touch
-    // the alternate screen, and the handlers short-circuit via leaveAltScreen.
-    installAltScreenRestoreHandlers(output);
-    // Clear the alternate screen (NOT the scrollback: \x1b[3J is dropped —
-    // it wipes the *main* screen's scrollback, which is both pointless here
-    // and would erase the user's shell history on terminals that honor it
-    // even while switched away). \x1b[2J clears the visible screen, \x1b[H
-    // homes the cursor.
-    output.write("\x1b[2J\x1b[H");
+    // Clear screen + scrollback so the TUI opens on a clean canvas instead of
+    // stacking below whatever the shell printed before launch.
+    output.write("\x1b[2J\x1b[3J\x1b[H");
   }
 
   // Ask the terminal for its background before the first frame is painted, so
   // the welcome banner and status line already use the right palette. Silent
   // terminals resolve null within the timeout and keep the existing default.
-  const detected = await detectTerminalBackground({
+  const detected = await detectTerminalBrightness({
     stdin: input as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void },
     stdout: output as NodeJS.WritableStream & { isTTY?: boolean },
   });
-  if (detected) {
-    setActiveBrightness(detected.brightness);
-    setActiveTerminalBaseHex(detected.hex);
-  }
+  if (detected) setActiveBrightness(detected);
 
   // Paint the welcome banner once, statically. The previous 15-frame animation
   // blocked composer setup for ~1.5s (the input box only appeared after the
@@ -866,34 +647,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // arrow-key move) instead of the `cursorPos ?? buffer.length` fallback in
   // renderInputArea snapping it to the line end.
   let cursorPos = 0;
-  // Oversized bracketed pastes collapse to `[paste #N · L lines]` chips in the
-  // draft. Submitted turns carry a compact model reference; the full bodies
-  // stay for the current dialog so later local turns can page them through
-  // readPastedText. /new and process shutdown clear the store.
-  const pasteStore = createCollapsedPasteStore();
   // Cooperative stop for the in-flight agent turn (Esc while busy).
   let activeTurnAbort: AbortController | null = null;
-  // 本轮已强制收尾标志：第二次 Esc 直接把 UI 交还用户后置 true。
-  // runAgentChat 的 await 仍会在稍后返回，此时 activeTurnAbort 已被强制清空、
-  // busyLock 已解除；这段迟到返回值必须被丢弃：不重复打印 turnStopped、
-  // 不重新置位 busyLock、不触发收尾重绘（用户可能已开始新一轮输入）。
-  // 用 epoch 而非单 boolean：强制停止后用户可能立刻发起新 turn，新 turn
-  // 会重置 forcedStop；旧 turn 的 await 稍后返回时靠 epoch 比对识别自己被
-  // 强制过，不被新 turn 的重置影响。
-  let forcedStop = false;
-  let forcedStopEpoch = 0;
-  let turnEpoch = 0;
-  // 当前正在运行的 turn 的 epoch（activeTurnAbort 非空时有效）。
-  // Esc 强制停止时据此设置 forcedStopEpoch，让对应的 runOneAgentTurn
-  // await 返回后能识别自己被强制过。
-  let activeTurnEpoch = 0;
   // 活动行状态机抽到 activityIndicator.ts：explicit 标签（working locally /
   // 工具标签）优先，静默超过阈值时自动补 working fallback，填补「文本流完模型
   // 在憋 tool_call」「tool-result 到下一轮」这些此前全黑的空窗。
   const activityIndicator = createActivityIndicator({
     isTurnActive: () => activeTurnAbort !== null,
     fallbackLabel: () => `${state.agentName} -> working`,
-    stoppingLabel: () => t("turnStopping"),
     onRepaint: () => {
       if (fixedInput.active && !fixedInput.isPaused()) {
         output.write("\x1b[?2026h\x1b[?25l");
@@ -977,23 +738,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }, 0);
   };
 
-  // 防重入卫兵：onInputLinesChange → renderHistoryToOutput → 若 composer 重绘
-  // 又触发 onInputLinesChange → 无限递归把 CPU 打满。重入时直接 return。
-  let syncingLayout = false;
-
   const renderHistoryToOutput = () => {
     // A dialog (picker / confirm) owns the screen while paused. Repainting the
     // transcript underneath it erases the frame — mid-turn confirms streamed
     // tokens over the prompt, so it flashed and vanished while still holding
     // the keyboard, and the turn looked hung.
     if (fixedInput.isPaused()) return;
-    if (syncingLayout) return;
-    syncingLayout = true;
-    try {
-      renderHistory(output, history, fixedInput.getInputLines());
-    } finally {
-      syncingLayout = false;
-    }
+    renderHistory(output, history, fixedInput.getInputLines());
   };
   const readLatestAssistantReply = () => {
     const lastReply = [...history.turns]
@@ -1054,10 +805,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     actionGateHandler: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>,
     confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>,
   ): Promise<{ ok: boolean; aborted: boolean }> => {
-    // 每轮 turn 开始时重置强制收尾标志，确保上一轮的强制停止不会泄漏到本轮。
-    forcedStop = false;
-    turnEpoch += 1;
-    const myEpoch = turnEpoch;
     history.followBottom = true;
     startTurn(history, "user");
     appendToCurrentTurn(history, message);
@@ -1105,7 +852,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         : undefined;
     try {
       activeTurnAbort = new AbortController();
-      activeTurnEpoch = myEpoch;
       const runResult = await runAgentChat(
         options.scriptDir,
         state,
@@ -1119,42 +865,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(confirmDestructiveAction ? { confirmDestructiveAction } : {}),
           ...(requestUserChoice ? { requestUserChoice } : {}),
           abortSignal: activeTurnAbort.signal,
-          pastedTextStore: pasteStore,
           explicitAgentSwitch,
           activityReporter,
         }
       );
-      // 强制收尾保护：第二次 Esc 已把 activeTurnAbort 置 null、busyLock 解除、
-      // 打印过 forceStopped 提示。runAgentChat 现在才返回 —— 这段迟到返回值
-      // 必须整体丢弃：不读已 null 的 activeTurnAbort（会 NPE）、不重复打印
-      // turnStopped、不重绘（用户可能已在输入新一轮）。用 epoch 比对而非全局
-      // forcedStop：强制停止后用户可能已发起新 turn 并重置 forcedStop=false，
-      // 旧 turn 靠 myEpoch === forcedStopEpoch 识别自己被强制过。
-      // dialogId/turnTokens 的状态折叠仍可安全执行（纯数据，不碰 UI 锁）。
-      const wasForceStopped = forcedStopEpoch === myEpoch;
-      if (wasForceStopped) {
-        if (runResult.dialogId || runResult.turnTokens) {
-          const nextDialogKey = runResult.dialogId
-            ? runResult.dialogId === state.dialogId && state.dialogKey
-              ? state.dialogKey
-              : state.dialogOwnerId
-                ? `dialog-${state.dialogOwnerId}-${runResult.dialogId}`
-                : undefined
-            : state.dialogKey;
-          state = {
-            ...state,
-            ...(runResult.dialogId
-              ? {
-                  dialogId: runResult.dialogId,
-                  dialogKey: nextDialogKey,
-                  dialogLabel: runResult.dialogId,
-                }
-              : {}),
-            ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
-          };
-        }
-        return { ok: false, aborted: true };
-      }
       const wasAborted = activeTurnAbort.signal.aborted;
       activeTurnAbort = null;
       // An explicit switch only needs to suppress the cached route for the
@@ -1167,15 +881,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         if (fixedInput.active) fixedInput.repaint(buffer);
       }
       if (wasAborted) {
-        if (runResult.pendingToolName) {
-          // 协作式中止时工具仍在跑：localLoop 放弃等待但工具可能已在后台
-          // 完成，其结果不会进入本次对话历史。告知工具名，语气正常。
-          emitCommandOutput(t("turnStoppedToolPending", runResult.pendingToolName));
-        } else {
-          emitCommandOutput(t("turnStopped"));
-        }
+        emitCommandOutput(t("turnStopped"));
       }
-      if (runResult.dialogId || runResult.turnTokens || runResult.contextWindow) {
+      if (runResult.dialogId || runResult.turnTokens) {
         const nextDialogKey = runResult.dialogId
           ? runResult.dialogId === state.dialogId && state.dialogKey
             ? state.dialogKey
@@ -1193,23 +901,18 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               }
             : {}),
           ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
-          ...(runResult.contextWindow
-            ? { contextWindow: runResult.contextWindow }
-            : {}),
         };
       }
-      // 把失败原因翻成人话：余额 / 额度 / 「对话已保留」/ 「本轮未入档」。
-      // 用户预期是：屏幕上看得见的上一句，下一句「继续」不能变成失忆新开场。
-      if (!wasAborted && runResult.exitCode !== 0) {
-        if (isBalanceExhaustedError(runResult.localError) && runResult.dialogId) {
-          emitCommandOutput(t("balanceExhaustedHint"));
-        } else if (isQuotaExhaustedError(runResult.localError)) {
-          emitCommandOutput(t("quotaExhaustedHint"));
-        } else if (runResult.dialogId) {
-          emitCommandOutput(t("dialogPreservedHint"));
-        } else {
-          emitCommandOutput(t("dialogNotSavedHint"));
-        }
+      // 把 429/额度耗尽这类错误单独识别出来，给一句人话提示 + 可操作的下一步，
+      // 而不是把原始报错留在 transcript 里让用户自己去猜「现在该怎么办」。
+      // localError 来自本地 runtime（exitCode 1 + localError）；server runtime 的
+      // 429 文本已被 agentRun 直接写进 agentOutput，这里只在 localError 可用时复检。
+      if (
+        !wasAborted &&
+        runResult.exitCode !== 0 &&
+        isQuotaExhaustedError(runResult.localError)
+      ) {
+        emitCommandOutput(t("quotaExhaustedHint"));
       }
       return { ok: !wasAborted, aborted: wasAborted };
     } finally {
@@ -1291,7 +994,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     if (result.action?.type === "exit") return true;
 
     if (result.action?.type === "clear") {
-      clearCollapsedPasteStore(pasteStore);
       history.turns.length = 0;
       history.currentRole = null;
       history.currentContent = "";
@@ -1364,18 +1066,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             ...state,
             agentName: pickResult.name,
             agentKey: pickResult.key,
-            contextWindow: resolveAgentContextWindow({
-              agentKey: pickResult.key,
-              agentName: pickResult.name,
-              model: pickResult.model,
-              autoRouteDefault: (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0",
-            }),
-            estimatedContextTokens: estimateDefaultCliContextTokens({
-              cwd: state.cwd,
-              agentKey: pickResult.key,
-              agentName: pickResult.name,
-              model: pickResult.model,
-            }),
+            contextWindow: getModelContextWindow(pickResult.name),
           };
           // 用户显式切换 agent：清掉这条对话首轮 auto-route 的缓存，否则
           // 下一轮会被缓存切回原 agent（典型场景：原 agent 429 后想换一个）。
@@ -1408,22 +1099,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
     if (result.action?.type === "set-mouse") {
       fixedInput.setMouseEnabled(result.action.enabled);
-    }
-
-    if (result.action?.type === "set-altscreen") {
-      // Both helpers are idempotent and no-op on non-TTY, so a repeated
-      // /altscreen on|off costs nothing. Re-installing the restore handlers on
-      // re-entry keeps the exit/signal path pointed at the current output.
-      if (result.action.enabled) {
-        enterAltScreen(output);
-        installAltScreenRestoreHandlers(output);
-      } else {
-        leaveAltScreen(output);
-      }
-      // The freshly switched buffer is blank — repaint or the user stares at
-      // an empty screen until the next event.
-      renderHistoryToOutput();
-      fixedInput.repaint(buffer);
     }
 
     if (result.action?.type === "copy-view") {
@@ -1478,7 +1153,23 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             dialog: pickResult.dialog,
             env: options.env ?? process.env,
           });
-          const restored = loadedTurns.slice(-MAX_TUI_HISTORY_TURNS);
+          // /resume 恢复的是数据库里的原始 markdown，必须经过和新回复（流式）
+          // 同一套完整渲染器，否则表格/列表/链接会降级成 highlightMarkdown 处理
+          // 不了的原始语法。只渲染 assistant turn：user turn 靠 ❯ 标记区分，
+          // buildHistoryLines 里 user 分支不走 markdown 渲染。整段消息用
+          // 默认 trimEdges。
+          const restored = loadedTurns
+            .slice(-MAX_TUI_HISTORY_TURNS)
+            .map((turn) =>
+              turn.role === "assistant"
+                ? {
+                    ...turn,
+                    content: formatAssistantDisplay(
+                      turn.content,
+                    ),
+                  }
+                : turn,
+            );
           history.turns.length = 0;
           history.turns.push(...restored);
           history.currentRole = null;
@@ -1492,7 +1183,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             dialogLabel: pickResult.dialog.id,
             turnTokens: undefined,
           };
-          clearCollapsedPasteStore(pasteStore);
           emitCommandOutput(
             `${t("resumedDialogPrefix")}: ${pickResult.dialog.title} (${pickResult.dialog.id})`,
           );
@@ -1695,11 +1385,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             return dimCliText(`  ⤷ ${i + 1}. ${oneLine}`, colorEnabled);
           });
       },
-      onInputLinesChange: () => {
-        // composer 高度变化（活动行首次出现：3→4 行）时补一次历史重绘。
-        // renderHistoryToOutput 内部有 syncingLayout 卫兵防重入。
-        renderHistoryToOutput();
-      },
     });
     fixedInput.init();
     const paintFrame = (draft: string) => {
@@ -1732,7 +1417,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const finish = () => {
       if (done) return;
       done = true;
-      clearCollapsedPasteStore(pasteStore);
       resizeTarget.off?.("resize", onResize);
       input.off("data", onData);
       onData.destroy();
@@ -1782,43 +1466,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       // staged follow-ups, arm stop-preempt so the abort preserves them
       // (instead of the normal "abort abandons follow-ups" contract); the
       // user stopped the current reply but did not abandon what they queued.
-      //
-      // 两次 Esc：
-      // 1) 第一次：abort 协作停止，同帧把活动行切到「停止中」文案让用户立刻
-      //    看到反馈（owner 报的 bug：按了没反应、要按好几次）。链路 unwind 需
-      //    要时间，turnStopped 要等 await 返回才打印。
-      // 2) 第二次（已 isStopping）：不再等链路，直接把 UI 交还用户——
-      //    activityIndicator.stop()、forcedStop=true、activeTurnAbort=null、
-      //    打印 forceStopped 提示、busyLock 解除、重绘 composer。迟到的
-      //    runAgentChat 返回值由 runOneAgentTurn 里的 forcedStop 分支丢弃。
       if (busyLock && sequence === "\x1b" && activeTurnAbort) {
-        if (activityIndicator.isStopping()) {
-          // 第二次 Esc = 强制收尾。
-          forcedStop = true;
-          forcedStopEpoch = activeTurnEpoch;
-          activityIndicator.stop();
-          activeTurnAbort.abort();
-          activeTurnAbort = null;
-          activeTurnEpoch = 0;
-          busy = false;
-          emitCommandOutput(t("forceStopped"));
-          flushPendingRender();
-          renderHistoryToOutput();
-          if (fixedInput.active) fixedInput.repaint(buffer);
-          return;
-        }
-        // 第一次 Esc = 协作停止 + 即时反馈。
         const stopBinding = chatQueueBinding;
         if (stopBinding && stopBinding.queueLength() > 0) {
           stopBinding.preemptForStop();
         }
-        activityIndicator.markStopping();
         activeTurnAbort.abort();
         return;
       }
-      const result = applyTuiInputKey(buffer, sequence, {}, cursorPos, {
-        pasteStore,
-      });
+      const result = applyTuiInputKey(buffer, sequence, {}, cursorPos);
       if (result.copyView) {
         if (busyLock) return;
         busy = true;
@@ -1839,13 +1495,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         return;
       }
       if (result.submit !== undefined) {
-        // Replace UI-only paste chips with compact model references. The full
-        // body is expanded only at an HTTP/persistence boundary or on demand
-        // through readPastedText, so every provider round avoids replaying it.
-        const submittedText = replaceCollapsedPastesWithReferences(
-          result.submit,
-          pasteStore,
-        );
         if (busyLock) {
           // While an agent turn is running, Enter does not start a new turn.
           // Instead, route the draft through the shared queue resolver: pure
@@ -1853,6 +1502,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           // attachments are surfaced as a brief notice (the user can retry
           // once the turn ends). The draft is cleared only on a successful
           // enqueue.
+          const submittedText = result.submit;
           const trimmedText = submittedText.trim();
           // While a turn runs, a few slash commands are handled locally right
           // now instead of being queued. Queuing them is wrong: the queue
@@ -1911,7 +1561,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                 output.write(`${msg}\n`);
               }
             }
-            releaseCollapsedPasteReferences(submittedText, pasteStore);
             buffer = "";
             cursorPos = 0;
             if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
@@ -1985,7 +1634,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // turn. Reuses the same runOneAgentTurn + notifyTurnEnd path as a
         // direct send so the queue core stays consistent. Non-empty drafts
         // fall through to runSubmittedLine as before.
-        if (!submittedText.trim() && chatQueueBinding && chatQueueBinding.queueLength() > 0) {
+        if (!result.submit.trim() && chatQueueBinding && chatQueueBinding.queueLength() > 0) {
           const actionGateHandler = async (gate: LocalAgentActionGate) => {
             modalOwnsKeyboard = true;
             try {
@@ -2049,14 +1698,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           }
         }
         busy = true;
+        const submittedText = result.submit;
         buffer = "";
         cursorPos = 0;
         // Note: we intentionally keep the `data` listener attached. During the
         // agent turn the user can still type into the composer; submit is
         // gated by `busy` above. This avoids tearing the input chrome down
         // and lets the draft persist across the turn.
-        // `submittedText` contains compact paste references; the selected
-        // runtime expands or reads the full body at the appropriate boundary.
         fixedInput.enterOutputMode(submittedText);
         // `busy` gates whether Enter starts a turn or queues. It MUST be
         // released no matter how runSubmittedLine settles; leaving it stuck

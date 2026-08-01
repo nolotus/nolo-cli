@@ -9,7 +9,7 @@ import {
   createTokenRecord,
   saveTokenRecord,
 } from "../../../ai/token/saveTokenRecord";
-import { createClientLogger } from "../../../core/clientLogger";
+import { pino } from "pino";
 import { deductBalance } from "../../../auth/authSlice"; // <--- 1. 导入新的 deductBalance action
 import { prepareTokenUsageData } from "../../../ai/token/prepareTokenUsageData";
 import { findModelConfig } from "../../../ai/llm/providers";
@@ -17,7 +17,7 @@ import { resolveMessageOwner } from "../../messages/resolveMessageOwner";
 import { applyTokenUsageToDayStats, type DayStats } from "../../../ai/token/applyTokenUsageToDayStats";
 import { runKeyed } from "../../../core/keyedTaskQueue";
 
-const logger = createClientLogger("token-usage");
+const logger = pino({ name: "token-usage", level: "info" });
 const dialogTokenPatchQueue = new Map<string, Promise<void>>();
 
 const queueDialogTokenPatch = async <T>(

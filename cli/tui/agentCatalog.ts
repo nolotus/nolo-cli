@@ -327,7 +327,9 @@ export function findAgentCatalogEntry(
 
   if (/^\d+$/.test(target)) {
     const entry = entries[Number(target) - 1];
-    return entry ? { name: entry.name, key: entry.key } : null;
+    return entry
+      ? { name: entry.name, key: entry.key, model: entry.model }
+      : null;
   }
 
   const lower = target.toLowerCase();
@@ -337,7 +339,9 @@ export function findAgentCatalogEntry(
       entry.key.toLowerCase() === lower ||
       entry.key.toLowerCase().endsWith(`-${lower}`)
   );
-  if (byName) return { name: byName.name, key: byName.key };
+  if (byName) {
+    return { name: byName.name, key: byName.key, model: byName.model };
+  }
 
   if (target.startsWith("agent-") || target.startsWith("agent-pub-")) {
     return { name: target, key: target };

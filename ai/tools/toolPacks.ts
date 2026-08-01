@@ -100,9 +100,9 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
     id: "agent-orchestration",
     label: "多 agent 编排",
     description:
-      "后台启动其他 agent 执行子任务，并观察、查询、停止运行中的 agent run——适合并行派发、长任务跟踪、中途叫停等编排场景。",
-    tools: ["startAgentRun", "controlAgentRun"],
-    defaultEnabled: false,
+      "列出候选 agent、后台启动其他 agent 执行子任务，并观察、查询、停止运行中的 agent run——适合并行派发、长任务跟踪、中途叫停等编排场景。",
+    tools: ["startAgentRun", "controlAgentRun", "listAgents"],
+    defaultEnabled: true,
     icon: "🧩",
   },
 ];

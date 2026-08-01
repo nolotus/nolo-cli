@@ -59,4 +59,128 @@ describe("i18n", () => {
     setCliLocale("en");
     expect(t("helpText")).toContain("/lang <zh|en>");
   });
+
+  test("ask choice chrome is localized", () => {
+    setCliLocale("zh");
+    expect(t("askChoiceTitle")).toBe("问题");
+    expect(t("askChoiceOtherLabel")).toBe("其他");
+    expect(t("askChoiceHistorySelected")).toBe("已选");
+    expect(t("askChoiceHistoryCancelled")).toBe("已取消");
+    setCliLocale("en");
+    expect(t("askChoiceTitle")).toBe("question");
+    expect(t("askChoiceOtherLabel")).toBe("Other");
+    expect(t("askChoiceHistoryHint")).toContain("Type a number");
+  });
+
+  test("turnStoppedToolPending resolves to non-empty text in both locales", () => {
+    setCliLocale("en");
+    const en = t("turnStoppedToolPending", "editFile");
+    expect(en.length).toBeGreaterThan(0);
+    expect(en).toContain("editFile");
+    setCliLocale("zh");
+    const zh = t("turnStoppedToolPending", "editFile");
+    expect(zh.length).toBeGreaterThan(0);
+    expect(zh).toContain("editFile");
+  });
+
+  // Keys added by the i18n completion pass (Task B). Every one must resolve
+  // to non-empty copy in both locales and the two must differ — identical
+  // zh/en means the translation was never written.
+  const NEW_KEYS = [
+    "unknownCommand",
+    "runtimeUsage",
+    "runtimeSet",
+    "toolsCurrent",
+    "toolsUsage",
+    "toolsSet",
+    "thinkingCurrent",
+    "thinkingUsage",
+    "thinkingSet",
+    "tasksRunning",
+    "tasksStopped",
+    "tasksNone",
+    "stopUsage",
+    "stopAllDone",
+    "stopNoPid",
+    "stopPidDone",
+    "stopNoLabel",
+    "stopLabelsDone",
+    "compactNothing",
+    "agentCurrent",
+    "agentUnknown",
+    "themeCurrent",
+    "themeUsage",
+    "themeAvailable",
+    "themeBrightnessSwitched",
+    "themeBrightnessAuto",
+    "themeSwitched",
+    "themeUnknown",
+    "densityCurrent",
+    "densitySwitched",
+    "densityUnknown",
+    "docAttachUsage",
+    "docList",
+    "docNone",
+    "skillAttachUsage",
+    "skillAttached",
+    "skillDetachUsage",
+    "skillDetached",
+    "skillNotAttached",
+    "skillNone",
+    "skillCleared",
+    "skillList",
+    "skillNoneHint",
+    "customizeHint",
+    "loginHint",
+    "versionInfo",
+    "versionUnknown",
+    "recentDialogs",
+    "dialogListTip",
+    "timeJustNow",
+    "timeMinutesAgo",
+    "timeHoursAgo",
+    "timeDaysAgo",
+    "dialogMoreAbove",
+    "dialogMoreBelow",
+  ] as const;
+
+  test("every new key resolves to non-empty, distinct copy in both locales", () => {
+    for (const key of NEW_KEYS) {
+      setCliLocale("en");
+      const en = t(key, "0", "1");
+      setCliLocale("zh");
+      const zh = t(key, "0", "1");
+      expect(en.length, `en copy for ${key}`).toBeGreaterThan(0);
+      expect(zh.length, `zh copy for ${key}`).toBeGreaterThan(0);
+      expect(zh, `zh === en means ${key} was not translated`).not.toBe(en);
+    }
+  });
+
+  test("interpolation placeholders are replaced in the new keys", () => {
+    setCliLocale("en");
+    expect(t("stopPidDone", "1001", "build")).toBe("Stopped pid 1001 (build)");
+    expect(t("timeMinutesAgo", "5")).toBe("5m ago");
+    setCliLocale("zh");
+    expect(t("stopPidDone", "1001", "build")).toBe("已停止 pid 1001（build）");
+    expect(t("timeMinutesAgo", "5")).toBe("5 分钟前");
+  });
+
+  test("altscreen i18n keys exist, non-empty, and differ between locales", () => {
+    // 覆盖测试要求 6。新增的 altscreenOn/Off/Usage 在 zh/en 下都要有非空
+    // 且互不相同的文案（相同意味着翻译没写）。
+    for (const key of ["altscreenOn", "altscreenOff", "altscreenUsage"] as const) {
+      setCliLocale("en");
+      const en = t(key);
+      setCliLocale("zh");
+      const zh = t(key);
+      expect(en.length, `en copy for ${key}`).toBeGreaterThan(0);
+      expect(zh.length, `zh copy for ${key}`).toBeGreaterThan(0);
+      expect(zh, `zh === en means ${key} was not translated`).not.toBe(en);
+    }
+    // helpText 在两种语言下都列出了 /altscreen。
+    setCliLocale("en");
+    expect(t("helpText")).toContain("/altscreen");
+    setCliLocale("zh");
+    expect(t("helpText")).toContain("/altscreen");
+  });
 });

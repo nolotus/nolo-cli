@@ -166,7 +166,8 @@ export async function runAgentListCommand(
           `type=${agent.type ?? "-"}`,
           `model=${agent.model}`,
           `updatedAt=${agent.updatedAt ?? "-"}`,
-          `privateKey=${agent.privateKey}`,
+          // 不输出 privateKey（dbKey 属敏感标识，与 web 端 listAgentsFunc 降权
+          // 对齐；需要完整记录请用 --json）。
           `publicKey=${agent.publicKey}${flagMismatch}`,
           `tools=${agent.tools.join(", ") || "-"}`,
           credentialLine,

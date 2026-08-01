@@ -62,13 +62,6 @@ export default {
       discard_changes: "Discard Changes",
       load_error_title: "Failed to Load Space Information",
       no_space_data: "Space data not found",
-      try_repair: "Try to Repair",
-      repair_success: "Repair operation completed successfully",
-      repair_space: "Repair Space",
-      repair_count_warn:
-        "This space has {{count}} content items. Repair will re-deduplicate and remove orphaned references. Continue?",
-      repair: "Repair",
-      repair_error: "Repair operation failed",
       try_later: "Please try again later",
 
       // === 基本信息 ===
@@ -429,13 +422,6 @@ export default {
       discard_changes: "放弃更改",
       load_error_title: "加载空间信息失败",
       no_space_data: "未找到空间数据",
-      try_repair: "尝试修复",
-      repair_success: "修复操作成功完成",
-      repair_space: "修复空间",
-      repair_count_warn:
-        "此空间有 {{count}} 项内容。修复将重新去重并清除孤立的引用。是否继续？",
-      repair: "修复",
-      repair_error: "修复操作失败",
       try_later: "请稍后重试",
 
       // === 基本信息 ===
@@ -787,13 +773,6 @@ export default {
       discard_changes: "放棄變更",
       load_error_title: "載入空間資訊失敗",
       no_space_data: "未找到空間資料",
-      try_repair: "嘗試修復",
-      repair_success: "修復操作成功完成",
-      repair_space: "修復空間",
-      repair_count_warn:
-        "此空間有 {{count}} 項內容。修復將重新去重並清除孤立的引用。是否繼續？",
-      repair: "修復",
-      repair_error: "修復操作失敗",
       try_later: "請稍後重試",
 
       // === 基本信息 ===
@@ -1140,13 +1119,6 @@ export default {
       discard_changes: "変更を破棄",
       load_error_title: "スペース情報の読み込みに失敗しました",
       no_space_data: "スペースデータが見つかりません",
-      try_repair: "修復を試行",
-      repair_success: "修復操作が正常に完了しました",
-      repair_space: "スペースを修復",
-      repair_count_warn:
-        "このスペースには {{count}} 件のコンテンツがあります。修復は重複を整理し、孤立した参照を削除します。続行しますか？",
-      repair: "修復",
-      repair_error: "修復操作に失敗しました",
       try_later: "しばらくしてから再度お試しください",
 
       // === 基本情報 ===

@@ -42,6 +42,7 @@ import {
   isKnownServerPlatformAgent,
 } from "./agentRunPlatformTools";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
+import { expandCollapsedPastes } from "../../core/collapsedPaste";
 
 import { ulid } from "ulid";
 import { asOptionalTrimmedString } from "../../core/optionalString";
@@ -70,6 +71,16 @@ function resolveRequestedRuntimeMode(options: RunAgentTurnOptions) {
   return "auto";
 }
 
+function canResolveCollapsedPasteReference(
+  store: import("../../core/collapsedPaste").CollapsedPasteStore,
+  content: import("../../agent-runtime/types").AgentRuntimeMessageContent,
+) {
+  const expand = (text: string) => expandCollapsedPastes(text, store) !== text;
+  if (typeof content === "string") return expand(content);
+  if (!Array.isArray(content)) return false;
+  return content.some((part) => part.type === "text" && expand(part.text));
+}
+
 function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
   return createCliLocalRuntimeAdapter({
     env: options.env,
@@ -81,6 +92,9 @@ function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
       : {}),
     ...(options.requestUserChoice
       ? { requestUserChoice: options.requestUserChoice }
+      : {}),
+    ...(options.pastedTextStore?.items.size
+      ? { pastedTextStore: options.pastedTextStore }
       : {}),
   });
 }
@@ -271,6 +285,77 @@ function isMissingLocalAgentConfigError(error: unknown, agentRef: string) {
   );
 }
 
+/**
+ * Detect failures raised by the platform-proxy transport
+ * (`platform provider failed: HTTP <status> ...`), i.e. errors that happened
+ * on the nolo server / upstream gateway while forwarding the chat request —
+ * NOT on the local credential/config side. Empty body (`{}`) is typical of a
+ * gateway 502/504, not of an application-layer nolo error (which always
+ * returns a JSON `{error:{message,code}}`).
+ *
+ * Such failures should be reported as transient upstream issues and should
+ * suggest retry / `--server`, NOT "fix the local credential/config".
+ */
+const PLATFORM_PROVIDER_FAILED_RE =
+  /platform provider failed:\s*HTTP\s+(\d+)\b/i;
+
+function classifyLocalRunError(message: string): {
+  kind: "platform-proxy-transient" | "platform-proxy-upstream" | "generic";
+  status?: number;
+} {
+  const m = message.match(PLATFORM_PROVIDER_FAILED_RE);
+  if (!m) return { kind: "generic" };
+  const status = Number(m[1]);
+  // 5xx from the proxy hop = transient gateway/upstream issue.
+  if (status >= 500 && status <= 599) {
+    // 502/504 with empty body = gateway layer; 503 is already retried by
+    // fetchWithTransientRetry, so seeing it here means retries exhausted.
+    return { kind: "platform-proxy-transient", status };
+  }
+  // 4xx from the proxy: still proxy-side (auth/quota/upstream rejected),
+  // not the local OS credential broker.
+  return { kind: "platform-proxy-upstream", status };
+}
+
+function describeLocalRunFailure(message: string): string {
+  // Balance/402 is the common "I just topped up / please continue" case —
+  // never tell the user to fix local credentials.
+  if (
+    /UPSTREAM_402|Insufficient Balance|余额不足|insufficient\s+balance/i.test(
+      message,
+    )
+  ) {
+    return (
+      `[nolo] auto runtime: local run unavailable (${message}). ` +
+      `Not falling back to server. Top up your balance, then send again ` +
+      `(or say "继续") — if a dialog was kept, context is preserved.\n`
+    );
+  }
+  const cls = classifyLocalRunError(message);
+  if (cls.kind === "platform-proxy-transient") {
+    return (
+      `[nolo] auto runtime: local run unavailable (server chat proxy returned ` +
+      `HTTP ${cls.status}; this is an upstream/gateway issue, not your local ` +
+      `credential or config).${message ? ` Detail: ${message}` : ""} ` +
+      `Not falling back to server. Retry shortly, or use --server to run on ` +
+      `the server explicitly.\n`
+    );
+  }
+  if (cls.kind === "platform-proxy-upstream") {
+    return (
+      `[nolo] auto runtime: local run unavailable (server chat proxy returned ` +
+      `HTTP ${cls.status}).${message ? ` Detail: ${message}` : ""} ` +
+      `Not falling back to server. Check the agent's provider/api-key settings ` +
+      `on nolo.chat, or use --server to run on the server explicitly.\n`
+    );
+  }
+  return (
+    `[nolo] auto runtime: local run unavailable (${message}). ` +
+    "Not falling back to server. Fix the local credential/config and retry, " +
+    "or use --server to run on the server explicitly.\n"
+  );
+}
+
 function shouldAttemptAutoLocal(options: RunAgentTurnOptions) {
   if (options.localRuntimeAdapter || options.localRuntimeAdapterFactory)
     return true;
@@ -390,15 +475,26 @@ async function runHttpAgentTurn(
     name.trim(),
   );
   const shouldStream = !options.noStream && !options.background;
+  const expandedMessage = options.pastedTextStore?.items.size
+    ? expandCollapsedPastes(options.message, options.pastedTextStore)
+    : options.message;
+  // Server path: pass context blocks as canonical contextBlockScopes request
+  // field instead of prepending to userInput. Prefer the already-scoped
+  // representation; fall back to converting plain extraContextBlocks to
+  // turn-scope blocks (the CLI client doesn't know session vs turn).
+  const serverContextBlockScopes =
+    options.contextBlockScopes && options.contextBlockScopes.length > 0
+      ? options.contextBlockScopes
+      : options.extraContextBlocks && options.extraContextBlocks.length > 0
+        ? options.extraContextBlocks.map((block) => ({
+            content: block,
+            cacheScope: "turn" as const,
+          }))
+        : undefined;
   const buildRequestBody = (stream: boolean) =>
     JSON.stringify({
       agentKey: options.agentKey,
-      userInput: buildUserInputContent(
-        options.extraContextBlocks?.length
-          ? [...options.extraContextBlocks, "", options.message].join("\n")
-          : options.message,
-        options.imageUrls,
-      ),
+      userInput: buildUserInputContent(expandedMessage, options.imageUrls),
       runtimeContext: {
         surface: "cli",
         host: "terminal",
@@ -428,6 +524,7 @@ async function runHttpAgentTurn(
       ...(options.modelOverride
         ? { runtimeOptions: { quickChatModelOverride: options.modelOverride } }
         : {}),
+      ...(serverContextBlockScopes ? { contextBlockScopes: serverContextBlockScopes } : {}),
       stream,
     });
   const postAgentRun = (stream: boolean) =>
@@ -668,6 +765,9 @@ async function runLocalAgentTurnForCli(
     spaceId: options.spaceId,
     runtimeContext,
   });
+  const expandedMessage = options.pastedTextStore?.items.size
+    ? expandCollapsedPastes(options.message, options.pastedTextStore)
+    : options.message;
 
   const workingLabel = `${options.agentName} -> working locally`;
   const turnOutput = createCliTurnOutput({
@@ -681,6 +781,24 @@ async function runLocalAgentTurnForCli(
       adapter,
       agentRef: options.agentKey,
       input: buildUserInputContent(options.message, options.imageUrls),
+      ...(expandedMessage !== options.message
+        ? {
+            persistedInput: buildUserInputContent(
+              expandedMessage,
+              options.imageUrls,
+            ),
+            persistedInputReference: buildUserInputContent(
+              options.message,
+              options.imageUrls,
+            ),
+          }
+        : {}),
+      ...(options.pastedTextStore
+        ? {
+            contextReferenceResolver: (reference: LocalAgentTurnInput["input"]) =>
+              canResolveCollapsedPasteReference(options.pastedTextStore!, reference),
+          }
+        : {}),
       continueDialogId: currentDialogId,
       spaceId: options.spaceId,
       category: options.category,
@@ -689,12 +807,11 @@ async function runLocalAgentTurnForCli(
       background: options.background,
       noStream: options.noStream,
       ...(runtimeContext ? { runtimeContext } : {}),
-      ...(options.extraContextBlocks?.length
-        ? { contextBlocks: options.extraContextBlocks }
-        : {}),
       ...(options.contextBlockScopes?.length
         ? { contextBlockScopes: options.contextBlockScopes }
-        : {}),
+        : options.extraContextBlocks?.length
+          ? { contextBlocks: options.extraContextBlocks }
+          : {}),
       ...(typeof options.timeoutMs === "number"
         ? { timeoutMs: options.timeoutMs }
         : {}),
@@ -738,18 +855,25 @@ async function runLocalAgentTurnForCli(
     };
   } catch (error) {
     turnOutput.spinner.stop();
+    // localLoop saveTurn()s on failure/abort and hangs dialogId on the error
+    // so TUI can keep state.dialogId and the next message --continues instead
+    // of opening a fresh dialog (402 / provider errors used to "amnesia").
+    const savedDialogId = (error as { dialogId?: string })?.dialogId;
     if (
       (error as { code?: string })?.code === LOCAL_TURN_ABORTED_CODE ||
       options.abortSignal?.aborted
     ) {
       // User-initiated stop: the TUI reports it; nothing failed.
-      // If localLoop saved a partial dialog before rethrowing, expose its id
-      // so the caller can --continue the interrupted turn.
-      const stoppedDialogId = (error as { dialogId?: string })?.dialogId;
+      // If a tool was still running when the stop landed, localLoop attaches
+      // its name (error.pendingToolName) so the caller can tell the user the
+      // tool may still finish in the background.
+      const pendingToolName = (error as { pendingToolName?: string })
+        ?.pendingToolName;
       return {
         exitCode: 0,
         streamInterrupted: true,
-        ...(stoppedDialogId ? { dialogId: stoppedDialogId } : {}),
+        ...(savedDialogId ? { dialogId: savedDialogId } : {}),
+        ...(pendingToolName ? { pendingToolName } : {}),
       };
     }
     if (settings.reportFailure) {
@@ -757,7 +881,11 @@ async function runLocalAgentTurnForCli(
         `[nolo] Local agent run failed: ${toErrorMessage(error)}\n`,
       );
     }
-    return { exitCode: 1, localError: error };
+    return {
+      exitCode: 1,
+      localError: error,
+      ...(savedDialogId ? { dialogId: savedDialogId } : {}),
+    };
   }
 }
 
@@ -784,6 +912,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
             : {}),
           ...(localResult.streamInterrupted
             ? { streamInterrupted: localResult.streamInterrupted }
+            : {}),
+          ...(localResult.pendingToolName
+            ? { pendingToolName: localResult.pendingToolName }
             : {}),
         };
       }
@@ -819,14 +950,13 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
       const localErrorMessage = localResult.localError
         ? toErrorMessage(localResult.localError)
         : "local runtime failed";
-      options.output.write(
-        `[nolo] auto runtime: local run unavailable (${localErrorMessage}). ` +
-          "Not falling back to server. Fix the local credential/config and retry, " +
-          "or use --server to run on the server explicitly.\n",
-      );
+      options.output.write(describeLocalRunFailure(localErrorMessage));
       return {
         exitCode: 1,
         ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
+        // Keep localError so TUI can show balance/quota/dialog-preserved hints
+        // instead of only the raw auto-runtime line.
+        ...(localResult.localError ? { localError: localResult.localError } : {}),
       };
     }
   }

@@ -1,7 +1,7 @@
 // 路径: /integrations/openai/generateOpenAIRequestBody.ts
 import { Agent, Message } from "../../app/types";
 
-import { isModelSupportReasoningEffort } from "../../ai/llm/reasoningModels";
+import { isModelSupportReasoningEffort, clampReasoningEffort } from "../../ai/llm/reasoningModels";
 import { getUsageRequestOptions } from "../../ai/llm/usageRequestOptions";
 import {
   isDeepInfraKimiModel,
@@ -175,9 +175,12 @@ const buildRequestBody = (options: BuildRequestBodyOptions): any => {
   });
   Object.assign(bodyData, usageRequestOptions);
 
-  // 推理强度（仅部分模型支持）
+  // 推理强度（仅部分模型支持，且按 provider 做 clamp）
   if (reasoning_effort && isModelSupportReasoningEffort(model)) {
-    bodyData.reasoning_effort = reasoning_effort;
+    const clamped = clampReasoningEffort(reasoning_effort, providerName);
+    if (clamped) {
+      bodyData.reasoning_effort = clamped;
+    }
   }
 
   if (typeof temperature === "number") bodyData.temperature = temperature;

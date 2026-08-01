@@ -13,7 +13,6 @@ import {
   buildModelLayerOverride,
   type ModelLayerOverride,
 } from "../agent-runtime/modelLayerOverride";
-import type { ContextBlockScope } from "../agent-runtime/contextBlockScope";
 import { buildSkillDiscoveryContextBlock } from "../agent-runtime/skillDiscovery";
 import { CliProviderQuotaError } from "../ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
@@ -427,7 +426,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
 
   // Build cache-friendly context blocks: AGENTS.md (session-scope) + skill
-  // content (turn-scope). Placed in the system message via contextBlockScopes
+ // content (turn-scope). Placed in the system message via extraContextBlocks
  // instead of prepending to the user message, preserving LLM prefix-cache.
   const cliCwd = parsed.cwd ?? process.cwd();
   const extraContextBlocks: string[] = [];
@@ -527,6 +526,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // Scope assignment mirrors desktopAgentRuntimeTurnService.ts:1272:
   //   AGENTS.md / memory-use-guidance = session (stable prefix for cache hits)
   //   skill content / skill discovery / memory-overlay = turn (dynamic suffix)
+  type ContextBlockScope = { content: string; cacheScope: "session" | "turn" };
   const contextBlockScopes: ContextBlockScope[] = [];
   // session-scope: AGENTS.md (first N entries of extraContextBlocks are
   // AGENTS.md content pushed before skill blocks — find it by marker).
@@ -600,11 +600,8 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     traceTools: parsed.traceTools,
     ...(parsed.eventsMode ? { eventsMode: parsed.eventsMode } : {}),
     ...(parsed.taskEvidence ? { taskEvidence: parsed.taskEvidence } : {}),
-    ...(contextBlockScopes.length > 0
-      ? { contextBlockScopes }
-      : extraContextBlocks.length > 0
-        ? { extraContextBlocks }
-        : {}),
+    ...(extraContextBlocks.length > 0 ? { extraContextBlocks } : {}),
+    ...(contextBlockScopes.length > 0 ? { contextBlockScopes } : {}),
   });
 
   let result: RunAgentTurnResult = await raceWithWatchdog(

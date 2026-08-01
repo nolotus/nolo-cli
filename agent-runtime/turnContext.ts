@@ -252,8 +252,7 @@ export const buildSkillDiscoveryLayer = (
   const lines = [
     "--- 可用技能（Skills）---",
     `工作区 ${boundFolder} 中发现了 ${skills.length} 个技能（SKILL.md）：`,
-    "模型可按需用 loadSkill 工具按名加载，把 SKILL.md 全文拉进上下文后遵循其指令；",
-    "如 loadSkill 不可用或想直接读取文件，下方 path 仍可用 readFile 作为 fallback：",
+    "模型可按需用 readFile 读取以下文件获取详细指令：",
     "",
     ...skills.map(
       (s) =>

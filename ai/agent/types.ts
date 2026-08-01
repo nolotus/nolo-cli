@@ -87,7 +87,4 @@ export interface AgentRuntimeOptions {
      * 工具策略保持不变；专职 agent、image 档与普通对话不使用此字段。
      */
     quickChatModelOverride?: QuickChatModelOverride | null;
-
-    /** 默认自动挡 DeepSeek V4 Flash 使用的推理强度。 */
-    quickChatReasoningEffort?: "max";
 }

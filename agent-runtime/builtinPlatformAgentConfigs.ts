@@ -33,8 +33,8 @@ import {
  * - flash tier: DeepSeek V4 Flash (nolo / deepseek-v4-flash)
  * - balanced tier: DeepSeek V4 Pro (deepseek / deepseek-v4-pro)
  * - quality tier: GLM 5.2 (nolo / glm-5.2)
- * - image tier: Kimi K2.6 (nolo / kimi-k2.6)
- * - coding executor: Kimi K2.7 Coding (nolo / kimi-k2.7-code)
+ * - image tier: Kimi K2.6 (ollama-cloud / kimi-k2.6)
+ * - coding executor: Kimi K2.7 Coding (ollama-cloud / kimi-k2.7-code)
  * - builtin nolo: platform-routed default agent.
  *   NOTE: the builtin nolo agent has no seed in `scripts/createSpaceAgents.ts`;
  *   its provider/model live only in the hosted production record. As a
@@ -96,14 +96,14 @@ const BUILTIN_PLATFORM_AGENT_CONFIGS: Record<string, AgentRuntimeAgentConfig> = 
   [PUBLIC_KIMI_K26_IMAGE_AGENT_KEY]: {
     key: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
     name: "Kimi K2.6",
-    provider: "nolo",
+    provider: "ollama-cloud",
     model: "kimi-k2.6",
     apiSource: "platform",
     useServerProxy: true,
     rawRecord: {
       dbKey: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
       isPublic: true,
-      provider: "nolo",
+      provider: "ollama-cloud",
       model: "kimi-k2.6",
       apiSource: "platform",
       useServerProxy: true,
@@ -112,14 +112,14 @@ const BUILTIN_PLATFORM_AGENT_CONFIGS: Record<string, AgentRuntimeAgentConfig> = 
   [PUBLIC_KIMI_K27_CODING_AGENT_KEY]: {
     key: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
     name: "Kimi K2.7 Coding",
-    provider: "nolo",
+    provider: "ollama-cloud",
     model: "kimi-k2.7-code",
     apiSource: "platform",
     useServerProxy: true,
     rawRecord: {
       dbKey: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
       isPublic: true,
-      provider: "nolo",
+      provider: "ollama-cloud",
       model: "kimi-k2.7-code",
       apiSource: "platform",
       useServerProxy: true,

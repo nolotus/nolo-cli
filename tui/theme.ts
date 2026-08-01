@@ -1,5 +1,4 @@
 import { resolveCliColorEnabled } from "../client/terminalStyles";
-import { displayWidth } from "./tuiAnsi";
 
 /**
  * TUI color tokens mirroring the app theme system.
@@ -205,34 +204,8 @@ export function setActiveDensity(density: TuiDensity) {
   activeDensity = density;
 }
 
-const TRUECOLOR_TERM_PROGRAMS = new Set([
-  "iterm.app",
-  "wezterm",
-  "ghostty",
-  "vscode",
-  "hyper",
-  "tabby",
-  "rio",
-  "warpterminal",
-]);
-
-/**
- * Truecolor support detection.
- *
- * COLORTERM is the canonical signal but a lot of terminals don't set it
- * (tmux, some SSH setups, VS Code's integrated terminal), which silently
- * dropped every background-tinted surface in the TUI. TERM_PROGRAM is the
- * reliable second signal. Apple_Terminal is deliberately excluded: it is a
- * 256-color terminal and would approximate 24-bit SGR into the wrong hue.
- */
 export function supportsTruecolor(env: Record<string, string | undefined> = process.env) {
-  const explicit = (env.NOLO_TUI_TRUECOLOR ?? "").trim().toLowerCase();
-  if (explicit === "1" || explicit === "true") return true;
-  if (explicit === "0" || explicit === "false") return false;
-  if (/truecolor|24bit/i.test(env.COLORTERM ?? "")) return true;
-  if (/direct|24bit/i.test(env.TERM ?? "")) return true;
-  const program = (env.TERM_PROGRAM ?? "").toLowerCase();
-  return TRUECOLOR_TERM_PROGRAMS.has(program);
+  return /truecolor|24bit/i.test(env.COLORTERM ?? "");
 }
 
 /**
@@ -298,35 +271,6 @@ const TERMINAL_BASE: Record<TuiBrightness, string> = {
   light: "FFFFFF",
 };
 
-/**
- * Real terminal background hex, set from the OSC 11 probe result. Null means
- * "no probe result", so resolution falls back to TERMINAL_BASE. Kept as raw
- * hex (no ANSI) — callers render it through hexToBgSgr/blendHex.
- */
-let activeTerminalBaseHex: string | null = null;
-
-/** Record the terminal's actual background hex, or clear it with null. */
-export function setActiveTerminalBaseHex(hex: string | null) {
-  if (hex === null) {
-    activeTerminalBaseHex = null;
-    return;
-  }
-  // Validate before storing: a dirty value would flow into blendHex and emit
-  // NaN SGR channels. readHexChannels requires uppercase, so normalize first.
-  activeTerminalBaseHex = readHexChannels(hex.replace(/^#/, "").toUpperCase())
-    ? hex.replace(/^#/, "").toUpperCase()
-    : null;
-}
-
-export function getActiveTerminalBaseHex(): string | null {
-  return activeTerminalBaseHex;
-}
-
-/** Base hex for a brightness: the probed terminal color, or the fallback. */
-function resolveTerminalBaseHex(brightness: TuiBrightness): string {
-  return activeTerminalBaseHex ?? TERMINAL_BASE[brightness];
-}
-
 /** Parse a 6-digit hex channel triple, or null when the input isn't one. */
 function readHexChannels(hex: string): [number, number, number] | null {
   if (!/^[0-9A-F]{6}$/.test(hex)) return null;
@@ -371,91 +315,34 @@ export function blendHex(fg: string, base: string, weight: number): string {
   return `${r}${g}${b}`;
 }
 
-export type DiffLineKind = "added" | "removed" | "context" | "hunk";
-export type DiffLineSequence = { fg: string; bg: string; bar: string };
+export type DiffLineSequence = { fg: string; bg: string };
 
 export function diffLineSequences(
   env: Record<string, string | undefined> = process.env,
   brightness: TuiBrightness = resolveTuiBrightness(env),
-): Record<DiffLineKind, DiffLineSequence> | null {
+): { added: DiffLineSequence; removed: DiffLineSequence } | null {
   if (!supportsTruecolor(env)) return null;
 
   const palette = THEME_PALETTES[activeThemeName] ?? THEME_PALETTES.trail;
   const successHex = palette[brightness].success.hex;
   const dangerHex = palette[brightness].danger.hex;
-  const infoHex = palette[brightness].info.hex;
 
-  const weight = brightness === "dark" ? 0.18 : 0.12;
-  const baseHex = resolveTerminalBaseHex(brightness);
+  const weight = brightness === "dark" ? 0.14 : 0.10;
+  const baseHex = TERMINAL_BASE[brightness];
 
   const addedBgHex = blendHex(successHex, baseHex, weight);
   const removedBgHex = blendHex(dangerHex, baseHex, weight);
-  const hunkBgHex = blendHex(infoHex, baseHex, weight * 0.6);
-
-  const successSgr = hexToSgr(successHex);
-  const dangerSgr = hexToSgr(dangerHex);
-  const infoSgr = hexToSgr(infoHex);
 
   return {
     added: {
-      fg: successSgr,
+      fg: hexToSgr(successHex),
       bg: hexToBgSgr(addedBgHex),
-      bar: `${successSgr}▌\x1b[39m`,
     },
     removed: {
-      fg: dangerSgr,
+      fg: hexToSgr(dangerHex),
       bg: hexToBgSgr(removedBgHex),
-      bar: `${dangerSgr}▌\x1b[39m`,
     },
-    hunk: {
-      fg: infoSgr,
-      bg: hexToBgSgr(hunkBgHex),
-      bar: " ",
-    },
-    context: { fg: "", bg: "", bar: " " },
   };
-}
-
-/**
- * Render one diff line as a Zed-style band: left color bar + tinted full-width
- * background + colored text.
- *
- * `padTo` is the block's widest line, NOT the terminal width. Padding to the
- * terminal width fights wrapTranscriptLine (which wraps at columns-1, so every
- * line would wrap one extra time), breaks on resize because the string is
- * already fixed, and leaves trailing spaces when the user copies the output.
- * A block-local rectangle reads the same and stays resize-safe.
- */
-export function renderDiffLine(args: {
-  kind: DiffLineKind;
-  /** Full line text INCLUDING its +/-/@@ prefix. */
-  text: string;
-  /** Display width to pad the tint to. Omit for no padding. */
-  padTo?: number;
-  env?: Record<string, string | undefined>;
-  colorEnabled?: boolean;
-}): string {
-  const { kind, text } = args;
-  const env = args.env ?? process.env;
-  const colorEnabled = args.colorEnabled ?? resolveCliColorEnabled();
-  if (!colorEnabled) return text;
-
-  const seqs = diffLineSequences(env);
-  if (!seqs) {
-    // Degraded terminal: foreground color only, no background, no bar.
-    if (kind === "context") return text;
-    const token: TuiThemeToken =
-      kind === "added" ? "success" : kind === "removed" ? "danger" : "info";
-    return `${themeColorSequence(token, env)}${text}\x1b[39m`;
-  }
-
-  const seq = seqs[kind];
-  const padding =
-    args.padTo === undefined
-      ? ""
-      : " ".repeat(Math.max(0, args.padTo - displayWidth(text)));
-  // \x1b[0m resets both fg and bg so the tint never leaks to the next line.
-  return `${seq.bar}${seq.bg}${seq.fg}${text}${padding}\x1b[0m`;
 }
 
 /**
@@ -492,14 +379,112 @@ export function themeText(
   return `${themeColorSequence(token, env)}${text}\x1b[39m`;
 }
 
-/**
- * Classify one diff fence line. Shared by the streaming highlighter
- * (assistantOutput.ts highlightCodeLine) so streamed and history-redraw paths
- * paint identically. `+++` / `---` file headers are context, not added/removed.
- */
-export function classifyDiffLine(line: string): DiffLineKind {
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("+") && !line.startsWith("+++")) return "added";
-  if (line.startsWith("-") && !line.startsWith("---")) return "removed";
-  return "context";
+function renderDiffCodeBlock(
+  code: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const border = themeText("│", "chrome", true, env);
+  const addedColor = themeColorSequence("success", env);
+  const deletedColor = themeColorSequence("danger", env);
+  const hunkColor = themeColorSequence("info", env);
+  const contextColor = themeColorSequence("chrome", env);
+  const reset = "\x1b[0m";
+
+  const lines = code.split("\n").map((line: string) => {
+    let color = contextColor;
+    if (line.startsWith("@@")) {
+      color = hunkColor;
+    } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      color = addedColor;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      color = deletedColor;
+    }
+    return ` ${border}  ${color}${line}${reset}`;
+  });
+
+  return ` ${themeText("┌───", "chrome", true, env)}\n${lines.join("\n")}\n ${themeText("└───", "chrome", true, env)}`;
+}
+
+export function highlightMarkdown(
+  text: string,
+  colorEnabled = resolveCliColorEnabled(),
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (!colorEnabled) return text;
+
+  let result = text;
+
+  // 1. Code blocks: ```[lang]\n([\s\S]*?)\n```
+  result = result.replace(/```([a-zA-Z-]*)\n([\s\S]*?)\n```/g, (match, lang, code) => {
+    if (lang.toLowerCase() === "diff") {
+      return renderDiffCodeBlock(code, env);
+    }
+    const infoColor = themeColorSequence("info", env);
+    const reset = "\x1b[39m\x1b[22m";
+    const border = themeText("│", "chrome", true, env);
+
+    const formattedCode = code
+      .split("\n")
+      .map((line: string) => ` ${border}  ${infoColor}${line}${reset}`)
+      .join("\n");
+
+    return ` ${themeText("┌───", "chrome", true, env)}\n${formattedCode}\n ${themeText("└───", "chrome", true, env)}`;
+  });
+
+  // 2. Headings: three-tier hierarchy matching the streaming renderer
+  // (assistantOutput.ts styleRichMarkdownLine). Must run before bold/inline
+  // so heading text isn't partially consumed by those patterns.
+  //   H1 → accent + bold + underline
+  //   H2 → warning + bold
+  //   H3 → info + bold
+  result = result.replace(/^(#{1,3})\s+(.+)$/gm, (match, hashes, title) => {
+    const level = hashes.length;
+    const reset = "\x1b[0m";
+    if (level === 1) {
+      return `\x1b[1m\x1b[4m${themeColorSequence("accent", env)}${title}${reset}`;
+    }
+    if (level === 2) {
+      return `\x1b[1m${themeColorSequence("warning", env)}${title}${reset}`;
+    }
+    return `\x1b[1m${themeColorSequence("info", env)}${title}${reset}`;
+  });
+
+  // 2b. 状态行弱化：以"进入 nolo-plan"开头的整行 → chrome + dim。repo
+  //     规范强制每条回复首句为该状态行，连续多条堆叠时噪声大。必须与
+  //     assistantOutput.ts styleRichMarkdownLine 对齐（同一回复流式与
+  //     历史重绘颜色不能跳变）。
+  result = result.replace(
+    /^(进入 nolo-plan[^\n]*)$/gm,
+    (match, content) =>
+      `${themeColorSequence("chrome", env)}\x1b[2m${content}\x1b[0m`
+  );
+
+  // 3. Blockquotes: "> text" → chrome left border + dimmed content
+  result = result.replace(/^>\s?(.*)$/gm, (match, content) => {
+    const border = themeColorSequence("chrome", env);
+    return `${border}│\x1b[39m \x1b[2m${content}\x1b[22m`;
+  });
+
+  // 4. Bold text: **bold** -> \x1b[1mbold\x1b[22m
+  result = result.replace(/\*\*([\s\S]*?)\*\*/g, "\x1b[1m$1\x1b[22m");
+
+  // 5. Inline code: `code` -> muted, not info. Sharing the info hue with code
+  // blocks made prose read as a wall of bright cyan; muted keeps identifiers
+  // distinguishable while the block border carries the stronger accent.
+  const mutedColor = themeColorSequence("muted", env);
+  const reset = "\x1b[39m";
+  result = result.replace(/`([^`\n]+)`/g, `${mutedColor}$1${reset}`);
+
+  // 6. Italic + strikethrough: run after bold so ** is consumed first.
+  //    *italic* -> dim; ~~strike~~ -> dim + strikethrough.
+  //    Only `*italic*` is supported, NOT `_italic_`: CommonMark gives `_` an
+  //    intra-word limitation (snake_case must not trigger italic) that needs a
+  //    word-boundary guard. Agent output contains snake_case variables often;
+  //    supporting `_italic_` would corrupt them. Must match styleInlineMarkdown
+  //    in assistantOutput.ts (streaming path) so the same reply doesn't shift
+  //    styling mid-scroll.
+  result = result.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, `\x1b[2m$1\x1b[22m`);
+  result = result.replace(/~~([^~\n]+?)~~/g, `\x1b[2m\x1b[9m$1\x1b[29m\x1b[22m`);
+
+  return result;
 }

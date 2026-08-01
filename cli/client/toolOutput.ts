@@ -9,9 +9,7 @@ import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import { parseUiAskChoiceContent } from "../../ai/tools/uiAskChoiceTool";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
-import { type DiffLineKind, renderDiffLine, themeText } from "../tui/theme";
-import { displayWidth } from "../tui/tuiAnsi";
-import { diffLines } from "diff";
+import { diffLineSequences, themeText } from "../tui/theme";
 import { t, toolLabel } from "../tui/i18n";
 
 export type ToolDisplayMode = "hide" | "compact" | "verbose";
@@ -90,12 +88,7 @@ export function formatActiveToolLabel(
  * Generic output size (line counts on every successful tool) is still dropped:
  * it padded every line without telling the user anything actionable.
  */
-export type EditSnippetLine = { kind: DiffLineKind; text: string };
-
-function compactResultHint(event: LocalAgentToolEvent): {
-  inline: string;
-  detail?: EditSnippetLine[];
-} {
+function compactResultHint(event: LocalAgentToolEvent): { inline: string; detail?: string } {
   const gate = readActionGate(event.metadata?.actionGate);
   if (gate) {
     const commandPayload = gate.kind === "handoff" ? readCommandActionGatePayload(gate.payload) : null;
@@ -145,107 +138,29 @@ function readReadFileRange(metadata: Record<string, unknown>): string | undefine
   return `${startLine}-${endLine}/${totalLines}`;
 }
 
-const EDIT_SNIPPET_MAX_LINES = 10;
+const EDIT_SNIPPET_MAX_LINES = 5;
 const EDIT_SNIPPET_MAX_WIDTH = 96;
 
-function formatEditFileSnippet(
-  metadata: Record<string, unknown>
-): EditSnippetLine[] | undefined {
+function formatEditFileSnippet(metadata: Record<string, unknown>): string | undefined {
   const oldSnippet = typeof metadata.oldSnippet === "string" ? metadata.oldSnippet : undefined;
   const newSnippet = typeof metadata.newSnippet === "string" ? metadata.newSnippet : undefined;
   if (!oldSnippet && !newSnippet) return undefined;
-
-  // Degraded path: one side missing — show whichever side we have, tagged
-  // wholesale as removed/added so the user at least sees something.
-  if (oldSnippet && !newSnippet) {
-    return snippetLinesWithKind(oldSnippet, "removed");
+  const lines: string[] = [];
+  if (oldSnippet) {
+    for (const line of snippetLines(oldSnippet)) lines.push(`- ${line}`);
   }
-  if (newSnippet && !oldSnippet) {
-    return snippetLinesWithKind(newSnippet, "added");
+  if (newSnippet) {
+    for (const line of snippetLines(newSnippet)) lines.push(`+ ${line}`);
   }
-
-  // Both present: produce a real line-level diff via `diffLines`.
-  const parts = diffLines(oldSnippet!, newSnippet!);
-  const all: EditSnippetLine[] = [];
-  for (const part of parts) {
-    const kind: DiffLineKind = part.added ? "added" : part.removed ? "removed" : "context";
-    // `diffLines` values end with "\n", so split drops a trailing empty element.
-    const raw = part.value.split("\n");
-    if (raw.length > 0 && raw[raw.length - 1] === "") raw.pop();
-    for (const line of raw) all.push(buildEditLine(kind, line));
-  }
-
-  // No change at all (old === new) — nothing actionable to show.
-  const changeCount = all.filter((l) => l.kind !== "context").length;
-  if (changeCount === 0) return undefined;
-
-  return windowAndTruncate(all, EDIT_SNIPPET_MAX_LINES);
+  return lines.length ? lines.join("\n") : undefined;
 }
 
-function prefixFor(kind: DiffLineKind): string {
-  return kind === "added" ? "+ " : kind === "removed" ? "- " : "  ";
-}
-
-/**
- * Build one diff line: kind prefix + width-clipped body. Clipping uses
- * display width (CJK-aware) so a 60-char CJK line (120 columns) is truncated
- * where a `.length` check would have let it overflow.
- */
-function buildEditLine(kind: DiffLineKind, body: string): EditSnippetLine {
-  return { kind, text: prefixFor(kind) + truncateByDisplayWidth(body, EDIT_SNIPPET_MAX_WIDTH) };
-}
-
-/** One-sided fallback: tag every line of a snippet with a single kind. */
-function snippetLinesWithKind(
-  snippet: string,
-  kind: DiffLineKind
-): EditSnippetLine[] {
+function snippetLines(snippet: string): string[] {
   const lines = snippet.split(/\r?\n/).filter((line) => line.length > 0);
-  return lines.slice(0, EDIT_SNIPPET_MAX_LINES).map((line) => buildEditLine(kind, line));
-}
-
-/**
- * Clip a line to a display-width budget, appending "…" when it overflows.
- * Width is measured by `displayWidth` (CJK-aware), not by code-unit count,
- * so a line of 60 CJK chars (120 display columns) is clipped where a
- * `.length`-based check would have let it through.
- */
-function truncateByDisplayWidth(line: string, maxWidth: number): string {
-  if (displayWidth(line) <= maxWidth) return line;
-  // Walk code points, accumulating display width; stop just before overflowing
-  // so the "…" fits within the budget.
-  let width = 0;
-  let kept = "";
-  for (const char of line) {
-    const w = displayWidth(char);
-    if (width + w + 1 > maxWidth) break; // +1 reserves room for "…"
-    kept += char;
-    width += w;
-  }
-  return `${kept}…`;
-}
-
-/**
- * Keep the window centered on the first changed line so a change at the tail
- * of a long snippet isn't clipped away by a naive head truncation. When the
- * changed region plus its surrounding context fits within maxLines, the
- * contiguous run from the first change is kept; otherwise the window is
- * shifted so the first change is visible.
- */
-function windowAndTruncate(lines: EditSnippetLine[], maxLines: number): EditSnippetLine[] {
-  if (lines.length <= maxLines) return lines;
-  const firstChange = lines.findIndex((l) => l.kind !== "context");
-  if (firstChange === -1) return lines.slice(0, maxLines);
-  // Center the window on the first change, clamped to [0, len-maxLines].
-  const half = Math.floor(maxLines / 2);
-  let start = Math.max(0, firstChange - half);
-  if (start + maxLines > lines.length) start = Math.max(0, lines.length - maxLines);
-  const kept = lines.slice(start, start + maxLines);
-  const omitted = lines.length - kept.length;
-  if (omitted > 0) {
-    kept.push({ kind: "context", text: `  … +${omitted} more lines` });
-  }
-  return kept;
+  const shown = lines.slice(0, EDIT_SNIPPET_MAX_LINES);
+  return shown.map((line) => (line.length > EDIT_SNIPPET_MAX_WIDTH
+    ? `${line.slice(0, EDIT_SNIPPET_MAX_WIDTH)}…`
+    : line));
 }
 
 function isFailedToolResult(event: LocalAgentToolEvent) {
@@ -269,15 +184,6 @@ function isNeedsActionToolResult(event: LocalAgentToolEvent) {
 function parseUiAskChoiceForCli(event: LocalAgentToolEvent): {
   question: string;
   choices: Array<{ label: string; userMessage?: string }>;
-  selected?: { label: string; userMessage: string };
-  answers?: Array<{
-    questionId: string;
-    selectedIds: string[];
-    otherText: string;
-    userMessage: string;
-  }>;
-  cancelled?: boolean;
-  resolved: boolean;
 } | null {
   if (event.toolName !== "ui_ask_choice" && !event.metadata?.uiAskChoice) {
     return null;
@@ -296,30 +202,8 @@ function parseUiAskChoiceForCli(event: LocalAgentToolEvent): {
       userMessage: typeof c.userMessage === "string" ? c.userMessage : undefined,
     }))
     .filter((c) => c.label.length > 0);
-  const selected =
-    parsed.selected && typeof parsed.selected === "object"
-      ? {
-          label: String(parsed.selected.label ?? "").trim(),
-          userMessage: String(parsed.selected.userMessage ?? "").trim(),
-        }
-      : undefined;
-  const answers = Array.isArray(parsed.answers) ? parsed.answers : undefined;
-  const cancelled = Boolean(parsed.cancelled);
-  const resolved = Boolean(
-    event.metadata?.resolved || selected || cancelled || (answers && answers.length > 0),
-  );
-  // Unresolved interactive prompts need a question + at least one choice.
-  // Resolved / cancelled payloads may omit choices (or only carry selected).
-  if (!resolved && (!question || choices.length === 0)) return null;
-  if (!question && !selected && !cancelled) return null;
-  return {
-    question,
-    choices,
-    ...(selected ? { selected } : {}),
-    ...(answers ? { answers } : {}),
-    ...(cancelled ? { cancelled: true } : {}),
-    resolved,
-  };
+  if (!question || choices.length === 0) return null;
+  return { question, choices };
 }
 
 function formatUiAskChoiceBlock(
@@ -330,59 +214,11 @@ function formatUiAskChoiceBlock(
   if (!parsed) return null;
   const lines: string[] = [];
   lines.push("");
-
-  const questionText = parsed.question || "";
   if (colorEnabled) {
-    lines.push(`${themeText("❓ ", "info", true)}${styleCliText(questionText, "cyan", true)}`);
+    lines.push(`${themeText("❓ ", "info", true)}${styleCliText(parsed.question, "cyan", true)}`);
   } else {
-    lines.push(`❓ ${questionText}`);
+    lines.push(`❓ ${parsed.question}`);
   }
-
-  // Resolved: show what the user picked (or cancelled) instead of re-printing
-  // the interactive menu + "type a number" hint into message history.
-  if (parsed.resolved) {
-    if (parsed.cancelled) {
-      const cancelled = t("askChoiceHistoryCancelled");
-      lines.push(
-        colorEnabled
-          ? `  ${themeText("·", "chrome", true)} ${themeText(cancelled, "muted", true)}`
-          : `  · ${cancelled}`,
-      );
-      return `${lines.join("\n")}\n`;
-    }
-
-    const selectedLabel =
-      parsed.selected?.label ||
-      parsed.selected?.userMessage ||
-      (parsed.answers
-        ? parsed.answers
-            .map((a) => a.userMessage)
-            .filter(Boolean)
-            .join(", ")
-        : "");
-    const marker = t("askChoiceHistorySelected");
-    const displayLabel = selectedLabel || "—";
-    if (colorEnabled) {
-      lines.push(
-        `  ${themeText("✓", "success", true)} ${themeText(marker, "muted", true)} ${displayLabel}`,
-      );
-    } else {
-      lines.push(`  ✓ ${marker} ${displayLabel}`);
-    }
-    // Multi-question: list each answer on its own line when present.
-    if (parsed.answers && parsed.answers.length > 1) {
-      for (const answer of parsed.answers) {
-        if (!answer.userMessage) continue;
-        lines.push(
-          colorEnabled
-            ? `    ${themeText("·", "chrome", true)} ${answer.userMessage}`
-            : `    · ${answer.userMessage}`,
-        );
-      }
-    }
-    return `${lines.join("\n")}\n`;
-  }
-
   parsed.choices.forEach((choice, i) => {
     const num = String(i + 1);
     const label = choice.label;
@@ -394,7 +230,7 @@ function formatUiAskChoiceBlock(
       lines.push(`  ${num}. ${label}`);
     }
   });
-  const hint = t("askChoiceHistoryHint");
+  const hint = "请输入序号选择，或直接回复：";
   if (colorEnabled) {
     lines.push(`  ${dimCliText(hint, true)}`);
   } else {
@@ -600,25 +436,6 @@ export function formatFetchTreeBlockForCli(
 
   return `${headerLine}${treeLines}\n`;
 }
-
-/**
- * Resolve the skill name for a loadSkill tool event. The tool contract puts
- * `{ name }` in the input; the success result content starts with
- * `Skill "<name>" loaded inline.`. Prefer the explicit metadata/arg name,
- * then fall back to extracting it from the result content so the renderer
- * stays correct even when only `content` is populated.
- */
-function resolveLoadSkillName(event: LocalAgentToolEvent): string {
-  const metaName = typeof event.metadata?.name === "string" ? event.metadata.name : undefined;
-  if (metaName) return metaName;
-  const argName = event.argumentsPreview?.trim();
-  if (argName && !argName.startsWith("{")) return argName;
-  const content = typeof event.content === "string" ? event.content : "";
-  const match = content.match(/Skill "([^"]+)" loaded inline/);
-  if (match?.[1]) return match[1];
-  return argName || "skill";
-}
-
 function formatCompactToolLine(
   event: LocalAgentToolEvent,
   pending: { toolName: string; argumentsPreview?: string } | undefined,
@@ -670,31 +487,6 @@ function formatCompactToolLine(
     return formatToolTraceLine(`▸ ${label}  ✗ ${message}`, colorEnabled, "error");
   }
 
-  // loadSkill: render Kimi-style "● Used Skill (<name>)" with the inline
-  // follow-instructions line indented below it. tool-error already returned
-  // above. not-found is a plain tool-result (executors return text, never
-  // throw), so detect it here — same minimal-prefix contract the web/RN
-  // renderers use — and render a failure line instead of the success bullet.
-  if (event.type === "tool-result" && toolName === "loadSkill") {
-    const skillName = resolveLoadSkillName(event);
-    const content = typeof event.content === "string" ? event.content : "";
-    const failed =
-      /^Skill\s+"[^"]*"\s+not found/.test(content) || isFailedToolResult(event);
-    if (failed) {
-      const message = clip(content.split("\n")[0] || t("toolFailed"), 96);
-      return formatToolTraceLine(`▸ Used Skill (${skillName})  ✗ ${message}`, colorEnabled, "error");
-    }
-    const resultLine = `Skill "${skillName}" loaded inline. Follow its instructions.`;
-    if (!colorEnabled) {
-      return `● Used Skill (${skillName})\n  ${resultLine}\n`;
-    }
-    const bullet = themeText("●", "success", true);
-    const labelPart = themeText("Used Skill", "muted", true);
-    const namePart = themeText(`(${skillName})`, "chrome", true);
-    const detail = themeText(`  ${resultLine}`, "muted", true);
-    return `${bullet} ${labelPart} ${namePart}\n${detail}\n`;
-  }
-
   // ui_ask_choice: render question + numbered choices instead of a generic
   // tool trace line, so CLI users get an interactive-looking menu they can
   // reply to by typing the number or their own answer.
@@ -724,20 +516,39 @@ function formatCompactToolLine(
     mainLine = `${chromePointer} ${mutedLabel}${argsPart}  ${statusToken}${suffixPart}\n`;
   }
 
-  if (!hint.detail?.length) return mainLine;
-  return `${mainLine}${formatEditDetailBlock(hint.detail, colorEnabled)}`;
+  if (!hint.detail) return mainLine;
+  const detailLines = hint.detail
+    .split("\n")
+    .map((line) => formatEditDetailLine(line, colorEnabled))
+    .join("");
+  return `${mainLine}${detailLines}`;
 }
 
-function formatEditDetailBlock(lines: EditSnippetLine[], colorEnabled: boolean): string {
-  if (!colorEnabled) {
-    return lines.map((line) => `  ${line.text}\n`).join("");
+function formatEditDetailLine(line: string, colorEnabled: boolean): string {
+  const marker = line.slice(0, 2);
+  const rest = line.slice(2);
+  if (!colorEnabled) return `  ${line}\n`;
+
+  const diff = diffLineSequences();
+  if (!diff) {
+    const color = marker === "- " ? "red" : marker === "+ " ? "green" : undefined;
+    if (color) {
+      return `  ${styleCliText(marker, color, true)}${dimCliText(rest, true)}\n`;
+    }
+    return `  ${dimCliText(line, true)}\n`;
   }
-  // Block-level padTo so every diff line forms a rectangle of equal visible
-  // width (Zed-style band). Measured with CJK-aware displayWidth.
-  const padTo = Math.max(...lines.map((line) => displayWidth(line.text))) + 1;
-  return lines
-    .map((line) => `  ${renderDiffLine({ kind: line.kind, text: line.text, padTo, colorEnabled: true })}\n`)
-    .join("");
+
+  const RESET = "\x1b[0m";
+
+  if (marker === "- ") {
+    return `  ${diff.removed.bg}${diff.removed.fg}- ${rest}${RESET}\n`;
+  }
+
+  if (marker === "+ ") {
+    return `  ${diff.added.bg}${diff.added.fg}+ ${rest}${RESET}\n`;
+  }
+
+  return `  ${dimCliText(line, true)}\n`;
 }
 
 export function formatToolEventForCli(

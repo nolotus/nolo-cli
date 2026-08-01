@@ -35,10 +35,10 @@ export function formatDialogTimestamp(
   const time = typeof value === "number" ? value : Date.parse(value);
   if (!Number.isFinite(time) || time <= 0) return "";
   const deltaSeconds = Math.max(0, Math.floor((now - time) / 1000));
-  if (deltaSeconds < 60) return t("timeJustNow");
-  if (deltaSeconds < 3600) return t("timeMinutesAgo", String(Math.floor(deltaSeconds / 60)));
-  if (deltaSeconds < 86400) return t("timeHoursAgo", String(Math.floor(deltaSeconds / 3600)));
-  if (deltaSeconds < 30 * 86400) return t("timeDaysAgo", String(Math.floor(deltaSeconds / 86400)));
+  if (deltaSeconds < 60) return "just now";
+  if (deltaSeconds < 3600) return `${Math.floor(deltaSeconds / 60)}m ago`;
+  if (deltaSeconds < 86400) return `${Math.floor(deltaSeconds / 3600)}h ago`;
+  if (deltaSeconds < 30 * 86400) return `${Math.floor(deltaSeconds / 86400)}d ago`;
   const date = new Date(time);
   const pad = (part: number) => String(part).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -57,7 +57,7 @@ export function toDialogPickerItems(dialogs: ListedDialog[]): DialogPickerItem[]
 
 export function renderDialogList(dialogs: ListedDialog[]): string {
   if (dialogs.length === 0) return t("noDialogsYet");
-  const lines = [t("recentDialogs")];
+  const lines = ["Recent dialogs:"];
   for (const [index, dialog] of dialogs.entries()) {
     const stamp = formatDialogTimestamp(dialog.updatedAt ?? dialog.createdAt);
     lines.push(
@@ -65,7 +65,7 @@ export function renderDialogList(dialogs: ListedDialog[]): string {
       `     id=${dialog.id}`,
     );
   }
-  lines.push("", t("dialogListTip"));
+  lines.push("", "Tip: run /history to pick one interactively, or paste an id after /resume.");
   return lines.join("\n");
 }
 

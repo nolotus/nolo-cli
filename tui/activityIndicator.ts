@@ -34,8 +34,6 @@ export type ActivityIndicatorDeps = {
   isTurnActive: () => boolean;
   /** fallback 行文案，readlineWorkspace 用 () => `${state.agentName} -> working`。 */
   fallbackLabel: () => string;
-  /** 停止中文案，readlineWorkspace 用 () => t("turnStopping")。 */
-  stoppingLabel: () => string;
   /** 重绘 composer（含光标隐藏/显示与 isPaused 守卫），由调用方提供。 */
   onRepaint: () => void;
   now?: () => number;
@@ -50,10 +48,6 @@ export type ActivityIndicator = {
   report(label: string | null): void;
   /** 当前应渲染的活动行数据；explicit 优先，其次 fallback，都没有返回 null。 */
   getView(): ActivityIndicatorView | null;
-  /** Esc 即时反馈：把活动行切到「停止中」文案，frame 冻结不再动。 */
-  markStopping(): void;
-  /** 是否已处于停止中状态（第二次 Esc 判定用）。 */
-  isStopping(): boolean;
   /** turn 结束时调用：清 timer 与全部状态。 */
   stop(): void;
 };
@@ -77,21 +71,11 @@ export function createActivityIndicator(
   let lastActivityAt = 0;
   let frameIndex = 0;
   let timer: unknown = null;
-  // 停止中：用户按了 Esc，链路正在 unwind。冻结 frame、显示停止中文案，
-  // 第二次 Esc 据此判定强制停止。stop() 必须清掉它，否则下一轮 turn 一开始
-  // 就显示"停止中"。
-  let stopping = false;
 
   const elapsedSecFrom = (startedAt: number) =>
     startedAt > 0 ? Math.max(0, Math.floor((now() - startedAt) / 1000)) : 0;
 
   const tick = () => {
-    // 停止中：冻结 frame，只重绘（让停止中文案持续显示但不闪动）。
-    // 不推进看门狗，因为用户已发起停止，无需再补 working fallback。
-    if (stopping) {
-      deps.onRepaint();
-      return;
-    }
     frameIndex += 1;
     // 看门狗：turn 活跃、无 explicit label、距上次 report 超过阈值 → 激活 fallback。
     // lastActivityAt > 0 只是防御性守卫（真实环境 Date.now() 恒 > 0）。
@@ -133,28 +117,10 @@ export function createActivityIndicator(
     deps.onRepaint();
   };
 
-  const markStopping = () => {
-    stopping = true;
-    // 不改 frameIndex：冻结在当前帧，让活动行不闪。
-    // 不清 explicitLabel/fallbackActive：它们在 stop() 时统一清。
-    // 立即重绘一帧让停止中文案显示出来，不必等下一个 150ms tick。
-    deps.onRepaint();
-  };
-
-  const isStopping = () => stopping;
-
   const getView = (): ActivityIndicatorView | null => {
     // turn 结束后 stop() 前的收尾窗口：不渲染残留活动行（abort 会跳过 finish 的 report(null)）。
     if (!deps.isTurnActive()) return null;
     const frame = ACTIVITY_FRAMES[frameIndex % ACTIVITY_FRAMES.length]!;
-    // 停止中：固定文案优先于 explicit/fallback，让用户立刻看到反馈。
-    if (stopping) {
-      return {
-        frame,
-        label: deps.stoppingLabel(),
-        elapsedSec: 0,
-      };
-    }
     if (explicitLabel !== null) {
       return {
         frame,
@@ -182,8 +148,7 @@ export function createActivityIndicator(
     fallbackActive = false;
     fallbackStartedAt = 0;
     lastActivityAt = 0;
-    stopping = false;
   };
 
-  return { report, getView, markStopping, isStopping, stop };
+  return { report, getView, stop };
 }

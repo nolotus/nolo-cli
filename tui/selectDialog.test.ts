@@ -1,19 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import { getCliLocale, setCliLocale } from "./i18n";
 import {
   createRawKeyReader,
   renderSelectDialog,
   runSelectDialog,
   type SelectDialogItem,
 } from "./selectDialog";
-
-// String assertions target the English strings; pin the locale for machines
-// whose LANG resolves to zh.
-const originalLocale = getCliLocale();
-beforeAll(() => setCliLocale("en"));
-afterAll(() => setCliLocale(originalLocale));
 
 describe("selectDialog", () => {
   test("renders a marker on the selected row", () => {

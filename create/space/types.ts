@@ -41,6 +41,4 @@ export interface SpaceState {
     dialogTitles: Record<string, string>;
     /** 第一层网页体验：后台完成/失败后给侧边栏一个未读提示点，进入该对话即清除 */
     unreadDialogIds: Record<string, boolean>;
-    /** 侧边栏「我的收藏」专区折叠态（全局侧边栏偏好，跨空间复用） */
-    favoritesCollapsed: boolean;
 }

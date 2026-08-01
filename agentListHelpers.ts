@@ -12,11 +12,6 @@ export type ListedAgent = {
   publicKey: string;
   name: string;
   model: string;
-  handle?: string;
-  introduction?: string;
-  provider?: string;
-  inputPrice?: number;
-  outputPrice?: number;
   updatedAt: string | number | null;
   isPublicFlag: boolean;
   publicRecordExists: boolean;
@@ -68,19 +63,6 @@ export function normalizeListedAgent(record: any): ListedAgent | null {
     publicKey: keys.publicKey,
     name: typeof record?.name === "string" && record.name ? record.name : "(unnamed)",
     model: typeof record?.model === "string" && record.model ? record.model : "-",
-    ...(typeof record?.handle === "string" && record.handle ? { handle: record.handle } : {}),
-    ...(typeof record?.introduction === "string" && record.introduction
-      ? { introduction: record.introduction }
-      : typeof record?.description === "string" && record.description
-        ? { introduction: record.description }
-        : {}),
-    ...(typeof record?.provider === "string" && record.provider ? { provider: record.provider } : {}),
-    ...(typeof record?.inputPrice === "number" && Number.isFinite(record.inputPrice)
-      ? { inputPrice: record.inputPrice }
-      : {}),
-    ...(typeof record?.outputPrice === "number" && Number.isFinite(record.outputPrice)
-      ? { outputPrice: record.outputPrice }
-      : {}),
     updatedAt:
       typeof record?.updatedAt === "string" || typeof record?.updatedAt === "number"
         ? record.updatedAt
@@ -119,7 +101,6 @@ export function sortListedAgents(agents: ListedAgent[]) {
 export function parseAgentListArgs(args: string[]) {
   return {
     wantJson: args.includes("--json"),
-    wantSafe: args.includes("--safe"),
     publicOnly: args.includes("--public-only"),
     idsOnly: args.includes("--ids-only"),
   };

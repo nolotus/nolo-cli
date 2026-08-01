@@ -1,10 +1,4 @@
-import {
-  classifyDiffLine,
-  renderDiffLine,
-  themeColorSequence,
-  resolveTuiBrightness,
-  type TuiBrightness,
-} from "../tui/theme";
+import { themeColorSequence, resolveTuiBrightness, type TuiBrightness } from "../tui/theme";
 
 // ANSI style codes that don't depend on color (bold, dim, reset).
 const STYLE = {
@@ -193,11 +187,20 @@ function highlightCodeLine(line: string, lang: CodeLang, brightness: TuiBrightne
     return `${info}${line}${STYLE.reset}`;
   }
   if (lang === "diff") {
-    // Shared classification + renderer with renderDiffCodeBlock so streamed
-    // lines and a full redraw paint identically. renderDiffLine resolves its
-    // own env/brightness (same source as the `brightness` arg here) and resets
-    // with \x1b[0m so the background tint never leaks to the next line.
-    return renderDiffLine({ kind: classifyDiffLine(line), text: line, colorEnabled: true });
+    const added = colorSeq("success", brightness);
+    const deleted = colorSeq("danger", brightness);
+    const hunk = colorSeq("info", brightness);
+    const context = colorSeq("chrome", brightness);
+    const reset = STYLE.reset;
+    let color = context;
+    if (line.startsWith("@@")) {
+      color = hunk;
+    } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      color = added;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      color = deleted;
+    }
+    return `${color}${line}${reset}`;
   }
   const regions = scanStringCommentRegions(line, lang);
   const keywords = KEYWORDS[lang];

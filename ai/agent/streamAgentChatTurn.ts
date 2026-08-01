@@ -248,6 +248,15 @@ export const streamAgentChatTurnHandler = async (
                 runtimeOptions.quickChatModelOverride,
             );
         }
+        if (
+            runtimeOptions?.quickChatReasoningEffort &&
+            rawAgentConfig.model === "deepseek-v4-flash"
+        ) {
+            rawAgentConfig = {
+                ...rawAgentConfig,
+                reasoning_effort: runtimeOptions.quickChatReasoningEffort,
+            };
+        }
 
         // ── Live-audio-only guard ────────────────────────────────────────────
         if (isLiveAudioOnlyAgent(rawAgentConfig)) {
@@ -1408,6 +1417,14 @@ export const streamAgentChatTurnHandler = async (
                         entrypoint: "chat-dialog",
                         capabilities: ["streaming", "dialog-ui", "tool-cards"],
                     },
+                    ...(runtimeOptions?.quickChatReasoningEffort
+                        ? {
+                              runtimeOptions: {
+                                  quickChatReasoningEffort:
+                                      runtimeOptions.quickChatReasoningEffort,
+                              },
+                          }
+                        : {}),
                     ...(currentDialog?.spaceId ? { spaceId: currentDialog.spaceId } : {}),
                 });
                 const remoteRunUrl = `${explicitServerBase.replace(/\/+$/, "")}/api/agent/run`;

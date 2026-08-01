@@ -13,6 +13,7 @@ import {
 } from "../client/toolOutput";
 import {
   DEFAULT_TUI_AGENT_KEY,
+  PLATFORM_AGENTS,
   resolveCatalogPlatformAgents,
 } from "./agentCatalog";
 import { resolveAgentSwitchTarget } from "./agentPicker";
@@ -27,12 +28,15 @@ import {
   getActiveDensity,
   setActiveDensity,
   THEME_PALETTES,
+  themeText,
 } from "./theme";
 import { detectGitStatus } from "./gitStatus";
-import { getModelContextWindow } from "../ai/llm/getModelContextWindow";
+import { resolveAgentContextWindow } from "../client/tokenUsage";
+import { estimateDefaultCliContextTokens } from "../client/estimateCliContext";
 import { getProcessRegistry } from "../agent-runtime/processRegistry";
 import { formatElapsedSeconds, renderContextPanel, renderKnownAgents, renderTuiHelp } from "./sessionRender";
 import { isLikelySlashCommand, stripImageTokens } from "./sessionInput";
+import { resolveCliColorEnabled } from "../client/terminalStyles";
 import type { TuiState, TuiInputResult } from "./sessionTypes";
 
 export { DEFAULT_TUI_AGENT_KEY };
@@ -60,6 +64,7 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
   const explicitDialogKey =
     asOptionalTrimmedString(env.NOLO_DIALOG_KEY) ??
     (dialogEnvValue?.startsWith("dialog-") ? dialogEnvValue : undefined);
+  const autoRouteDefault = env.NOLO_AUTO_ROUTE !== "0";
 
   return {
     agentKey,
@@ -92,23 +97,67 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
       "hide"
     ),
     toolDisplay: normalizeToolDisplayMode(env.NOLO_CLI_TOOLS ?? env.NOLO_TOOLS, "compact"),
-    contextWindow: getModelContextWindow(agentName),
+    contextWindow: resolveAgentContextWindow({
+      agentKey,
+      agentName,
+      autoRouteDefault,
+    }),
+    estimatedContextTokens: estimateDefaultCliContextTokens({
+      cwd,
+      agentKey,
+      agentName: autoRouteDefault ? "DeepSeek V4 Flash" : agentName,
+      model: autoRouteDefault ? "deepseek-v4-flash" : undefined,
+    }),
+    apiSource: PLATFORM_AGENTS.some((entry) => entry.key === agentKey)
+      ? "platform"
+      : undefined,
   };
 }
 
 
-function applyAgentSwitch(state: TuiState, target: { name: string; key: string }) {
+function applyAgentSwitch(
+  state: TuiState,
+  target: { name: string; key: string; model?: string; apiSource?: string },
+  opts?: { autoRouteDefault?: boolean },
+) {
+  const autoRouteDefault = opts?.autoRouteDefault ?? process.env.NOLO_AUTO_ROUTE !== "0";
+  const contextWindow = resolveAgentContextWindow({
+    agentKey: target.key,
+    agentName: target.name,
+    model: target.model,
+    autoRouteDefault,
+  });
   return {
     nextState: {
       ...state,
       agentName: target.name,
       agentKey: target.key,
-      contextWindow: getModelContextWindow(target.name),
+      contextWindow,
+      estimatedContextTokens: estimateDefaultCliContextTokens({
+        cwd: state.cwd,
+        agentKey: target.key,
+        agentName: target.name,
+        model: target.model,
+      }),
+      apiSource: target.apiSource,
     },
     output: `Switched to ${target.name}. ${
       state.dialogId ? `Dialog kept: ${state.dialogId}` : "Dialog kept: new"
     }`,
   };
+}
+
+/**
+ * Render `/skill attach` success in the same visual language as the loadSkill
+ * compact tool line: a success-colored bullet followed by the skill name.
+ */
+function formatAttachedSkillLine(skillRef: string): string {
+  const colorEnabled = resolveCliColorEnabled();
+  if (!colorEnabled) return `● Attached skill: ${skillRef}`;
+  const bullet = themeText("●", "success", true);
+  const label = themeText("Attached skill:", "muted", true);
+  const name = themeText(skillRef, "chrome", true);
+  return `${bullet} ${label} ${name}`;
 }
 
 export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
@@ -168,9 +217,9 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         return {
           nextState: state,
           output: [
-            `Current theme: ${getActiveThemeName()} · ${brightness}`,
-            `Usage: /theme <name> | /theme light | /theme dark`,
-            `Available themes: ${available}`,
+            t("themeCurrent", getActiveThemeName(), brightness),
+            t("themeUsage"),
+            t("themeAvailable", available),
           ].join("\n"),
         };
       }
@@ -180,24 +229,24 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       // NOLO_TUI_THEME env var, which nobody discovers.
       if (sub === "light" || sub === "dark") {
         setActiveBrightness(sub);
-        return { nextState: state, output: `Switched to ${sub} background colors.` };
+        return { nextState: state, output: t("themeBrightnessSwitched", sub) };
       }
       if (sub === "auto") {
         setActiveBrightness(null);
         return {
           nextState: state,
-          output: `Background colors follow terminal detection (now: ${resolveTuiBrightness()}).`,
+          output: t("themeBrightnessAuto", resolveTuiBrightness()),
         };
       }
       if (setActiveThemeName(sub)) {
         return {
           nextState: state,
-          output: `Switched to theme: ${sub}`,
+          output: t("themeSwitched", sub),
         };
       } else {
         return {
           nextState: state,
-          output: `Unknown theme: ${sub}. Available themes: ${available}`,
+          output: t("themeUnknown", sub, available),
         };
       }
     }
@@ -207,19 +256,19 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       if (!sub) {
         return {
           nextState: state,
-          output: `Current density: ${getActiveDensity()}\nUsage: /density <cozy|spacious>`,
+          output: t("densityCurrent", getActiveDensity()),
         };
       }
       if (sub === "cozy" || sub === "spacious") {
         setActiveDensity(sub);
         return {
           nextState: state,
-          output: `Switched to layout density: ${sub}`,
+          output: t("densitySwitched", sub),
         };
       } else {
         return {
           nextState: state,
-          output: `Unknown density: ${sub}. Use 'cozy' or 'spacious'.`,
+          output: t("densityUnknown", sub),
         };
       }
     }
@@ -230,52 +279,52 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       if (argText !== "auto" && argText !== "local" && argText !== "server") {
         return {
           nextState: state,
-          output: "Usage: /runtime <auto|local|server>",
+          output: t("runtimeUsage"),
         };
       }
       return {
         nextState: { ...state, runtimeMode: argText },
-        output: `Runtime: ${argText}`,
+        output: t("runtimeSet", argText),
       };
     }
     case "/tools": {
       if (!argText) {
         return {
           nextState: state,
-          output: `Tool display: ${state.toolDisplay} (hide | compact | verbose)`,
+          output: t("toolsCurrent", state.toolDisplay),
         };
       }
       const normalizedArg = asTrimmedLowercaseString(argText);
       if (!["hide", "compact", "verbose", "on", "off"].includes(normalizedArg)) {
         return {
           nextState: state,
-          output: "Usage: /tools <hide|compact|verbose>",
+          output: t("toolsUsage"),
         };
       }
       const nextMode = normalizeToolDisplayMode(normalizedArg, state.toolDisplay);
       return {
         nextState: { ...state, toolDisplay: nextMode },
-        output: `Tool display: ${nextMode}`,
+        output: t("toolsSet", nextMode),
       };
     }
     case "/thinking": {
       if (!argText) {
         return {
           nextState: state,
-          output: `Thinking display: ${state.thinkingDisplay} (hide | marker | show)`,
+          output: t("thinkingCurrent", state.thinkingDisplay),
         };
       }
       const normalizedArg = asTrimmedLowercaseString(argText);
       if (!["hide", "marker", "show", "on", "off"].includes(normalizedArg)) {
         return {
           nextState: state,
-          output: "Usage: /thinking <hide|marker|show>",
+          output: t("thinkingUsage"),
         };
       }
       const nextMode = normalizeThinkingDisplayMode(normalizedArg, state.thinkingDisplay);
       return {
         nextState: { ...state, thinkingDisplay: nextMode },
-        output: `Thinking display: ${nextMode}`,
+        output: t("thinkingSet", nextMode),
       };
     }
     case "/tasks":
@@ -287,14 +336,14 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       const stopped = all.filter(p => p.status !== "running");
       const lines: string[] = [];
       if (running.length > 0) {
-        lines.push(`Running processes (${running.length}):`);
+        lines.push(t("tasksRunning", String(running.length)));
         for (const p of running) {
           const elapsed = formatElapsedSeconds(Math.floor((Date.now() - p.startedAt) / 1000));
           lines.push(`  pid ${p.pid}  ${p.label}    running  ${elapsed}`);
         }
       }
       if (stopped.length > 0) {
-        lines.push(`Stopped/exited (${stopped.length}):`);
+        lines.push(t("tasksStopped", String(stopped.length)));
         for (const p of stopped) {
           const elapsed = formatElapsedSeconds(Math.floor((Date.now() - p.startedAt) / 1000));
           const exitInfo = p.exitCode !== undefined ? `  exit ${p.exitCode}` : "";
@@ -302,39 +351,39 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         }
       }
       if (all.length === 0) {
-        lines.push("No processes.");
+        lines.push(t("tasksNone"));
       }
       return { nextState: state, output: lines.join("\n") };
     }
     case "/stop": {
       const registry = getProcessRegistry();
       if (!argText) {
-        return { nextState: state, output: "Usage: /stop <pid|label|all>" };
+        return { nextState: state, output: t("stopUsage") };
       }
       if (argText === "all") {
         const before = registry.list().filter(p => p.status === "running").length;
         registry.stopAll();
-        return { nextState: state, output: `Stopped ${before} processes` };
+        return { nextState: state, output: t("stopAllDone", String(before)) };
       }
       if (/^\d+$/.test(argText)) {
         const pid = parseInt(argText, 10);
         const proc = registry.get(pid);
         if (!proc || proc.status !== "running") {
-          return { nextState: state, output: `No running process with pid ${pid}` };
+          return { nextState: state, output: t("stopNoPid", String(pid)) };
         }
         registry.kill(pid);
-        return { nextState: state, output: `Stopped pid ${pid} (${proc.label})` };
+        return { nextState: state, output: t("stopPidDone", String(pid), proc.label) };
       }
       // Match by label
       const matches = registry.list().filter(p => p.status === "running" && p.label === argText);
       if (matches.length === 0) {
-        return { nextState: state, output: `No running process labeled '${argText}'` };
+        return { nextState: state, output: t("stopNoLabel", argText) };
       }
       for (const p of matches) {
         registry.kill(p.pid);
       }
       const stoppedNames = matches.map(p => `pid ${p.pid} (${p.label})`).join(", ");
-      return { nextState: state, output: `Stopped ${stoppedNames}` };
+      return { nextState: state, output: t("stopLabelsDone", stoppedNames) };
     }
     case "/exit":
     case "/quit":
@@ -358,13 +407,13 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       if (argText) {
         return {
           nextState: state,
-          output: `Unknown command: ${trimmed}\n\n${renderTuiHelp()}`,
+          output: t("unknownCommand", trimmed) + renderTuiHelp(),
         };
       }
       if (!state.dialogId) {
         return {
           nextState: state,
-          output: "Current dialog: new (nothing to compact yet)",
+          output: t("compactNothing"),
         };
       }
       return {
@@ -391,16 +440,14 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       if (argText === "current" || argText === "show") {
         return {
           nextState: state,
-          output: `Current agent: ${state.agentName} (${state.agentKey})`,
+          output: t("agentCurrent", state.agentName, state.agentKey),
         };
       }
       const resolvedTarget = resolveAgentSwitchTarget(argText, resolveCatalogPlatformAgents());
       if (!resolvedTarget) {
         return {
           nextState: state,
-          output:
-            `I don't know agent "${argText}" yet.\n` +
-            "Use /switch, /switch list, /switch minimax-m3, or a full agent key.",
+          output: t("agentUnknown", argText),
         };
       }
       return applyAgentSwitch(state, resolvedTarget);
@@ -454,6 +501,16 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         action: { type: "set-mouse", enabled: argText === "on" },
       };
     }
+    case "/altscreen": {
+      if (argText !== "on" && argText !== "off") {
+        return { nextState: state, output: t("altscreenUsage") };
+      }
+      return {
+        nextState: state,
+        output: argText === "on" ? t("altscreenOn") : t("altscreenOff"),
+        action: { type: "set-altscreen", enabled: argText === "on" },
+      };
+    }
     case "/resume": {
       if (!argText) {
         return {
@@ -485,7 +542,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       if (rest[0] === "attach") {
         const docName = rest.slice(1).join(" ").trim();
         if (!docName) {
-          return { nextState: state, output: "Usage: /doc attach <doc>" };
+          return { nextState: state, output: t("docAttachUsage") };
         }
         const attachedDocs = state.attachedDocs.includes(docName)
           ? state.attachedDocs
@@ -499,8 +556,8 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         nextState: state,
         output:
           state.attachedDocs.length > 0
-            ? `Attached docs: ${state.attachedDocs.join(", ")}`
-            : "No docs attached. Use /doc attach <doc>.",
+            ? t("docList", state.attachedDocs.join(", "))
+            : t("docNone"),
       };
     }
     case "/skill": {
@@ -508,57 +565,55 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       if (sub === "attach") {
         const skillRef = rest.slice(1).join(" ").trim();
         if (!skillRef) {
-          return { nextState: state, output: "Usage: /skill attach <skill-ref>" };
+          return { nextState: state, output: t("skillAttachUsage") };
         }
         const attachedSkills = state.attachedSkills.includes(skillRef)
           ? state.attachedSkills
           : [...state.attachedSkills, skillRef];
         return {
           nextState: { ...state, attachedSkills },
-          output: `Attached skill: ${skillRef}`,
+          output: formatAttachedSkillLine(skillRef),
         };
       }
       if (sub === "detach") {
         const skillRef = rest.slice(1).join(" ").trim();
         if (!skillRef) {
-          return { nextState: state, output: "Usage: /skill detach <skill-ref>" };
+          return { nextState: state, output: t("skillDetachUsage") };
         }
         const attachedSkills = state.attachedSkills.filter((s) => s !== skillRef);
         return {
           nextState: { ...state, attachedSkills },
           output: state.attachedSkills.includes(skillRef)
-            ? `Detached skill: ${skillRef}`
-            : `Skill not attached: ${skillRef}`,
+            ? t("skillDetached", skillRef)
+            : t("skillNotAttached", skillRef),
         };
       }
       if (sub === "clear") {
         if (state.attachedSkills.length === 0) {
-          return { nextState: state, output: "No skills attached." };
+          return { nextState: state, output: t("skillNone") };
         }
         return {
           nextState: { ...state, attachedSkills: [] },
-          output: `Cleared ${state.attachedSkills.length} skill(s).`,
+          output: t("skillCleared", String(state.attachedSkills.length)),
         };
       }
       return {
         nextState: state,
         output:
           state.attachedSkills.length > 0
-            ? `Attached skills: ${state.attachedSkills.join(", ")}\nUsage: /skill attach <ref> | /skill detach <ref> | /skill clear`
-            : "No skills attached. Use /skill attach <skill-ref> to attach a skill.\nSkill refs can be a dbKey (page-xxx), a skill name (searched in .agents/skills/ then docs/skills/), or a direct path.",
+            ? t("skillList", state.attachedSkills.join(", "))
+            : t("skillNoneHint"),
       };
     }
     case "/customize":
       return {
         nextState: state,
-        output:
-          "Tell nolo what to change, for example: /customize make my default agent more concise.",
+        output: t("customizeHint"),
       };
     case "/login":
       return {
         nextState: state,
-        output:
-          "MVP login uses profile/env auth. Set AUTH_TOKEN, NOLO_SERVER, or NOLO_PROFILE before starting nolo.",
+        output: t("loginHint"),
       };
     case "/profile":
       return {
@@ -574,15 +629,12 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
     case "/version":
       return {
         nextState: state,
-        output:
-          `nolo ${state.cliVersion || "unknown version"}\n` +
-          "Update this install with: nolo update\n" +
-          "If repo-local output differs, publish/install the latest npm package first.",
+        output: t("versionInfo", state.cliVersion || t("versionUnknown")),
       };
     default:
       return {
         nextState: state,
-        output: `Unknown command: ${command}\n\n${renderTuiHelp()}`,
+        output: t("unknownCommand", command) + renderTuiHelp(),
       };
   }
 }

@@ -39,6 +39,13 @@ export type CapabilityPack = {
   defaultEnabled: boolean;
   /** 图标 emoji（UI 展示用） */
   icon: string;
+  /**
+   * 能力包附带的方法论文档（Markdown）。启用该包时，此内容会随工具一起
+   * 注入 system prompt 的「技能提示」块，与 skill reference 的 promptPatch
+   * 走同一条注入链（mergeAgentToolsWithRuntime → buildSkillGuidanceBlock）。
+   * 用于承载"这套工具的配合纪律/流程/模板"，让能力包 = 工具 + 用法。
+   */
+  promptPatch?: string;
 };
 
 export const CAPABILITY_PACKS: CapabilityPack[] = [
@@ -100,10 +107,83 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
     id: "agent-orchestration",
     label: "多 agent 编排",
     description:
-      "后台启动其他 agent 执行子任务，并观察、查询、停止运行中的 agent run——适合并行派发、长任务跟踪、中途叫停等编排场景。",
-    tools: ["startAgentRun", "controlAgentRun"],
-    defaultEnabled: false,
+      "先按收藏、简介、能力和成本列出安全 agent 摘要，按需读取候选配置解析可运行 key，再后台启动其他 agent 执行子任务，并观察、查询、停止运行中的 agent run——适合并行派发、长任务跟踪、中途叫停等编排场景。",
+    tools: ["startAgentRun", "controlAgentRun", "listAgents"],
+    defaultEnabled: true,
     icon: "🧩",
+  },
+  {
+    id: "app-builder",
+    label: "应用构建",
+    description:
+      "构建/修改/发布 Web 应用：读取应用源码、定点修改、预检、部署，无需编程经验。",
+    tools: [
+      "appRead",
+      "appFileList",
+      "appFileSearch",
+      "appFileRead",
+      "appFileReplace",
+      "appFileWrite",
+      "appPreflight",
+      "appDeploy",
+      "appList",
+      "appDelete",
+      "createTable",
+      "addTableRow",
+      "addTableRows",
+      "queryTableRows",
+      "updateTableRow",
+      "deleteTableRow",
+      "openAIGptImage",
+    ],
+    defaultEnabled: false,
+    icon: "🖥",
+    promptPatch: `# 应用构建能力包 — 操作纪律
+
+## 效率优先（省 token）
+- 不复述用户需求，不解释你「打算怎么做」，直接动手。改完只用一两句话说清「改了什么、去哪看」。
+- 思考简短：定位问题即可，不做长篇推演。
+- 小改动（改文字、颜色、间距、圆角、单个组件）走最短路径：\`appFileSearch\` 或 \`appFileRead\` 定位 → \`appFileReplace\` 精确替换 → \`appPreflight\` → \`appDeploy\`。能一次命中就不要反复读文件。
+- 已经知道文件和位置时，跳过多余的 search/read，直接 replace。
+- 禁止为一个小改动整页重写或连带改动未命中的部分。
+
+## 定点修改
+- 如果上下文里带有用户「选中的元素」（cssPath / HTML 片段 / 源码位置），直接据此定位，不要再全局搜索。
+- 修改收敛在命中的元素及其样式来源（组件 / 类 / design token）。
+
+## 持续迭代流程
+- 用户要改功能或样式时，先用 appList 找到目标应用，再用 appRead 判断当前是源码工作区还是部署产物；一旦拿到 appId，后续都必须复用同一个 appId。
+- 每次修改后：appPreflight → appDeploy；appDeploy 必须继续传同一个 appId。
+- 收到 repairPlan 就直接修：按返回 issues 定点修复并重新预检，不要整站重写，也不要先问用户要不要修。
+
+## Nolo React SSR 维护纪律（当前默认路径）
+- 新建和维护的应用优先走 Nolo React SSR（framework: "nolo-react", renderMode: "ssr"）。
+- 当 appRead 返回 workspaceRef / sourceFiles / sourceOmitted 时，不要整站重写；使用受限 workspace 文件工具：appFileList / appFileSearch / appFileRead / appFileReplace / appFileWrite。
+- 小改动必须优先 appFileReplace；只有新建文件或确实需要整文件重写时才 appFileWrite。
+- 不要静默把 nolo-react 应用退回 react-spa 或单文件 Worker。
+- 视觉微调优先改 theme / tokens / design system；旧写法应用可先做最小 token 迁移，再改视觉参数。
+
+## 表单 / 数据收集
+- 留言、联系表单、预约、订阅、反馈收集优先用表工具，不要自己发明 JSON 文件存储。
+- 公开网页表单先 createTable，并配置 publicIntake（enabled、slug、allowedFields、requiredFields、可选 honeypotField）。
+- 公开访客提交只能调用 /api/table/public-submit；不要把 tenantId、tableId、token 写进公开应用代码。
+
+## 项目素材
+- 首页插画、封面、横幅、按钮图标等视觉素材，优先 openAIGptImage，再接入应用。
+
+## 通道异常止损
+- 如果工具返回 HTML / 非 JSON / transport failure / retryable=false，停止自动重试，说明是平台通道异常。
+
+## 缺少源码要说明风险
+- 如果 appRead 读出来的是 HTML 壳、importmap、压缩 bundle，必须先告知用户当前更像部署产物而不是可维护源码，得到确认后再继续大改。
+
+## 部署应答模板
+部署成功后：
+"✅ 你的应用已经好了！
+
+🔗 访问链接：[URL]
+
+这个应用可以帮你 [一句话功能描述]。想要修改或添加功能，直接告诉我就行！"`,
   },
 ];
 
@@ -144,6 +224,40 @@ export function expandEnabledPacks(
     .map((id) => CAPABILITY_PACK_BY_ID[id]?.tools ?? [])
     .flat();
   return [...new Set([...packTools, ...(explicitTools ?? [])])];
+}
+
+/**
+ * Collect promptPatch (方法论文档) from enabled packs. Merged into
+ * agent.skillPromptPatches at runtime so the pack's discipline lands in the
+ * system prompt's skill-guidance block together with its tools.
+ */
+export function expandEnabledPackPromptPatches(
+  enabledPacks: string[] | null | undefined,
+): string[] {
+  return (enabledPacks ?? [])
+    .map((id) => CAPABILITY_PACK_BY_ID[id]?.promptPatch)
+    .filter((patch): patch is string => typeof patch === "string" && patch.length > 0);
+}
+
+/**
+ * Append enabled packs' promptPatch docs to an agent's raw prompt. No-op when
+ * the agent has no enabled pack with a promptPatch.
+ *
+ * 用途：CLI / 桌面 runtime 的 system prompt 直接使用 agentConfig.prompt
+ * （不经过 buildSystemPrompt 的 skill-guidance 层），因此在这里把能力包的
+ * 操作纪律追加进 prompt，保证「工具 + 纪律」在这两端同样整体生效。
+ */
+export function appendEnabledPackPromptPatches(
+  prompt: string | null | undefined,
+  enabledPacks: string[] | null | undefined,
+): string | undefined {
+  const patches = expandEnabledPackPromptPatches(enabledPacks);
+  if (patches.length === 0) return prompt ?? undefined;
+  const base = typeof prompt === "string" ? prompt.trim() : "";
+  const addition = patches.join("\n\n");
+  if (!base) return addition;
+  if (base.includes(addition)) return base;
+  return `${base}\n\n${addition}`;
 }
 
 /**

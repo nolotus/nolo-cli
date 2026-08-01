@@ -107,6 +107,66 @@ describe("cli agent run client", () => {
     expect(output.text()).not.toContain("tokens=");
   });
 
+  test("sends canonical context scopes over HTTP without duplicating legacy blocks into userInput", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+    const contextBlockScopes = [
+      { content: "SESSION_CONTEXT", cacheScope: "session" as const },
+      { content: "TURN_CONTEXT", cacheScope: "turn" as const },
+    ];
+
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      output,
+      // Keep a legacy value present to prove scoped input is authoritative.
+      extraContextBlocks: ["LEGACY_CONTEXT_SHOULD_NOT_BE_SENT"],
+      contextBlockScopes,
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "ok", dialogId: "dialog-scoped" });
+      },
+    });
+
+    expect(requests[0]?.body.userInput).toBe("hello");
+    expect(requests[0]?.body.contextBlockScopes).toEqual(contextBlockScopes);
+    expect(requests[0]?.body.contextBlocks).toBeUndefined();
+    expect(JSON.stringify(requests[0]?.body.userInput)).not.toContain(
+      "LEGACY_CONTEXT_SHOULD_NOT_BE_SENT",
+    );
+  });
+
+  test("converts legacy extraContextBlocks to turn scopes for HTTP compatibility", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      output,
+      extraContextBlocks: ["LEGACY_CONTEXT"],
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "ok", dialogId: "dialog-legacy" });
+      },
+    });
+
+    expect(requests[0]?.body.userInput).toBe("hello");
+    expect(requests[0]?.body.contextBlockScopes).toEqual([
+      { content: "LEGACY_CONTEXT", cacheScope: "turn" },
+    ]);
+  });
+
   test("warns that --ephemeral is ignored when running directly on the server", async () => {
     const output = new CaptureOutput();
 
@@ -454,6 +514,129 @@ describe("cli agent run client", () => {
     });
 
     expect(result).toEqual({ exitCode: 0, dialogId: "dialog-bg" });
+  });
+
+  test("aborted local turn surfaces pendingToolName when a tool was still running", async () => {
+    const output = new CaptureOutput();
+    const controller = new AbortController();
+    let markToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => { markToolStarted = resolve; });
+    let releaseTool!: () => void;
+    const toolReleased = new Promise<void>((resolve) => { releaseTool = resolve; });
+
+    const run = runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      abortSignal: controller.signal,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+          toolNames: ["editFile"],
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-abort-tool" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => ({
+            content: "",
+            model: "fake-local",
+            tool_calls: [
+              {
+                id: "call-edit",
+                type: "function",
+                function: {
+                  name: "editFile",
+                  arguments: JSON.stringify({ path: "a.ts", content: "x" }),
+                },
+              },
+            ],
+          }),
+        }),
+        executeTool: async () => {
+          markToolStarted();
+          await toolReleased;
+          return { content: "written", metadata: { exitCode: 0 } };
+        },
+      },
+    });
+
+    // The tool starts executing, then the user aborts (Esc). The local loop
+    // abandons the tool mid-flight and attaches its name to the error.
+    await toolStarted;
+    controller.abort();
+    releaseTool();
+
+    const result = await run;
+    expect(result.exitCode).toBe(0);
+    expect(result.streamInterrupted).toBe(true);
+    expect(result.pendingToolName).toBe("editFile");
+  });
+
+  test("plain abort does not carry pendingToolName", async () => {
+    const output = new CaptureOutput();
+    const controller = new AbortController();
+    let markCompleteStarted!: () => void;
+    const completeStarted = new Promise<void>((resolve) => { markCompleteStarted = resolve; });
+    let releaseComplete!: () => void;
+    const completeReleased = new Promise<void>((resolve) => { releaseComplete = resolve; });
+
+    const run = runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "local",
+      abortSignal: controller.signal,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-plain-abort" }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => {
+            markCompleteStarted();
+            await completeReleased;
+            return { content: "done", model: "fake-local" };
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+    });
+
+    // The user aborts while the LLM request is still in flight — no tool was
+    // abandoned, so the returned result must not carry pendingToolName.
+    await completeStarted;
+    controller.abort();
+    releaseComplete();
+
+    const result = await run;
+    expect(result.exitCode).toBe(0);
+    expect(result.streamInterrupted).toBe(true);
+    expect(result.pendingToolName).toBeUndefined();
+    expect("pendingToolName" in result).toBe(false);
   });
 
   test("runs forced local turns through the injected runtime adapter without HTTP", async () => {

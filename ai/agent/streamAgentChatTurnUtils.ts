@@ -55,7 +55,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, applyDefaultWebToolPacks } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -247,9 +247,10 @@ export const trimMessagesWithSummary = (
     let cutIndex = messages.length - keepCount;
     if (cutIndex < 0) cutIndex = 0;
 
-    // 避免从 tool 消息中间开始，丢失其调用方 assistant
-    while (cutIndex < messages.length && messages[cutIndex].role === "tool") {
-        cutIndex++;
+    // 避免从 tool 消息中间开始：向前带上调用方 assistant 和完整的
+    // tool-result 配对，不能为了规避孤儿结果而把这一轮工具状态直接丢掉。
+    while (cutIndex > 0 && messages[cutIndex]?.role === "tool") {
+        cutIndex--;
     }
 
     return messages.slice(cutIndex);
@@ -769,7 +770,8 @@ export const mergeAgentToolsWithRuntime = (
         : [];
     // Expand capability packs into tool names, merged with explicit tools.
     // 非 inline-artifact agent 且 enabledPacks 为空时，fallback 补 long-term-memory
-    // 包——保证历史 agent（enabledPacks: []）仍默认获得长期记忆能力，与「默认全挂、
+    // + agent-orchestration 包——保证历史 agent（enabledPacks: []）仍默认获得长期
+    // 记忆与多 agent 编排（startAgentRun/controlAgentRun/listAgents）能力，与「默认全挂、
     // 可单关」定位一致。inline-artifact agent 不 fallback，保持「纯产物生成、无交互
     // 工具」语义。
     // 注意：不 fallback web-search 和其他 DEFAULT_ENABLED_PACKS——避免改变空配置
@@ -781,10 +783,12 @@ export const mergeAgentToolsWithRuntime = (
     const isInlineArtifact = isInlineVisualArtifactAgent(agentConfig);
     const effectiveEnabledPacks =
       Array.isArray(agentEnabledPacks) && agentEnabledPacks.length > 0
-        ? agentEnabledPacks
+        ? agentEnabledPacks.includes("agent-orchestration")
+          ? agentEnabledPacks
+          : [...agentEnabledPacks, "agent-orchestration"]
         : isInlineArtifact
           ? (agentEnabledPacks ?? [])
-          : ["long-term-memory"];
+          : ["long-term-memory", "agent-orchestration"];
     const expandedPackTools = expandEnabledPacks(
         effectiveEnabledPacks,
         rawBaseTools,
@@ -800,7 +804,13 @@ export const mergeAgentToolsWithRuntime = (
         ...new Set(asNonEmptyStringArray((agentConfig as any).recommendedSkillHints)),
     ];
     const skillPromptPatches = [
-        ...new Set(asNonEmptyStringArray((agentConfig as any).skillPromptPatches)),
+        ...new Set([
+            ...asNonEmptyStringArray((agentConfig as any).skillPromptPatches),
+            // 能力包的 promptPatch（方法论文档）与 skill reference 的 patch 走同一条
+            // 注入链（buildSkillGuidanceBlock → buildSkillGuidancePromptBlock），
+            // 让「工具 + 配套纪律」作为一个能力包整体注入 system prompt。
+            ...expandEnabledPackPromptPatches(effectiveEnabledPacks),
+        ]),
     ];
     // LIGHT_WEB + FULL_BROWSER auto-injection (shared with server runtime).
     // skipWeb for inline-visual-artifact agents (pure output generators).

@@ -4,11 +4,14 @@
  * 从 readlineWorkspace.ts 抽出。依赖：
  * - ./tuiAnsi：wrapTranscriptLine / padOrTruncateToWidth / applyTerminalOutputToText
  * - ./tuiScrollbar：renderScrollbarRow / parseScrollAction / ScrollAction / WHEEL_SCROLL_LINES
- * - ./theme：themeColorSequence / themeText / highlightMarkdown / getActiveDensity / resolveCliColorEnabled
+ * - ./theme：themeColorSequence / themeText / getActiveDensity / resolveCliColorEnabled
+ * - ../client/assistantOutput：formatAssistantDisplay（assistant turn 的唯一渲染器，
+ *   与流式输出共享同一份实现，避免历史重绘与流式样式漂移）
  */
 import {
   applyTerminalOutputToText,
   padOrTruncateToWidth,
+  stripAnsi,
   wrapTranscriptLine,
 } from "./tuiAnsi";
 import {
@@ -18,10 +21,10 @@ import {
 } from "./tuiScrollbar";
 import {
   getActiveDensity,
-  highlightMarkdown,
   themeColorSequence,
   themeText,
 } from "./theme";
+import { formatAssistantDisplay } from "../client/assistantOutput";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 
 export type TurnRole = "user" | "assistant";
@@ -92,7 +95,7 @@ export function applyOutputChunkToCurrentTurn(
   return true;
 }
 
-function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
+export function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
   const colorEnabled = resolveCliColorEnabled();
   // Visual rhythm: every turn is separated by a blank line, user turns carry a
   // colored ❯ marker, and [nolo] system notices render dim so questions,
@@ -112,7 +115,9 @@ function buildHistoryLines(history: TurnHistory, contentWidth: number): string[]
       const reset = "\x1b[39m";
       return `${accent}❯${reset} ${content}`;
     }
-    const highlighted = highlightMarkdown(content, colorEnabled);
+    const highlighted = colorEnabled
+      ? formatAssistantDisplay(content)
+      : stripAnsi(formatAssistantDisplay(content));
     const rawLines = highlighted.split("\n");
     const styledLines = rawLines.map((line, idx) => {
       if (idx === 0 && !line.startsWith("[nolo]")) {

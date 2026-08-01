@@ -53,6 +53,26 @@ export function parseOsc11Reply(reply: string): TuiBrightness | null {
   );
 }
 
+/**
+ * Parse an OSC 11 reply into brightness + the terminal's exact background RGB
+ * (6-digit uppercase hex, no "#"), or null if it isn't one.
+ */
+export function parseOsc11Background(reply: string): { brightness: TuiBrightness; hex: string } | null {
+  const match = reply.match(OSC11_REPLY_RE);
+  if (!match) return null;
+  const channels = [
+    componentToByte(match[1]),
+    componentToByte(match[2]),
+    componentToByte(match[3]),
+  ];
+  return {
+    brightness: brightnessFromRgb(channels[0], channels[1], channels[2]),
+    hex: channels
+      .map((v) => v.toString(16).padStart(2, "0").toUpperCase())
+      .join(""),
+  };
+}
+
 type Stdin = NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void };
 
 /**
@@ -70,20 +90,29 @@ function isTerminalDevice(stream: unknown): boolean {
   return stream instanceof ReadStream;
 }
 
-/**
- * Probe the terminal for its background brightness.
- *
- * Resolves null when the terminal is not a TTY, does not answer in time, or
- * answers with something unparseable — callers treat null as "keep the current
- * default" rather than guessing.
- */
-export async function detectTerminalBrightness(args: {
+export type DetectTerminalBackgroundArgs = {
   stdin?: Stdin;
   stdout?: NodeJS.WritableStream & { isTTY?: boolean };
   timeoutMs?: number;
   /** Override the terminal-device check. Tests use this to drive a fake pair. */
   isTerminal?: (stream: unknown) => boolean;
-} = {}): Promise<TuiBrightness | null> {
+};
+
+export type DetectedTerminalBackground = {
+  brightness: TuiBrightness;
+  hex: string;
+};
+
+/**
+ * Probe the terminal for its background color.
+ *
+ * Resolves null when the terminal is not a TTY, does not answer in time, or
+ * answers with something unparseable — callers treat null as "keep the current
+ * default" rather than guessing.
+ */
+export async function detectTerminalBackground(
+  args: DetectTerminalBackgroundArgs = {},
+): Promise<DetectedTerminalBackground | null> {
   const stdin = (args.stdin ?? process.stdin) as Stdin;
   const stdout = args.stdout ?? process.stdout;
   const timeoutMs = args.timeoutMs ?? 100;
@@ -96,12 +125,12 @@ export async function detectTerminalBrightness(args: {
 
   const wasRaw = Boolean((stdin as { isRaw?: boolean }).isRaw);
 
-  return await new Promise<TuiBrightness | null>((resolve) => {
+  return await new Promise<DetectedTerminalBackground | null>((resolve) => {
     let buffer = "";
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const finish = (result: TuiBrightness | null) => {
+    const finish = (result: DetectedTerminalBackground | null) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
@@ -123,7 +152,7 @@ export async function detectTerminalBrightness(args: {
 
     const onData = (chunk: Buffer | string) => {
       buffer += chunk.toString("latin1");
-      const parsed = parseOsc11Reply(buffer);
+      const parsed = parseOsc11Background(buffer);
       if (parsed) finish(parsed);
       // Guard against a terminal streaming unrelated input at us forever.
       else if (buffer.length > 256) finish(null);
@@ -141,4 +170,17 @@ export async function detectTerminalBrightness(args: {
 
     timer = setTimeout(() => finish(null), timeoutMs);
   });
+}
+
+/**
+ * Probe the terminal for its background brightness.
+ *
+ * Thin wrapper over detectTerminalBackground returning only the brightness,
+ * kept for callers that just need light/dark (existing tests depend on it).
+ */
+export async function detectTerminalBrightness(
+  args: DetectTerminalBackgroundArgs = {},
+): Promise<TuiBrightness | null> {
+  const r = await detectTerminalBackground(args);
+  return r ? r.brightness : null;
 }

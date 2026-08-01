@@ -11,15 +11,19 @@
  *   Tab        next question tab
  *   Shift+Tab  prev question tab
  *   Esc        cancel
- *   printable  type into Other when focused
+ *   printable  type into Other when focused (or on the Other row)
  *   Backspace  delete from Other when focused
+ *
+ * Other-row IME: the frame paints a plain text row (no fake block cursor).
+ * After each paint, when Other is focused, we CUP the real terminal cursor to
+ * the end of that text so the OS IME candidate window anchors there — matching
+ * how the docked composer positions its cursor via displayWidth.
  */
 
 import {
   type AskChoiceAction,
   type AskChoiceQuestion,
   type AskChoiceUiState,
-  type QuestionUiState,
   askChoiceReducer,
   buildAskChoiceResult,
   canSubmit,
@@ -32,7 +36,10 @@ import {
   DIALOG_UNCHECKED,
   renderDialogRow,
   renderDialogTitle,
+  renderOverflowAbove,
+  renderOverflowBelow,
 } from "./dialogFrame";
+import { t } from "./i18n";
 import {
   clearAnchoredLines,
   computeVisibleWindow,
@@ -47,6 +54,7 @@ import {
 } from "./selectDialog";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 import { themeColorSequence, themeText } from "./theme";
+import { displayWidth } from "./tuiAnsi";
 import { parseScrollAction } from "./tuiScrollbar";
 import type { UserChoiceRequest, UserChoiceResult } from "../client/localRuntimeAdapterTypes";
 
@@ -57,6 +65,19 @@ const CSI_SHIFT_TAB = "\x1b[Z";
 const CSI_BACKSPACE = "\x7f";
 const CSI_BACKSPACE_ALT = "\b";
 const CSI_SPACE = " ";
+
+export type AskChoiceCursor = {
+  /** 0-based line index inside the rendered frame. */
+  lineIndex: number;
+  /** 0-based display column (before CUP's 1-based adjust). */
+  col: number;
+};
+
+export type AskChoiceFrame = {
+  text: string;
+  /** Present when the Other free-text row is focused and accepts typing. */
+  otherCursor: AskChoiceCursor | null;
+};
 
 function renderTabBar(
   questions: AskChoiceQuestion[],
@@ -74,23 +95,31 @@ function renderTabBar(
       ? themeText(` ${label} `, "muted", colorEnabled)
       : ` ${label} `;
   });
-  const submitLabel = "Submit";
+  const submitLabel = t("askChoiceSubmit");
   return tabs.join("  ") + "  " + (colorEnabled ? themeText(submitLabel, "chrome", colorEnabled) : submitLabel);
 }
 
-function renderFooter(colorEnabled: boolean): string {
-  const hints = "↵ pick/submit · space toggle · tab switch · esc cancel";
+function renderFooter(multiSelect: boolean, colorEnabled: boolean): string {
+  const hints = multiSelect ? t("askChoiceFooterMulti") : t("askChoiceFooterSingle");
   return colorEnabled ? themeText(`  ${hints}`, "chrome", colorEnabled) : `  ${hints}`;
 }
 
-export function renderAskChoiceFrame(state: AskChoiceUiState): string {
+function otherRowPrefix(index: number): string {
+  // Plain (no ANSI) prefix used both for painting and for cursor column math.
+  // Marker is a single space here; the focused marker is applied separately so
+  // displayWidth stays stable regardless of color wrapping.
+  return ` [${index + 1}] ${t("askChoiceOtherLabel")}: `;
+}
+
+export function renderAskChoiceFrame(state: AskChoiceUiState): AskChoiceFrame {
   const colorEnabled = resolveCliColorEnabled();
   const q = state.questions[state.activeIndex];
   const qs = state.questionStates[state.activeIndex];
   const lines: string[] = [];
+  let otherCursor: AskChoiceCursor | null = null;
 
   // Title
-  lines.push(renderDialogTitle("question"));
+  lines.push(renderDialogTitle(t("askChoiceTitle")));
   lines.push("");
 
   // Tab bar (only when multiple questions)
@@ -109,14 +138,14 @@ export function renderAskChoiceFrame(state: AskChoiceUiState): string {
   if (q.multiSelect) {
     lines.push(
       colorEnabled
-        ? themeText("  Space to toggle, Enter to confirm selection.", "muted", colorEnabled)
-        : "  Space to toggle, Enter to confirm selection.",
+        ? themeText(`  ${t("askChoiceHintMulti")}`, "muted", colorEnabled)
+        : `  ${t("askChoiceHintMulti")}`,
     );
   } else {
     lines.push(
       colorEnabled
-        ? themeText("  Type your answer, then press Enter to save.", "muted", colorEnabled)
-        : "  Type your answer, then press Enter to save.",
+        ? themeText(`  ${t("askChoiceHintSingle")}`, "muted", colorEnabled)
+        : `  ${t("askChoiceHintSingle")}`,
     );
   }
   lines.push("");
@@ -129,11 +158,7 @@ export function renderAskChoiceFrame(state: AskChoiceUiState): string {
   });
 
   if (window.start > 0) {
-    lines.push(
-      colorEnabled
-        ? themeText(`  ↑ ${window.start} more`, "chrome", colorEnabled)
-        : `  ↑ ${window.start} more`,
-    );
+    lines.push(renderOverflowAbove(window.start));
   }
 
   for (let i = window.start; i < window.end; i++) {
@@ -156,35 +181,36 @@ export function renderAskChoiceFrame(state: AskChoiceUiState): string {
         }),
       );
     } else {
-      // Other row
+      // Other row — never paint a fake █; the real terminal cursor is CUPed
+      // onto this text after paint so CJK IME windows anchor correctly.
       const focused = qs.cursorIndex === i;
       const marker = focused ? DIALOG_CURSOR : " ";
-      const otherContent = qs.otherFocused
-        ? `${qs.otherText}█`
-        : qs.otherText || "";
-      const row = `${marker} [${i + 1}] Other: ${otherContent}`;
+      const plainPrefix = `${marker}${otherRowPrefix(i)}`;
+      const plainRow = `${plainPrefix}${qs.otherText}`;
       if (focused && colorEnabled) {
         lines.push(
-          `\x1b[1m${themeColorSequence("accent")}${row}\x1b[0m`,
+          `\x1b[1m${themeColorSequence("accent")}${plainRow}\x1b[0m`,
         );
       } else {
-        lines.push(row);
+        lines.push(plainRow);
+      }
+      if (qs.otherFocused) {
+        otherCursor = {
+          lineIndex: lines.length - 1,
+          col: displayWidth(plainPrefix + qs.otherText),
+        };
       }
     }
   }
 
   if (window.end < totalRows) {
-    lines.push(
-      colorEnabled
-        ? themeText(`  ↓ ${totalRows - window.end} more`, "chrome", colorEnabled)
-        : `  ↓ ${totalRows - window.end} more`,
-    );
+    lines.push(renderOverflowBelow(totalRows - window.end));
   }
 
   lines.push("");
-  lines.push(renderFooter(colorEnabled));
+  lines.push(renderFooter(q.multiSelect, colorEnabled));
 
-  return lines.join("\n");
+  return { text: lines.join("\n"), otherCursor };
 }
 
 // ── Runner ─────────────────────────────────────────────────────────
@@ -211,18 +237,6 @@ export async function runAskChoiceDialog(args: {
     return { kind: "cancelled" };
   }
 
-  // Fast path: single question, single select, no multi → use simple select dialog
-  // for backward compat (no tab bar, no Other complexity)
-  const q0 = normalized.questions[0];
-  if (
-    normalized.questions.length === 1 &&
-    !q0.multiSelect &&
-    !q0.allowOther
-  ) {
-    // Delegate to simple select — but we still need to import runSelectDialog
-    // For now, fall through to the full dialog which handles this fine.
-  }
-
   let state = createInitialAskChoiceState(normalized.questions);
 
   const output = args.output ?? process.stdout;
@@ -244,10 +258,19 @@ export async function runAskChoiceDialog(args: {
         : args.bottomRow ?? 0,
     );
   let lastBottomRow = 0;
+  // Unanchored Other-focus paint leaves the real cursor mid-frame for IME.
+  // Next paint / exit clear must restore to "one line below previous frame"
+  // before the classic `\x1b[1A\x1b[2K` clear loop, or the UI drifts upward.
+  let unanchoredCursorLift = 0;
+  const restoreUnanchoredCursor = () => {
+    if (unanchoredCursorLift <= 0) return;
+    output.write(`\x1b[${unanchoredCursorLift}B`);
+    unanchoredCursorLift = 0;
+  };
 
   const paint = () => {
     const frame = renderAskChoiceFrame(state);
-    const lines = frame.split("\n");
+    const lines = frame.text.split("\n");
     const lineCount = lines.length;
     const canPosition = outputIsTty(output) && typeof output.write === "function";
 
@@ -265,23 +288,42 @@ export async function runAskChoiceDialog(args: {
       }
       lastBottomRow = anchorRow;
       renderedLineCount = lineCount;
+      unanchoredCursorLift = 0;
+      // Place the real cursor on the Other text so IME candidates follow it.
+      if (frame.otherCursor) {
+        const cursorRow =
+          anchorRow - (lineCount - 1 - frame.otherCursor.lineIndex);
+        if (cursorRow >= 1) {
+          output.write(`\x1b[${cursorRow};${frame.otherCursor.col + 1}H`);
+        }
+      }
       return;
     }
 
     if (canPosition) {
-      // Clear previous
+      restoreUnanchoredCursor();
       for (let i = 0; i < renderedLineCount; i++) {
         output.write("\x1b[1A\x1b[2K");
       }
-      output.write(`${frame}\n`);
+      output.write(`${frame.text}\n`);
       renderedLineCount = lineCount;
+      if (frame.otherCursor) {
+        // Unanchored path: frame was written then a trailing \n, so the
+        // cursor sits one line below the frame. Walk back to the Other row
+        // and CUP to its column.
+        const linesFromBottom = lineCount - frame.otherCursor.lineIndex;
+        output.write(`\x1b[${linesFromBottom}A`);
+        output.write(`\x1b[${frame.otherCursor.col + 1}G`);
+        unanchoredCursorLift = linesFromBottom;
+      }
       return;
     }
 
     if (typeof output.write === "function") {
-      output.write(`${frame}\n`);
+      output.write(`${frame.text}\n`);
     }
     renderedLineCount = lineCount;
+    unanchoredCursorLift = 0;
   };
 
   const resizeTarget = output as NodeJS.WritableStream & {
@@ -318,6 +360,9 @@ export async function runAskChoiceDialog(args: {
       }
 
       let action: AskChoiceAction | null = null;
+      const qs = state.questionStates[state.activeIndex];
+      const q = state.questions[state.activeIndex];
+      const isOtherRow = qs.cursorIndex >= q.choices.length;
 
       if (isCancel(sequence)) {
         action = { type: "CANCEL" };
@@ -330,12 +375,20 @@ export async function runAskChoiceDialog(args: {
       } else if (isArrowDown(sequence)) {
         action = { type: "MOVE_CURSOR", delta: 1 };
       } else if (sequence === CSI_SPACE) {
-        action = { type: "TOGGLE_AT_CURSOR" };
+        if (qs.otherFocused) {
+          // Literal space while typing Other (single + multi).
+          action = {
+            type: "SET_OTHER_TEXT",
+            text: qs.otherText + " ",
+          };
+        } else if (q.multiSelect) {
+          // Space toggles a choice, or focuses Other.
+          action = { type: "TOGGLE_AT_CURSOR" };
+        } else if (isOtherRow) {
+          // Single-select: Space on Other focuses the free-text input.
+          action = { type: "FOCUS_OTHER" };
+        }
       } else if (isSubmit(sequence)) {
-        const qs = state.questionStates[state.activeIndex];
-        const q = state.questions[state.activeIndex];
-        const isOtherRow = qs.cursorIndex >= q.choices.length;
-
         if (qs.otherFocused) {
           // Enter in Other input → blur (save text)
           action = { type: "BLUR_OTHER" };
@@ -353,26 +406,42 @@ export async function runAskChoiceDialog(args: {
         sequence === CSI_BACKSPACE ||
         sequence === CSI_BACKSPACE_ALT
       ) {
-        const qs = state.questionStates[state.activeIndex];
         if (qs.otherFocused && qs.otherText.length > 0) {
+          // Delete one Unicode code point, not one UTF-16 unit, so a CJK
+          // character (or emoji) erases as a single glyph.
+          const chars = Array.from(qs.otherText);
           action = {
             type: "SET_OTHER_TEXT",
-            text: qs.otherText.slice(0, -1),
+            text: chars.slice(0, -1).join(""),
           };
         }
-      } else if (sequence.length === 1 && sequence.charCodeAt(0) >= 32) {
-        // Printable character → type into Other if focused
-        const qs = state.questionStates[state.activeIndex];
-        if (qs.otherFocused) {
-          action = {
-            type: "SET_OTHER_TEXT",
-            text: qs.otherText + sequence,
-          };
+      } else if (
+        sequence.length >= 1 &&
+        sequence.charCodeAt(0) >= 32 &&
+        !sequence.startsWith("\x1b")
+      ) {
+        // Printable text → type into Other if focused OR if the cursor sits
+        // on the Other row (auto-focus so the user can start typing without
+        // an extra Enter). Accept multi-char bursts so CJK IME commits
+        // (word groups / 整句) land in one piece. Strip control chars so a
+        // pasted "word\r" doesn't smuggle a submit.
+        if (qs.otherFocused || (isOtherRow && q.allowOther)) {
+          const cleaned = sequence.replace(/[\x00-\x1f\x7f]/g, "");
+          if (cleaned) {
+            if (!qs.otherFocused) {
+              state = askChoiceReducer(state, { type: "FOCUS_OTHER" });
+            }
+            const currentText =
+              state.questionStates[state.activeIndex].otherText;
+            action = {
+              type: "SET_OTHER_TEXT",
+              text: currentText + cleaned,
+            };
+          }
         }
       }
 
       if (action) {
-        const prev = state;
         state = askChoiceReducer(state, action);
 
         // After SELECT_AT_CURSOR in single-question single-select,
@@ -407,6 +476,7 @@ export async function runAskChoiceDialog(args: {
           renderedLineCount,
         );
       } else {
+        restoreUnanchoredCursor();
         for (let i = 0; i < renderedLineCount; i++) {
           output.write("\x1b[1A\x1b[2K");
         }
@@ -421,18 +491,19 @@ export async function runAskChoiceDialog(args: {
     return { kind: "cancelled" };
   }
 
-  // Single-question backward compat
+  // Single-question backward compat (covers single-select AND multi-select
+  // on one question — both return kind:"selected" with joined labels).
   if (result.answers.length === 1) {
     const a = result.answers[0];
+    const q = normalized.questions[0];
+    const labels = a.selectedIds
+      .map((id) => q.choices.find((c) => c.id === id)?.label ?? "")
+      .filter(Boolean);
+    if (a.otherText) labels.push(a.otherText);
     return {
       kind: "selected",
       userMessage: a.userMessage,
-      label: a.selectedIds
-        .map((id) => {
-          const q = normalized.questions[0];
-          return q.choices.find((c) => c.id === id)?.label ?? "";
-        })
-        .join(", ") || a.otherText || "",
+      label: labels.join(", ") || a.otherText || "",
     };
   }
 

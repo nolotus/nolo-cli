@@ -27,7 +27,7 @@ export const startAgentRunFunctionSchema = {
         properties: {
             agentKey: {
                 type: "string",
-                description: "要启动的 Agent 的唯一 ID（dbKey，格式如 agent-xxx）。",
+                description: "要启动的 Agent 的可运行 dbKey（优先使用 readAgent 返回的 agentKey，格式如 agent-xxx）。",
             },
             task: {
                 type: "string",

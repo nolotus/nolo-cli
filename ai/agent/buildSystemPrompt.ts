@@ -31,6 +31,22 @@ const CONTEXT_USAGE_INSTRUCTIONS = `参考资料使用说明：
 - 当通用指令与更具体的"按 Agent / 按文档"的规则发生冲突时，必须优先遵守更具体、优先级更高的规则。`;
 
 // ============================================================================
+// 多 Agent 编排 - 后台 Run（有 startAgentRun / controlAgentRun 工具时注入）
+// 与上面 callAgent 体系互补：callAgent 是同步/异步子对话委托，startAgentRun 是
+// 后台 run 编排（fork+exec）。纪律提炼自 .agents/skills/agent-orchestration/SKILL.md，
+// 属于"启用 agent-orchestration 能力包必须遵守的行为规则"。
+// ============================================================================
+const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run） ---
+你可用 startAgentRun 后台启动子 Agent（fork+exec，返回 runId），用 controlAgentRun 观察/停止（wait+signal+proc）。核心纪律（反面教材：子代理崩溃/挂起而编排器毫无察觉）：
+1. 先发现再派发。调用 listAgents 读取安全摘要；在胜任候选中优先 isFavorite，再结合 introduction、modelAbility.passAt1/benchmarkScore、inputPrice/outputPrice 和特定工具能力选择。不要查指派表，不要求 recommendedFor，也不要根据模型名称臆造能力等级。
+2. coding 是默认能力。tools 只用于浏览器、图片、表格、邮件、数据库等特定工具任务；不要因为 coding agent 的 tools 摘要为空就淘汰它。
+3. listAgents 返回的 id、publicKey、handle 只是候选标识。选中后优先调用 readAgent 解析可运行的 agentKey，再把该 agentKey 传给 startAgentRun；不要凭展示名称或 id 猜 key，也不要索取 prompt、密钥或数据库 key 来选人。没有 readAgent 时只能使用已有上下文中明确的 agentKey。
+4. 派发后必须轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:30) 轮询（建议 5–10s 一次），不要只靠聊天复述结果。不轮询 = 没编排。
+5. 读日志确认进展。tailLines>0 读实际输出/工具调用，不只看 status=running——后台监视器可能空转。
+6. stop 前先看日志。用 status 判断是真卡死还是正常跑，确认需要叫停再 controlAgentRun(action:"stop", runId)；用 list/status 确认 run 真实存在且非终态，别假设"派发了就在跑"。
+工具选择：子任务 <100s 且要立即拿结果 → callAgent（同步）；长任务 / 并行 / 需要观察或叫停 → startAgentRun（本段）。`;
+
+// ============================================================================
 // 交互说明（有 ui_ask_choice 工具时注入）
 // ============================================================================
 
@@ -176,12 +192,20 @@ type ToolGuidedSection = {
 const TOOL_GUIDED_SECTIONS: ToolGuidedSection[] = [
     {
         id: "agentOrchestration",
-        triggerTools: ["callAgent", "runStreamingAgent"],
+        triggerTools: [
+            "callAgent",
+            "runStreamingAgent",
+            "startAgentRun",
+            "controlAgentRun",
+        ],
         build: (tools) =>
             [
                 AGENT_ORCHESTRATION_INSTRUCTIONS,
                 tools.includes("runStreamingAgent")
                     ? PAGE_BUILDER_HANDOFF_INSTRUCTIONS
+                    : "",
+                tools.includes("startAgentRun") || tools.includes("controlAgentRun")
+                    ? AGENT_ORCHESTRATION_RUN_INSTRUCTIONS
                     : "",
             ]
                 .filter(Boolean)

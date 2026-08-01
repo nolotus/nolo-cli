@@ -70,6 +70,78 @@ export function discoverSkills(cwd: string): DiscoveredSkill[] {
 }
 
 /**
+ * Resolve a single skill by name to its absolute SKILL.md path, reusing the
+ * same scan sources and resolution order as `discoverSkills`
+ * (`.agents/skills/<name>/SKILL.md` → `docs/skills/<name>.md`). This does not
+ * re-run the full scan — it probes the two candidate paths directly, so it
+ * stays O(1) and never duplicates the discovery logic.
+ *
+ * Returns the resolved absolute path, or null when no candidate exists. The
+ * caller decides what to do with a miss (the `loadSkill` tool returns an
+ * available-skills list rather than throwing).
+ *
+ * Name matching mirrors `discoverSkills`'s fallback: a discovered
+ * `.agents/skills/<dir>/SKILL.md` is identified by its directory entry, and a
+ * `docs/skills/<file>.md` by the file stem. Frontmatter `name:` is not
+ * consulted here — discovery's source-of-truth for the on-disk path is the
+ * directory/file name, and `loadSkill` must accept the same names discovery
+ * advertises (it advertises frontmatter `name` when present, with the
+ * directory/file stem as fallback). To stay consistent with advertised names
+ * without re-reading frontmatter on every lookup, we match on the directory
+ * / file stem and also accept a frontmatter-name match by reading the file
+ * only when the stem doesn't match (so the common path stays cheap).
+ */
+export function resolveSkillByName(cwd: string, name: string): string | null {
+  const trimmed = name.trim();
+  // Reject empty / path-traversal inputs before touching the filesystem:
+  // a name containing `/`, `\`, or `..` could escape the skill directories and
+  // resolve an arbitrary .md. Skill names are single-segment identifiers
+  // (e.g. `nolo-commit`), so these characters are never valid here.
+  if (!trimmed || trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) {
+    return null;
+  }
+  // .agents/skills/<name>/SKILL.md — match by directory stem or frontmatter name.
+  const agentsDir = join(cwd, ".agents", "skills", trimmed);
+  const agentsSkillMd = join(agentsDir, "SKILL.md");
+  if (existsSync(agentsSkillMd)) return agentsSkillMd;
+  // Frontmatter-name match: scan sibling dirs whose frontmatter name equals
+  // the requested name. Kept narrow — only runs when the stem match missed.
+  const agentsParent = join(cwd, ".agents", "skills");
+  if (existsSync(agentsParent) && statSync(agentsParent).isDirectory()) {
+    try {
+      for (const entry of readdirSync(agentsParent)) {
+        const candidate = join(agentsParent, entry, "SKILL.md");
+        if (!existsSync(candidate)) continue;
+        // Per-file try/catch: one malformed SKILL.md must not abort the scan
+        // of its siblings. (parseSkillFrontmatter already swallows YAML
+        // errors; this guards readdirSync/stat edge cases and future changes.)
+        try {
+          const { name: fmName } = parseSkillFrontmatter(candidate);
+          if (fmName && fmName === trimmed) return candidate;
+        } catch { /* skip unreadable/bad file, keep scanning */ }
+      }
+    } catch { /* best-effort, mirror discoverSkills' swallow */ }
+  }
+  // docs/skills/<name>.md — match by file stem or frontmatter name.
+  const docsFlat = join(cwd, "docs", "skills", `${trimmed}.md`);
+  if (existsSync(docsFlat)) return docsFlat;
+  const docsDir = join(cwd, "docs", "skills");
+  if (existsSync(docsDir) && statSync(docsDir).isDirectory()) {
+    try {
+      for (const entry of readdirSync(docsDir)) {
+        if (!entry.endsWith(".md")) continue;
+        const candidate = join(docsDir, entry);
+        try {
+          const { name: fmName } = parseSkillFrontmatter(candidate);
+          if (fmName && fmName === trimmed) return candidate;
+        } catch { /* skip unreadable/bad file, keep scanning */ }
+      }
+    } catch { /* best-effort */ }
+  }
+  return null;
+}
+
+/**
  * One-call helper for host entry points (CLI agentRunCommand, TUI
  * readlineWorkspace, desktop runtime) to build the skill-discovery context
  * block. Encapsulates discoverSkills + buildSkillDiscoveryLayer + best-effort

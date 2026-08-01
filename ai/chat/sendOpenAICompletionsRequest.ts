@@ -220,6 +220,8 @@ export type CompletionMeta = {
   finishReason: string | null;
   messageId: string;
   usage?: any;
+  responseId?: string;
+  responsesStateFallback?: boolean;
 };
 
 const STREAM_READ_TIMEOUT_MS = 45_000;

@@ -1,5 +1,14 @@
+import { BUILTIN_NOLO_AGENT_KEY } from "../core/builtinAgents";
+import { API_REPORTED_COST_MULTIPLIER } from "../ai/token/calculatePrice";
 import { findModelConfig } from "../ai/llm/providers";
-import { getModelContextWindow } from "../ai/llm/getModelContextWindow";
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  getModelContextWindow,
+} from "../ai/llm/getModelContextWindow";
+import {
+  CLI_AUTO_TIER_MODELS,
+  resolveCliAutoAgentModel,
+} from "./autoModelRouter";
 import type { EnvLike } from "./agentRunTypes";
 
 export type TurnTokenUsage = {
@@ -7,7 +16,54 @@ export type TurnTokenUsage = {
   output: number;
   contextWindow?: number;
   remaining?: number;
+  /** 本轮累计消耗的平台积分（provider 返回 cost 按 7 credits/USD 换算；非平台计费无此值）。 */
+  credits?: number;
 };
+
+const isUsableModelId = (model?: string | null): model is string => {
+  const raw = model?.trim();
+  return Boolean(raw) && raw !== "-" && raw !== "auto";
+};
+
+/**
+ * Resolve the context window for a TUI agent selection.
+ *
+ * Prefer an explicit model id, then known auto-route tier keys, then the
+ * auto/nolo default (flash → DeepSeek 1M when auto-route is on), then the
+ * display-name fuzzy path. Avoids the historical bug where agentName "nolo"
+ * fell through to DEFAULT_CONTEXT_WINDOW (256k) while auto→flash was actually
+ * running on a 1M model.
+ */
+export function resolveAgentContextWindow(opts: {
+  agentKey?: string;
+  agentName?: string;
+  model?: string | null;
+  /** When true (default), DEFAULT_TUI / nolo key uses flash tier's window. */
+  autoRouteDefault?: boolean;
+}): number {
+  if (isUsableModelId(opts.model)) {
+    return getModelContextWindow(opts.model);
+  }
+
+  const agentKey = opts.agentKey?.trim();
+  if (agentKey) {
+    const tierModel = resolveCliAutoAgentModel(agentKey);
+    if (tierModel) return getModelContextWindow(tierModel);
+
+    if (
+      opts.autoRouteDefault !== false &&
+      agentKey === BUILTIN_NOLO_AGENT_KEY
+    ) {
+      return getModelContextWindow(CLI_AUTO_TIER_MODELS.flash);
+    }
+  }
+
+  if (opts.agentName?.trim()) {
+    return getModelContextWindow(opts.agentName);
+  }
+
+  return DEFAULT_CONTEXT_WINDOW;
+}
 
 const PROVIDER_LOOKUP_ORDER = [
   "openrouter",
@@ -72,10 +128,16 @@ export function buildTurnTokenUsage(
     contextWindow && parsed.input > 0
       ? Math.max(0, contextWindow - parsed.input)
       : undefined;
+  const rawCost = typeof usage?.cost === "number" ? usage.cost : undefined;
+  const credits =
+    rawCost !== undefined && rawCost > 0
+      ? rawCost * API_REPORTED_COST_MULTIPLIER
+      : undefined;
   return {
     ...parsed,
     ...(contextWindow ? { contextWindow } : {}),
     ...(remaining != null ? { remaining } : {}),
+    ...(credits !== undefined ? { credits } : {}),
   };
 }
 

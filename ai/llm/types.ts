@@ -1,7 +1,5 @@
 // ai/llm/types.ts
 
-import type { ModelAbility } from "./modelAbility";
-
 export interface ModelPrice {
   input: number;
   output: number;
@@ -95,7 +93,4 @@ export interface Model {
 
   supportsReasoningEffort?: boolean; // 是否支持推理功能
   endpointKey?: string;
-
-  /** Optional benchmark capability metadata. */
-  ability?: ModelAbility;
 }

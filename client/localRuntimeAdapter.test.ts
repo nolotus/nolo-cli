@@ -13,18 +13,8 @@ import {
   createCliLocalRuntimeAdapter,
   postRemoteRecord,
   setRemoteDialogSyncTimeoutForTest,
-  // 导出供测试：policy 名单派生回归用。
-  buildOpenAiTools,
-  buildLocalPolicyToolNames,
-  resolveCliRequestedToolNames,
 } from "./localRuntimeAdapter";
-import { resolveLocalToolPolicy } from "./localToolPolicy";
-import { buildLocalToolExecutors } from "./cliLocalToolExecutors";
 import { LOCAL_CODEX_AGENT_KEY } from "../agentAliases";
-import {
-  allocateCollapsedPaste,
-  createCollapsedPasteStore,
-} from "../core/collapsedPaste";
 
 const FULLSTACK_TEST_AGENT_KEY = "fullstack";
 
@@ -103,7 +93,6 @@ describe("CLI local runtime adapter", () => {
     "readSpace",
     "readDoc",
     "readSkillDoc",
-    "loadSkill",
     "listTables",
     "queryTableRows",
     "cliWhoami",
@@ -115,8 +104,6 @@ describe("CLI local runtime adapter", () => {
     "exa_search",
     "fetchWebpage",
     ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
-    "startAgentRun",
-    "controlAgentRun",
   ];
 
   function toolNamesFromRequest(request: any) {
@@ -1464,8 +1451,6 @@ describe("CLI local runtime adapter", () => {
       "exa_search",
       "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
-      "startAgentRun",
-      "controlAgentRun",
     ]);
   });
 
@@ -2172,10 +2157,6 @@ describe("CLI local runtime adapter", () => {
       "exa_search",
       "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
-      // CLI 空配置默认补 agent-orchestration 能力包：编排工具本地执行器已接入
-      // （MED-1 修复），注册进工具面。
-      "startAgentRun",
-      "controlAgentRun",
     ]);
   });
 
@@ -2232,12 +2213,7 @@ describe("CLI local runtime adapter", () => {
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
       "exa_search",
       "fetchWebpage",
-      // CLI 空配置默认补 agent-orchestration 能力包：listAgents 候选发现 +
-      // 本地 --bg 编排执行器（MED-1 修复）。
-      "listAgents",
       "queryTableRows",
-      "startAgentRun",
-      "controlAgentRun",
     ]);
   });
 
@@ -2354,75 +2330,6 @@ describe("CLI local runtime adapter", () => {
       "caseSensitive",
       "contextLines",
     ]);
-  });
-
-  test("exposes and executes readPastedText for a paste-aware local turn", async () => {
-    const requests: Array<{ body: any }> = [];
-    const pasteStore = createCollapsedPasteStore();
-    const { id } = allocateCollapsedPaste(
-      pasteStore,
-      Array.from({ length: 220 }, (_, index) => `paste-line-${index + 1}`).join("\n"),
-    );
-    let providerCalls = 0;
-    const adapter = createAdapter({
-      env: {
-        OPENAI_API_KEY: "sk-local",
-        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
-      },
-      pastedTextStore: pasteStore,
-      db: {
-        get: async () => ({
-          dbKey: "paste-agent",
-          prompt: "Use the paste reader when a paste reference is present.",
-          model: "fake-local",
-          provider: "custom",
-        }),
-        put: async () => {},
-        batch: async () => {},
-        iterator: () => (async function* () {})(),
-      },
-      fetchImpl: async (_url, init) => {
-        const body = JSON.parse(String(init?.body));
-        requests.push({ body });
-        providerCalls += 1;
-        if (providerCalls === 1) {
-          return Response.json({
-            choices: [{
-              message: {
-                content: "",
-                tool_calls: [{
-                  id: "call-paste",
-                  type: "function",
-                  function: {
-                    name: "readPastedText",
-                    arguments: JSON.stringify({ pasteId: id }),
-                  },
-                }],
-              },
-            }],
-          });
-        }
-        return Response.json({
-          choices: [{ message: { content: "paste read" } }],
-        });
-      },
-    });
-
-    const result = await runLocalAgentTurn({
-      adapter,
-      agentRef: "paste-agent",
-      input: "inspect the pasted reference",
-    });
-
-    expect(result.content).toBe("paste read");
-    const tools = new Map(
-      requests[0]?.body.tools.map((tool: any) => [tool.function.name, tool.function]),
-    );
-    expect(tools.has("readPastedText")).toBe(true);
-    expect((tools.get("readPastedText") as any).parameters.required).toEqual(["pasteId"]);
-    const toolMessage = requests[1]?.body.messages.find((message: any) => message.role === "tool");
-    expect(toolMessage?.content).toContain("paste-line-1");
-    expect(toolMessage?.content).toContain("totalLines");
   });
 
   test("can vary globFiles schema through local runtime env", async () => {
@@ -4198,17 +4105,16 @@ describe("CLI local runtime adapter remote sync fetch timeout", () => {
 });
 
 describe("resolveCliEffectiveEnabledPacks", () => {
-  test("enabledPacks 为空时默认补 code + agent-orchestration 包", () => {
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [] })).toEqual(["code", "agent-orchestration"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: null })).toEqual(["code", "agent-orchestration"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: undefined })).toEqual(["code", "agent-orchestration"]);
-    expect(resolveCliEffectiveEnabledPacks({})).toEqual(["code", "agent-orchestration"]);
+  test("enabledPacks 为空时默认补 code 包", () => {
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [] })).toEqual(["code"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: null })).toEqual(["code"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: undefined })).toEqual(["code"]);
+    expect(resolveCliEffectiveEnabledPacks({})).toEqual(["code"]);
   });
 
-  test("enabledPacks 非空时幂等补齐编排包", () => {
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"] })).toEqual(["web-search", "agent-orchestration"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "web-search"] })).toEqual(["code", "web-search", "agent-orchestration"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "agent-orchestration"] })).toEqual(["code", "agent-orchestration"]);
+  test("enabledPacks 非空时保持原值不补", () => {
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"] })).toEqual(["web-search"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "web-search"] })).toEqual(["code", "web-search"]);
   });
 
   test("declared-only 模式下不补 code 包（用户显式要 ablation）", () => {
@@ -4432,130 +4338,5 @@ describe("CLI local runtime adapter OAuth per-request wiring (real credential st
     // 请求用 providerConfig.apiKey（agent.apiKey），而非 resolver 的 OAuth token。
     expect(requests[0].auth).toBe("Bearer sk-direct-plain");
     expect(requests[0].auth).not.toBe("Bearer token-should-not-be-used");
-  });
-});
-
-/**
- * Policy 名单派生自 schema 侧：buildLocalPolicyToolNames 不再按类别独立收集，
- * 直接取 buildOpenAiTools 输出的 function.name。覆盖 startAgentRun/controlAgentRun
- * 掉出放行名单的回归（MED-1 之后 schema 注入了但 policy 漏放行）。
- */
-describe("CLI local policy tool names 派生自 schema", () => {
-  /** 最小 executor map：构造不触发 DB/网络，全是同步组装。fetchImpl 给假函数。 */
-  function buildExecutors(env: Record<string, unknown> = {}) {
-    return buildLocalToolExecutors({
-      workspaceRoot: "/tmp/nolo-policy-derive-test",
-      env: env as any,
-      fetchImpl: (async () => new Response("{}")) as any,
-    });
-  }
-
-  test("默认 agent 名单含 startAgentRun/controlAgentRun 且 policy 放行", () => {
-    const agentConfig = { key: "agent-test", tools: [] } as any;
-    const env = {};
-    const requested = resolveCliRequestedToolNames(agentConfig, env as any);
-    const policyNames = buildLocalPolicyToolNames({
-      agentKey: agentConfig.key,
-      toolNames: requested,
-      env: env as any,
-    });
-    expect(policyNames).toContain("startAgentRun");
-    expect(policyNames).toContain("controlAgentRun");
-    const decision = resolveLocalToolPolicy({
-      env: env as any,
-      agentToolNames: policyNames,
-      toolName: "startAgentRun",
-    });
-    expect(decision.allowed).toBe(true);
-  });
-
-  test("不变式：buildOpenAiTools 每个 function.name 都在 buildLocalPolicyToolNames 结果里", () => {
-    const cases: Array<{ name: string; agentConfig: any; env: Record<string, unknown> }> = [
-      { name: "默认 agent", agentConfig: { key: "agent-default", tools: [] }, env: {} },
-      {
-        name: "agent-orchestration 包",
-        agentConfig: { key: "agent-orch", tools: [], enabledPacks: ["agent-orchestration"] },
-        env: {},
-      },
-    ];
-    for (const { name, agentConfig, env } of cases) {
-      const requested = resolveCliRequestedToolNames(agentConfig, env as any);
-      const tools = buildOpenAiTools({
-        agentKey: agentConfig.key,
-        toolNames: requested,
-        env: env as any,
-      }) as Array<Record<string, unknown>>;
-      const schemaNames = tools
-        .map((t) => (t as any)?.function?.name)
-        .filter((n): n is string => typeof n === "string" && n.length > 0);
-      const policyNames = new Set(
-        buildLocalPolicyToolNames({
-          agentKey: agentConfig.key,
-          toolNames: requested,
-          env: env as any,
-        }),
-      );
-      const missing = schemaNames.filter((n) => !policyNames.has(n));
-      expect(missing).toEqual([]);
-    }
-  });
-
-  test("executor 覆盖守卫：模型可见的每个工具名都能在本地 executor map 找到实现", () => {
-    const agentConfig = { key: "agent-exec-cov", tools: [] } as any;
-    const env = {};
-    const requested = resolveCliRequestedToolNames(agentConfig, env as any);
-    const exposed = buildLocalPolicyToolNames({
-      agentKey: agentConfig.key,
-      toolNames: requested,
-      env: env as any,
-    });
-    const executors = buildExecutors(env);
-    const uncovered = exposed.filter((n) => !(n in executors));
-    expect(uncovered).toEqual([]);
-  });
-
-  test("收窄仍然生效：disabledTools 屏蔽后 schema 与 policy 名单都不含被禁工具", () => {
-    const agentConfig = {
-      key: "agent-disabled",
-      tools: [],
-      disabledTools: ["startAgentRun", "controlAgentRun"],
-    } as any;
-    const env = {};
-    const requested = resolveCliRequestedToolNames(agentConfig, env as any);
-    const tools = buildOpenAiTools({
-      agentKey: agentConfig.key,
-      toolNames: requested,
-      env: env as any,
-    }) as Array<Record<string, unknown>>;
-    const schemaNames = tools
-      .map((t) => (t as any)?.function?.name)
-      .filter((n): n is string => typeof n === "string" && n.length > 0);
-    expect(schemaNames).not.toContain("startAgentRun");
-    expect(schemaNames).not.toContain("controlAgentRun");
-    const policyNames = buildLocalPolicyToolNames({
-      agentKey: agentConfig.key,
-      toolNames: requested,
-      env: env as any,
-    });
-    expect(policyNames).not.toContain("startAgentRun");
-    expect(policyNames).not.toContain("controlAgentRun");
-  });
-
-  test("restricted 模式下默认 agent 的 startAgentRun 仍放行（在 DEFAULT_LOCAL_TOOLS 里）", () => {
-    const agentConfig = { key: "agent-restricted", tools: [] } as any;
-    const env = { NOLO_LOCAL_TOOL_MODE: "restricted" };
-    const requested = resolveCliRequestedToolNames(agentConfig, env as any);
-    const policyNames = buildLocalPolicyToolNames({
-      agentKey: agentConfig.key,
-      toolNames: requested,
-      env: env as any,
-    });
-    expect(policyNames).toContain("startAgentRun");
-    const decision = resolveLocalToolPolicy({
-      env: env as any,
-      agentToolNames: policyNames,
-      toolName: "startAgentRun",
-    });
-    expect(decision.allowed).toBe(true);
   });
 });

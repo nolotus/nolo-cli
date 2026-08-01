@@ -1,7 +1,7 @@
 // 路径: /integrations/openai/generateOpenAIRequestBody.ts
 import { Agent, Message } from "../../app/types";
 
-import { isModelSupportReasoningEffort, clampReasoningEffort } from "../../ai/llm/reasoningModels";
+import { isModelSupportReasoningEffort } from "../../ai/llm/reasoningModels";
 import { getUsageRequestOptions } from "../../ai/llm/usageRequestOptions";
 import {
   isDeepInfraKimiModel,
@@ -13,7 +13,6 @@ import { generatePrompt, buildSystemPromptContext } from "../../ai/agent/generat
 import { isLoopbackUrl } from "../../core/localOrigins";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { normalizeChatCompletionsBodyForProvider } from "./providerBodyCompatibility";
-import { preserveAgentStateFields } from "../../agent-runtime/openAiCompatibleMessages";
 
 // model 理论上不应为空（schema 已强制必填），但防御性处理 undefined
 const isClaudeModel = (model: string | undefined): boolean =>
@@ -130,7 +129,22 @@ const sanitizeChatCompletionsMessage = (message: Message & Record<string, any>) 
   const name = asOptionalTrimmedString(message.name);
   if (name) sanitized.name = name;
 
-  return preserveAgentStateFields(message, sanitized);
+  const toolCallId = asOptionalTrimmedString(message.tool_call_id);
+  if (toolCallId) sanitized.tool_call_id = toolCallId;
+
+  if (Array.isArray(message.tool_calls)) {
+    sanitized.tool_calls = message.tool_calls;
+  }
+
+  if (
+    message.role === "assistant" &&
+    typeof message.reasoning_content === "string" &&
+    message.reasoning_content
+  ) {
+    sanitized.reasoning_content = message.reasoning_content;
+  }
+
+  return sanitized;
 };
 
 const buildRequestBody = (options: BuildRequestBodyOptions): any => {
@@ -161,12 +175,9 @@ const buildRequestBody = (options: BuildRequestBodyOptions): any => {
   });
   Object.assign(bodyData, usageRequestOptions);
 
-  // 推理强度（仅部分模型支持，且按 provider 做 clamp）
+  // 推理强度（仅部分模型支持）
   if (reasoning_effort && isModelSupportReasoningEffort(model)) {
-    const clamped = clampReasoningEffort(reasoning_effort, providerName);
-    if (clamped) {
-      bodyData.reasoning_effort = clamped;
-    }
+    bodyData.reasoning_effort = reasoning_effort;
   }
 
   if (typeof temperature === "number") bodyData.temperature = temperature;

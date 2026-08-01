@@ -11,7 +11,6 @@ export const DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOLS = [
   "readSpace",
   "readDoc",
   "readSkillDoc",
-  "loadSkill",
   "listTables",
   "queryTableRows",
   "cliWhoami",

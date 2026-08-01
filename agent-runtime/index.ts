@@ -218,7 +218,6 @@ export {
   buildNoloWorkspaceCliToolExecutors,
   buildNoloWorkspaceOpenAiTools,
   buildNoloTableQueryRequest,
-  buildLoadSkillExecutor,
   clampNoloPositiveInteger,
   filterNoloWorkspaceToolNames,
   getNoloComparableUpdatedAt,
@@ -308,11 +307,6 @@ export {
   createCloudCredentialGrant,
   uploadCloudCredentialGrant,
 } from "./cloudCredentialGrant";
-export type {
-  ContextBlockCacheScope,
-  ContextBlockScope,
-} from "./contextBlockScope";
-export { normalizeContextBlockScopes } from "./contextBlockScope";
 export type {
   CloudCredentialGrant,
   CloudCredentialGrantStatus,

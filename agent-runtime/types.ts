@@ -37,12 +37,6 @@ export interface AgentRuntimeToolCall {
 export interface AgentRuntimeChatMessage {
   role: (typeof AGENT_RUNTIME_MESSAGE_ROLES)[number];
   content: AgentRuntimeMessageContent;
-  /**
-   * Provider-visible replacement for a durable message body. The complete
-   * `content` remains the source of truth; local runtime history projection
-   * uses this reference and removes the field before sending it to a provider.
-   */
-  context_reference?: AgentRuntimeMessageContent;
   tool_call_id?: string;
   tool_calls?: AgentRuntimeToolCall[];
   /** 工具名：tool 行的语义字段，落库 / 回读 / 折叠头显示都依赖它。 */
@@ -52,19 +46,6 @@ export interface AgentRuntimeChatMessage {
   cybotKey?: string;
   agentKey?: string;
   agentName?: string;
-}
-
-/**
- * Durable continuation identity for the OpenAI Responses wire.
- *
- * This is deliberately separate from usage.audit `provider_response_ids`:
- * only the latest response for the same provider/model can be used as the
- * next turn's `previous_response_id`.
- */
-export interface ResponsesConversationState {
-  provider: string;
-  model: string;
-  responseId: string;
 }
 
 export type AgentRuntimeOutputBlock =
@@ -86,7 +67,6 @@ export interface AgentRuntimeResult {
   inputPrice?: number;
   outputPrice?: number;
   usage?: Record<string, any>;
-  responsesState?: ResponsesConversationState | null;
   trace?: AgentRuntimeChatMessage[];
   tool_calls?: AgentRuntimeToolCall[];
   reasoning_content?: string;

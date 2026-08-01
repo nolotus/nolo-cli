@@ -24,10 +24,7 @@ interface PrepareTokenUsageDataParams {
   agentConfig: BillingAgentConfig;
   userId?: string;
   username?: string;
-  /** Canonical agent identity (preferred). */
-  agentId?: string;
-  /** Deprecated legacy identity; used only when agentId is absent/blank. */
-  cybotId?: string;
+  cybotId: string;
   dialogId: string;
   timestamp?: number;
 }
@@ -90,20 +87,10 @@ export const prepareTokenUsageData = ({
   agentConfig,
   userId,
   username,
-  agentId,
   cybotId,
   dialogId,
   timestamp = Date.now(),
 }: PrepareTokenUsageDataParams): PreparedTokenUsageData => {
-  const resolvedAgentId =
-    (typeof agentId === "string" && agentId.trim()) ||
-    (typeof cybotId === "string" && cybotId.trim()) ||
-    "";
-  if (!resolvedAgentId) {
-    throw new Error(
-      "prepareTokenUsageData requires a non-empty agentId or cybotId"
-    );
-  }
   const usage = normalizeUsage(rawUsage);
   const billingTarget = resolveBillingTarget({
     usage,
@@ -153,8 +140,7 @@ export const prepareTokenUsageData = ({
       ...usage,
       userId,
       username,
-      agentId: resolvedAgentId,
-      cybotId: resolvedAgentId,
+      cybotId,
       model: billedModel,
       provider: recordProvider,
       billing_service_tier: billedServiceTier,

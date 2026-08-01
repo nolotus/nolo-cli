@@ -46,16 +46,8 @@ export type TuiState = {
   thinkingDisplay: ThinkingDisplayMode;
   toolDisplay: ToolDisplayMode;
   turnTokens?: TurnTokenUsage;
-  /**
-   * Measured estimate of built-in system+tools context (AGENTS.md, guidance,
-   * skill index, tool schemas). Used by the status chip until provider usage
-   * arrives in turnTokens.
-   */
-  estimatedContextTokens?: number;
   /** Resolved from agentName at init / agent-switch; fallback when turnTokens has no contextWindow. */
   contextWindow?: number;
-  /** 执行来源：platform=平台API(计费) custom=自定义API cli=订阅制。platform 时状态行显示积分。 */
-  apiSource?: string;
 };
 
 export type TuiAction =
@@ -104,10 +96,6 @@ export type TuiAction =
     }
   | {
       type: "set-mouse";
-      enabled: boolean;
-    }
-  | {
-      type: "set-altscreen";
       enabled: boolean;
     }
   | {

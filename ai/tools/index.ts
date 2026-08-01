@@ -47,7 +47,6 @@ import {
 import { doctorSkillFunctionSchema, doctorSkillFunc } from "./doctorSkillTool";
 import { evalSkillFunctionSchema, evalSkillFunc } from "./evalSkillTool";
 import { importSkillFunctionSchema, importSkillFunc } from "./importSkillTool";
-import { loadSkillFunctionSchema, loadSkillFunc } from "./loadSkillTool";
 import {
   readDocFunctionSchema,
   readDocFunc,
@@ -846,21 +845,6 @@ const baseToolDefinitions: ToolDefinition[] = [
     riskLevel: "medium",
     costLevel: "medium",
     defaultConsent: "ask",
-  },
-  {
-    id: "loadSkill",
-    schema: loadSkillFunctionSchema,
-    executor: loadSkillFunc,
-    description: {
-      name: "loadSkill",
-      description: "按名称加载已保存的 skill 文档，返回完整指令正文。",
-      category: "内容管理",
-    },
-    behavior: "data",
-    uiGroup: "content",
-    capability: "space_context",
-    riskLevel: "low",
-    costLevel: "low",
   },
   {
     id: "wereadGateway",

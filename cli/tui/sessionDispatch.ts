@@ -27,14 +27,12 @@ import {
   getActiveDensity,
   setActiveDensity,
   THEME_PALETTES,
-  themeText,
 } from "./theme";
 import { detectGitStatus } from "./gitStatus";
 import { getModelContextWindow } from "../../ai/llm/getModelContextWindow";
 import { getProcessRegistry } from "../../agent-runtime/processRegistry";
 import { formatElapsedSeconds, renderContextPanel, renderKnownAgents, renderTuiHelp } from "./sessionRender";
 import { isLikelySlashCommand, stripImageTokens } from "./sessionInput";
-import { resolveCliColorEnabled } from "../client/terminalStyles";
 import type { TuiState, TuiInputResult } from "./sessionTypes";
 
 export { DEFAULT_TUI_AGENT_KEY };
@@ -111,19 +109,6 @@ function applyAgentSwitch(state: TuiState, target: { name: string; key: string }
       state.dialogId ? `Dialog kept: ${state.dialogId}` : "Dialog kept: new"
     }`,
   };
-}
-
-/**
- * Render `/skill attach` success in the same visual language as the loadSkill
- * compact tool line: a success-colored bullet followed by the skill name.
- */
-function formatAttachedSkillLine(skillRef: string): string {
-  const colorEnabled = resolveCliColorEnabled();
-  if (!colorEnabled) return `● Attached skill: ${skillRef}`;
-  const bullet = themeText("●", "success", true);
-  const label = themeText("Attached skill:", "muted", true);
-  const name = themeText(skillRef, "chrome", true);
-  return `${bullet} ${label} ${name}`;
 }
 
 export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
@@ -530,7 +515,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
           : [...state.attachedSkills, skillRef];
         return {
           nextState: { ...state, attachedSkills },
-          output: formatAttachedSkillLine(skillRef),
+          output: `Attached skill: ${skillRef}`,
         };
       }
       if (sub === "detach") {

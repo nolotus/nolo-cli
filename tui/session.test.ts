@@ -21,10 +21,6 @@ import { getCliLocale, setCliLocale, t, type CliLocale } from "./i18n";
 import { displayWidth, stripAnsi } from "./readlineWorkspace";
 import { detectImagePaths } from "./pasteImage";
 import {
-  createCollapsedPasteStore,
-  expandCollapsedPastes,
-} from "../core/collapsedPaste";
-import {
   getActiveThemeName,
   getActiveDensity,
   setActiveThemeName,
@@ -144,99 +140,6 @@ describe("applyTuiInputKey", () => {
       cursorPos: 0,
       submit: "line1\nline2\nline3",
     });
-  });
-
-  test("collapses oversized paste into a one-line placeholder and expands on submit", () => {
-    const pasteStore = createCollapsedPasteStore();
-    const body = Array.from({ length: 12 }, (_, i) => `line-${i}`).join("\n");
-    const pasteToken = `\x00PASTE\x00${body}`;
-    const pasteRes = applyTuiInputKey("", pasteToken, {}, 0, { pasteStore });
-    expect(pasteRes.buffer).toBe("[paste #1 · 12 lines]");
-    expect(pasteRes.buffer.includes("\n")).toBe(false);
-    expect(pasteStore.items.get(1)).toBe(body);
-
-    const enterRes = applyTuiInputKey(pasteRes.buffer, "\r", { name: "enter" });
-    expect(expandCollapsedPastes(enterRes.submit ?? "", pasteStore)).toBe(body);
-  });
-
-  test("backspace deletes a collapsed paste chip atomically", () => {
-    const pasteStore = createCollapsedPasteStore();
-    const body = Array.from({ length: 10 }, (_, i) => `L${i}`).join("\n");
-    const pasteRes = applyTuiInputKey("hi ", `\x00PASTE\x00${body}`, {}, 3, {
-      pasteStore,
-    });
-    expect(pasteRes.buffer.startsWith("hi [paste #1")).toBe(true);
-    const afterBackspace = applyTuiInputKey(
-      pasteRes.buffer,
-      "\x7f",
-      { name: "backspace" },
-      pasteRes.cursorPos,
-      { pasteStore },
-    );
-    expect(afterBackspace.buffer).toBe("hi ");
-    expect(pasteStore.items.size).toBe(0);
-  });
-
-  test("Ctrl+W after chip+word deletes only the word, not the chip", () => {
-    const pasteStore = createCollapsedPasteStore();
-    const body = Array.from({ length: 10 }, (_, i) => `L${i}`).join("\n");
-    const pasteRes = applyTuiInputKey("", `\x00PASTE\x00${body}`, {}, 0, {
-      pasteStore,
-    });
-    const withWord = applyTuiInputKey(
-      pasteRes.buffer,
-      "foo",
-      {},
-      pasteRes.cursorPos,
-      { pasteStore },
-    );
-    expect(withWord.buffer.endsWith("foo")).toBe(true);
-    const afterWordDelete = applyTuiInputKey(
-      withWord.buffer,
-      "\x17",
-      { ctrl: true, name: "w" },
-      withWord.cursorPos,
-      { pasteStore },
-    );
-    expect(afterWordDelete.buffer).toBe(pasteRes.buffer);
-    expect(pasteStore.items.size).toBe(1);
-    expect(expandCollapsedPastes(afterWordDelete.buffer, pasteStore)).toBe(body);
-  });
-
-  test("paste while caret is inside an existing chip does not nest placeholders", () => {
-    const pasteStore = createCollapsedPasteStore();
-    const body1 = Array.from({ length: 10 }, (_, i) => `A${i}`).join("\n");
-    const body2 = Array.from({ length: 10 }, (_, i) => `B${i}`).join("\n");
-    const first = applyTuiInputKey("", `\x00PASTE\x00${body1}`, {}, 0, {
-      pasteStore,
-    });
-    const nested = applyTuiInputKey(
-      first.buffer,
-      `\x00PASTE\x00${body2}`,
-      {},
-      5,
-      { pasteStore },
-    );
-    expect(nested.buffer).toBe(`${first.buffer}[paste #2 · 10 lines]`);
-    expect(expandCollapsedPastes(nested.buffer, pasteStore)).toBe(
-      `${body1}${body2}`,
-    );
-  });
-
-  test("left arrow from inside a chip jumps to chip start", () => {
-    const pasteStore = createCollapsedPasteStore();
-    const body = Array.from({ length: 10 }, (_, i) => `L${i}`).join("\n");
-    const pasteRes = applyTuiInputKey("xx", `\x00PASTE\x00${body}`, {}, 2, {
-      pasteStore,
-    });
-    const left = applyTuiInputKey(
-      pasteRes.buffer,
-      "\x1b[D",
-      { name: "left" },
-      5,
-      { pasteStore },
-    );
-    expect(left.cursorPos).toBe(2);
   });
 
   test("handles forward Delete key and modifier Delete/Backspace variants", () => {
@@ -836,7 +739,7 @@ describe("handleTuiInput - /skill", () => {
   test("/skill attach adds a skill ref", () => {
     const state = createInitialTuiState({});
     const result = handleTuiInput("/skill attach nolo-plan", state);
-    expect(result.output).toBe("● Attached skill: nolo-plan");
+    expect(result.output).toBe("Attached skill: nolo-plan");
     expect(result.nextState.attachedSkills).toEqual(["nolo-plan"]);
   });
 
@@ -849,7 +752,7 @@ describe("handleTuiInput - /skill", () => {
   test("/skill attach with dbKey", () => {
     const state = createInitialTuiState({});
     const result = handleTuiInput("/skill attach page-0e95801d90-01SKPLAN", state);
-    expect(result.output).toBe("● Attached skill: page-0e95801d90-01SKPLAN");
+    expect(result.output).toBe("Attached skill: page-0e95801d90-01SKPLAN");
     expect(result.nextState.attachedSkills).toEqual(["page-0e95801d90-01SKPLAN"]);
   });
 

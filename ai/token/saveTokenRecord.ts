@@ -4,9 +4,9 @@ import { DataType } from "../../create/types";
 import { createTokenKey } from "../../database/keys";
 import { write } from "../../database/dbSlice";
 import { toast } from "../../app/utils/toast";
-import { createClientLogger } from "../../core/clientLogger";
+import { pino } from "pino";
 
-const logger = createClientLogger("token-record");
+const logger = pino({ name: "token-record", level: "info" });
 
 type TokenCount = { input: number; output: number };
 
@@ -43,16 +43,13 @@ export const saveTokenRecord = async (
     tokenData.timestamp ?? record.createdAt ?? Date.now();
   const key = createTokenKey.record(ownerUserId, eventTime);
   try {
-    await thunkApi.dispatch(
+    await (thunkApi.dispatch(
       write({
         data: { ...record, id: key, type: DataType.TOKEN, userId: ownerUserId },
         customKey: key,
-        // writeAction stamps record.userId from writeConfig.userId ||
-        // currentUserId; without this, logged-out local token rows lose
-        // the authoritative "local" owner before replication planning.
         userId: ownerUserId,
       })
-    );
+    ) as any).unwrap();
   } catch (error) {
     logger.error(
       {

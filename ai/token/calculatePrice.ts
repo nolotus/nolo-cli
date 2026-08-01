@@ -34,6 +34,16 @@ export interface ExternalPrice {
   creatorId?: string;
 }
 
+/**
+ * 成本归一化：非有限数（NaN/Infinity）或负数归零。
+ * 根因守卫——在 calculatePrice 出口封死 NaN，下游 resolveBillable 和
+ * applyTokenUsageToDayStats 不再需要各自防御。
+ */
+const sanitizeCost = (raw: number): number => {
+  const rounded = Number(raw.toFixed(6));
+  return Number.isFinite(rounded) && rounded > 0 ? rounded : 0;
+};
+
 interface CalculatePriceParams {
   modelName: string;
   usage: Usage;
@@ -527,7 +537,7 @@ export const calculatePrice = ({
       billingServiceTier
     );
     const pay = calculatePayDistribution(costs, externalPrice, sharingLevel);
-    return { cost: Number(costs.charge.toFixed(6)), pay };
+    return { cost: sanitizeCost(costs.charge), pay };
   }
 
   const costs = calculateBasicCost(
@@ -556,7 +566,7 @@ export const calculatePrice = ({
   const pay = calculatePayDistribution(adjustedCosts, externalPrice, sharingLevel);
 
   return {
-    cost: Number(adjustedCosts.charge.toFixed(6)),
+    cost: sanitizeCost(adjustedCosts.charge),
     pay,
   };
 };

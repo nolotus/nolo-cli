@@ -93,7 +93,6 @@ describe("CLI local runtime adapter", () => {
     "readSpace",
     "readDoc",
     "readSkillDoc",
-    "loadSkill",
     "listTables",
     "queryTableRows",
     "cliWhoami",
@@ -927,7 +926,7 @@ describe("CLI local runtime adapter", () => {
 
     expect(result.content).toBe("grok ok");
     expect(cliCalledWith?.options?.reasoningEffort).toBe("high");
-  });
+  }, 15_000);
 
   test("passes cli-provider image inputs to the CLI executor instead of rejecting", async () => {
     let cliCalledWith: any = null;

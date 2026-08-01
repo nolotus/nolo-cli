@@ -13,25 +13,12 @@
  * - ./sessionInput：completeSlashCommand
  * - ./session：PASTE_TOKEN_PREFIX
  */
-import { COLLAPSED_PASTE_PLACEHOLDER_RE } from "../core/collapsedPaste";
 import { displayWidth, fitAnsiLine, wrapTextToLines } from "./tuiAnsi";
 import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
 import { themeColorSequence, themeText } from "./theme";
 import { t } from "./i18n";
 import { completeSlashCommand } from "./sessionInput";
 import { PASTE_TOKEN_PREFIX } from "./session";
-
-/** Soft-highlight collapsed paste chips so they read as chips, not typed text. */
-function styleCollapsedPastePlaceholders(
-  text: string,
-  colorEnabled: boolean,
-): string {
-  if (!colorEnabled || !text.includes("[paste #")) return text;
-  COLLAPSED_PASTE_PLACEHOLDER_RE.lastIndex = 0;
-  return text.replace(COLLAPSED_PASTE_PLACEHOLDER_RE, (match) =>
-    themeText(match, "accent", true),
-  );
-}
 
 export type FixedInputController = {
   active: boolean;
@@ -208,9 +195,7 @@ export function createFixedInput(
       for (let j = 0; j < rows.length; j += 1) {
         const rowPrefix = j === 0 ? prefix : " ".repeat(promptWidth);
         const rowText = rows[j] ?? "";
-        sections.push(
-          `${rowPrefix}${styleCollapsedPastePlaceholders(rowText, colorEnabled)}`,
-        );
+        sections.push(`${rowPrefix}${rowText}`);
 
         const rowLen = rowText.length;
         if (!cursorFound) {

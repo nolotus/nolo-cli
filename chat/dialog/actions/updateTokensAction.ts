@@ -8,25 +8,17 @@ import { toast } from "../../../app/utils/toast";
 import {
   createTokenRecord,
   saveTokenRecord,
-  ModelStats,
 } from "../../../ai/token/saveTokenRecord";
-import { createClientLogger } from "../../../core/clientLogger";
+import { pino } from "pino";
 import { deductBalance } from "../../../auth/authSlice"; // <--- 1. 导入新的 deductBalance action
 import { prepareTokenUsageData } from "../../../ai/token/prepareTokenUsageData";
 import { findModelConfig } from "../../../ai/llm/providers";
 import { resolveMessageOwner } from "../../messages/resolveMessageOwner";
+import { applyTokenUsageToDayStats, type DayStats } from "../../../ai/token/applyTokenUsageToDayStats";
+import { runKeyed } from "../../../core/keyedTaskQueue";
 
-const logger = createClientLogger("token-usage");
+const logger = pino({ name: "token-usage", level: "info" });
 const dialogTokenPatchQueue = new Map<string, Promise<void>>();
-
-interface DayStats {
-  userId: string;
-  period: "day";
-  timeKey: string;
-  total: ModelStats;
-  models: Record<string, ModelStats>;
-  providers: Record<string, ModelStats>;
-}
 
 const queueDialogTokenPatch = async <T>(
   dialogKey: string,
@@ -50,18 +42,6 @@ const queueDialogTokenPatch = async <T>(
   }
 };
 
-const updateStatsCounter = (
-  data: TokenUsageData,
-  stats: ModelStats = { count: 0, tokens: { input: 0, output: 0 }, cost: 0 }
-): ModelStats => ({
-  count: stats.count + 1,
-  tokens: {
-    input: stats.tokens.input + data.input_tokens,
-    output: stats.tokens.output + data.output_tokens,
-  },
-  cost: stats.cost + data.cost,
-});
-
 const updateStats = async (
   data: TokenUsageData,
   existingStats: DayStats | null,
@@ -69,48 +49,26 @@ const updateStats = async (
   thunkApi: any
 ) => {
   try {
-    const stats = existingStats ?? {
-      userId: data.userId,
-      period: "day",
-      timeKey: format(Date.now(), "yyyy-MM-dd"),
-      total: { count: 0, tokens: { input: 0, output: 0 }, cost: 0 },
-      models: {},
-      providers: {},
-    };
+    const dateKey = format(data.timestamp ?? Date.now(), "yyyy-MM-dd");
+    const newStats = applyTokenUsageToDayStats(existingStats, {
+      userId: data.userId ?? "",
+      timeKey: dateKey,
+      model: data.model || "unknown",
+      provider: data.provider || "unknown",
+      input_tokens: data.input_tokens,
+      output_tokens: data.output_tokens,
+      cost: data.cost,
+    });
 
-    const modelName = data.model || "unknown";
-    const providerName = data.provider || "unknown";
-
-    const cleanModels = Object.fromEntries(
-      Object.entries(stats.models).filter(
-        ([key]) => !["unknown", "undefined"].includes(key)
-      )
-    );
-
-    const updatedStats = {
-      ...stats,
-      total: updateStatsCounter(data, stats.total),
-      models: {
-        ...cleanModels,
-        [modelName]: updateStatsCounter(data, (cleanModels as any)[modelName]),
-      },
-      providers: {
-        ...stats.providers,
-        [providerName]: updateStatsCounter(data, (stats.providers as any)[providerName]),
-      },
-    };
-
-    await thunkApi.dispatch(
+    await (thunkApi.dispatch(
       write({
-        data: { ...updatedStats, id: key, type: DataType.TOKEN },
+        data: { ...newStats, id: key, type: DataType.TOKEN },
         customKey: key,
-        // Must stamp owner on writeConfig: writeAction overwrites data.userId
-        // from writeConfig.userId || currentUserId (empty when logged out).
         userId: data.userId,
       })
-    );
+    ) as any).unwrap();
 
-    return updatedStats;
+    return newStats;
   } catch (error) {
     logger.error(
       { key, userId: data.userId, error: (error as any).message },
@@ -122,48 +80,53 @@ const updateStats = async (
 };
 
 export const saveTokenUsage = async (data: TokenUsageData, thunkApi: any) => {
-  const dateKey = format(Date.now(), "yyyy-MM-dd");
+  // 用 data.timestamp（而非 Date.now()）取 dateKey，与 updateStats 内的
+  // timeKey 计算保持一致，避免零点交界处 DB Key 与 Payload timeKey 错配。
+  const dateKey = format(data.timestamp ?? Date.now(), "yyyy-MM-dd");
   const tokenDayStatsKey = createTokenStatsKey(data.userId ?? "", dateKey);
-  try {
-    let currentStats = null;
+  // per-key 串行队列防止并发 read-modify-write 丢失增量（与服务端 runKeyed 对齐）
+  return runKeyed(tokenDayStatsKey, async () => {
     try {
-      currentStats = await thunkApi.dispatch(read({
-        dbKey: tokenDayStatsKey
-      })).unwrap();
-    } catch (err) {
-      logger.warn({ tokenDayStatsKey }, "No existing stats found");
-    }
+      let currentStats = null;
+      try {
+        currentStats = await thunkApi.dispatch(read({
+          dbKey: tokenDayStatsKey
+        })).unwrap();
+      } catch (err) {
+        logger.warn({ tokenDayStatsKey }, "No existing stats found");
+      }
 
-    const updatedStats = await updateStats(
-      data,
-      currentStats,
-      tokenDayStatsKey,
-      thunkApi
-    );
+      const updatedStats = await updateStats(
+        data,
+        currentStats,
+        tokenDayStatsKey,
+        thunkApi
+      );
 
-    return {
-      success: true,
-      id: ulid(Date.now()),
-      record: updatedStats,
-    };
-  } catch (error: any) {
-    logger.error(
-      {
-        key: tokenDayStatsKey,
-        userId: data.userId,
-        error: error.message,
-        tokenData: {
-          input: data.input_tokens,
-          output: data.output_tokens,
-          model: data.model,
+      return {
+        success: true,
+        id: ulid(Date.now()),
+        record: updatedStats,
+      };
+    } catch (error: any) {
+      logger.error(
+        {
+          key: tokenDayStatsKey,
+          userId: data.userId,
+          error: error.message,
+          tokenData: {
+            input: data.input_tokens,
+            output: data.output_tokens,
+            model: data.model,
+          },
         },
-      },
-      "Failed to process token usage"
-    );
+        "Failed to process token usage"
+      );
 
-    toast.error("Failed to process token usage");
-    throw error;
-  }
+      toast.error("Failed to process token usage");
+      throw error;
+    }
+  });
 };
 
 export const updateTokensAction = async (
@@ -222,7 +185,8 @@ export const updateTokensAction = async (
   await saveTokenRecord(persistedTokenData, record as any, thunkApi);
   await saveTokenUsage(persistedTokenData, thunkApi);
 
-  if (result.cost > 0) {
+  if (persistedTokenData.billable === true ||
+      (persistedTokenData.billable === undefined && result.cost > 0)) {
     thunkApi.dispatch(deductBalance(result.cost));
   }
 

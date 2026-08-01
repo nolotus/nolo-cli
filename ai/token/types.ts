@@ -8,6 +8,11 @@ export const TOKEN_PERIODS = {
   MONTH: "month",
 } as const;
 
+// DayStats / ModelStats / TokenCount 统一定义，供 stats.ts、query.ts、
+// serverTokenWriter、updateTokensAction、externalToolCost 共用。
+// 唯一实现在 applyTokenUsageToDayStats.ts。
+export type { DayStats, ModelStats, TokenCount } from "./applyTokenUsageToDayStats";
+
 export const TOKEN_SCOPES = {
   USER: "user",
   SITE: "site",
@@ -74,6 +79,12 @@ export interface TokenUsageData extends NormalizedUsage {
   /** Optional event time used when building record keys. */
   timestamp?: number;
   pay: any; // TODO: 明确支付数据类型
+  /**
+   * 唯一计费标志：true 才扣费，false 只统计。
+   * 由 prepareTokenUsageData 按 apiSource / billing_estimated / owner 一次性算出，
+   * 所有扣费入口只读此字段，禁止再看 cost > 0。
+   */
+  billable: boolean;
 }
 
 // Token记录
@@ -102,6 +113,8 @@ export interface TokenRecord {
   pay: any;
   createdAt: number; // UTC timestamp
   type: string;
+  /** 唯一计费标志：true 才扣费，false 只统计。 */
+  billable: boolean;
 }
 
 // Token统计数据

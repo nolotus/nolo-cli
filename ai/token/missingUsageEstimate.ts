@@ -33,7 +33,7 @@ export const estimateMissingUsage = ({
   );
 
   return {
-    input_tokens: 1,
+    input_tokens: 0,
     output_tokens: estimatedOutputTokens,
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,

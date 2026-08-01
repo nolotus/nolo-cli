@@ -30,6 +30,7 @@ import {
     dequeueUserInput,
     clearPendingUserInputQueue,
     selectActiveControllers,
+    updateTokens,
 } from "../../chat/dialog/dialogSlice";
 import { runChatQueueTurnEnd } from "../../chat/queue/chatQueueLifecycleActions";
 import {
@@ -97,6 +98,7 @@ import {
 import { shouldBlockForGptPro } from "../../auth/gptProTier";
 import { persistMessageWithFixedId } from "./persistMessageWithFixedId";
 import { updateTotalUsage } from "../chat/updateTotalUsage";
+import { estimateMissingUsage } from "../token/missingUsageEstimate";
 import { createSSEParser } from "../chat/parseMultilineSSE";
 import { performServerProxyFetchWithRetry } from "../chat/serverProxyRetry";
 import { normalizeServerOrigin } from "./serverOrigin";
@@ -592,6 +594,7 @@ export const streamAgentChatTurnHandler = async (
 
             let accumulated = "";
             let cliCapabilityWarnings: string[] = [];
+            let cliTurnUsage: any = null;
             const decoder = new TextDecoder();
             const buildCliAssistantMessage = () => ({
                 id: messageId,
@@ -662,6 +665,11 @@ export const streamAgentChatTurnHandler = async (
                                     typeof warning === "string" && warning.trim().length > 0
                             );
                         }
+                        // CLI provider 子进程通常不返回 usage；少数 provider 未来可能报告。
+                        // 读取并累计，streamEnded 后若无值则走字符估算。
+                        if (payload.done && payload.usage) {
+                            cliTurnUsage = updateTotalUsage(cliTurnUsage, payload.usage);
+                        }
                     },
                 });
 
@@ -701,6 +709,36 @@ export const streamAgentChatTurnHandler = async (
                     // 持久化最终消息：用已有 ID，避免 prepareAndPersistMessage 重新生成 ID 导致重复
                     await persistMessageWithFixedId(dispatch, buildCliAssistantMessage());
                     remoteTransientMessageFinalized = true;
+
+                    // 补 token 统计：CLI 子进程通常不返回 usage，走字符估算。
+                    // 只有估算时才强制 apiSource="cli" → resolveBillable early-return false，
+                    // 只写统计不扣费（含远程绑定机器的平台 agent 估算场景）。
+                    // 如果 CLI 子进程返回了真实 usage（有非零 token），保留原 apiSource，
+                    // 让平台 agent 的真实 usage 正常计费。
+                    // 空/零 usage（如 {} 或全零）视为"没拿到真实 usage"，走估算。
+                    // dialogKey 缺失时跳过（无归属对话）。
+                    const cliUsageRaw = cliTurnUsage as any;
+                    const hasRealUsage = !!cliUsageRaw &&
+                        ((cliUsageRaw.prompt_tokens ?? cliUsageRaw.input_tokens ?? 0) +
+                         (cliUsageRaw.completion_tokens ?? cliUsageRaw.output_tokens ?? 0) +
+                         (cliUsageRaw.cache_creation_input_tokens ?? 0) +
+                         (cliUsageRaw.cache_read_input_tokens ?? 0)) > 0;
+                    const isCliEstimated = !hasRealUsage;
+                    const cliUsage = hasRealUsage ? cliUsageRaw : estimateMissingUsage({ content: accumulated });
+                    if (dialogKey) {
+                        try {
+                            await dispatch((updateTokens as any)({
+                                dialogId,
+                                dialogKey,
+                                usage: cliUsage,
+                                agentConfig: isCliEstimated
+                                    ? { ...agentConfig, apiSource: "cli" }
+                                    : agentConfig,
+                            })).unwrap();
+                        } catch (err) {
+                            console.warn("[streamAgentChatTurn] CLI token stats dispatch failed", err);
+                        }
+                    }
                 }
             } finally {
                 try {

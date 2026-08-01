@@ -70,6 +70,10 @@ export interface CliExecuteResult {
   raw: string;        // 原始 stdout
   elapsed: number;    // 耗时 ms
   warnings?: string[];
+  /** Optional token usage if the CLI provider reports it. Most CLI subprocesses
+   *  (copilot/codex/claude code) don't report usage; this is reserved for future
+   *  per-provider stdout parsers. When absent, caller falls back to estimateMissingUsage. */
+  usage?: import("../token/types").RawUsage;
 }
 
 /**

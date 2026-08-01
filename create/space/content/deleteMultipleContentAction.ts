@@ -2,9 +2,14 @@ import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read, remove } from "../../../database/dbSlice";
 import { SpaceData } from "../../../app/types";
-import { createClientLogger } from "../../../core/clientLogger";
+import pino from "pino";
 
-const logger = createClientLogger("delete-multiple-content");
+const logger = pino({
+  level: "info",
+  // transport: {
+  //   target: "pino-pretty",
+  // },
+});
 
 /**
  * 从指定的 Space 中批量删除多个内容。

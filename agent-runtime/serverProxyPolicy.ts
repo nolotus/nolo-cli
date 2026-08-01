@@ -15,6 +15,7 @@ export const OAUTH_APIKEY_REFS = new Set([
   "xai",
   "chatgpt",
   "claude",
+  "cursor",
 ]);
 
 export type ServerProxyAgentConfig = {

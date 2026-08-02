@@ -33,6 +33,7 @@ export type RunRecord = {
   runId: string;
   pid?: number;
   agentKey: string;
+  agentName?: string;
   cwd?: string;
   msgFile?: string;
   startedAt: string;
@@ -367,6 +368,7 @@ export async function spawnLocalBackgroundRun(
     commandPath?: string[];
     cliEntrypointPath?: string;
     agentKey: string;
+    agentName?: string;
     cwd?: string;
     msgFile?: string;
     /** 已解析的任务内容；提供时会快照进 runs 目录并让子进程读快照而非原始文件。 */
@@ -399,6 +401,7 @@ export async function spawnLocalBackgroundRun(
   const record: RunRecord = {
     runId,
     agentKey: input.agentKey,
+    ...(typeof input.agentName === "string" && input.agentName.trim() ? { agentName: input.agentName.trim() } : {}),
     cwd: input.cwd,
     ...(messagePath ? { msgFile: messagePath } : input.msgFile ? { msgFile: input.msgFile } : {}),
     startedAt: now().toISOString(),

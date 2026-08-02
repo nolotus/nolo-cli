@@ -477,6 +477,35 @@ async function fetchUserFavoriteAgentMap(thunkApi: any): Promise<Record<string, 
   }
 }
 
+export interface SafeAgentSummaryForCard {
+  name?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  apiSource?: string | null;
+  cliProvider?: string | null;
+  isFavorite?: boolean;
+  /** Prefer publicKey for delegation; fall back to id. */
+  publicKey?: string | null;
+  id?: string | null;
+}
+
+export function formatAgentListCard(agents: SafeAgentSummaryForCard[], maxDisplay = 20): string {
+  const total = agents.length;
+  const lines: string[] = [`Agents (${total})`];
+  const visible = agents.slice(0, maxDisplay);
+  for (const agent of visible) {
+    const star = agent.isFavorite ? "★" : " ";
+    const name = agent.name || "(unnamed)";
+    const model = agent.model || "—";
+    const source = agent.apiSource || agent.provider || agent.cliProvider || "—";
+    lines.push(`${star} ${name}  ${model}  ${source}`);
+  }
+  if (total > maxDisplay) {
+    lines.push(`… +${total - maxDisplay} more`);
+  }
+  return lines.join("\n");
+}
+
 export const listAgentsFunctionSchema = {
   name: "listAgents",
   description:
@@ -529,7 +558,7 @@ export async function listAgentsFunc(args: any, thunkApi: any): Promise<ToolResu
   agents = sortSafeAgentSummaries(agents);
   return {
     rawData: { success: true, total: agents.length, agents },
-    displayData: jsonPreview({ total: agents.length, agents }),
+    displayData: formatAgentListCard(agents),
   };
 }
 

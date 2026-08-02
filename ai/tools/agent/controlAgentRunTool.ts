@@ -9,6 +9,7 @@
 
 import { callToolApi } from "../toolApiClient";
 import { toErrorMessage } from "../../../core/errorMessage";
+import { getAgentRunStatusIcon } from "./agentRunDisplayHelpers";
 
 export const controlAgentRunFunctionSchema = {
     name: "controlAgentRun",
@@ -109,16 +110,16 @@ async function handleList(
         const runs = resData?.runs ?? [];
         const count = resData?.count ?? runs.length;
 
-        const summary = runs
-            .map((t: any) => `${t.runId} [${t.status}] ${t.agentKey ?? "unknown"}`)
-            .join("\n");
+        const lines = [`Runs (${count})`];
+        for (const t of runs) {
+            const icon = getAgentRunStatusIcon(t.status);
+            const name = t.agentName || t.name || "agent";
+            lines.push(`  ${icon}  ${name}  ${t.runId}`);
+        }
 
         return {
             rawData: { runs, count },
-            displayData:
-                runs.length > 0
-                    ? `📋 找到 ${runs.length} 个 run：\n${summary}`
-                    : "📋 没有找到 run。",
+            displayData: lines.join("\n"),
         };
     } catch (e: any) {
         throw new Error(`controlAgentRun(list) 失败: ${toErrorMessage(e)}`);
@@ -143,23 +144,28 @@ async function handleStatus(
         if (!resData || resData.found === false || !resData.run) {
             return {
                 rawData: { runId: opts.runId, found: false },
-                displayData: `❓ run ${opts.runId} 未找到。可能已完成并被清理，或 ID 错误。`,
+                displayData: `Run status\n  ? not_found\n  runId   ${opts.runId}`,
             };
         }
 
         const run = resData.run;
         const logLines: string[] | undefined = resData.logLines;
+        const icon = getAgentRunStatusIcon(run.status);
+        const name = run.agentName || run.name || "agent";
 
         const displayParts = [
-            `📊 run ${run.runId}`,
-            `  状态: ${run.status}`,
-            `  Agent: ${run.agentKey ?? "unknown"}`,
-            ...(run.lastToolNames?.length ? [`  最近工具: ${run.lastToolNames.join(", ")}`] : []),
-            ...(run.toolCallCount !== undefined ? [`  工具调用数: ${run.toolCallCount}`] : []),
-            ...(run.lastAssistantText ? [`  最近输出: ${run.lastAssistantText.slice(0, 200)}`] : []),
-            ...(run.errorMessage ? [`  错误: ${run.errorMessage}`] : []),
-            ...(logLines?.length ? [`  日志(最近 ${logLines.length} 行):`, ...logLines.map((l: string) => `  ${l}`)] : []),
+            "Run status",
+            `  ${icon} ${run.status}`,
+            `  agent   ${name}`,
+            `  runId   ${run.runId}`,
+            ...(run.lastToolNames?.length ? [`  lastTools ${run.lastToolNames.join(", ")}`] : []),
+            ...(run.toolCallCount !== undefined ? [`  toolCalls ${run.toolCallCount}`] : []),
+            ...(run.errorMessage ? [`  error     ${run.errorMessage}`] : []),
         ];
+
+        if (logLines && logLines.length > 0) {
+            displayParts.push("", "Log tail:", ...logLines.map((l: string) => `  ${l}`));
+        }
 
         return {
             rawData: { found: true, ...run, ...(logLines ? { logLines } : {}) },
@@ -185,23 +191,12 @@ async function handleStop(
         );
 
         const result = data?.data ?? data;
-        const wasActive = result?.wasActive ?? false;
         const status = result?.status ?? "cancelled";
-
-        let statusText: string;
-        if (status === "cancelling") {
-            statusText = `🛑 已发出取消信号，run ${opts.runId} 正在中止。`;
-        } else if (status === "cancelled" && !wasActive) {
-            statusText = `🛑 run ${opts.runId} 没有活跃进程，已标记为已取消。`;
-        } else if (status === "cancelled") {
-            statusText = `🛑 run ${opts.runId} 已成功取消。`;
-        } else {
-            statusText = `ℹ️ run ${opts.runId} 已处于状态 "${status}"。${wasActive ? "执行已停止。" : "没有活跃进程。"}`;
-        }
+        const icon = getAgentRunStatusIcon(status);
 
         return {
-            rawData: { runId: opts.runId, status, wasActive },
-            displayData: statusText,
+            rawData: { runId: opts.runId, status, wasActive: result?.wasActive ?? false },
+            displayData: `Run stopped\n  ${icon} ${status}\n  runId   ${opts.runId}`,
         };
     } catch (e: any) {
         throw new Error(`controlAgentRun(stop) 失败: ${toErrorMessage(e)}`);

@@ -14,6 +14,7 @@
 import { runAgentBackground } from "../../agent/runAgentBackground";
 import { toErrorMessage } from "../../../core/errorMessage";
 import { buildDelegatedTaskContent } from "./callAgentTool";
+import { getAgentRunStatusIcon } from "./agentRunDisplayHelpers";
 
 export const startAgentRunFunctionSchema = {
     name: "startAgentRun",
@@ -84,13 +85,16 @@ export async function startAgentRunFunc(
 
         const runId = bgResult.dialogId;
         const status = bgResult.status ?? "pending";
+        const icon = getAgentRunStatusIcon(status);
+        const name = bgResult.agentName || bgResult.name || "agent";
 
         return {
             rawData: {
                 runId,
                 status,
+                ...(bgResult.agentName ? { agentName: bgResult.agentName } : {}),
             },
-            displayData: `⏳ 后台 run 已启动，runId: ${runId}。用 controlAgentRun(action:"status", runId:"${runId}") 查进度。`,
+            displayData: `Run started\n  agent   ${name}\n  runId   ${runId}\n  status  ${icon} ${status}`,
         };
     } catch (e: any) {
         throw new Error(`startAgentRun 启动 Agent [${agentKey}] 失败: ${toErrorMessage(e)}`);

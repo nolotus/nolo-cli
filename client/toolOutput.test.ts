@@ -935,4 +935,101 @@ describe("toolOutput", () => {
     expect(line).not.toContain("●");
     expect(line.split("\n").filter(Boolean)).toHaveLength(1);
   });
+
+  test("compact mode renders listAgents / startAgentRun / controlAgentRun as formatted cards (no color)", () => {
+    const listLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "listAgents",
+        metadata: {
+          displayData: "Agents (2)\n★ Agent A  model-x  platform\n  Agent B  model-y  custom",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(listLine).toBe("● listAgents\n  Agents (2)\n  ★ Agent A  model-x  platform\n    Agent B  model-y  custom\n");
+
+    const startLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "startAgentRun",
+        metadata: {
+          displayData: "Run started\n  agent   agent-a\n  runId   run-123\n  pid     999",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(startLine).toBe("● startAgentRun\n  Run started\n    agent   agent-a\n    runId   run-123\n    pid     999\n");
+
+    const controlLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "controlAgentRun",
+        metadata: {
+          displayData: "Run stopped\n  🛑 killed\n  runId   run-123",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(controlLine).toBe("● controlAgentRun\n  Run stopped\n    🛑 killed\n    runId   run-123\n");
+  });
+
+  test("compact mode orchestration card recovers readable card from JSON content when displayData missing", () => {
+    const listLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "listAgents",
+        content: JSON.stringify({
+          success: true,
+          total: 1,
+          agents: [
+            {
+              name: "Agent A",
+              model: "model-x",
+              apiSource: "platform",
+              isFavorite: true,
+              publicKey: "agent-pub-a",
+            },
+          ],
+        }),
+      }),
+      "compact",
+      false
+    );
+    expect(listLine).toBe(
+      "● listAgents\n  Agents (1)\n  ★ Agent A  model-x  platform\n"
+    );
+
+    const startLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "startAgentRun",
+        content: JSON.stringify({ runId: "run-9", status: "pending" }),
+      }),
+      "compact",
+      false
+    );
+    expect(startLine).toContain("● startAgentRun");
+    expect(startLine).toContain("Run started");
+    expect(startLine).toContain("runId   run-9");
+    expect(startLine).not.toContain('{"runId"');
+  });
+
+  test("compact mode orchestration card renders failure line with ✗ when failed", () => {
+    const failLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "startAgentRun",
+        content: "Error: missing agentKey",
+        metadata: { failed: true },
+      }),
+      "compact",
+      false
+    );
+    expect(failLine).toContain("✗ startAgentRun");
+    expect(failLine).toContain("Error: missing agentKey");
+  });
 });

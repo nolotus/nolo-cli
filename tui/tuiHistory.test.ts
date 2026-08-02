@@ -4,7 +4,7 @@ import {
   createTurnHistory,
   type Turn,
 } from "./tuiHistory";
-import { setActiveThemeName } from "./theme";
+import { setActiveThemeName, themeColorSequence } from "./theme";
 import { formatAssistantDisplay } from "../client/assistantOutput";
 import { stripAnsi } from "./tuiAnsi";
 
@@ -207,5 +207,99 @@ describe("buildHistoryLines — assistant markdown rendered through the full ren
     // and breathing put blank lines between the prose↔list boundaries).
     expect(firstCount).toBeGreaterThan(6);
     expect(first.split("\n").filter((l) => l === "").length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("buildHistoryLines — user turn bubble formatting", () => {
+  beforeEach(() => setActiveThemeName("catppuccin"));
+  afterEach(() => setActiveThemeName("catppuccin"));
+
+  test("first line uses accent ❯ and default body text", () => {
+    let lines: string[] = [];
+    withColor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content: "hello world" }] },
+        80
+      ).filter(Boolean);
+    });
+
+    expect(lines.length).toBe(1);
+    const accentSeq = themeColorSequence("accent");
+    const mutedSeq = themeColorSequence("muted");
+    expect(lines[0]).toContain(`${accentSeq}❯\x1b[39m`);
+    expect(lines[0]).toContain("hello world");
+    expect(lines[0]).not.toContain(mutedSeq);
+  });
+
+  test("explicit multiline uses chrome │ prefix and default body text", () => {
+    let lines: string[] = [];
+    withColor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content: "first line\nsecond line" }] },
+        80
+      ).filter(Boolean);
+    });
+
+    expect(lines.length).toBe(2);
+    const accentSeq = themeColorSequence("accent");
+    const chromeSeq = themeColorSequence("chrome");
+    const mutedSeq = themeColorSequence("muted");
+
+    expect(lines[0]).toContain(`${accentSeq}❯\x1b[39m`);
+    expect(lines[0]).toContain("first line");
+    expect(lines[0]).not.toContain(mutedSeq);
+
+    expect(lines[1]).toContain(`${chromeSeq}│\x1b[39m`);
+    expect(lines[1]).toContain("second line");
+    expect(lines[1]).not.toContain(mutedSeq);
+  });
+
+  test("soft wrapping adds 2-space hanging gutter", () => {
+    let lines: string[] = [];
+    withColor(() => {
+      // 10 columns width forces "hello world extra" to soft-wrap
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content: "hello world extra" }] },
+        10
+      ).filter(Boolean);
+    });
+
+    expect(lines.length).toBeGreaterThan(1);
+    const mutedSeq = themeColorSequence("muted");
+    // Continuation line start with hanging gutter "  "
+    expect(lines[1]).toMatch(/^  /);
+    expect(lines[1]).not.toContain(mutedSeq);
+    expect(lines[1]).toContain("world");
+  });
+
+  test("no-color mode produces ❯ marker, two-space multiline prefix, and zero \\x1b", () => {
+    let lines: string[] = [];
+    noColor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content: "first long line for wrap\nsecond line" }] },
+        15
+      ).filter(Boolean);
+    });
+
+    const fullText = lines.join("\n");
+    expect(fullText).not.toContain("\x1b");
+    expect(lines[0]).toMatch(/^❯ first long/);
+    // Soft-wrapped continuation starts with two spaces
+    expect(lines[1]).toMatch(/^  line for/);
+    // Explicit newline continuation starts with two spaces
+    expect(lines[lines.length - 1]).toMatch(/^  second line/);
+  });
+
+  test("user content keeps markdown literal without formatting", () => {
+    let lines: string[] = [];
+    withColor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content: "**bold** `code` # header" }] },
+        80
+      ).filter(Boolean);
+    });
+
+    expect(lines[0]).toContain("**bold** `code` # header");
+    expect(lines[0]).not.toContain("\x1b[1mbold\x1b[22m");
   });
 });

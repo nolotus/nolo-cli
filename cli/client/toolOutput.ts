@@ -8,6 +8,8 @@ export { clipHeadAndTail };
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../../agent-runtime/actionGate";
 import { parseUiAskChoiceContent } from "../../ai/tools/uiAskChoiceTool";
+import { formatAgentListCard } from "../../ai/tools/noloWorkspaceReadTools";
+import { getAgentRunStatusIcon } from "../../ai/tools/agent/agentRunDisplayHelpers";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 import { type DiffLineKind, renderDiffLine, themeText } from "../tui/theme";
 import { displayWidth } from "../tui/tuiAnsi";
@@ -411,6 +413,134 @@ function formatToolTraceLine(text: string, colorEnabled: boolean, accent: "none"
   return `${dimCliText(text, true)}\n`;
 }
 
+function recoverOrchestrationDisplayFromContent(toolName: string, content: string): string {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return content;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (toolName === "listAgents") {
+      const agents = Array.isArray(parsed.agents) ? parsed.agents : [];
+      return formatAgentListCard(agents as Parameters<typeof formatAgentListCard>[0]);
+    }
+    if (toolName === "startAgentRun") {
+      const runId = typeof parsed.runId === "string" ? parsed.runId : "—";
+      const name =
+        typeof parsed.agentName === "string" && parsed.agentName.trim()
+          ? parsed.agentName.trim()
+          : typeof parsed.name === "string" && parsed.name.trim()
+            ? parsed.name.trim()
+            : "agent";
+      const pid =
+        typeof parsed.pid === "number" || typeof parsed.pid === "string" ? String(parsed.pid) : undefined;
+      const status = typeof parsed.status === "string" ? parsed.status : undefined;
+      const lastLine =
+        pid !== undefined
+          ? `  pid     ${pid}`
+          : `  status  ${status ? `${getAgentRunStatusIcon(status)} ${status}` : "—"}`;
+      return `Run started\n  agent   ${name}\n  runId   ${runId}\n${lastLine}`;
+    }
+    if (toolName === "controlAgentRun") {
+      if (Array.isArray(parsed.runs)) {
+        const runs = parsed.runs as Array<Record<string, unknown>>;
+        const lines = [`Runs (${runs.length})`];
+        for (const run of runs) {
+          const status = typeof run.status === "string" ? run.status : "—";
+          const icon = getAgentRunStatusIcon(status);
+          const name =
+            typeof run.agentName === "string" && run.agentName.trim()
+              ? run.agentName.trim()
+              : typeof run.name === "string" && run.name.trim()
+                ? run.name.trim()
+                : "agent";
+          const runId = typeof run.runId === "string" ? run.runId : "—";
+          lines.push(`  ${icon}  ${name}  ${runId}`);
+        }
+        return lines.join("\n");
+      }
+      const runId = typeof parsed.runId === "string" ? parsed.runId : "—";
+      const status = typeof parsed.status === "string" ? parsed.status : undefined;
+      const icon = getAgentRunStatusIcon(status ?? "not_found");
+      if (parsed.found === false || status === "not_found") {
+        return `Run status\n  ? not_found\n  runId   ${runId}`;
+      }
+      if (status === "killed" || status === "cancelled" || status === "cancelling") {
+        return `Run stopped\n  ${icon} ${status}\n  runId   ${runId}`;
+      }
+      const name =
+        typeof parsed.agentName === "string" && parsed.agentName.trim()
+          ? parsed.agentName.trim()
+          : typeof parsed.name === "string" && parsed.name.trim()
+            ? parsed.name.trim()
+            : "agent";
+      const lines = [`Run status`, `  ${icon} ${status ?? "—"}`, `  agent   ${name}`, `  runId   ${runId}`];
+      if (parsed.pid != null) lines.push(`  pid     ${String(parsed.pid)}`);
+      return lines.join("\n");
+    }
+  } catch {
+    // Not JSON / unexpected shape — fall through.
+  }
+  return content;
+}
+
+function formatOrchestrationCardBlock(
+  event: LocalAgentToolEvent,
+  toolName: string,
+  colorEnabled: boolean
+): string {
+  const rawLabel = toolLabel(toolName);
+  let rawDataStr =
+    typeof event.metadata?.displayData === "string" && event.metadata.displayData.trim()
+      ? event.metadata.displayData
+      : typeof event.content === "string"
+      ? event.content
+      : "";
+  // Web → CLI bridge may only carry JSON content without metadata.displayData.
+  // Recover a readable card before dumping the raw JSON blob into the transcript.
+  if (
+    typeof event.metadata?.displayData !== "string" &&
+    typeof event.content === "string" &&
+    event.content.trim()
+  ) {
+    rawDataStr = recoverOrchestrationDisplayFromContent(toolName, event.content);
+  }
+  const failed =
+    event.type === "tool-error" ||
+    isFailedToolResult(event) ||
+    Boolean(event.metadata?.failed) ||
+    /^Error:/i.test(rawDataStr.trim());
+
+  if (failed) {
+    const firstLine = rawDataStr.trim().split("\n")[0] || event.summary || event.message || t("toolFailed");
+    const message = clip(firstLine, 96);
+    if (!colorEnabled) {
+      return `✗ ${rawLabel}  ${message}\n`;
+    }
+    const cross = themeText("✗", "danger", true);
+    const labelPart = themeText(rawLabel, "muted", true);
+    const msgPart = themeText(message, "danger", true);
+    return `${cross} ${labelPart}  ${msgPart}\n`;
+  }
+
+  const displayData = rawDataStr.trim();
+  const lines = displayData ? displayData.split("\n") : [];
+
+  if (!colorEnabled) {
+    let out = `● ${rawLabel}\n`;
+    for (const line of lines) {
+      out += `  ${line}\n`;
+    }
+    return out;
+  }
+
+  const bullet = themeText("●", "success", true);
+  const labelPart = themeText(rawLabel, "muted", true);
+  let out = `${bullet} ${labelPart}\n`;
+  for (const line of lines) {
+    out += `  ${themeText(line, "muted", true)}\n`;
+  }
+  return out;
+}
+
 function formatVerboseToolEvent(event: LocalAgentToolEvent, colorEnabled: boolean) {
   const round = event.round + 1;
   const detail = event.argumentsPreview ? ` ${event.argumentsPreview}` : "";
@@ -693,6 +823,14 @@ function formatCompactToolLine(
     const namePart = themeText(`(${skillName})`, "chrome", true);
     const detail = themeText(`  ${resultLine}`, "muted", true);
     return `${bullet} ${labelPart} ${namePart}\n${detail}\n`;
+  }
+
+  // listAgents / startAgentRun / controlAgentRun orchestration card block
+  if (
+    event.type === "tool-result" &&
+    (toolName === "listAgents" || toolName === "startAgentRun" || toolName === "controlAgentRun")
+  ) {
+    return formatOrchestrationCardBlock(event, toolName, colorEnabled);
   }
 
   // ui_ask_choice: render question + numbered choices instead of a generic

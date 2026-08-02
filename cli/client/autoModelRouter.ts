@@ -9,8 +9,6 @@
 
 import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-  PUBLIC_GLM_52_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
 } from "../../core/builtinAgents";
 import {
@@ -37,8 +35,8 @@ import type { CliFetchImpl } from "../cliFetch";
  */
 export const CLI_AUTO_TIER_AGENT_KEYS = {
   flash: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  balanced: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-  quality: PUBLIC_GLM_52_AGENT_KEY,
+  balanced: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
+  quality: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
 } as const;
 
 /**
@@ -48,8 +46,8 @@ export const CLI_AUTO_TIER_AGENT_KEYS = {
  */
 export const CLI_AUTO_TIER_MODELS = {
   flash: "deepseek-v4-flash",
-  balanced: "deepseek-v4-pro",
-  quality: "glm-5.2",
+  balanced: "deepseek-v4-flash",
+  quality: "deepseek-v4-flash",
 } as const;
 
 /** 图片输入时自动切换到的 vision agent key（Kimi K2.6）。 */

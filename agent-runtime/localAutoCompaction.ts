@@ -126,6 +126,29 @@ export function projectHistoryWithSummary(args: {
   ];
 }
 
+/**
+ * 认为 provider 前缀缓存已过期的静默时长。
+ *
+ * 取值偏保守：误判为「已过期」会生成新摘要、改变前缀，把本来还热的缓存毁掉。
+ * 常见 provider 的前缀缓存 TTL 在分钟到小时量级，取 60 分钟留足余量。
+ */
+export const COLD_RESUME_IDLE_MS = 60 * 60 * 1000;
+
+/** 距最后一条带时间戳的历史消息是否已超过 COLD_RESUME_IDLE_MS。 */
+export function isColdResume(
+  history: AgentRuntimeChatMessage[],
+  nowMs: number,
+): boolean {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const at = history[i]?.createdAt;
+    if (typeof at === "number" && Number.isFinite(at)) {
+      return nowMs - at > COLD_RESUME_IDLE_MS;
+    }
+  }
+  // 历史不带时间戳（旧记录或不支持的 host）→ 不触发，保持既有行为。
+  return false;
+}
+
 export type LocalAutoCompactionResult = {
   history: AgentRuntimeChatMessage[];
   /** True when history was projected through a (new or existing) summary. */
@@ -143,6 +166,8 @@ export type LocalAutoCompactionResult = {
 export async function maybeAutoCompactLocalHistory(args: {
   adapter: AgentRuntimeHostAdapter;
   dialogId?: string;
+  /** 可注入的当前时间，供 cold-resume 判定使用；测试用来保持确定性。 */
+  now?: () => number;
   history: AgentRuntimeChatMessage[];
   model?: string;
   /** Lazy provider resolver — only invoked when a new summary must be generated. */
@@ -189,11 +214,20 @@ export async function maybeAutoCompactLocalHistory(args: {
       : getModelContextWindow(args.model ?? "");
 
   const allMsgs = toPlanCompressionMessages(history);
+  // Cold-resume 判定：距上次活动很久再继续的对话，provider 前缀缓存必然已过期，
+  // 这一轮无论如何都要全量重发整个上下文。那正是压缩最划算的时刻——反正要付
+  // 全量未命中的钱，不如让重发的那份小一点，且后续每一轮都跟着受益。
+  //
+  // 阈值方向必须保守：若缓存其实还热却误触发，新摘要会改变前缀、把热缓存毁掉。
+  // 所以取一个明显高于常见 provider TTL 的值，宁可漏判也不误判。
+  const coldResume = isColdResume(history, args.now?.() ?? Date.now());
+
   const plan = planCompression({
     allMsgs: allMsgs as any,
     summarizedBeforeId,
     summary: existingSummary,
     contextWindow,
+    ...(coldResume ? { force: true, reason: "context_budget" as const } : {}),
   });
 
   const projectExisting = (): LocalAutoCompactionResult => {

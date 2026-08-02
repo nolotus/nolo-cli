@@ -47,6 +47,12 @@ export interface AgentRuntimeChatMessage {
   tool_calls?: AgentRuntimeToolCall[];
   /** 工具名：tool 行的语义字段，落库 / 回读 / 折叠头显示都依赖它。 */
   toolName?: string;
+  /**
+   * 消息创建时间（epoch ms）。仅用于判断「距上次活动多久」——隔了很久再继续的
+   * 对话，provider 前缀缓存必然已过期，那一轮无论如何都要全量重发，
+   * 因此是触发压缩最划算的时刻（见 localAutoCompaction 的 cold-resume 判定）。
+   */
+  createdAt?: number;
   tool_result_metadata?: Record<string, unknown>;
   reasoning_content?: string;
   cybotKey?: string;

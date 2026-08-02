@@ -96,6 +96,8 @@ export type DesktopAgentRuntimeAgentConfigSnapshot = {
   apiKeyHeader?: string;
   useServerProxy?: boolean;
   tools?: string[];
+  /** 启用的能力包 id（如 ["app-builder"]）；工具展开与 promptPatch 注入依赖此字段。 */
+  enabledPacks?: string[];
   temperature?: number;
   top_p?: number;
   frequency_penalty?: number;
@@ -288,6 +290,9 @@ function pickAllowlistedAgentConfigFields(
     uniqueToolNames(source.toolNames);
   if (tools) snapshot.tools = tools;
 
+  const enabledPacks = uniqueToolNames(source.enabledPacks);
+  if (enabledPacks) snapshot.enabledPacks = enabledPacks;
+
   for (const key of DESKTOP_AGENT_CONFIG_SNAPSHOT_OBJECT_FIELDS) {
     const value = sanitizePlainObject(source[key]);
     if (value) {
@@ -393,6 +398,9 @@ export function agentRuntimeConfigFromDesktopSnapshot(
     ...(snapshot.useServerProxy === true ? { useServerProxy: true } : {}),
     ...(snapshot.useServerProxy === false ? { useServerProxy: false } : {}),
     ...(snapshot.tools ? { tools: snapshot.tools, toolNames: snapshot.tools } : {}),
+    ...(snapshot.enabledPacks?.length
+      ? { enabledPacks: [...snapshot.enabledPacks] }
+      : {}),
     ...(snapshot.temperature !== undefined ? { temperature: snapshot.temperature } : {}),
     ...(snapshot.top_p !== undefined ? { top_p: snapshot.top_p } : {}),
     ...(snapshot.frequency_penalty !== undefined

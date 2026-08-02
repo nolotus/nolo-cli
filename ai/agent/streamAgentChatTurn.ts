@@ -56,6 +56,10 @@ import {
     resolveAgentCallPlan,
     resolveClientWire,
 } from "../../agent-runtime/agentCallPlan";
+import {
+    selectResponsesConversationState,
+    updateResponsesConversationState,
+} from "../../agent-runtime/responsesConversationState";
 
 import {
     sendOpenAICompletionsRequest,
@@ -247,6 +251,15 @@ export const streamAgentChatTurnHandler = async (
                 rawAgentConfig,
                 runtimeOptions.quickChatModelOverride,
             );
+        }
+        if (
+            runtimeOptions?.quickChatReasoningEffort &&
+            rawAgentConfig.model === "deepseek-v4-flash"
+        ) {
+            rawAgentConfig = {
+                ...rawAgentConfig,
+                reasoning_effort: runtimeOptions.quickChatReasoningEffort,
+            };
         }
 
         // ── Live-audio-only guard ────────────────────────────────────────────
@@ -1408,6 +1421,14 @@ export const streamAgentChatTurnHandler = async (
                         entrypoint: "chat-dialog",
                         capabilities: ["streaming", "dialog-ui", "tool-cards"],
                     },
+                    ...(runtimeOptions?.quickChatReasoningEffort
+                        ? {
+                              runtimeOptions: {
+                                  quickChatReasoningEffort:
+                                      runtimeOptions.quickChatReasoningEffort,
+                              },
+                          }
+                        : {}),
                     ...(currentDialog?.spaceId ? { spaceId: currentDialog.spaceId } : {}),
                 });
                 const remoteRunUrl = `${explicitServerBase.replace(/\/+$/, "")}/api/agent/run`;
@@ -1666,6 +1687,19 @@ export const streamAgentChatTurnHandler = async (
 
             let appendTempUserInput = true;
             let currentParentMessageId = parentMessageId ?? undefined;
+            const storedResponsesState = currentDialog?.responsesState;
+            let responsesState = selectResponsesConversationState(
+                storedResponsesState,
+                agentConfigForCall,
+            );
+            if (storedResponsesState != null && !responsesState) {
+                dispatch(
+                    patch({
+                        dbKey: dialogKey,
+                        changes: { responsesState: null },
+                    }),
+                );
+            }
 
             const w = typeof globalThis !== "undefined" && (globalThis as any).window ? (globalThis as any).window : null;
             if (w) w.__LOOP_STOP_REASON__ = null;
@@ -1834,7 +1868,18 @@ export const streamAgentChatTurnHandler = async (
                     stableMessages: stableMessages as any,
                     userInput: userInputText,
                     contexts,
+                    responsesState,
                 });
+                const fallbackBodyData = responsesState
+                    ? generateRequestBody({
+                        agentConfig: effectiveAgentConfig,
+                        messages: dynamicMessages as any,
+                        stableMessages: stableMessages as any,
+                        userInput: userInputText,
+                        contexts,
+                        responsesState: null,
+                    })
+                    : undefined;
                 logQuickChatPerfStage(quickChatPerfStartedAt, "stream-agent-model-request-starting", {
                     responseApi: true,
                     dynamicMessageCount: dynamicMessages.length,
@@ -1850,6 +1895,7 @@ export const streamAgentChatTurnHandler = async (
                     parentMessageId: currentParentMessageId,
                     messageMetadata: streamingMessageMetadata,
                     quickChatPerfStartedAt,
+                    fallbackBodyData,
                 });
                 logQuickChatPerfStage(quickChatPerfStartedAt, "stream-agent-model-request-finished", {
                     responseApi: true,
@@ -1860,6 +1906,35 @@ export const streamAgentChatTurnHandler = async (
 
                 appendTempUserInput = false;
                 currentParentMessageId = undefined;
+                if (meta.responseId) {
+                    responsesState = updateResponsesConversationState(
+                        agentConfigForCall,
+                        meta.responseId,
+                    );
+                    if (responsesState) {
+                        dispatch(
+                            patch({
+                                dbKey: dialogKey,
+                                changes: { responsesState },
+                            }),
+                        );
+                    } else if (meta.responsesStateFallback) {
+                        dispatch(
+                            patch({
+                                dbKey: dialogKey,
+                                changes: { responsesState: null },
+                            }),
+                        );
+                    }
+                } else if (meta.responsesStateFallback) {
+                    responsesState = null;
+                    dispatch(
+                        patch({
+                            dbKey: dialogKey,
+                            changes: { responsesState: null },
+                        }),
+                    );
+                }
                 totalTurnUsage = updateTotalUsage(totalTurnUsage, meta.usage);
 
                 if (meta.hasHandedOff) {

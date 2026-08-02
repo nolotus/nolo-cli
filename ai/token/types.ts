@@ -68,10 +68,16 @@ export interface NormalizedUsage extends BillingUsageMetadata {
   cost: number;
 }
 
+/** 请求入口路径，用于按调用面切片缓存命中率。 */
+export type EntryPath = "web-chat" | "quick-chat" | "agent-run" | "cli-local";
+
 // Token使用数据
 export interface TokenUsageData extends NormalizedUsage {
   userId?: string;
   username?: string;
+  /** Canonical agent identity (new records). Kept in sync with cybotId. */
+  agentId?: string;
+  /** Legacy agent identity; retained for old rows. New records write both. */
   cybotId: string;
   model: string;
   provider: string;
@@ -85,6 +91,12 @@ export interface TokenUsageData extends NormalizedUsage {
    * 所有扣费入口只读此字段，禁止再看 cost > 0。
    */
   billable: boolean;
+  /** 本次请求所发送的稳定前缀指纹，来自 CompiledContext.cacheProfile.stablePrefixHash。 */
+  stable_prefix_hash?: string;
+  /** 稳定前缀的估算 token 数，来自 cacheProfile.stablePrefixEstimatedTokens。 */
+  stable_prefix_estimated_tokens?: number;
+  /** 请求入口路径，用于按调用面切片命中率。 */
+  entry_path?: EntryPath;
 }
 
 // Token记录
@@ -92,7 +104,10 @@ export interface TokenRecord {
   id: string;
   userId: string;
   username: string;
-  cybotId: string;
+  /** Canonical agent identity (new records). Kept in sync with cybotId. */
+  agentId?: string;
+  /** Legacy agent identity; optional on new records that carry agentId. */
+  cybotId?: string;
   model: string;
   provider: string;
   /** Optional: explicit served-upstream audit (may match provider after resolve). */
@@ -115,6 +130,12 @@ export interface TokenRecord {
   type: string;
   /** 唯一计费标志：true 才扣费，false 只统计。 */
   billable: boolean;
+  /** 本次请求所发送的稳定前缀指纹，来自 CompiledContext.cacheProfile.stablePrefixHash。 */
+  stable_prefix_hash?: string;
+  /** 稳定前缀的估算 token 数，来自 cacheProfile.stablePrefixEstimatedTokens。 */
+  stable_prefix_estimated_tokens?: number;
+  /** 请求入口路径，用于按调用面切片命中率。 */
+  entry_path?: EntryPath;
 }
 
 // Token统计数据

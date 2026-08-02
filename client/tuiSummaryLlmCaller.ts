@@ -4,7 +4,7 @@
  *
  * Mirrors the pattern from `generateLocalDialogTitle` (dialogTitleLlm.ts):
  * resolve platform chat provider config → build request → fetch → parse.
- * Uses BUILTIN_SUMMARY_LLM_CONFIG (deepseek-v4-pro) as the summary model.
+ * Uses BUILTIN_SUMMARY_LLM_CONFIG (deepseek-v4-flash) as the summary model.
  *
  * Returns null on any failure (no auth, network error, parse error) so
  * `compactDialog` can degrade to fork-only behavior.

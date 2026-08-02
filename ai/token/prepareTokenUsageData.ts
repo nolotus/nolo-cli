@@ -2,7 +2,7 @@ import { extractUserId } from "../../core/prefix";
 import { calculatePrice } from "./calculatePrice";
 import { normalizeUsage } from "./normalizeUsage";
 import { resolveBillingTarget } from "./resolveBillingTarget";
-import type { RawUsage, TokenUsageData } from "./types";
+import type { EntryPath, RawUsage, TokenUsageData } from "./types";
 import { isOAuthApiKeyRef } from "../../agent-runtime/serverProxyPolicy";
 
 type SharingLevel = "default" | "split" | "full";
@@ -24,9 +24,18 @@ interface PrepareTokenUsageDataParams {
   agentConfig: BillingAgentConfig;
   userId?: string;
   username?: string;
-  cybotId: string;
+  /** Canonical agent identity (preferred). */
+  agentId?: string;
+  /** Deprecated legacy identity; used only when agentId is absent/blank. */
+  cybotId?: string;
   dialogId: string;
   timestamp?: number;
+  /** 本次请求所发送的稳定前缀指纹，来自 CompiledContext.cacheProfile.stablePrefixHash。 */
+  stable_prefix_hash?: string;
+  /** 稳定前缀的估算 token 数，来自 cacheProfile.stablePrefixEstimatedTokens。 */
+  stable_prefix_estimated_tokens?: number;
+  /** 请求入口路径，用于按调用面切片命中率。 */
+  entry_path?: EntryPath;
 }
 
 export interface PreparedTokenUsageData {
@@ -87,10 +96,23 @@ export const prepareTokenUsageData = ({
   agentConfig,
   userId,
   username,
+  agentId,
   cybotId,
   dialogId,
   timestamp = Date.now(),
+  stable_prefix_hash,
+  stable_prefix_estimated_tokens,
+  entry_path,
 }: PrepareTokenUsageDataParams): PreparedTokenUsageData => {
+  const resolvedAgentId =
+    (typeof agentId === "string" && agentId.trim()) ||
+    (typeof cybotId === "string" && cybotId.trim()) ||
+    "";
+  if (!resolvedAgentId) {
+    throw new Error(
+      "prepareTokenUsageData requires a non-empty agentId or cybotId"
+    );
+  }
   const usage = normalizeUsage(rawUsage);
   const billingTarget = resolveBillingTarget({
     usage,
@@ -140,7 +162,8 @@ export const prepareTokenUsageData = ({
       ...usage,
       userId,
       username,
-      cybotId,
+      agentId: resolvedAgentId,
+      cybotId: resolvedAgentId,
       model: billedModel,
       provider: recordProvider,
       billing_service_tier: billedServiceTier,
@@ -149,6 +172,11 @@ export const prepareTokenUsageData = ({
       pay,
       timestamp,
       billable,
+      ...(stable_prefix_hash !== undefined ? { stable_prefix_hash } : {}),
+      ...(stable_prefix_estimated_tokens !== undefined
+        ? { stable_prefix_estimated_tokens }
+        : {}),
+      ...(entry_path !== undefined ? { entry_path } : {}),
     },
   };
 };

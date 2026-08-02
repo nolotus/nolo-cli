@@ -41,6 +41,7 @@ import {
   finalizeAccumulatedToolCalls,
   type AccumulatedToolCall,
 } from "./toolCallAccumulator";
+import { resolvePlatformChatCompletionsEndpoint } from "./platformProviderEndpoints";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -180,6 +181,29 @@ export function buildPlatformChatCompletionRequest(args: {
 }
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export function resolveLegacyDeepSeekProxyChatFallback(args: {
+  providerConfig: PlatformChatProviderConfig;
+  status: number;
+  raw: string;
+}): PlatformChatProviderConfig | undefined {
+  if (
+    args.status !== 400 ||
+    args.providerConfig.provider.toLowerCase() !== "deepseek" ||
+    !isResponsesEndpoint(args.providerConfig.endpoint) ||
+    !/UPSTREAM_400/.test(args.raw) ||
+    !/missing field [`\"]?(?:function|messages)/i.test(args.raw)
+  ) {
+    return undefined;
+  }
+  const endpoint = resolvePlatformChatCompletionsEndpoint("deepseek");
+  return endpoint
+    ? {
+        ...args.providerConfig,
+        endpoint,
+      }
+    : undefined;
+}
 
 function tryParseJson(raw: string) {
   try {
@@ -452,6 +476,17 @@ export async function executePlatformChatCompletion(args: {
 
   if (!res.ok) {
     const raw = await res.text().catch(() => "");
+    const fallbackProviderConfig = resolveLegacyDeepSeekProxyChatFallback({
+      providerConfig: args.providerConfig,
+      status: res.status,
+      raw,
+    });
+    if (fallbackProviderConfig) {
+      return executePlatformChatCompletion({
+        ...args,
+        providerConfig: fallbackProviderConfig,
+      });
+    }
     let data: unknown = raw;
     try {
       data = JSON.parse(raw);

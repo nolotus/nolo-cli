@@ -6,7 +6,10 @@ import {
   renderDialogOverflow,
   renderDialogRow,
   renderDialogTitle,
+  renderOverflowAbove,
+  renderOverflowBelow,
 } from "./dialogFrame";
+import { t } from "./i18n";
 import { renderSelectDialog } from "./selectDialog";
 import { renderMultiSelectFrame } from "./multiSelectDialog";
 
@@ -94,5 +97,25 @@ describe("dialog frame primitives", () => {
         process.env.COLORTERM = previous;
       }
     }
+  });
+});
+
+describe("overflow helpers", () => {
+  test("renderOverflowAbove/Below are byte-identical to the old manual i18n composition", () => {
+    // The three pickers previously inlined these two lines; the helpers must
+    // produce exactly the same bytes so dialog output does not drift.
+    for (const count of [1, 3, 42]) {
+      expect(renderOverflowAbove(count, false)).toBe(
+        renderDialogOverflow(t("dialogMoreAbove", String(count)), false),
+      );
+      expect(renderOverflowBelow(count, false)).toBe(
+        renderDialogOverflow(t("dialogMoreBelow", String(count)), false),
+      );
+    }
+  });
+
+  test("overflow helpers render the count in the localized message", () => {
+    expect(renderOverflowAbove(3, false)).toContain("3");
+    expect(renderOverflowBelow(5, false)).toContain("5");
   });
 });

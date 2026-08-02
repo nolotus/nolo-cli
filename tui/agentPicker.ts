@@ -89,6 +89,8 @@ export async function runAgentPicker(args: {
     kind: "selected" as const,
     name: selected.name,
     key: selected.key,
+    model: selected.model,
+    apiSource: selected.apiSource ?? (selected.kind === "platform" ? "platform" : undefined),
     entries,
   };
 }
@@ -103,6 +105,16 @@ export function resolveAgentSwitchTarget(
     return {
       name: aliasEntry?.name ?? asTrimmedLowercaseString(rawTarget),
       key: resolvedKey,
+      ...(aliasEntry?.model ? { model: aliasEntry.model } : {}),
+      ...(aliasEntry
+        ? {
+            ...(aliasEntry.apiSource
+              ? { apiSource: aliasEntry.apiSource }
+              : aliasEntry.kind === "platform"
+                ? { apiSource: "platform" }
+                : {}),
+          }
+        : {}),
     };
   }
   return findAgentCatalogEntry(catalogEntries, rawTarget);

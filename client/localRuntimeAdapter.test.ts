@@ -1667,6 +1667,11 @@ describe("CLI local runtime adapter", () => {
         if (target.includes("/api/v1/db/write/")) {
           return Response.json({ ok: true });
         }
+        if (target.includes("/api/v1/db/read/")) {
+          return Response.json({
+            data: store.get("agent-user-1-frontend"),
+          });
+        }
         attempts += 1;
         if (attempts <= 2) {
           throw new Error("unknown certificate verification error");
@@ -1686,6 +1691,83 @@ describe("CLI local runtime adapter", () => {
 
     expect(result.content).toBe("platform retry ok");
     expect(attempts).toBe(3);
+  });
+
+  test("waits through repeated platform drain responses before starting the provider turn", async () => {
+    let attempts = 0;
+    const retryDelays: number[] = [];
+    const store = new Map<string, any>([
+      ["agent-user-1-frontend", {
+        dbKey: "agent-user-1-frontend",
+        id: "frontend",
+        prompt: "Fix UI.",
+        model: "accounts/fireworks/models/kimi-k2p6",
+        provider: "fireworks",
+        apiSource: "platform",
+        useServerProxy: true,
+      }],
+    ]);
+    const adapter = createAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => {
+          store.set(key, value);
+        },
+        batch: async (ops) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async (url) => {
+        const target = String(url);
+        if (target.includes("/api/v1/db/write/")) {
+          return Response.json({ ok: true });
+        }
+        if (target.includes("/api/v1/db/read/")) {
+          return Response.json({
+            data: store.get("agent-user-1-frontend"),
+          });
+        }
+        attempts += 1;
+        if (attempts <= 4) {
+          return Response.json(
+            {
+              error: "Server draining",
+              reason: "core_draining",
+              retryable: true,
+              retryAfterMs: 0,
+            },
+            { status: 503, headers: { "Retry-After": "0" } },
+          );
+        }
+        return Response.json({
+          choices: [{ message: { content: "platform resumed" } }],
+        });
+      },
+      sleep: async (ms) => {
+        retryDelays.push(ms);
+      },
+    });
+
+    const result = await runLocalAgentTurn({
+      adapter,
+      agentRef: "frontend",
+      input: "inspect",
+    });
+
+    expect(result.content).toBe("platform resumed");
+    expect(attempts).toBe(5);
+    expect(retryDelays).toEqual([0, 0, 0, 0]);
   });
 
   test("keeps retrying repeated transient certificate failures with backoff hooks", async () => {

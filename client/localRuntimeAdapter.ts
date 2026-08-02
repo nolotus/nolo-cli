@@ -117,6 +117,13 @@ import {
   type FetchInput,
   type FetchInit,
 } from "./localRuntimeFetchRetry";
+
+// The server can explicitly reject new platform-chat admissions with
+// `503 core_draining` for the duration of a single-origin PM2 deploy. These
+// responses are safe to retry because the provider call was not started.
+// Keep 502/504 terminal: they are ambiguous without durable turn idempotency.
+// The long drain budget is now handled inside `fetchWithTransientRetry`
+// (core_draining responses only), so no platform-specific constant is needed.
 import {
   persistCliPendingChildDialog,
   persistCliFailedChildDialog,

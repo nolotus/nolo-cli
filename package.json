@@ -466,6 +466,7 @@
     "core/clipMultilineText.ts",
     "core/gatewayHttpStatus.ts",
     "core/retryAfterMs.ts",
+    "core/drainReason.ts",
     "core/positiveIntegerOrFallback.ts",
     "core/stringArray.ts",
     "core/trimmedString.ts",

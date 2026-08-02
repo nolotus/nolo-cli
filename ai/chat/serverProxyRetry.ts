@@ -1,17 +1,36 @@
 import { isAbortError } from "../../core/abortError";
+import { CORE_DRAIN_REASON } from "../../core/drainReason";
+import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import {
   normalizeNonNegativeMs,
   parseRetryAfterHeaderMs,
 } from "../../core/retryAfterMs";
 
-const RETRYABLE_SERVER_PROXY_STATUSES = new Set([502, 503, 504]);
 const DEFAULT_SERVER_PROXY_RETRY_AFTER_MS = 1_500;
 const MAX_SERVER_PROXY_RETRIES = 2;
 const MAX_STATUS_RETRIES = 1;
+const MAX_SERVER_DRAIN_STATUS_RETRIES = 30;
 
-const resolveServerProxyRetryAfterMs = (response: Response) =>
+const readRetryableResponseBody = async (response: Response) => {
+  try {
+    return (await response.clone().json()) as {
+      reason?: unknown;
+      retryAfterMs?: unknown;
+    };
+  } catch {
+    return null;
+  }
+};
+
+const resolveServerProxyRetryAfterMs = (
+  response: Response,
+  body: Awaited<ReturnType<typeof readRetryableResponseBody>>,
+) =>
   parseRetryAfterHeaderMs(response.headers.get("Retry-After")) ??
-  DEFAULT_SERVER_PROXY_RETRY_AFTER_MS;
+  normalizeNonNegativeMs(
+    body?.retryAfterMs,
+    DEFAULT_SERVER_PROXY_RETRY_AFTER_MS,
+  );
 
 const isRetryableServerProxyFetchError = (error: unknown) => {
   if (!error || isAbortError(error)) return false;
@@ -59,16 +78,32 @@ export const performServerProxyFetchWithRetry = async ({
   signal?: AbortSignal;
   logPrefix?: string;
 }): Promise<Response> => {
-  for (let attempt = 0; attempt <= MAX_SERVER_PROXY_RETRIES; attempt += 1) {
+  let networkRetries = 0;
+  let statusRetries = 0;
+
+  while (true) {
     try {
       const response = await execute();
+      const responseBody =
+        response.status === 503
+          ? await readRetryableResponseBody(response)
+          : null;
+      const isCoreDraining =
+        response.status === 503 && responseBody?.reason === CORE_DRAIN_REASON;
+      const maxStatusRetries = isCoreDraining
+        ? MAX_SERVER_DRAIN_STATUS_RETRIES
+        : MAX_STATUS_RETRIES;
       if (
-        attempt < MAX_STATUS_RETRIES &&
-        RETRYABLE_SERVER_PROXY_STATUSES.has(response.status)
+        statusRetries < maxStatusRetries &&
+        isGatewayHttpStatus(response.status)
       ) {
-        const retryAfterMs = resolveServerProxyRetryAfterMs(response);
+        statusRetries += 1;
+        const retryAfterMs = resolveServerProxyRetryAfterMs(
+          response,
+          responseBody,
+        );
         console.warn(
-          `${logPrefix} 检测到${response.status}状态，${retryAfterMs}ms后重试一次...`
+          `${logPrefix} 检测到${response.status}状态，${retryAfterMs}ms后重试...`
         );
         await waitForServerProxyRetry(retryAfterMs, signal);
         continue;
@@ -76,12 +111,13 @@ export const performServerProxyFetchWithRetry = async ({
       return response;
     } catch (error: any) {
       if (
-        attempt < MAX_SERVER_PROXY_RETRIES &&
+        networkRetries < MAX_SERVER_PROXY_RETRIES &&
         isRetryableServerProxyFetchError(error)
       ) {
-        const retryDelay = (attempt + 1) * 1000;
+        networkRetries += 1;
+        const retryDelay = networkRetries * 1000;
         console.warn(
-          `${logPrefix} 检测到网络瞬断，${retryDelay}ms后重试(第${attempt + 1}次)...`,
+          `${logPrefix} 检测到网络瞬断，${retryDelay}ms后重试(第${networkRetries}次)...`,
           error
         );
         await waitForServerProxyRetry(retryDelay, signal);
@@ -90,6 +126,4 @@ export const performServerProxyFetchWithRetry = async ({
       throw error;
     }
   }
-
-  throw new Error("server proxy retry exhausted unexpectedly");
 };

@@ -2,6 +2,7 @@ import type { MachineHeartbeat } from "./connector-experimental/protocol";
 import { isRecord } from "./core/isRecord";
 import { normalizeServerOrigin } from "./core/serverOrigin";
 import { asTrimmedString } from "./core/trimmedString";
+import { CORE_DRAIN_REASON } from "./core/drainReason";
 import type { CliFetchImpl } from "./cliFetch";
 import { detectMachineInfo } from "./connector-experimental/machineInfo";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
@@ -298,7 +299,7 @@ export async function runMachineConnectCommand(
       if (attempt >= maxAttempts) return exitCode;
       const retryDelayMs = sessionResult.retryAfterMs ?? reconnectDelayMs;
       const reconnectContext =
-        sessionResult.reconnectReason === "core_draining" ? " during core draining" : "";
+        sessionResult.reconnectReason === CORE_DRAIN_REASON ? " during core draining" : "";
       output.write(
         `[nolo] Connector websocket disconnected${reconnectContext}. Reconnecting in ${retryDelayMs}ms.\n`
       );

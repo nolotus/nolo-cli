@@ -17,6 +17,7 @@ import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { resolveRetryAfterMs } from "../../app/utils/retryAfter";
 import { selectIdentityToken } from "identity/selectors";
 import { isAbortError } from "../../core/abortError";
+import { CORE_DRAIN_REASON } from "../../core/drainReason";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import { normalizeServerOrigin } from "../../core/serverOrigin";
 import { createSSEParser } from "../chat/parseMultilineSSE";
@@ -49,7 +50,11 @@ export interface RunAgentBackgroundArgs {
 
 const MAX_SSE_RETRIES = 3;
 const SSE_RETRY_DELAY_MS = 1500;
+// 普通可重试错误：只重试 1 次。
+// 结构化 `core_draining`（服务端明示的 deploy drain 窗口，最长 30s）走专属长预算，
+// 与 TUI/Web chat 的 30 次预算对齐：1.5s/次 × 30 ≈ 45s > drain 窗口，不会中途放弃。
 const MAX_RUN_START_RETRIES = 1;
+const MAX_RUN_START_CORE_DRAINING_RETRIES = 30;
 
 type RetryableError = Error & { retryable?: boolean; retryAfterMs?: number };
 
@@ -225,7 +230,11 @@ export const runAgentBackground = createAsyncThunk<
         }
         | null = null;
 
-    for (let attempt = 0; attempt <= MAX_RUN_START_RETRIES; attempt++) {
+    // core_draining 走 drain 专属长预算（30 次），其余可重试错误保持默认 1 次。
+    // 预算在每次失败响应后按类型裁决，循环上限也按预算走。
+    let maxRunStartRetries = MAX_RUN_START_RETRIES;
+
+    for (let attempt = 0; attempt <= maxRunStartRetries; attempt++) {
         const runRes = await fetch(`${currentServer}/api/agent/run`, {
             method: "POST",
             headers: {
@@ -264,12 +273,16 @@ export const runAgentBackground = createAsyncThunk<
             SSE_RETRY_DELAY_MS,
             payload?.retryAfterMs
         );
+        const isCoreDraining = payload?.reason === CORE_DRAIN_REASON;
         const retryable =
             payload?.retryable === true ||
-            payload?.reason === "core_draining" ||
+            isCoreDraining ||
             isGatewayHttpStatus(runRes.status);
+        if (isCoreDraining) {
+            maxRunStartRetries = MAX_RUN_START_CORE_DRAINING_RETRIES;
+        }
 
-        if (retryable && attempt < MAX_RUN_START_RETRIES) {
+        if (retryable && attempt < maxRunStartRetries) {
             await waitForRetryDelay(retryAfterMs, effectiveSignal);
             continue;
         }

@@ -12,6 +12,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { CliFetchImpl } from "../cliFetch";
 import { toErrorMessage } from "../core/errorMessage";
+import { CORE_DRAIN_REASON } from "../core/drainReason";
 import { isLoopbackHostname } from "../core/localOrigins";
 
 export type FetchInput = string | URL | Request;
@@ -19,6 +20,10 @@ export type FetchInit = RequestInit;
 
 const TRANSIENT_FETCH_MAX_ATTEMPTS = 3;
 const TRANSIENT_FETCH_RETRY_BASE_DELAY_MS = 250;
+// 仅对结构化 `503 core_draining`（服务端明示可重试的 drain 窗口）使用长预算，
+// 普通 429/503 与网络错误保持 TRANSIENT_FETCH_MAX_ATTEMPTS，避免一次容量抖动
+// 或持续限流把客户端拖住近 5 分钟。
+const CORE_DRAINING_MAX_ATTEMPTS = 30;
 
 /**
  * 上游明确表示「我没受理」的状态码，与服务端 chatUpstreamRetry 的 GENTLE_RETRY_STATUSES
@@ -159,11 +164,42 @@ export type FetchWithTransientRetryOptions = {
   sleep?: (ms: number) => Promise<void>;
   loopbackRequest?: (input: FetchInput, init?: FetchInit) => Promise<Response>;
   /**
+   * Bounded attempt budget. Callers that know a longer, explicitly retryable
+   * maintenance window can raise this without changing every other fetch.
+   *
+   * Note: this budget applies to all retryable statuses (429/503) and transient
+   * network errors. It does **not** gate the dedicated core-draining budget —
+   * structured `503 core_draining` responses always use `coreDrainingMaxAttempts`
+   * (default 30) so a deploy drain window can be waited through regardless of
+   * the general budget.
+   */
+  maxAttempts?: number;
+  /**
+   * Dedicated attempt budget for structured `503 core_draining` responses.
+   * Defaults to `CORE_DRAINING_MAX_ATTEMPTS` (30). Ordinary 429/503 and network
+   * errors never consume this budget.
+   */
+  coreDrainingMaxAttempts?: number;
+  /**
    * 显式重试状态码集合。默认 `RETRYABLE_HTTP_STATUSES`（{429,503}），
    * 刻意不含 502/504。幂等写路径可传入含 502 的集合以放宽重试。
    */
   retryableStatuses?: ReadonlySet<number>;
 };
+
+/**
+ * 判断响应是否为服务端明示可重试的 `503 core_draining`。
+ * 复用 clone 读 body，避免消费调用方要用的响应体。
+ */
+async function isCoreDrainingResponse(response: Response): Promise<boolean> {
+  if (response.status !== 503) return false;
+  try {
+    const body = await response.clone().json() as { reason?: unknown };
+    return body?.reason === CORE_DRAIN_REASON;
+  } catch {
+    return false;
+  }
+}
 
 export async function fetchWithTransientRetry(
   fetchImpl: CliFetchImpl,
@@ -172,8 +208,18 @@ export async function fetchWithTransientRetry(
   options: FetchWithTransientRetryOptions = {},
 ) {
   const retryableStatuses = options.retryableStatuses ?? RETRYABLE_HTTP_STATUSES;
+  const requestedMaxAttempts = Number(options.maxAttempts);
+  const maxAttempts = Number.isFinite(requestedMaxAttempts)
+    ? Math.min(100, Math.max(1, Math.floor(requestedMaxAttempts)))
+    : TRANSIENT_FETCH_MAX_ATTEMPTS;
+  const requestedCoreDrainingMaxAttempts = Number(options.coreDrainingMaxAttempts);
+  const coreDrainingMaxAttempts = Number.isFinite(requestedCoreDrainingMaxAttempts)
+    ? Math.min(100, Math.max(1, Math.floor(requestedCoreDrainingMaxAttempts)))
+    : CORE_DRAINING_MAX_ATTEMPTS;
+  // 循环上限取两者较大值，具体预算在每次响应后按类型裁决。
+  const loopMaxAttempts = Math.max(maxAttempts, coreDrainingMaxAttempts);
   let lastError: unknown;
-  for (let attempt = 1; attempt <= TRANSIENT_FETCH_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= loopMaxAttempts; attempt += 1) {
     try {
       if (options.loopbackRequest && isLoopbackUrl(input)) {
         return await options.loopbackRequest(input, init);
@@ -182,21 +228,25 @@ export async function fetchWithTransientRetry(
       // 429/503 是一次**成功的** HTTP 交换，不会走到下面的 catch。以前这里直接
       // 把它返回给调用方，于是服务端 `retryable: true, retryAfterMs: 1500` 这类
       // 明示信号被完全无视，一次容量抖动就成了用户可见的终局失败。
-      if (
-        retryableStatuses.has(response.status) &&
-        attempt < TRANSIENT_FETCH_MAX_ATTEMPTS &&
-        !init?.signal?.aborted
-      ) {
-        const delayMs = await resolveRetryAfterMs(response, attempt);
-        await (options.sleep ?? defaultSleep)(delayMs);
-        continue;
+      // 结构化 `503 core_draining` 使用专属长预算（默认 30 次）等待 drain 窗口；
+      // 其余可重试状态码走通用预算（默认 3 次）。
+      if (retryableStatuses.has(response.status) && !init?.signal?.aborted) {
+        const coreDraining = await isCoreDrainingResponse(response);
+        const attemptBudget = coreDraining
+          ? coreDrainingMaxAttempts
+          : maxAttempts;
+        if (attempt < attemptBudget) {
+          const delayMs = await resolveRetryAfterMs(response, attempt);
+          await (options.sleep ?? defaultSleep)(delayMs);
+          continue;
+        }
       }
       return response;
     } catch (error) {
       if (init?.signal?.aborted) throw error;
       if (!isTransientFetchError(error)) throw error;
       lastError = error;
-      if (attempt < TRANSIENT_FETCH_MAX_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         await (options.sleep ?? defaultSleep)(transientFetchRetryDelayMs(attempt));
       }
     }

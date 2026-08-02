@@ -1,5 +1,6 @@
 import { isGatewayHttpStatus } from "./core/gatewayHttpStatus";
 import { parseRetryAfterHeaderMs } from "./core/retryAfterMs";
+import { CORE_DRAIN_REASON } from "./core/drainReason";
 import { asTrimmedLowercaseString } from "./core/trimmedLowercaseString";
 import type { CliFetchImpl } from "./cliFetch";
 
@@ -79,7 +80,7 @@ export async function resolveConnectorWebSocketTarget(input: {
     const json = await response.clone().json().catch(() => null);
     const retryable =
       json?.retryable === true ||
-      json?.reason === "core_draining" ||
+      json?.reason === CORE_DRAIN_REASON ||
       isGatewayHttpStatus(response.status);
     if (retryable) {
       const reason = typeof json?.reason === "string" ? json.reason : "retryable";

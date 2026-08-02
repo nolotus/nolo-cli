@@ -1,5 +1,6 @@
 import { toErrorMessage } from "../core/errorMessage";
 import { parsePositiveFiniteNumberOrFallback } from "../core/positiveFiniteNumberOrFallback";
+import { CORE_DRAIN_REASON } from "../core/drainReason";
 import type { HeartbeatLoopOptions } from "../connector-experimental/heartbeatLoop";
 import type { MachineHeartbeat } from "../connector-experimental/protocol";
 import {
@@ -197,7 +198,7 @@ export async function runMachineWsSession(options: {
     }
     if (isConnectorWebSocketRetryableError(error)) {
       const description =
-        error.reason === "core_draining" ? "core draining" : error.reason;
+        error.reason === CORE_DRAIN_REASON ? "core draining" : error.reason;
       options.output.write(
         `[nolo] Connector websocket unavailable: ${description} (${error.message}).\n`
       );

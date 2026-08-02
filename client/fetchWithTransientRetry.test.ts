@@ -74,6 +74,66 @@ describe("fetchWithTransientRetry", () => {
     expect(slept.length).toBe(2);
   });
 
+  it("gives structured 503 core_draining responses the dedicated long budget", async () => {
+    const slept: number[] = [];
+    const { impl, calls } = scriptedFetch([
+      json(503, { reason: "core_draining", retryAfterMs: 1500 }),
+      json(503, { reason: "core_draining", retryAfterMs: 1500 }),
+      json(503, { reason: "core_draining", retryAfterMs: 1500 }),
+      json(503, { reason: "core_draining", retryAfterMs: 1500 }),
+      json(200, { ok: true }),
+    ]);
+
+    // 不传任何 maxAttempts：core_draining 走内置长预算（30），
+    // 4 次重试后成功，证明普通 3 次预算不会截断 drain 窗口。
+    const res = await fetchWithTransientRetry(
+      impl,
+      "https://example.test/x",
+      undefined,
+      {
+        sleep: async (ms) => { slept.push(ms); },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(calls.length).toBe(5);
+    expect(slept).toEqual([1500, 1500, 1500, 1500]);
+  });
+
+  it("keeps ordinary 429 responses on the general budget, not the drain budget", async () => {
+    const slept: number[] = [];
+    const { impl, calls } = scriptedFetch([
+      json(429, { retryAfterMs: 100 }),
+      json(429, { retryAfterMs: 100 }),
+      json(429, { retryAfterMs: 100 }),
+      json(429, { retryAfterMs: 100, last: true }),
+    ]);
+    // 默认预算 3：普通 429 只重试 2 次，第 3 次响应原样返回，不会被长预算拖住。
+    const res = await fetchWithTransientRetry(impl, "https://example.test/x", undefined, {
+      sleep: async (ms) => { slept.push(ms); },
+    });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ retryAfterMs: 100 });
+    expect(calls.length).toBe(3);
+    expect(slept.length).toBe(2);
+  });
+
+  it("keeps plain 503 (non core_draining) on the general budget", async () => {
+    const slept: number[] = [];
+    const { impl, calls } = scriptedFetch([
+      json(503, { retryAfterMs: 50 }),
+      json(503, { retryAfterMs: 50 }),
+      json(503, { retryAfterMs: 50, last: true }),
+    ]);
+    const res = await fetchWithTransientRetry(impl, "https://example.test/x", undefined, {
+      sleep: async (ms) => { slept.push(ms); },
+    });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ retryAfterMs: 50, last: true });
+    expect(calls.length).toBe(3);
+    expect(slept.length).toBe(2);
+  });
+
   it("does not retry statuses the upstream actually processed", async () => {
     const { impl, calls } = scriptedFetch([json(400, { error: "bad request" })]);
     const res = await fetchWithTransientRetry(impl, "https://example.test/x", undefined, {

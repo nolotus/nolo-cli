@@ -100,18 +100,19 @@ export async function runConfirmDialog(args: {
   // label line, then body, then the command (if any), then the key hint.
   //
   // PermissionRequest is a generic type (any tool/action can raise one), so
-  // only the known destructive-shell action gets the localized copy — that
-  // one is worth translating because it is the request users actually hit,
-  // and its request-side title/body are hardcoded Chinese. Every other action
-  // renders its own title/body verbatim; hardcoding the shell wording here
-  // would mislabel them.
-  const isDestructiveShell = args.request.action === "destructive_shell_command";
-  const titleText = isDestructiveShell
-    ? t("dialogConfirmTitle")
-    : args.request.title;
-  const bodyText = isDestructiveShell
-    ? t("dialogConfirmBody")
-    : args.request.body;
+  // only known actions (destructive-shell and external-file access) get
+  // localized copies. These permission requests have hardcoded Chinese
+  // title/body at their request source. Every other action renders its own
+  // title/body verbatim.
+  let titleText = args.request.title;
+  let bodyText = args.request.body;
+  if (args.request.action === "destructive_shell_command") {
+    titleText = t("dialogConfirmTitle");
+    bodyText = t("dialogConfirmBody");
+  } else if (args.request.action === "external_file_access") {
+    titleText = t("dialogConfirmExternalFileTitle");
+    bodyText = t("dialogConfirmExternalFileBody");
+  }
 
   const terminalWidth =
     typeof (output as any).columns === "number" && (output as any).columns > 0

@@ -65,7 +65,7 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
     });
   });
 
-  test("returns ollama-cloud Kimi K2.6 config for the image tier", async () => {
+  test("returns nolo-hosted Kimi K2.6 config for the image tier", async () => {
     const config = await readAgentFromStore({
       store: emptyStore,
       agentRef: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
@@ -74,14 +74,14 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
     expect(config).not.toBeNull();
     expect(config).toMatchObject({
       key: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
-      provider: "ollama-cloud",
+      provider: "nolo",
       model: "kimi-k2.6",
       apiSource: "platform",
       useServerProxy: true,
     });
   });
 
-  test("returns ollama-cloud Kimi K2.7 Coding config", async () => {
+  test("returns nolo-hosted Kimi K2.7 Coding config", async () => {
     const config = await readAgentFromStore({
       store: emptyStore,
       agentRef: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
@@ -90,7 +90,7 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
     expect(config).not.toBeNull();
     expect(config).toMatchObject({
       key: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
-      provider: "ollama-cloud",
+      provider: "nolo",
       model: "kimi-k2.7-code",
       apiSource: "platform",
       useServerProxy: true,

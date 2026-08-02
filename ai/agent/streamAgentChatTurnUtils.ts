@@ -28,6 +28,7 @@ import {
 import type { Agent, DialogConfig } from "../../app/types";
 import type { Contexts } from "../types";
 import { getModelContextWindow } from "../llm/getModelContextWindow";
+import { projectToolMessageContent } from "./toolOutputPolicy";
 import { selectCurrentUserBalance } from "../../auth/authSlice";
 import { selectIdentityUserId } from "identity/selectors";
 import {
@@ -55,7 +56,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, applyDefaultWebToolPacks } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -157,9 +158,11 @@ export const classifyConversationLoad = (
 /**
  * 压缩历史 tool_result 内容，防止大体积工具返回值撑爆上下文。
  *
- * 策略：
- * - 最近一个 tool 轮次（最后一条 assistant tool_calls + 对应 tool 结果）：完整保留
- * - 更早的 tool 消息：内容截断到 MAX_CHARS，并追加截断标记
+ * 策略（两档，见 toolOutputPolicy.projectToolMessageContent）：
+ * - 最近一个 tool 轮次（最后一条 assistant tool_calls + 对应 tool 结果）：
+ *   优先保留完整，但超过 FRESH_TOOL_OUTPUT_MAX_CHARS (32,000) 时按头尾裁剪。
+ *   此前该档无任何上限，一条 13M 字符的工具结果会原样进请求、超出模型上下文窗口。
+ * - 更早的 tool 消息：内容截断到 maxChars (默认 800)，并追加截断标记
  *
  * 在 filterAndCleanMessages 之后、trimMessagesWithSummary 之前调用。
  */
@@ -181,17 +184,22 @@ export const compressOldToolResults = (
     }
 
     return messages.map((msg, idx) => {
-        // 只处理 tool 消息，且不是最近轮次的
+        // 只处理 tool 消息
         if (msg.role !== "tool") return msg;
-        if (idx > lastToolCallAssistantIdx) return msg; // 最近轮次，保留完整
 
         const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-        if (content.length <= maxChars) return msg;
 
-        return {
-            ...msg,
-            content: content.slice(0, maxChars) + `\n…[截断，原始长度 ${content.length} 字符]`,
-        };
+        // 决策逻辑统一在 toolOutputPolicy.projectToolMessageContent（纯函数，
+        // 可被独立测试且不受本模块的 mock.module 桩影响）。
+        const projected = projectToolMessageContent({
+            content,
+            isFresh: idx > lastToolCallAssistantIdx,
+            toolName: (msg as any).name,
+            historicalMaxChars: maxChars,
+        });
+
+        if (projected === content) return msg;
+        return { ...msg, content: projected };
     });
 };
 
@@ -247,9 +255,10 @@ export const trimMessagesWithSummary = (
     let cutIndex = messages.length - keepCount;
     if (cutIndex < 0) cutIndex = 0;
 
-    // 避免从 tool 消息中间开始，丢失其调用方 assistant
-    while (cutIndex < messages.length && messages[cutIndex].role === "tool") {
-        cutIndex++;
+    // 避免从 tool 消息中间开始：向前带上调用方 assistant 和完整的
+    // tool-result 配对，不能为了规避孤儿结果而把这一轮工具状态直接丢掉。
+    while (cutIndex > 0 && messages[cutIndex]?.role === "tool") {
+        cutIndex--;
     }
 
     return messages.slice(cutIndex);
@@ -803,7 +812,13 @@ export const mergeAgentToolsWithRuntime = (
         ...new Set(asNonEmptyStringArray((agentConfig as any).recommendedSkillHints)),
     ];
     const skillPromptPatches = [
-        ...new Set(asNonEmptyStringArray((agentConfig as any).skillPromptPatches)),
+        ...new Set([
+            ...asNonEmptyStringArray((agentConfig as any).skillPromptPatches),
+            // 能力包的 promptPatch（方法论文档）与 skill reference 的 patch 走同一条
+            // 注入链（buildSkillGuidanceBlock → buildSkillGuidancePromptBlock），
+            // 让「工具 + 配套纪律」作为一个能力包整体注入 system prompt。
+            ...expandEnabledPackPromptPatches(effectiveEnabledPacks),
+        ]),
     ];
     // LIGHT_WEB + FULL_BROWSER auto-injection (shared with server runtime).
     // skipWeb for inline-visual-artifact agents (pure output generators).

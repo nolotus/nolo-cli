@@ -11,6 +11,7 @@ import {
 import { Contexts } from "../types";
 import { getModelConfig } from "./providers";
 import type { Model } from "./types";
+import type { ResponsesConversationState } from "../../agent-runtime/types";
 
 export interface GenerateRequestBodyArgs {
   agentConfig: Agent;
@@ -19,6 +20,8 @@ export interface GenerateRequestBodyArgs {
   contexts?: Contexts; // 可选上下文
   stableMessages?: Message[]; // 稳定的、已截断的历史快照（用于缓存）
   prependSystemPrompt?: boolean;
+  /** Provider/model-bound Responses continuation state; null explicitly clears it. */
+  responsesState?: ResponsesConversationState | null;
 }
 
 const IMAGE_OUTPUT_EXECUTION_PROMPT = [
@@ -136,6 +139,7 @@ export const generateRequestBody = ({
   contexts,
   stableMessages,
   prependSystemPrompt = true,
+  responsesState,
 }: GenerateRequestBodyArgs) => {
   const provider = (agentConfig.provider || "").toLowerCase();
   const imageSettings = getImageOutputSettings(agentConfig, provider);
@@ -155,7 +159,8 @@ export const generateRequestBody = ({
       agentConfigForRequest,
       [...(stableMessages ?? []), ...messages],
       contexts,
-      prependSystemPrompt
+      prependSystemPrompt,
+      responsesState,
     );
   }
 

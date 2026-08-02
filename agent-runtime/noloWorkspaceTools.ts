@@ -95,7 +95,7 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
       description: "Confirmed dialog ids or dbKeys to delete.",
     },
   }, ["query"]);
-  add("listAgents", "List the current user's agents in the Nolo workspace.", {
+  add("listAgents", "List the current user's agents as safe summaries; use readAgent to resolve the runnable agentKey before delegation.", {
     space: stringToolParam("Optional space id or URL."),
     publicOnly: { type: "boolean", description: "Only show public agents." },
     // 端间差异（LOW-R2-3）：CLI 命令 `nolo agent list` 无 --limit（parseAgentListArgs
@@ -513,6 +513,7 @@ export function buildNoloWorkspaceCommandArgs(call: { name: string; arguments: s
       const space = noloStringArg(args.space);
       if (space) cliArgs.push("--space", space);
       if (args.publicOnly === true) cliArgs.push("--public-only");
+      cliArgs.push("--json", "--safe");
       return cliArgs;
     }
     case "readAgent": {

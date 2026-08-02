@@ -365,7 +365,7 @@ const calculateOpenRouterFallbackCost = (
 // (non-GPT / non-Claude) 1 USD = 7 credits. If either provider's
 // multiplier diverges, split this into OPENROUTER_COST_MULTIPLIER and
 // XAI_COST_MULTIPLIER and add a per-case switch before the helper call.
-const API_REPORTED_COST_MULTIPLIER = 7;
+export const API_REPORTED_COST_MULTIPLIER = 7;
 
 const zeroCostBreakdown = (): CostBreakdown => ({
   regular: 0,

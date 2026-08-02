@@ -88,6 +88,18 @@ export default {
         public: "Public",
         byConversation: "Create AI by Conversation",
         manualConfiguration: "Manual Configuration",
+        quickCreate: {
+          reasoningEffort: "Reasoning Effort",
+          reasoningEffortOptions: {
+            none: "None",
+            minimal: "Minimal",
+            low: "Low",
+            medium: "Medium",
+            high: "High",
+            xhigh: "X-High",
+            max: "Max",
+          },
+        },
       },
       // RN / local-first create sheet (useTranslation("ai") → localCreate.*)
       localCreate: {
@@ -209,7 +221,7 @@ export default {
           "Reduces topic repetition, from -2 to 2. Higher encourages new topics.",
         maxTokens: "Limits response length, minimum 1.",
         reasoningEffort:
-          "How hard the model thinks before answering (low / medium / high). Only applies to models that support reasoning effort.",
+          "How hard the model thinks before answering. Supported values: none / minimal / low / medium / high / xhigh / max (varies by model/provider). Only applies to models that support reasoning effort.",
       },
 
       // Validation Messages
@@ -228,7 +240,7 @@ export default {
         maxTokensMin: "Max Tokens must be at least 1",
         maxTokensMax: "Max Tokens must be at most 500,000",
         maxTokensRange: "Max Tokens must be between {{min}} and {{max}}",
-        reasoningEffortInvalid: "Reasoning effort must be low, medium, or high",
+        reasoningEffortInvalid: "Reasoning effort must be none, minimal, low, medium, high, xhigh, or max",
         thinkingBudgetMin: "Thinking budget must be at least 1024 tokens",
         thinkingBudgetMax: "Thinking budget must be at most 100,000 tokens",
         apiKeyRequired:
@@ -496,6 +508,18 @@ export default {
         public: "公开",
         byConversation: "用对话创建 AI",
         manualConfiguration: "手动配置 AI",
+        quickCreate: {
+          reasoningEffort: "推理强度",
+          reasoningEffortOptions: {
+            none: "关闭",
+            minimal: "极简",
+            low: "低",
+            medium: "中",
+            high: "高",
+            xhigh: "超高",
+            max: "最大",
+          },
+        },
       },
       // RN / local-first create sheet (useTranslation("ai") → localCreate.*)
       localCreate: {
@@ -611,7 +635,7 @@ export default {
         presencePenalty: "降低主题重复度，范围-2到2。越高越鼓励谈论新主题。",
         maxTokens: "限制单次回复的长度，最小为1。",
         reasoningEffort:
-          "控制模型回答前的推理强度（low / medium / high）。仅对支持推理强度的模型生效。",
+          "控制模型回答前的推理强度。支持的值：none / minimal / low / medium / high / xhigh / max（因模型/服务商而异）。仅对支持推理强度的模型生效。",
       },
 
       // 验证信息
@@ -630,7 +654,7 @@ export default {
         maxTokensMin: "最大Token数必须至少为1",
         maxTokensMax: "最大Token数不能超过500,000",
         maxTokensRange: "最大Token数必须在 {{min}} 和 {{max}} 之间",
-        reasoningEffortInvalid: "推理强度必须是 low, medium, 或 high",
+        reasoningEffortInvalid: "推理强度必须是 none, minimal, low, medium, high, xhigh, 或 max",
         thinkingBudgetMin: "思考预算至少需要 1024 个 Token",
         thinkingBudgetMax: "思考预算不能超过 100,000 个 Token",
         apiKeyRequired:
@@ -897,6 +921,18 @@ export default {
         public: "公開",
         byConversation: "用對話建立 AI",
         manualConfiguration: "手動設定 AI",
+        quickCreate: {
+          reasoningEffort: "推理強度",
+          reasoningEffortOptions: {
+            none: "關閉",
+            minimal: "極簡",
+            low: "低",
+            medium: "中",
+            high: "高",
+            xhigh: "超高",
+            max: "最大",
+          },
+        },
       },
       // RN / local-first create sheet (useTranslation("ai") → localCreate.*)
       localCreate: {
@@ -1012,7 +1048,7 @@ export default {
         presencePenalty: "降低主題重複度，範圍-2到2。越高越鼓勵談論新主題。",
         maxTokens: "限制單次回覆的長度，最小為1。",
         reasoningEffort:
-          "控制模型回答前的推理強度（low / medium / high）。僅對支援推理強度的模型生效。",
+          "控制模型回答前的推理強度。支援的值：none / minimal / low / medium / high / xhigh / max（因模型/服務商而異）。僅對支援推理強度的模型生效。",
       },
 
       // 驗證資訊
@@ -1031,7 +1067,7 @@ export default {
         maxTokensMin: "最大Token數必須至少為1",
         maxTokensMax: "最大Token數不得超過500,000",
         maxTokensRange: "最大Token數必須在 {{min}} 和 {{max}} 之間",
-        reasoningEffortInvalid: "推理強度必須是 low, medium, 或 high",
+        reasoningEffortInvalid: "推理強度必須是 none, minimal, low, medium, high, xhigh, 或 max",
         thinkingBudgetMin: "思考預算至少需要 1024 個 Token",
         thinkingBudgetMax: "思考預算不能超過 100,000 個 Token",
         apiKeyRequired:
@@ -1225,6 +1261,18 @@ export default {
         public: "公開",
         byConversation: "会話で AI を作成",
         manualConfiguration: "手動設定で AI を作成",
+        quickCreate: {
+          reasoningEffort: "推論強度",
+          reasoningEffortOptions: {
+            none: "なし",
+            minimal: "最小",
+            low: "低",
+            medium: "中",
+            high: "高",
+            xhigh: "超高",
+            max: "最大",
+          },
+        },
       },
       // RN / local-first create sheet (useTranslation("ai") → localCreate.*)
       localCreate: {
@@ -1350,7 +1398,7 @@ export default {
           "トピックの繰り返しを減らします（範囲-2〜2）。値が高いほど新しいトピックが促されます。",
         maxTokens: "1回の応答の長さを制限します（最小1）。",
         reasoningEffort:
-          "回答前の推論の強さ（low / medium / high）。推論強度をサポートするモデルでのみ有効です。",
+          "回答前の推論の強さ。サポート値：none / minimal / low / medium / high / xhigh / max（モデル/プロバイダーにより異なる）。推論強度をサポートするモデルでのみ有効です。",
       },
 
       // バリデーションメッセージ
@@ -1371,7 +1419,7 @@ export default {
         maxTokensMax: "最大トークン数は500,000以下である必要があります",
         maxTokensRange: "最大トークン数は {{min}} 〜 {{max}} の範囲で入力してください",
         reasoningEffortInvalid:
-          "推論強度は low, medium, high のいずれかである必要があります",
+          "推論強度は none, minimal, low, medium, high, xhigh, max のいずれかである必要があります",
         thinkingBudgetMin: "思考予算は1024トークン以上である必要があります",
         thinkingBudgetMax: "思考予算は100,000トークン以下である必要があります",
         apiKeyRequired:

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { getCliLocale, setCliLocale } from "../tui/i18n";
+import { displayWidth } from "../tui/tuiAnsi";
 import {
   createSseToolEventAdapter,
   createToolEventFormatter,
@@ -11,6 +12,18 @@ import {
   resolveToolDisplayMode,
   shouldEmitToolEvents,
 } from "./toolOutput";
+
+/** Strip ANSI SGR sequences so displayWidth measures the visible glyphs. */
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/** Count detail lines whose visible text starts with a given 2-char marker. */
+function countDetailMarker(out: string, marker: string): number {
+  return out
+    .split("\n")
+    .filter((l) => l.startsWith(`  ${marker}`)).length;
+}
 
 function toolEvent(
   partial: Partial<LocalAgentToolEvent> & Pick<LocalAgentToolEvent, "type" | "toolName">
@@ -145,7 +158,10 @@ describe("toolOutput", () => {
     );
   });
 
-  test("compact mode shows editFile added/removed snippets", () => {
+  test("compact mode shows editFile added/removed snippets as a real line-level diff", () => {
+    // Single-line change: the old behavior would show "delete 1 / add 1"
+    // wholesale, which is fine here, but the line-level diff must still emit
+    // exactly one removed + one added line (no spurious context duplication).
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
@@ -164,6 +180,10 @@ describe("toolOutput", () => {
     expect(line).toContain("▸ Edit app.ts  ✓");
     expect(line).toContain("- const a = 1;");
     expect(line).toContain("+ const a = 2;");
+    // Exactly one removed and one added line — no duplication from the old
+    // whole-snippet tagging.
+    expect(countDetailMarker(line, "- ")).toBe(1);
+    expect(countDetailMarker(line, "+ ")).toBe(1);
   });
 
   test("compact labels follow the active locale, unknown tools keep their raw name", () => {
@@ -279,6 +299,84 @@ describe("toolOutput", () => {
     expect(line).toContain("2. 整理待办事项");
   });
 
+  test("compact mode renders a resolved ui_ask_choice as question + selected", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "ui_ask_choice",
+        content: JSON.stringify({
+          type: "ui_ask_choice",
+          question: "选哪个？",
+          choices: [
+            { id: "a", label: "选项 A", userMessage: "我选 A" },
+            { id: "b", label: "选项 B", userMessage: "我选 B" },
+          ],
+          blocking: true,
+          selected: { label: "选项 A", userMessage: "我选 A" },
+        }),
+        metadata: { uiAskChoice: true, resolved: true },
+      }),
+      "compact",
+      false
+    );
+    expect(line).toContain("选哪个？");
+    expect(line).toContain("选项 A");
+    // Resolved history must NOT re-print the interactive menu / type-a-number hint.
+    expect(line).not.toContain("1. 选项 A");
+    expect(line).not.toContain("请输入序号");
+    expect(line).not.toContain("Type a number");
+  });
+
+  test("compact mode keeps resolved ui_ask_choice out of the menu when selected label is empty", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "ui_ask_choice",
+        content: JSON.stringify({
+          type: "ui_ask_choice",
+          question: "选哪个？",
+          choices: [
+            { id: "a", label: "选项 A", userMessage: "我选 A" },
+            { id: "b", label: "选项 B", userMessage: "我选 B" },
+          ],
+          blocking: true,
+          selected: { label: "", userMessage: "" },
+        }),
+        metadata: { uiAskChoice: true, resolved: true },
+      }),
+      "compact",
+      false
+    );
+    expect(line).toContain("选哪个？");
+    expect(line).toContain("✓");
+    expect(line).not.toContain("1. 选项 A");
+    expect(line).not.toContain("请输入序号");
+    expect(line).not.toContain("Type a number");
+  });
+
+  test("compact mode renders a cancelled ui_ask_choice without the menu", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "ui_ask_choice",
+        content: JSON.stringify({
+          type: "ui_ask_choice",
+          question: "选哪个？",
+          choices: [{ id: "a", label: "选项 A" }],
+          blocking: true,
+          selected: { label: "", userMessage: "" },
+          cancelled: true,
+        }),
+        metadata: { uiAskChoice: true, resolved: true, cancelled: true },
+      }),
+      "compact",
+      false
+    );
+    expect(line).toContain("选哪个？");
+    expect(line).not.toContain("1. 选项 A");
+    expect(line).not.toContain("请输入序号");
+  });
+
   test("verbose mode renders ui_ask_choice question + numbered choices", () => {
     const line = formatToolEventForCli(
       toolEvent({
@@ -368,7 +466,7 @@ describe("toolOutput", () => {
     });
   });
 
-  test("formatEditDetailLine plain text output (colorEnabled=false) contains no escape codes", () => {
+  test("formatEditDetailBlock plain text output (colorEnabled=false) contains no escape codes", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
@@ -385,6 +483,136 @@ describe("toolOutput", () => {
     expect(line).toContain("- const oldVal = 1;");
     expect(line).toContain("+ const newVal = 2;");
     expect(line).not.toContain("\x1b");
+  });
+
+  test("single-char edit in a 5-line snippet shows only the changed line, not 5 del + 5 add", () => {
+    // Core value of this task: a one-character change must NOT render as
+    // "delete 5 lines / add 5 lines". The line-level diff keeps the 4
+    // unchanged lines as context and emits exactly 1 removed + 1 added.
+    const oldSnippet = ["line one", "line two", "line three", "line four", "line five"].join("\n");
+    const newSnippet = ["line one", "line two", "line THREE", "line four", "line five"].join("\n");
+    const out = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "app.ts",
+        metadata: { oldSnippet, newSnippet },
+      }),
+      "compact",
+      false
+    );
+    expect(countDetailMarker(out, "- ")).toBe(1);
+    expect(countDetailMarker(out, "+ ")).toBe(1);
+    expect(out).toContain("- line three");
+    expect(out).toContain("+ line THREE");
+    // The unchanged lines survive as context (two-space prefix), proving the
+    // diff is line-level rather than whole-snippet.
+    expect(out).toContain("  line one");
+    expect(out).toContain("  line five");
+  });
+
+  test("a change at the tail of a 20-line snippet is not clipped away by the window", () => {
+    // 20 lines, only line 18 differs. A naive head truncation at 10 lines
+    // would drop the change entirely. The window must center on the first
+    // changed line so the user actually sees it.
+    const lines = Array.from({ length: 20 }, (_, i) => `row ${i + 1}`);
+    const oldSnippet = lines.join("\n");
+    const newLines = lines.slice();
+    newLines[17] = "row 18 CHANGED";
+    const newSnippet = newLines.join("\n");
+    const out = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "app.ts",
+        metadata: { oldSnippet, newSnippet },
+      }),
+      "compact",
+      false
+    );
+    expect(out).toContain("- row 18");
+    expect(out).toContain("+ row 18 CHANGED");
+    expect(countDetailMarker(out, "- ")).toBe(1);
+    expect(countDetailMarker(out, "+ ")).toBe(1);
+  });
+
+  test("CJK lines are clipped and padded by display width, not code-unit count", () => {
+    // 60 CJK chars = 120 display columns but only 60 code units. A
+    // `.length`-based clip at width 96 would let all 60 through (60 < 96);
+    // the display-width clip must truncate and append "…".
+    const cjk = "中".repeat(60);
+    const out = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "app.ts",
+        metadata: { oldSnippet: cjk, newSnippet: `${cjk}X` },
+      }),
+      "compact",
+      false
+    );
+    // The added line is the one at risk of overflowing; find it and verify
+    // its visible width is within budget and ends with the ellipsis.
+    const addedLine = out.split("\n").find((l) => l.startsWith("  + "));
+    expect(addedLine).toBeDefined();
+    const visible = stripAnsi(addedLine!).slice("  + ".length);
+    expect(visible.endsWith("…")).toBe(true);
+    // "+ " prefix (2) + visible glyphs must stay within MAX_WIDTH (96).
+    expect(displayWidth(visible)).toBeLessThanOrEqual(96);
+  });
+
+  test("COLORTERM=truecolor produces a 48;2 background band of equal visible width across all diff lines", () => {
+    // Mixed short and long changed lines: the rectangle must pad every line
+    // to the same display width so the tint forms a clean band.
+    const oldSnippet = "short\nmuch longer line than the previous one";
+    const newSnippet = "shortX\nmuch longer line than the previous one too";
+    const env = { COLORTERM: "truecolor", TERM: "xterm-256color", FORCE_COLOR: "1" } as Record<string, string>;
+    const original = { ...process.env };
+    Object.assign(process.env, env);
+    try {
+      const out = formatToolEventForCli(
+        toolEvent({
+          type: "tool-result",
+          toolName: "editFile",
+          argumentsPreview: "app.ts",
+          metadata: { oldSnippet, newSnippet },
+        }),
+        "compact",
+        true
+      );
+      expect(out).toContain("48;2");
+      // Every diff line (added/removed/context) in the detail block must have
+      // the same visible width — that is the Zed-style band invariant.
+      const detailLines = out
+        .split("\n")
+        .filter((l) => l.startsWith("  ") && /\x1b\[/.test(l));
+      expect(detailLines.length).toBeGreaterThan(0);
+      const widths = detailLines.map((l) => displayWidth(stripAnsi(l).replace(/^ {2}/, "")));
+      const first = widths[0];
+      for (const w of widths) expect(w).toBe(first);
+    } finally {
+      for (const k of Object.keys(env)) delete process.env[k];
+      Object.assign(process.env, original);
+    }
+  });
+
+  test("old === new yields no detail block (returns undefined upstream)", () => {
+    // No change → formatEditFileSnippet returns undefined → no detail lines
+    // in the compact output, just the main tool trace line.
+    const snippet = "identical\ncontent\nhere";
+    const out = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "app.ts",
+        metadata: { oldSnippet: snippet, newSnippet: snippet },
+      }),
+      "compact",
+      false
+    );
+    expect(out).toContain("▸ Edit app.ts  ✓");
+    expect(out).not.toContain("+ ");
+    expect(out).not.toContain("- ");
   });
 
   test("clipPathAware elides the middle of a long path, keeping leading dirs and the filename", () => {
@@ -611,7 +839,7 @@ describe("toolOutput", () => {
     expect(errLine).toContain("✗");
   });
 
-  test("compact mode renders loadSkill as Kimi-style Used Skill block (no color)", () => {
+  test("compact mode renders loadSkill as single-line i18n badge (no color)", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
@@ -622,9 +850,7 @@ describe("toolOutput", () => {
       "compact",
       false
     );
-    expect(line).toBe(
-      "● Used Skill (nolo-plan)\n  Skill \"nolo-plan\" loaded inline. Follow its instructions.\n"
-    );
+    expect(line).toBe("✦ Used Skill: nolo-plan\n");
   });
 
   test("compact mode loadSkill prefers metadata.name and falls back to content parsing", () => {
@@ -633,20 +859,19 @@ describe("toolOutput", () => {
       toolEvent({
         type: "tool-result",
         toolName: "loadSkill",
-        argumentsPreview: "{ \"name\": \"ignored\" }",
+        argumentsPreview: '{ "name": "ignored" }',
         metadata: { name: "search-first" },
         content: 'Skill "search-first" loaded inline. Follow its instructions.',
       }),
       "compact",
       false
     );
-    expect(line).toContain("Used Skill (search-first)");
-    expect(line).toContain('Skill "search-first" loaded inline');
+    expect(line).toBe("✦ Used Skill: search-first\n");
     // No-color path must not emit ANSI escapes.
     expect(line).not.toContain("\x1b");
   });
 
-  test("compact mode loadSkill with color emits success bullet and muted detail", () => {
+  test("compact mode loadSkill with color emits single-line success star and badge", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
@@ -657,11 +882,11 @@ describe("toolOutput", () => {
       "compact",
       true
     );
-    // Title line: success-colored bullet, then label, then name in parens.
     expect(line).toContain("Used Skill");
-    expect(line).toContain("(nolo-plan)");
-    // Detail line is indented two spaces and carries the follow-instructions text.
-    expect(line).toContain('Skill "nolo-plan" loaded inline. Follow its instructions.');
+    expect(line).toContain("nolo-plan");
+    expect(line).toContain("✦");
+    // Single line output
+    expect(line.split("\n").filter(Boolean)).toHaveLength(1);
     // ANSI present (color enabled).
     expect(line).toContain("\x1b");
   });
@@ -706,5 +931,102 @@ describe("toolOutput", () => {
     expect(line).not.toContain("loaded inline");
     expect(line).not.toContain("●");
     expect(line.split("\n").filter(Boolean)).toHaveLength(1);
+  });
+
+  test("compact mode renders listAgents / startAgentRun / controlAgentRun as formatted cards (no color)", () => {
+    const listLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "listAgents",
+        metadata: {
+          displayData: "Agents (2)\n★ Agent A  model-x  platform\n  Agent B  model-y  custom",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(listLine).toBe("● listAgents\n  Agents (2)\n  ★ Agent A  model-x  platform\n    Agent B  model-y  custom\n");
+
+    const startLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "startAgentRun",
+        metadata: {
+          displayData: "Run started\n  agent   agent-a\n  runId   run-123\n  pid     999",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(startLine).toBe("● startAgentRun\n  Run started\n    agent   agent-a\n    runId   run-123\n    pid     999\n");
+
+    const controlLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "controlAgentRun",
+        metadata: {
+          displayData: "Run stopped\n  🛑 killed\n  runId   run-123",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(controlLine).toBe("● controlAgentRun\n  Run stopped\n    🛑 killed\n    runId   run-123\n");
+  });
+
+  test("compact mode orchestration card recovers readable card from JSON content when displayData missing", () => {
+    const listLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "listAgents",
+        content: JSON.stringify({
+          success: true,
+          total: 1,
+          agents: [
+            {
+              name: "Agent A",
+              model: "model-x",
+              apiSource: "platform",
+              isFavorite: true,
+              publicKey: "agent-pub-a",
+            },
+          ],
+        }),
+      }),
+      "compact",
+      false
+    );
+    expect(listLine).toBe(
+      "● listAgents\n  Agents (1)\n  ★ Agent A  model-x  platform\n"
+    );
+
+    const startLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "startAgentRun",
+        content: JSON.stringify({ runId: "run-9", status: "pending" }),
+      }),
+      "compact",
+      false
+    );
+    expect(startLine).toContain("● startAgentRun");
+    expect(startLine).toContain("Run started");
+    expect(startLine).not.toContain("runId");
+    expect(startLine).not.toContain('{"runId"');
+  });
+
+  test("compact mode orchestration card renders failure line with ✗ when failed", () => {
+    const failLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "startAgentRun",
+        content: "Error: missing agentKey",
+        metadata: { failed: true },
+      }),
+      "compact",
+      false
+    );
+    expect(failLine).toContain("✗ startAgentRun");
+    expect(failLine).toContain("Error: missing agentKey");
   });
 });

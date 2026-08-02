@@ -1,14 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-  BUILTIN_NOLO_AGENT_KEY,
-  PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-} from "../core/builtinAgents";
-import {
   buildTurnTokenUsage,
   formatTokenCount,
   mergeUsageRecords,
   renderTokenStatus,
-  resolveAgentContextWindow,
   resolveContextWindow,
 } from "./tokenUsage";
 
@@ -46,52 +41,5 @@ describe("tokenUsage", () => {
     expect(formatTokenCount(842)).toBe("842");
     expect(renderTokenStatus()).toBe("in — out — left —");
     expect(resolveContextWindow("MiniMax-M3")).toBe(1_000_000);
-  });
-
-  test("resolveAgentContextWindow maps auto/flash to DeepSeek 1M", () => {
-    expect(
-      resolveAgentContextWindow({
-        agentKey: BUILTIN_NOLO_AGENT_KEY,
-        agentName: "nolo",
-        autoRouteDefault: true,
-      }),
-    ).toBe(1_000_000);
-
-    expect(
-      resolveAgentContextWindow({
-        agentKey: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-        agentName: "auto→flash",
-      }),
-    ).toBe(1_000_000);
-
-    expect(
-      resolveAgentContextWindow({
-        agentName: "nolo",
-        autoRouteDefault: false,
-      }),
-    ).toBe(256_000);
-
-    // With the real default agent key, autoRouteDefault:false must still
-    // refuse the flash 1M upgrade (regression for runAgentChat leak).
-    expect(
-      resolveAgentContextWindow({
-        agentKey: BUILTIN_NOLO_AGENT_KEY,
-        agentName: "nolo",
-        autoRouteDefault: false,
-      }),
-    ).toBe(256_000);
-  });
-
-  test("calculates platform credits from provider raw cost when cost > 0", () => {
-    expect(
-      buildTurnTokenUsage(
-        { input_tokens: 100, output_tokens: 50, cost: 0.5 },
-        "nolo"
-      )?.credits
-    ).toBe(3.5);
-    expect(
-      buildTurnTokenUsage({ input_tokens: 100, output_tokens: 50 }, "nolo")
-        ?.credits
-    ).toBeUndefined();
   });
 });

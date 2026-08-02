@@ -4,14 +4,11 @@
  * 从 readlineWorkspace.ts 抽出。依赖：
  * - ./tuiAnsi：wrapTranscriptLine / padOrTruncateToWidth / applyTerminalOutputToText
  * - ./tuiScrollbar：renderScrollbarRow / parseScrollAction / ScrollAction / WHEEL_SCROLL_LINES
- * - ./theme：themeColorSequence / themeText / getActiveDensity / resolveCliColorEnabled
- * - ../client/assistantOutput：formatAssistantDisplay（assistant turn 的唯一渲染器，
- *   与流式输出共享同一份实现，避免历史重绘与流式样式漂移）
+ * - ./theme：themeColorSequence / themeText / highlightMarkdown / getActiveDensity / resolveCliColorEnabled
  */
 import {
   applyTerminalOutputToText,
   padOrTruncateToWidth,
-  stripAnsi,
   wrapTranscriptLine,
 } from "./tuiAnsi";
 import {
@@ -21,10 +18,10 @@ import {
 } from "./tuiScrollbar";
 import {
   getActiveDensity,
+  highlightMarkdown,
   themeColorSequence,
   themeText,
 } from "./theme";
-import { formatAssistantDisplay } from "../client/assistantOutput";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 
 export type TurnRole = "user" | "assistant";
@@ -95,18 +92,27 @@ export function applyOutputChunkToCurrentTurn(
   return true;
 }
 
-export function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
+function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
   const colorEnabled = resolveCliColorEnabled();
-  // Visual rhythm: every turn is separated by a blank line, user turns carry an
-  // accent ❯ marker on the first line and chrome │ markers on explicit multiline
-  // continuations (two spaces when no-color), with default body text for strong readability.
+  // Visual rhythm: every turn is separated by a blank line, user turns carry a
+  // colored ❯ marker, and [nolo] system notices render dim so questions,
+  // answers, and plumbing are distinguishable at a glance.
   //
   // Colors use theme tokens (tui/theme.ts) so the history area stays in the
-  // same hue family as the status line.
-  const styleAssistantTurn = (content: string): string => {
-    const highlighted = colorEnabled
-      ? formatAssistantDisplay(content)
-      : stripAnsi(formatAssistantDisplay(content));
+  // same hue family as the status line — accent for the user marker, chrome
+  // (muted gray) for system notices.
+  const styleTurn = (role: TurnRole, content: string): string => {
+    if (role === "user") {
+      // Only the ❯ marker carries accent; the text itself stays on the
+      // terminal's default foreground. Coloring whole user turns made every
+      // question a solid block of accent, which fought the assistant's own
+      // markdown highlighting — the marker alone is enough to tell turns apart.
+      if (!colorEnabled) return `❯ ${content}`;
+      const accent = themeColorSequence("accent");
+      const reset = "\x1b[39m";
+      return `${accent}❯${reset} ${content}`;
+    }
+    const highlighted = highlightMarkdown(content, colorEnabled);
     const rawLines = highlighted.split("\n");
     const styledLines = rawLines.map((line, idx) => {
       if (idx === 0 && !line.startsWith("[nolo]")) {
@@ -121,46 +127,25 @@ export function buildHistoryLines(history: TurnHistory, contentWidth: number): s
     });
     return styledLines.join("\n");
   };
-
-  const wrapped: string[] = [];
+  const lines: string[] = [];
   const pushTurn = (role: TurnRole, content: string) => {
     if (getActiveDensity() === "spacious") {
-      if (wrapped.length > 0 || role === "user") wrapped.push("");
+      if (lines.length > 0 || role === "user") lines.push("");
     }
-    if (role === "user") {
-      const logicalLines = content.split("\n");
-      const accentSeq = colorEnabled ? themeColorSequence("accent") : "";
-      const chromeSeq = colorEnabled ? themeColorSequence("chrome") : "";
-
-      for (let i = 0; i < logicalLines.length; i++) {
-        const line = logicalLines[i];
-        let styledLine: string;
-        if (colorEnabled) {
-          // Reset foreground only (`39`), not full SGR (`0`), so a future
-          // bold/dim on the marker sequence would not wipe styles mid-line.
-          const prefix = i === 0 ? `${accentSeq}❯\x1b[39m ` : `${chromeSeq}│\x1b[39m `;
-          styledLine = `${prefix}${line}`;
-        } else {
-          const prefix = i === 0 ? "❯ " : "  ";
-          styledLine = `${prefix}${line}`;
-        }
-        wrapped.push(...wrapTranscriptLine(styledLine, contentWidth, "  "));
-      }
-    } else {
-      const styledEntry = styleAssistantTurn(content);
-      for (const logicalLine of styledEntry.split("\n")) {
-        wrapped.push(...wrapTranscriptLine(logicalLine, contentWidth));
-      }
-    }
+    lines.push(styleTurn(role, content));
   };
-
   for (const turn of history.turns) {
     pushTurn(turn.role, turn.content);
   }
   if (history.currentRole !== null && history.currentContent) {
     pushTurn(history.currentRole, history.currentContent);
   }
-
+  const wrapped: string[] = [];
+  for (const entry of lines) {
+    for (const logicalLine of entry.split("\n")) {
+      wrapped.push(...wrapTranscriptLine(logicalLine, contentWidth));
+    }
+  }
   return wrapped;
 }
 

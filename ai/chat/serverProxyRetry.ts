@@ -1,5 +1,4 @@
 import { isAbortError } from "../../core/abortError";
-import { waitForAbortableDelay } from "../../core/abortableDelay";
 import { CORE_DRAIN_REASON } from "../../core/drainReason";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import {
@@ -48,12 +47,26 @@ const waitForServerProxyRetry = async (
   retryAfterMs: number,
   signal?: AbortSignal
 ) => {
-  const delayMs = normalizeNonNegativeMs(
-    retryAfterMs,
-    DEFAULT_SERVER_PROXY_RETRY_AFTER_MS,
-  );
-  if (delayMs <= 0) return;
-  await waitForAbortableDelay(delayMs, signal);
+  if (retryAfterMs <= 0) return;
+  if (signal?.aborted) {
+    const abortError = new Error("Aborted");
+    abortError.name = "AbortError";
+    throw abortError;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+      const abortError = new Error("Aborted");
+      abortError.name = "AbortError";
+      reject(abortError);
+    };
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, normalizeNonNegativeMs(retryAfterMs, DEFAULT_SERVER_PROXY_RETRY_AFTER_MS));
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 };
 
 export const performServerProxyFetchWithRetry = async ({

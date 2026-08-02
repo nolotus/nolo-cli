@@ -236,42 +236,4 @@ describe("runConfirmDialog", () => {
     expect(out).toContain("Allow");
     expect(out).toContain("rm -rf ./tmp");
   });
-
-  test("external_file_access action uses localized title and body in both locales", async () => {
-    const extRequest: PermissionRequest = {
-      id: "permission-ext-file",
-      tool: "readFile",
-      action: "external_file_access",
-      title: "确认读取工作区外部文件",
-      body: "该路径位于当前工作区之外。确认后本次访问放行，否则拒绝。",
-    };
-
-    {
-      setCliLocale("zh");
-      const { input, output, stdout } = makeStreams();
-      await runConfirmDialog({
-        request: extRequest,
-        input,
-        output,
-        readKey: async () => "\u001b",
-      });
-      const out = stdout();
-      expect(out).toContain("确认读取工作区外部文件");
-      expect(out).toContain("该路径位于当前工作区之外。确认后本次访问放行，否则拒绝。");
-    }
-
-    {
-      setCliLocale("en");
-      const { input, output, stdout } = makeStreams();
-      await runConfirmDialog({
-        request: extRequest,
-        input,
-        output,
-        readKey: async () => "\u001b",
-      });
-      const out = stdout();
-      expect(out).toContain("Confirm reading a file outside the workspace");
-      expect(out).toContain("This path is outside the current workspace. Allow this one-time access, or deny it.");
-    }
-  });
 });

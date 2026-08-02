@@ -85,8 +85,8 @@ export function estimateComplexity(text: string): "simple" | "medium" | "complex
 /** 各档位的中文描述，注入分类器 system prompt。 */
 export const TIER_DESCRIPTIONS: Record<string, string> = {
   flash: "快速简单：问候、闲聊、快速问答、翻译、短文",
-  balanced: "平衡推理：分析、中等长度写作、代码、推理（当前路由至 DeepSeek V4 Flash）",
-  quality: "高质量深度：复杂推理、长文、架构设计、深度分析（当前路由至 DeepSeek V4 Flash）",
+  balanced: "平衡推理：分析、中等长度写作、代码、推理",
+  quality: "高质量深度：复杂推理、长文、架构设计、深度分析",
 };
 
 /**

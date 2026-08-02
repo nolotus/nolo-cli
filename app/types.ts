@@ -5,7 +5,6 @@ import type {
   AgentBasePolicy,
   DialogPolicyState,
 } from "../ai/policy/types";
-import type { ResponsesConversationState } from "../agent-runtime/types";
 
 export type ULID = string;
 
@@ -87,8 +86,6 @@ export interface DialogConfig {
   inheritedFromDialogKey?: string; // 若从旧对话开启，记录来源对话 key 以便刷新后仍可提示
   inheritedFromDialogTitle?: string; // 来源对话标题快照，用于 UI 提示
   summaryPending?: boolean; // 摘要任务是否挂起（因快速切换等原因）
-  /** Latest provider/model-bound Responses continuation state, if enabled. */
-  responsesState?: ResponsesConversationState | null;
   inputTokens?: number;
   outputTokens?: number;
   maxTokens?: number; // 此对话最大回复 token 数，覆盖 agent 默认值
@@ -309,8 +306,6 @@ export interface Agent {
   basePolicy?: AgentBasePolicy;
   runtimeBinding?: AgentRuntimeBinding | null;
   runtimeToolPolicy?: Record<string, unknown> | null;
-  responsesState?: ResponsesConversationState | null;
-  responsesCompactionThreshold?: number;
 }
 
 
@@ -337,10 +332,6 @@ export interface SpaceContent {
   triggerType?: string;
   parentTaskKey?: string;
   parentAutomationKey?: string;
-  /** multi-agent: 当前 dialog 由哪个父 dialog 发起（侧边栏折叠子对话用） */
-  parentDialogId?: string;
-  /** multi-agent: 这棵 dialog 执行树的根 dialog，便于查询 fanout */
-  rootDialogId?: string;
   skillSummary?: {
     isSkill: true;
     skillId?: string;

@@ -154,10 +154,9 @@ export const updateTokensAction = async (
     agentConfig,
     userId: ownerUserId,
     username: currentUser?.username,
-    agentId: agentConfig.id,
+    cybotId: agentConfig.id,
     dialogId,
     timestamp,
-    entry_path: "web-chat",
   });
   const { usage, tokenData, recordProvider, billedModel } = prepared;
   const result = { cost: tokenData.cost, pay: tokenData.pay };

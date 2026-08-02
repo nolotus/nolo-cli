@@ -10,8 +10,6 @@ import { getModelConfig } from "../ai/llm/providers";
 
 export const OPENAI_RESPONSES_ENDPOINT =
   "https://api.openai.com/v1/responses";
-export const DEEPSEEK_RESPONSES_ENDPOINT =
-  "https://api.deepseek.com/v1/responses";
 
 /** Known platform chat.completions endpoints keyed by provider id. */
 export const PLATFORM_CHAT_COMPLETIONS_ENDPOINTS: Readonly<
@@ -42,11 +40,7 @@ export function isOpenAiResponsesModel(args: {
   model?: string;
   endpointKey?: string;
 }): boolean {
-  const provider = asTrimmedLowercaseString(args.provider);
-  if (provider === "deepseek") {
-    return asTrimmedLowercaseString(args.model) === "deepseek-v4-flash";
-  }
-  if (provider !== "openai") return false;
+  if (asTrimmedLowercaseString(args.provider) !== "openai") return false;
   if (args.endpointKey === "responses") return true;
   if (!args.model) return false;
   try {
@@ -56,34 +50,11 @@ export function isOpenAiResponsesModel(args: {
   }
 }
 
-export function resolvePlatformResponsesEndpoint(provider: string): string | undefined {
-  switch (asTrimmedLowercaseString(provider)) {
-    case "openai":
-      return OPENAI_RESPONSES_ENDPOINT;
-    case "deepseek":
-      return DEEPSEEK_RESPONSES_ENDPOINT;
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Legacy agent records may still store provider `ollama-cloud` (the retired
- * public product id, now canonicalised to `nolo`). Treat it as an alias of
- * `nolo` so the endpoint resolver never throws on records that predate the
- * rename. The catalog/provider layer (`packages/ai/llm`) also normalises
- * `ollama-cloud` → `nolo`; this keeps the execution seam consistent.
- */
-const PLATFORM_PROVIDER_ENDPOINT_ALIASES: Readonly<Record<string, string>> = {
-  "ollama-cloud": "nolo",
-};
-
 /** Lookup a known platform chat.completions endpoint; undefined if unknown. */
 export function resolvePlatformChatCompletionsEndpoint(
   provider: string,
 ): string | undefined {
   const key = asTrimmedLowercaseString(provider);
   if (!key) return undefined;
-  const aliased = PLATFORM_PROVIDER_ENDPOINT_ALIASES[key] ?? key;
-  return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS[aliased];
+  return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS[key];
 }

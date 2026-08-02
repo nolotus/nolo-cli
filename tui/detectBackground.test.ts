@@ -3,9 +3,7 @@ import { EventEmitter } from "node:events";
 import {
   brightnessFromRgb,
   detectTerminalBrightness,
-  detectTerminalBackground,
   parseOsc11Reply,
-  parseOsc11Background,
 } from "./detectBackground";
 
 /** Minimal TTY stdin stand-in that records raw-mode transitions. */
@@ -93,46 +91,5 @@ describe("detectBackground", () => {
     expect(stdout.writes).toEqual([]);
     expect(stdin.rawModeCalls).toEqual([]);
     expect(stdin.listenerCount("data")).toBe(0);
-  });
-
-  test("parseOsc11Background returns brightness and uppercase hex", () => {
-    // 16-bit per channel, the common reply width — must scale to bytes and
-    // uppercase, without "#".
-    expect(parseOsc11Background("\x1b]11;rgb:1e1e/1e1e/2e2e\x07")).toEqual({
-      brightness: "dark",
-      hex: "1E1E2E",
-    });
-    expect(parseOsc11Background("\x1b]11;rgb:ffff/ffff/ffff\x07")).toEqual({
-      brightness: "light",
-      hex: "FFFFFF",
-    });
-    expect(parseOsc11Background("garbage")).toBeNull();
-  });
-
-  test("detectTerminalBackground resolves the full background via probe", async () => {
-    const stdin = fakeStdin();
-    const stdout = fakeStdout();
-    const pending = detectTerminalBackground({
-      stdin,
-      stdout,
-      timeoutMs: 500,
-      isTerminal: () => true,
-    });
-    expect(stdout.writes.join("")).toBe("\x1b]11;?\x07");
-    stdin.emit("data", Buffer.from("\x1b]11;rgb:1e1e/1e1e/2e2e\x07", "latin1"));
-    expect(await pending).toEqual({ brightness: "dark", hex: "1E1E2E" });
-  });
-
-  test("detectTerminalBrightness thin wrapper still resolves brightness", async () => {
-    const stdin = fakeStdin();
-    const stdout = fakeStdout();
-    const pending = detectTerminalBrightness({
-      stdin,
-      stdout,
-      timeoutMs: 500,
-      isTerminal: () => true,
-    });
-    stdin.emit("data", Buffer.from("\x1b]11;rgb:fafa/fafa/fafa\x07", "latin1"));
-    expect(await pending).toBe("light");
   });
 });

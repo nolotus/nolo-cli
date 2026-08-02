@@ -1,5 +1,4 @@
 import { isAbortError } from "../../core/abortError";
-import { waitForAbortableDelay } from "../../core/abortableDelay";
 
 export const MAX_INITIAL_STREAM_RETRIES = 1;
 export const DEFAULT_INITIAL_STREAM_RETRY_AFTER_MS = 1_500;
@@ -26,8 +25,24 @@ export const waitForInitialStreamRetry = async (
   retryAfterMs: number,
   signal?: AbortSignal
 ) => {
-  await waitForAbortableDelay(
-    normalizeInitialStreamRetryAfterMs(retryAfterMs),
-    signal,
-  );
+  if (signal?.aborted) {
+    const abortError = new Error("Aborted");
+    abortError.name = "AbortError";
+    throw abortError;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+      const abortError = new Error("Aborted");
+      abortError.name = "AbortError";
+      reject(abortError);
+    };
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, normalizeInitialStreamRetryAfterMs(retryAfterMs));
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 };

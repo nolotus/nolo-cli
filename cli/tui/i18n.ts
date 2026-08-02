@@ -118,18 +118,6 @@ const STRINGS = {
     en: "Stopped this reply.",
     zh: "已停止本次回复。",
   },
-  turnStoppedToolPending: {
-    en: "Stopped waiting. {0} may still be finishing in the background — its result won't be added to this conversation.",
-    zh: "已停止等待。{0} 可能仍在后台完成，其结果不会计入本次对话。",
-  },
-  turnStopping: {
-    en: "Stopping… press Esc again to force",
-    zh: "正在停止…再按一次 Esc 强制停止",
-  },
-  forceStopped: {
-    en: "Force stopped. Background tasks may still be finishing.",
-    zh: "已强制停止，后台任务可能仍在收尾。",
-  },
   turnFailed: {
     en: "This reply failed. Queued messages are kept — press Enter to resend.",
     zh: "本次回复出错。已排队的消息仍保留，按 Enter 可重新发送。",
@@ -198,18 +186,6 @@ const STRINGS = {
     en: "Usage: /mouse <on|off>",
     zh: "用法：/mouse <on|off>",
   },
-  altscreenOn: {
-    en: "Alternate screen on: the TUI uses a private buffer so the terminal wheel no longer fights its own scroll state.",
-    zh: "备用屏已开启：TUI 使用独立缓冲区，终端滚轮不再与自身滚动状态互相打架。",
-  },
-  altscreenOff: {
-    en: "Alternate screen off: the TUI shares the shell scrollback (wheel may desync the viewport).",
-    zh: "备用屏已关闭：TUI 与 shell 共用回滚缓冲区（滚轮可能让视口错位）。",
-  },
-  altscreenUsage: {
-    en: "Usage: /altscreen <on|off>",
-    zh: "用法：/altscreen <on|off>",
-  },
   langSwitched: {
     en: "Language switched to English.",
     zh: "已切换为中文。",
@@ -232,10 +208,6 @@ const STRINGS = {
   toolFailed: {
     en: "failed",
     zh: "失败",
-  },
-  usedSkillLabel: {
-    en: "Used Skill",
-    zh: "已加载技能",
   },
   // --- Dialog (picker / confirm) copy --------------------------------------
   // Key-hint wording is unified across select / multi-select / confirm so the
@@ -275,13 +247,9 @@ const STRINGS = {
     en: "This command may delete or reset user content and needs explicit confirmation before it runs.",
     zh: "该命令可能删除或重置用户内容，需要用户明确确认后才能执行。",
   },
-  dialogConfirmExternalFileTitle: {
-    en: "Confirm reading a file outside the workspace",
-    zh: "确认读取工作区外部文件",
-  },
-  dialogConfirmExternalFileBody: {
-    en: "This path is outside the current workspace. Allow this one-time access, or deny it.",
-    zh: "该路径位于当前工作区之外。确认后本次访问放行，否则拒绝。",
+  dialogConfirmCommandLabel: {
+    en: "Command",
+    zh: "命令",
   },
   dialogConfirmCommandTruncated: {
     en: "(truncated)",
@@ -302,47 +270,6 @@ const STRINGS = {
   dialogConfirmCancelDetail: {
     en: "abort the operation",
     zh: "中止操作",
-  },
-  // --- Ask choice (ui_ask_choice) ------------------------------------------
-  askChoiceTitle: {
-    en: "question",
-    zh: "问题",
-  },
-  askChoiceSubmit: {
-    en: "Submit",
-    zh: "提交",
-  },
-  askChoiceOtherLabel: {
-    en: "Other",
-    zh: "其他",
-  },
-  askChoiceHintSingle: {
-    en: "Type your answer, then press Enter to save.",
-    zh: "输入回答后按 Enter 保存。",
-  },
-  askChoiceHintMulti: {
-    en: "Space to toggle, Enter to confirm selection.",
-    zh: "空格切换选中，Enter 确认提交。",
-  },
-  askChoiceFooterSingle: {
-    en: "↵ pick/submit · tab switch · esc cancel",
-    zh: "↵ 选择/提交 · tab 切换 · esc 取消",
-  },
-  askChoiceFooterMulti: {
-    en: "↵ submit · space toggle · tab switch · esc cancel",
-    zh: "↵ 提交 · space 切换 · tab 切换 · esc 取消",
-  },
-  askChoiceHistoryHint: {
-    en: "Type a number to choose, or reply directly:",
-    zh: "请输入序号选择，或直接回复：",
-  },
-  askChoiceHistorySelected: {
-    en: "selected",
-    zh: "已选",
-  },
-  askChoiceHistoryCancelled: {
-    en: "cancelled",
-    zh: "已取消",
   },
   contextTitle: {
     en: "Workspace context",
@@ -436,7 +363,6 @@ const STRINGS = {
       "  /copy                 Copy the last reply to the clipboard",
       "  /copy view            Open native scrollback for partial selection (Ctrl+O)",
       "  /mouse <on|off>       Toggle mouse mode (off = drag to select text)",
-      "  /altscreen <on|off>   Toggle the terminal alternate screen (default on; off shares shell scrollback)",
       "  /doc                  List attached docs",
       "  /doc attach <doc>     Attach a doc to this workspace",
       "  /skill                List attached skills",
@@ -473,7 +399,6 @@ const STRINGS = {
       "  /copy                 复制最后一条回复到剪贴板",
       "  /copy view            打开原生回滚进行跨屏拖选（Ctrl+O）",
       "  /mouse <on|off>       切换鼠标模式（off 后可直接拖选文本）",
-      "  /altscreen <on|off>   切换终端备用屏（默认 on；off 改为与 shell 共用回滚）",
       "  /doc                  列出已挂载的文档",
       "  /doc attach <doc>     挂载文档到当前工作区",
       "  /skill                列出已挂载的技能",
@@ -492,154 +417,12 @@ const STRINGS = {
       "也可以直接输入自然语言。简单的读取/状态请求会走 CLI 命令，其余交给当前 agent。",
     ].join("\n"),
   },
-  // --- Slash-command output ---------------------------------------------
-  // Command results that used to be hardcoded English. Usage lines keep the
-  // command literal untouched; only the surrounding words are translated.
-  unknownCommand: {
-    en: "Unknown command: {0}\n\n",
-    zh: "未知命令：{0}\n\n",
-  },
-  runtimeUsage: { en: "Usage: /runtime <auto|local|server>", zh: "用法：/runtime <auto|local|server>" },
-  runtimeSet: { en: "Runtime: {0}", zh: "运行模式：{0}" },
-  toolsCurrent: {
-    en: "Tool display: {0} (hide | compact | verbose)",
-    zh: "工具显示：{0}（hide | compact | verbose）",
-  },
-  toolsUsage: { en: "Usage: /tools <hide|compact|verbose>", zh: "用法：/tools <hide|compact|verbose>" },
-  toolsSet: { en: "Tool display: {0}", zh: "工具显示：{0}" },
-  thinkingCurrent: {
-    en: "Thinking display: {0} (hide | marker | show)",
-    zh: "思考显示：{0}（hide | marker | show）",
-  },
-  thinkingUsage: { en: "Usage: /thinking <hide|marker|show>", zh: "用法：/thinking <hide|marker|show>" },
-  thinkingSet: { en: "Thinking display: {0}", zh: "思考显示：{0}" },
-  tasksRunning: { en: "Running processes ({0}):", zh: "运行中的进程（{0}）：" },
-  tasksStopped: { en: "Stopped/exited ({0}):", zh: "已停止/已退出（{0}）：" },
-  tasksNone: { en: "No processes.", zh: "没有运行中的进程。" },
-  stopUsage: { en: "Usage: /stop <pid|label|all>", zh: "用法：/stop <pid|label|all>" },
-  stopAllDone: { en: "Stopped {0} processes", zh: "已停止 {0} 个进程" },
-  stopNoPid: { en: "No running process with pid {0}", zh: "没有 pid 为 {0} 的运行中进程" },
-  stopPidDone: { en: "Stopped pid {0} ({1})", zh: "已停止 pid {0}（{1}）" },
-  stopNoLabel: { en: "No running process labeled '{0}'", zh: "没有名为“{0}”的运行中进程" },
-  stopLabelsDone: { en: "Stopped {0}", zh: "已停止 {0}" },
-  compactNothing: {
-    en: "Current dialog: new (nothing to compact yet)",
-    zh: "当前对话还是新的（还没有可压缩的内容）",
-  },
-  agentCurrent: { en: "Current agent: {0} ({1})", zh: "当前 agent：{0}（{1}）" },
-  agentUnknown: {
-    en: "I don't know agent \"{0}\" yet.\nUse /switch, /switch list, /switch minimax-m3, or a full agent key.",
-    zh: "还不认识 agent“{0}”。\n可以用 /switch、/switch list、/switch minimax-m3 或完整的 agent key 来切换。",
-  },
-  themeCurrent: { en: "Current theme: {0} · {1}", zh: "当前主题：{0} · {1}" },
-  themeUsage: {
-    en: "Usage: /theme <name> | /theme light | /theme dark",
-    zh: "用法：/theme <name> | /theme light | /theme dark",
-  },
-  themeAvailable: { en: "Available themes: {0}", zh: "可用主题：{0}" },
-  themeBrightnessSwitched: { en: "Switched to {0} background colors.", zh: "已切换到 {0} 背景色。" },
-  themeBrightnessAuto: {
-    en: "Background colors follow terminal detection (now: {0}).",
-    zh: "背景色跟随终端自动检测（当前：{0}）。",
-  },
-  themeSwitched: { en: "Switched to theme: {0}", zh: "已切换到主题：{0}" },
-  themeUnknown: { en: "Unknown theme: {0}. Available themes: {1}", zh: "未知主题：{0}。可用主题：{1}" },
-  densityCurrent: {
-    en: "Current density: {0}\nUsage: /density <cozy|spacious>",
-    zh: "当前密度：{0}\n用法：/density <cozy|spacious>",
-  },
-  densitySwitched: { en: "Switched to layout density: {0}", zh: "已切换到布局密度：{0}" },
-  densityUnknown: {
-    en: "Unknown density: {0}. Use 'cozy' or 'spacious'.",
-    zh: "未知密度：{0}。请使用 cozy 或 spacious。",
-  },
-  docAttachUsage: { en: "Usage: /doc attach <doc>", zh: "用法：/doc attach <doc>" },
-  docList: { en: "Attached docs: {0}", zh: "已挂载文档：{0}" },
-  docNone: { en: "No docs attached. Use /doc attach <doc>.", zh: "还没有挂载文档。用 /doc attach <doc> 挂载。" },
-  skillAttachUsage: { en: "Usage: /skill attach <skill-ref>", zh: "用法：/skill attach <skill-ref>" },
-  skillAttached: { en: "Attached skill: {0}", zh: "已挂载技能：{0}" },
-  skillDetachUsage: { en: "Usage: /skill detach <skill-ref>", zh: "用法：/skill detach <skill-ref>" },
-  skillDetached: { en: "Detached skill: {0}", zh: "已卸载技能：{0}" },
-  skillNotAttached: { en: "Skill not attached: {0}", zh: "技能未挂载：{0}" },
-  skillNone: { en: "No skills attached.", zh: "还没有挂载技能。" },
-  skillCleared: { en: "Cleared {0} skill(s).", zh: "已清空 {0} 个技能。" },
-  skillList: {
-    en: "Attached skills: {0}\nUsage: /skill attach <ref> | /skill detach <ref> | /skill clear",
-    zh: "已挂载技能：{0}\n用法：/skill attach <ref> | /skill detach <ref> | /skill clear",
-  },
-  skillNoneHint: {
-    en: "No skills attached. Use /skill attach <skill-ref> to attach a skill.\nSkill refs can be a dbKey (page-xxx), a skill name (searched in .agents/skills/ then docs/skills/), or a direct path.",
-    zh: "还没有挂载技能。用 /skill attach <skill-ref> 挂载技能。\n技能引用可以是 dbKey（page-xxx）、技能名（会在 .agents/skills/ 与 docs/skills/ 中查找）或直接路径。",
-  },
-  customizeHint: {
-    en: "Tell nolo what to change, for example: /customize make my default agent more concise.",
-    zh: "告诉 nolo 你想改什么，例如：/customize make my default agent more concise。",
-  },
-  loginHint: {
-    en: "MVP login uses profile/env auth. Set AUTH_TOKEN, NOLO_SERVER, or NOLO_PROFILE before starting nolo.",
-    zh: "MVP 登录走 profile/环境变量认证。启动 nolo 前请设置 AUTH_TOKEN、NOLO_SERVER 或 NOLO_PROFILE。",
-  },
-  versionInfo: {
-    en: "nolo {0}\nUpdate this install with: nolo update\nIf repo-local output differs, publish/install the latest npm package first.",
-    zh: "nolo {0}\n用 nolo update 更新当前安装。\n如果本地仓库输出的版本不同，请先发布/安装最新的 npm 包。",
-  },
-  versionUnknown: { en: "unknown version", zh: "未知版本" },
-  // --- Dialog list / timestamps -----------------------------------------
-  recentDialogs: { en: "Recent dialogs:", zh: "最近对话：" },
-  dialogListTip: {
-    en: "Tip: run /history to pick one interactively, or paste an id after /resume.",
-    zh: "提示：用 /history 交互式选择，或把 id 粘到 /resume 后面。",
-  },
-  timeJustNow: { en: "just now", zh: "刚刚" },
-  timeMinutesAgo: { en: "{0}m ago", zh: "{0} 分钟前" },
-  timeHoursAgo: { en: "{0}h ago", zh: "{0} 小时前" },
-  timeDaysAgo: { en: "{0}d ago", zh: "{0} 天前" },
-  // Overflow hints shared by select / multi-select / ask-choice. The arrows
-  // and count are part of the copy so each locale can order them naturally.
-  dialogMoreAbove: { en: "↑ {0} more", zh: "↑ {0} 更多" },
-  dialogMoreBelow: { en: "↓ {0} more", zh: "↓ {0} 更多" },
-  // Action gate handoff
-  actionGateNeeded: {
-    en: "Action needed in your terminal",
-    zh: "终端需要你的操作",
-  },
-  actionGateEnterHint: {
-    en: "Press Enter to run it now. Follow any prompts below, or Ctrl+C to cancel.",
-    zh: "按 Enter 立即执行，按下方提示操作，或按 Ctrl+C 取消。",
-  },
-  actionGateInteractiveTitle: {
-    en: "This command requires an interactive terminal.",
-    zh: "该命令需要交互式终端",
-  },
-  actionGateInteractiveBody: {
-    en: "Complete it in the terminal, then nolo will continue.",
-    zh: "在终端中完成操作后，nolo 将继续。",
-  },
-  // Agent catalog sources
-  agentSourcePlatform: {
-    en: "Platform",
-    zh: "平台",
-  },
-  agentSourceSubscription: {
-    en: "Subscription",
-    zh: "订阅",
-  },
-  agentSourceApi: {
-    en: "API",
-    zh: "API",
-  },
 } as const;
 
 export type CliStringKey = keyof typeof STRINGS;
 
-export function t(key: CliStringKey, ...params: string[]): string {
-  const text = STRINGS[key][currentLocale];
-  if (params.length === 0) return text;
-  // Optional {0}/{1}/... interpolation; missing params keep the placeholder.
-  return text.replace(/\{(\d+)\}/g, (match, index) => {
-    const replacement = params[Number(index)];
-    return replacement === undefined ? match : replacement;
-  });
+export function t(key: CliStringKey): string {
+  return STRINGS[key][currentLocale];
 }
 
 /**

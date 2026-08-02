@@ -1,7 +1,6 @@
 // packages/app/settings/quickChatTierDefaults.ts
 //
 // 单一职责:快速对话「快速 / 平衡 / 质量 / 图片」四档的内置默认智能体 key。
-// 2026-08-02:balanced/quality 临时指向 flash(最新 flash 性能等同 pro/glm-5.2,可回滚);image 保留 kimi(多模态)。
 //
 // 这是四档默认 agentKey 的唯一真相源(single source of truth)。
 // `packages/app/pages/quickChatFlow.ts` 从此处 re-export,以避免 settings 包
@@ -14,6 +13,8 @@
 
 import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
+  PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
+  PUBLIC_GLM_52_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
 } from "../../core/builtinAgents";
 
@@ -26,7 +27,7 @@ export const QUICK_CHAT_DEFAULT_TIER_AGENTS: Record<
   string
 > = {
   flash: QUICK_CHAT_AUTO_FALLBACK_AGENT_KEY,
-  balanced: QUICK_CHAT_AUTO_FALLBACK_AGENT_KEY,
-  quality: QUICK_CHAT_AUTO_FALLBACK_AGENT_KEY,
+  balanced: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
+  quality: PUBLIC_GLM_52_AGENT_KEY,
   image: QUICK_CHAT_IMAGE_AGENT_KEY,
 };

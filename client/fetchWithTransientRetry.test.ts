@@ -72,6 +72,10 @@ describe("fetchWithTransientRetry", () => {
     expect(await res.json()).toEqual({ last: true });
     expect(calls.length).toBe(3);
     expect(slept.length).toBe(2);
+    // 无 Retry-After 头、无 body retryAfterMs：退避必须是递增的非零值
+    // （250ms → 500ms 指数退避），不能变成 0 即瞬间重试。
+    expect(slept[0]).toBeGreaterThan(0);
+    expect(slept[1]).toBeGreaterThan(slept[0]);
   });
 
   it("gives structured 503 core_draining responses the dedicated long budget", async () => {

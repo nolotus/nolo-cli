@@ -337,6 +337,10 @@ export interface SpaceContent {
   triggerType?: string;
   parentTaskKey?: string;
   parentAutomationKey?: string;
+  /** multi-agent: 当前 dialog 由哪个父 dialog 发起（侧边栏折叠子对话用） */
+  parentDialogId?: string;
+  /** multi-agent: 这棵 dialog 执行树的根 dialog，便于查询 fanout */
+  rootDialogId?: string;
   skillSummary?: {
     isSkill: true;
     skillId?: string;

@@ -233,6 +233,10 @@ const STRINGS = {
     en: "failed",
     zh: "失败",
   },
+  usedSkillLabel: {
+    en: "Used Skill",
+    zh: "已加载技能",
+  },
   // --- Dialog (picker / confirm) copy --------------------------------------
   // Key-hint wording is unified across select / multi-select / confirm so the
   // three dialogs read as one family: "<Label>  <↑↓ move · Enter choose ·

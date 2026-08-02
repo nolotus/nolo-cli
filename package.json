@@ -493,6 +493,7 @@
     "core/timestamp.ts",
     "core/clientLogger.ts",
     "core/sanitizeModelString.ts",
+    "core/abortableDelay.ts",
     "core/generateMainKey.ts",
     "core/generateKeyPairFromSeedV1.ts",
     "core/password.ts",

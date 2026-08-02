@@ -839,7 +839,7 @@ describe("toolOutput", () => {
     expect(errLine).toContain("✗");
   });
 
-  test("compact mode renders loadSkill as Kimi-style Used Skill block (no color)", () => {
+  test("compact mode renders loadSkill as single-line i18n badge (no color)", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
@@ -850,9 +850,7 @@ describe("toolOutput", () => {
       "compact",
       false
     );
-    expect(line).toBe(
-      "● Used Skill (nolo-plan)\n  Skill \"nolo-plan\" loaded inline. Follow its instructions.\n"
-    );
+    expect(line).toBe("✦ Used Skill: nolo-plan\n");
   });
 
   test("compact mode loadSkill prefers metadata.name and falls back to content parsing", () => {
@@ -861,20 +859,19 @@ describe("toolOutput", () => {
       toolEvent({
         type: "tool-result",
         toolName: "loadSkill",
-        argumentsPreview: "{ \"name\": \"ignored\" }",
+        argumentsPreview: '{ "name": "ignored" }',
         metadata: { name: "search-first" },
         content: 'Skill "search-first" loaded inline. Follow its instructions.',
       }),
       "compact",
       false
     );
-    expect(line).toContain("Used Skill (search-first)");
-    expect(line).toContain('Skill "search-first" loaded inline');
+    expect(line).toBe("✦ Used Skill: search-first\n");
     // No-color path must not emit ANSI escapes.
     expect(line).not.toContain("\x1b");
   });
 
-  test("compact mode loadSkill with color emits success bullet and muted detail", () => {
+  test("compact mode loadSkill with color emits single-line success star and badge", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
@@ -885,11 +882,11 @@ describe("toolOutput", () => {
       "compact",
       true
     );
-    // Title line: success-colored bullet, then label, then name in parens.
     expect(line).toContain("Used Skill");
-    expect(line).toContain("(nolo-plan)");
-    // Detail line is indented two spaces and carries the follow-instructions text.
-    expect(line).toContain('Skill "nolo-plan" loaded inline. Follow its instructions.');
+    expect(line).toContain("nolo-plan");
+    expect(line).toContain("✦");
+    // Single line output
+    expect(line.split("\n").filter(Boolean)).toHaveLength(1);
     // ANSI present (color enabled).
     expect(line).toContain("\x1b");
   });
@@ -1014,7 +1011,7 @@ describe("toolOutput", () => {
     );
     expect(startLine).toContain("● startAgentRun");
     expect(startLine).toContain("Run started");
-    expect(startLine).toContain("runId   run-9");
+    expect(startLine).not.toContain("runId");
     expect(startLine).not.toContain('{"runId"');
   });
 

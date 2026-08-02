@@ -17,6 +17,7 @@ import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { resolveRetryAfterMs } from "../../app/utils/retryAfter";
 import { selectIdentityToken } from "identity/selectors";
 import { isAbortError } from "../../core/abortError";
+import { waitForAbortableDelay } from "../../core/abortableDelay";
 import { CORE_DRAIN_REASON } from "../../core/drainReason";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import { normalizeServerOrigin } from "../../core/serverOrigin";
@@ -46,6 +47,11 @@ export interface RunAgentBackgroundArgs {
     signal?: AbortSignal;
     /** 是否等待 SSE 完成事件；false 时拿到 dialogId 立即返回（用于 callAgent background 模式） */
     waitForCompletion?: boolean;
+    /**
+     * 父对话 id。非空时透传给服务端 /api/agent/run 的 parentDialogId，
+     * 让后台子对话（如 review）记录父子关系，供侧边栏折叠。
+     */
+    parentDialogId?: string;
 }
 
 const MAX_SSE_RETRIES = 3;
@@ -82,20 +88,7 @@ function createSubscriptionError(
 }
 
 async function waitForRetryDelay(retryAfterMs: number, signal: AbortSignal) {
-    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-    await new Promise<void>((resolve, reject) => {
-        let timeoutId: ReturnType<typeof setTimeout>;
-        const onAbort = () => {
-            clearTimeout(timeoutId);
-            signal.removeEventListener("abort", onAbort);
-            reject(new DOMException("Aborted", "AbortError"));
-        };
-        timeoutId = setTimeout(() => {
-            signal.removeEventListener("abort", onAbort);
-            resolve();
-        }, retryAfterMs);
-        signal.addEventListener("abort", onAbort, { once: true });
-    });
+    await waitForAbortableDelay(retryAfterMs, signal);
 }
 
 function parseRetryableJson(text: string) {
@@ -211,7 +204,7 @@ export const runAgentBackground = createAsyncThunk<
     RunAgentBackgroundArgs,
     { state: RootState }
 >("agent/runBackground", async (args, { getState, signal: thunkSignal }) => {
-    const { agentKey, userInput, serverBase, spaceId, onStatusChange, onDone, onFailed } = args;
+    const { agentKey, userInput, serverBase, spaceId, parentDialogId, onStatusChange, onDone, onFailed } = args;
 
     const state = getState();
     const currentServer = normalizeServerOrigin(serverBase) || selectCurrentServer(state);
@@ -246,12 +239,14 @@ export const runAgentBackground = createAsyncThunk<
                 userInput,
                 spaceId,
                 background: true,
+                ...(parentDialogId ? { parentDialogId } : {}),
                 runtimeContext: {
                     surface: "web",
                     host: "browser",
                     runtime: "react",
                     entrypoint: "background-agent-run",
                     capabilities: ["background", "sse-events"],
+                    ...(parentDialogId ? { parentThreadId: parentDialogId } : {}),
                 },
             }),
             signal: effectiveSignal,

@@ -9,7 +9,7 @@
 
 import { callToolApi } from "../toolApiClient";
 import { toErrorMessage } from "../../../core/errorMessage";
-import { getAgentRunStatusIcon } from "./agentRunDisplayHelpers";
+import { formatListRunsCard, formatStatusRunCard, formatStopRunCard } from "./agentRunDisplayHelpers";
 
 export const controlAgentRunFunctionSchema = {
     name: "controlAgentRun",
@@ -110,16 +110,9 @@ async function handleList(
         const runs = resData?.runs ?? [];
         const count = resData?.count ?? runs.length;
 
-        const lines = [`Runs (${count})`];
-        for (const t of runs) {
-            const icon = getAgentRunStatusIcon(t.status);
-            const name = t.agentName || t.name || "agent";
-            lines.push(`  ${icon}  ${name}  ${t.runId}`);
-        }
-
         return {
             rawData: { runs, count },
-            displayData: lines.join("\n"),
+            displayData: formatListRunsCard(runs),
         };
     } catch (e: any) {
         throw new Error(`controlAgentRun(list) 失败: ${toErrorMessage(e)}`);
@@ -144,32 +137,22 @@ async function handleStatus(
         if (!resData || resData.found === false || !resData.run) {
             return {
                 rawData: { runId: opts.runId, found: false },
-                displayData: `Run status\n  ? not_found\n  runId   ${opts.runId}`,
+                displayData: `Run status\n  ? not_found`,
             };
         }
 
         const run = resData.run;
         const logLines: string[] | undefined = resData.logLines;
-        const icon = getAgentRunStatusIcon(run.status);
         const name = run.agentName || run.name || "agent";
-
-        const displayParts = [
-            "Run status",
-            `  ${icon} ${run.status}`,
-            `  agent   ${name}`,
-            `  runId   ${run.runId}`,
-            ...(run.lastToolNames?.length ? [`  lastTools ${run.lastToolNames.join(", ")}`] : []),
-            ...(run.toolCallCount !== undefined ? [`  toolCalls ${run.toolCallCount}`] : []),
-            ...(run.errorMessage ? [`  error     ${run.errorMessage}`] : []),
-        ];
-
-        if (logLines && logLines.length > 0) {
-            displayParts.push("", "Log tail:", ...logLines.map((l: string) => `  ${l}`));
-        }
 
         return {
             rawData: { found: true, ...run, ...(logLines ? { logLines } : {}) },
-            displayData: displayParts.join("\n"),
+            displayData: formatStatusRunCard(name, run.status, {
+                lastToolNames: run.lastToolNames,
+                toolCallCount: run.toolCallCount,
+                errorMessage: run.errorMessage,
+                logLines,
+            }),
         };
     } catch (e: any) {
         throw new Error(`controlAgentRun(status) 失败: ${toErrorMessage(e)}`);
@@ -192,11 +175,10 @@ async function handleStop(
 
         const result = data?.data ?? data;
         const status = result?.status ?? "cancelled";
-        const icon = getAgentRunStatusIcon(status);
 
         return {
             rawData: { runId: opts.runId, status, wasActive: result?.wasActive ?? false },
-            displayData: `Run stopped\n  ${icon} ${status}\n  runId   ${opts.runId}`,
+            displayData: formatStopRunCard(status),
         };
     } catch (e: any) {
         throw new Error(`controlAgentRun(stop) 失败: ${toErrorMessage(e)}`);

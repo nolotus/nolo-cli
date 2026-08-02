@@ -9,7 +9,13 @@ import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { readActionGate, readCommandActionGatePayload } from "../agent-runtime/actionGate";
 import { parseUiAskChoiceContent } from "../ai/tools/uiAskChoiceTool";
 import { formatAgentListCard } from "../ai/tools/noloWorkspaceReadTools";
-import { getAgentRunStatusIcon } from "../ai/tools/agent/agentRunDisplayHelpers";
+import {
+  formatListRunsCard,
+  formatStartRunCard,
+  formatStatusRunCard,
+  formatStopRunCard,
+  getAgentRunStatusIcon,
+} from "../ai/tools/agent/agentRunDisplayHelpers";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 import { type DiffLineKind, renderDiffLine, themeText } from "../tui/theme";
 import { displayWidth } from "../tui/tuiAnsi";
@@ -423,48 +429,26 @@ function recoverOrchestrationDisplayFromContent(toolName: string, content: strin
       return formatAgentListCard(agents as Parameters<typeof formatAgentListCard>[0]);
     }
     if (toolName === "startAgentRun") {
-      const runId = typeof parsed.runId === "string" ? parsed.runId : "—";
       const name =
         typeof parsed.agentName === "string" && parsed.agentName.trim()
           ? parsed.agentName.trim()
           : typeof parsed.name === "string" && parsed.name.trim()
             ? parsed.name.trim()
             : "agent";
-      const pid =
-        typeof parsed.pid === "number" || typeof parsed.pid === "string" ? String(parsed.pid) : undefined;
-      const status = typeof parsed.status === "string" ? parsed.status : undefined;
-      const lastLine =
-        pid !== undefined
-          ? `  pid     ${pid}`
-          : `  status  ${status ? `${getAgentRunStatusIcon(status)} ${status}` : "—"}`;
-      return `Run started\n  agent   ${name}\n  runId   ${runId}\n${lastLine}`;
+      const status = typeof parsed.status === "string" ? parsed.status : "running";
+      return formatStartRunCard(name, status);
     }
     if (toolName === "controlAgentRun") {
       if (Array.isArray(parsed.runs)) {
-        const runs = parsed.runs as Array<Record<string, unknown>>;
-        const lines = [`Runs (${runs.length})`];
-        for (const run of runs) {
-          const status = typeof run.status === "string" ? run.status : "—";
-          const icon = getAgentRunStatusIcon(status);
-          const name =
-            typeof run.agentName === "string" && run.agentName.trim()
-              ? run.agentName.trim()
-              : typeof run.name === "string" && run.name.trim()
-                ? run.name.trim()
-                : "agent";
-          const runId = typeof run.runId === "string" ? run.runId : "—";
-          lines.push(`  ${icon}  ${name}  ${runId}`);
-        }
-        return lines.join("\n");
+        const runs = parsed.runs as Array<{ agentName?: string; name?: string; status?: string }>;
+        return formatListRunsCard(runs);
       }
-      const runId = typeof parsed.runId === "string" ? parsed.runId : "—";
       const status = typeof parsed.status === "string" ? parsed.status : undefined;
-      const icon = getAgentRunStatusIcon(status ?? "not_found");
       if (parsed.found === false || status === "not_found") {
-        return `Run status\n  ? not_found\n  runId   ${runId}`;
+        return `Run status\n  ? not_found`;
       }
       if (status === "killed" || status === "cancelled" || status === "cancelling") {
-        return `Run stopped\n  ${icon} ${status}\n  runId   ${runId}`;
+        return formatStopRunCard(status);
       }
       const name =
         typeof parsed.agentName === "string" && parsed.agentName.trim()
@@ -472,9 +456,9 @@ function recoverOrchestrationDisplayFromContent(toolName: string, content: strin
           : typeof parsed.name === "string" && parsed.name.trim()
             ? parsed.name.trim()
             : "agent";
-      const lines = [`Run status`, `  ${icon} ${status ?? "—"}`, `  agent   ${name}`, `  runId   ${runId}`];
-      if (parsed.pid != null) lines.push(`  pid     ${String(parsed.pid)}`);
-      return lines.join("\n");
+      const errorMessage = typeof parsed.errorMessage === "string" ? parsed.errorMessage : undefined;
+      const logLines = Array.isArray(parsed.logLines) ? (parsed.logLines as string[]) : undefined;
+      return formatStatusRunCard(name, status ?? "—", { errorMessage, logLines });
     }
   } catch {
     // Not JSON / unexpected shape — fall through.
@@ -810,19 +794,18 @@ function formatCompactToolLine(
     const content = typeof event.content === "string" ? event.content : "";
     const failed =
       /^Skill\s+"[^"]*"\s+not found/.test(content) || isFailedToolResult(event);
+    const labelText = t("usedSkillLabel");
     if (failed) {
       const message = clip(content.split("\n")[0] || t("toolFailed"), 96);
-      return formatToolTraceLine(`▸ Used Skill (${skillName})  ✗ ${message}`, colorEnabled, "error");
+      return formatToolTraceLine(`▸ ${labelText} (${skillName})  ✗ ${message}`, colorEnabled, "error");
     }
-    const resultLine = `Skill "${skillName}" loaded inline. Follow its instructions.`;
     if (!colorEnabled) {
-      return `● Used Skill (${skillName})\n  ${resultLine}\n`;
+      return `✦ ${labelText}: ${skillName}\n`;
     }
-    const bullet = themeText("●", "success", true);
-    const labelPart = themeText("Used Skill", "muted", true);
-    const namePart = themeText(`(${skillName})`, "chrome", true);
-    const detail = themeText(`  ${resultLine}`, "muted", true);
-    return `${bullet} ${labelPart} ${namePart}\n${detail}\n`;
+    const star = themeText("✦", "success", true);
+    const labelPart = themeText(labelText, "muted", true);
+    const namePart = themeText(skillName, "chrome", true);
+    return `${star} ${labelPart}: ${namePart}\n`;
   }
 
   // listAgents / startAgentRun / controlAgentRun orchestration card block

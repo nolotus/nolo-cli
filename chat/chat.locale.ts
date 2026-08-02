@@ -565,6 +565,7 @@ export default {
         fallbackSpaces: "匹配的空间",
         failureDialogs: "删除对话执行失败",
         failureSpaces: "删除空间执行失败",
+        // executedSummary 仅写入 toolMessage 内部记录，不直接展示给用户，故保留英文标识符（zh/zh-Hant/ja 同）
         executedDialogs: "deleteDialogs executed",
         executedSpaces: "deleteSpaces executed",
         entityDialog: "对话",
@@ -911,6 +912,7 @@ export default {
         fallbackSpaces: "符合的空間",
         failureDialogs: "刪除對話執行失敗",
         failureSpaces: "刪除空間執行失敗",
+        // executedSummary 仅写入 toolMessage 内部记录，不直接展示给用户，故保留英文标识符
         executedDialogs: "deleteDialogs executed",
         executedSpaces: "deleteSpaces executed",
         entityDialog: "對話",
@@ -1208,6 +1210,7 @@ export default {
         fallbackSpaces: "一致するスペース",
         failureDialogs: "対話の削除に失敗しました",
         failureSpaces: "スペースの削除に失敗しました",
+        // executedSummary 仅写入 toolMessage 内部记录，不直接展示给用户，故保留英文标识符
         executedDialogs: "deleteDialogs executed",
         executedSpaces: "deleteSpaces executed",
         entityDialog: "対話",

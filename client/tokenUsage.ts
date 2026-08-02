@@ -9,6 +9,7 @@ import {
   CLI_AUTO_TIER_MODELS,
   resolveCliAutoAgentModel,
 } from "./autoModelRouter";
+import { normalizeUsage } from "../ai/token/normalizeUsage";
 import type { EnvLike } from "./agentRunTypes";
 
 export type TurnTokenUsage = {
@@ -18,6 +19,13 @@ export type TurnTokenUsage = {
   remaining?: number;
   /** 本轮累计消耗的平台积分（provider 返回 cost 按 7 credits/USD 换算；非平台计费无此值）。 */
   credits?: number;
+  /**
+   * 命中缓存的输入 token（已含在 `input` 里，不是额外量）。
+   * 命中与未命中的单价可差一到两个数量级，光看 input 看不出账单为什么是那个数。
+   */
+  cacheRead?: number;
+  /** 写入缓存的输入 token（同样已含在 `input` 里）。 */
+  cacheWrite?: number;
 };
 
 const isUsableModelId = (model?: string | null): model is string => {
@@ -85,7 +93,20 @@ export function parseUsageRecord(usage?: Record<string, unknown> | null): TurnTo
   const output = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
   if (!Number.isFinite(input) || !Number.isFinite(output)) return undefined;
   if (!input && !output) return undefined;
-  return { input, output };
+  // Cache field names differ per provider — Anthropic uses
+  // cache_read_input_tokens, DeepSeek uses top-level prompt_cache_hit_tokens /
+  // prompt_cache_miss_tokens, OpenAI nests cached_tokens under
+  // prompt_tokens_details. normalizeUsage already knows all of them, so read
+  // through it rather than keeping a second, narrower list here.
+  const normalized = normalizeUsage(usage as never);
+  const cacheRead = normalized.cache_read_input_tokens || undefined;
+  const cacheWrite = normalized.cache_creation_input_tokens || undefined;
+  return {
+    input,
+    output,
+    ...(cacheRead === undefined ? {} : { cacheRead }),
+    ...(cacheWrite === undefined ? {} : { cacheWrite }),
+  };
 }
 
 export function mergeUsageRecords(
@@ -94,11 +115,18 @@ export function mergeUsageRecords(
 ) {
   const left = parseUsageRecord(current);
   const right = parseUsageRecord(next);
-  if (!left) return right ? { input_tokens: right.input, output_tokens: right.output } : current ?? undefined;
+  // Nothing on the left: hand back `next` untouched. Reshaping it here used to
+  // drop the cache fields, which is how a merged total could disagree with the
+  // provider's own numbers.
+  if (!left) return right ? next ?? undefined : current ?? undefined;
   if (!right) return current ?? undefined;
+  const cacheRead = (left.cacheRead ?? 0) + (right.cacheRead ?? 0);
+  const cacheWrite = (left.cacheWrite ?? 0) + (right.cacheWrite ?? 0);
   return {
     input_tokens: left.input + right.input,
     output_tokens: left.output + right.output,
+    ...(cacheRead > 0 ? { cache_read_input_tokens: cacheRead } : {}),
+    ...(cacheWrite > 0 ? { cache_creation_input_tokens: cacheWrite } : {}),
   };
 }
 
@@ -161,7 +189,13 @@ export function renderTokenStatus(tokens?: TurnTokenUsage) {
       : tokens.contextWindow
         ? "—"
         : "—";
-  return `in ${formatTokenCount(tokens.input)} out ${formatTokenCount(tokens.output)} left ${left}`;
+  // Cache hits are a slice of `input`, so they read as a parenthetical on it
+  // rather than a separate column.
+  const cache =
+    tokens.cacheRead != null && tokens.cacheRead > 0
+      ? ` (cache ${formatTokenCount(tokens.cacheRead)})`
+      : "";
+  return `in ${formatTokenCount(tokens.input)}${cache} out ${formatTokenCount(tokens.output)} left ${left}`;
 }
 
 export function shouldShowUsage(env: EnvLike) {

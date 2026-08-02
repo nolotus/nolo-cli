@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { FsLike, SpawnLike } from "../agentRunControl";
+import { agentRunCardLabels } from "../tui/i18n";
 import {
   createCliControlAgentRunExecutor,
   createCliStartAgentRunExecutor,
@@ -67,7 +68,9 @@ describe("cli startAgentRun executor", () => {
     });
 
     expect(JSON.parse(result.content)).toEqual({ runId: "run-1", status: "running" });
-    expect(result.metadata?.displayData).toContain("Run started");
+    // 卡片标题现在按 CLI locale 本地化（默认 zh）；断言用同一套 label 源，
+    // 避免把「英文字面量」当成契约再次写死。
+    expect(result.metadata?.displayData).toContain(agentRunCardLabels().runStarted);
     expect(result.metadata?.displayData).not.toContain("runId");
 
     // 注册表记录已写入

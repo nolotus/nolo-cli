@@ -11,16 +11,17 @@ import { parseUiAskChoiceContent } from "../../ai/tools/uiAskChoiceTool";
 import { formatAgentListCard } from "../../ai/tools/noloWorkspaceReadTools";
 import {
   formatListRunsCard,
+  formatNotFoundRunCard,
   formatStartRunCard,
   formatStatusRunCard,
   formatStopRunCard,
-  getAgentRunStatusIcon,
+  isAgentRunTerminalStatus,
 } from "../../ai/tools/agent/agentRunDisplayHelpers";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 import { type DiffLineKind, renderDiffLine, themeText } from "../tui/theme";
 import { displayWidth } from "../tui/tuiAnsi";
 import { diffLines } from "diff";
-import { t, toolLabel } from "../tui/i18n";
+import { agentRunCardLabels, t, toolLabel } from "../tui/i18n";
 
 export type ToolDisplayMode = "hide" | "compact" | "verbose";
 
@@ -268,6 +269,31 @@ function isNeedsActionToolResult(event: LocalAgentToolEvent) {
 }
 
 /**
+ * Field readers for a controlAgentRun status payload. Two callers parse the
+ * same JSON — the display-recovery path and the fold path — so the shape is
+ * read in one place; the payload comes over a bridge we do not control, which
+ * is exactly the kind of contract that should not be spelled out twice.
+ */
+function readRunAgentName(parsed: Record<string, unknown>): string {
+  const agentName = typeof parsed.agentName === "string" ? parsed.agentName.trim() : "";
+  if (agentName) return agentName;
+  const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+  return name || "agent";
+}
+
+function readRunLogLines(parsed: Record<string, unknown>): string[] | undefined {
+  if (Array.isArray(parsed.logLines)) return parsed.logLines as string[];
+  if (typeof parsed.logTail === "string" && parsed.logTail.trim()) {
+    return parsed.logTail.split("\n");
+  }
+  return undefined;
+}
+
+function readRunErrorMessage(parsed: Record<string, unknown>): string | undefined {
+  return typeof parsed.errorMessage === "string" ? parsed.errorMessage : undefined;
+}
+
+/**
  * Parse a ui_ask_choice tool result into a question + numbered option list
  * for CLI display. Returns null when the content is not a ui_ask_choice
  * payload (so non-choice tools fall through to the generic compact line).
@@ -422,6 +448,7 @@ function formatToolTraceLine(text: string, colorEnabled: boolean, accent: "none"
 function recoverOrchestrationDisplayFromContent(toolName: string, content: string): string {
   const trimmed = content.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return content;
+  const labels = agentRunCardLabels();
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
     if (toolName === "listAgents") {
@@ -436,34 +463,71 @@ function recoverOrchestrationDisplayFromContent(toolName: string, content: strin
             ? parsed.name.trim()
             : "agent";
       const status = typeof parsed.status === "string" ? parsed.status : "running";
-      return formatStartRunCard(name, status);
+      return formatStartRunCard(name, status, labels);
     }
     if (toolName === "controlAgentRun") {
       if (Array.isArray(parsed.runs)) {
         const runs = parsed.runs as Array<{ agentName?: string; name?: string; status?: string }>;
-        return formatListRunsCard(runs);
+        return formatListRunsCard(runs, labels);
       }
       const status = typeof parsed.status === "string" ? parsed.status : undefined;
       if (parsed.found === false || status === "not_found") {
-        return `Run status\n  ? not_found`;
+        return formatNotFoundRunCard(labels);
       }
       if (status === "killed" || status === "cancelled" || status === "cancelling") {
-        return formatStopRunCard(status);
+        return formatStopRunCard(status, labels);
       }
-      const name =
-        typeof parsed.agentName === "string" && parsed.agentName.trim()
-          ? parsed.agentName.trim()
-          : typeof parsed.name === "string" && parsed.name.trim()
-            ? parsed.name.trim()
-            : "agent";
-      const errorMessage = typeof parsed.errorMessage === "string" ? parsed.errorMessage : undefined;
-      const logLines = Array.isArray(parsed.logLines) ? (parsed.logLines as string[]) : undefined;
-      return formatStatusRunCard(name, status ?? "—", { errorMessage, logLines });
+      return formatStatusRunCard(readRunAgentName(parsed), status ?? "—", {
+        errorMessage: readRunErrorMessage(parsed),
+        logLines: readRunLogLines(parsed),
+        labels,
+      });
     }
   } catch {
     // Not JSON / unexpected shape — fall through.
   }
   return content;
+}
+
+/**
+ * Parse a controlAgentRun tool-result into a foldable status snapshot.
+ * List/stop/not_found cards are not foldable status polls.
+ */
+function parseControlAgentRunStatusEvent(event: LocalAgentToolEvent): {
+  runId: string;
+  status: string;
+  agentName: string;
+  errorMessage?: string;
+  logLines?: string[];
+  logKey: string;
+} | null {
+  const raw =
+    typeof event.content === "string" && event.content.trim()
+      ? event.content.trim()
+      : "";
+  if (!raw.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (Array.isArray(parsed.runs)) return null;
+    const status = typeof parsed.status === "string" ? parsed.status : undefined;
+    if (parsed.found === false || status === "not_found") return null;
+    if (status === "killed" || status === "cancelled" || status === "cancelling") return null;
+    if (!status) return null;
+    const runId =
+      typeof parsed.runId === "string" && parsed.runId.trim()
+        ? parsed.runId.trim()
+        : typeof event.metadata?.runId === "string"
+          ? event.metadata.runId
+          : "";
+    if (!runId) return null;
+    const agentName = readRunAgentName(parsed);
+    const errorMessage = readRunErrorMessage(parsed);
+    const logLines = readRunLogLines(parsed);
+    const logKey = logLines && logLines.length > 0 ? logLines.join("\n") : "";
+    return { runId, status, agentName, errorMessage, logLines, logKey };
+  } catch {
+    return null;
+  }
 }
 
 function formatOrchestrationCardBlock(
@@ -476,8 +540,8 @@ function formatOrchestrationCardBlock(
     typeof event.metadata?.displayData === "string" && event.metadata.displayData.trim()
       ? event.metadata.displayData
       : typeof event.content === "string"
-      ? event.content
-      : "";
+        ? event.content
+        : "";
   // Web → CLI bridge may only carry JSON content without metadata.displayData.
   // Recover a readable card before dumping the raw JSON blob into the transcript.
   if (
@@ -506,7 +570,12 @@ function formatOrchestrationCardBlock(
   }
 
   const displayData = rawDataStr.trim();
-  const lines = displayData ? displayData.split("\n") : [];
+  // `displayData` may be a card baked by the server (possibly an older build),
+  // which this process cannot fix structurally the way formatStatusRunCard does.
+  // Drop the information-free `agent   agent` row if such a card still carries it.
+  const lines = displayData
+    ? displayData.split("\n").filter((line) => !/^\s*agent\s+agent\s*$/.test(line))
+    : [];
 
   if (!colorEnabled) {
     let out = `● ${rawLabel}\n`;
@@ -523,6 +592,44 @@ function formatOrchestrationCardBlock(
     out += `  ${themeText(line, "muted", true)}\n`;
   }
   return out;
+}
+
+function formatFoldedControlStatusCard(
+  snapshot: {
+    runId: string;
+    status: string;
+    agentName: string;
+    errorMessage?: string;
+    logLines?: string[];
+    pollCount: number;
+    elapsedMs?: number;
+    includeLogTail: boolean;
+  },
+  colorEnabled: boolean
+): string {
+  const labels = agentRunCardLabels();
+  const body = formatStatusRunCard(snapshot.agentName, snapshot.status, {
+    errorMessage: snapshot.errorMessage,
+    logLines: snapshot.logLines,
+    pollCount: snapshot.pollCount,
+    elapsedMs: snapshot.elapsedMs,
+    includeLogTail: snapshot.includeLogTail,
+    labels,
+  });
+  // Reuse the same ● card chrome as a normal orchestration result.
+  return formatOrchestrationCardBlock(
+    {
+      type: "tool-result",
+      round: 0,
+      toolCallId: `fold-${snapshot.runId}`,
+      toolName: "controlAgentRun",
+      content: "",
+      metadata: { displayData: body },
+      elapsedMs: snapshot.elapsedMs,
+    },
+    "controlAgentRun",
+    colorEnabled
+  );
 }
 
 function formatVerboseToolEvent(event: LocalAgentToolEvent, colorEnabled: boolean) {
@@ -605,15 +712,16 @@ export function formatSearchTreeBlockForCli(
 ): string {
   if (items.length === 0) return "";
   const { count, lines } = formatSearchTreeLines(items);
+  const titleText = toolLabel("searchFiles");
 
   if (!colorEnabled) {
-    const headerLine = `• Search (${count})\n`;
+    const headerLine = `• ${titleText} (${count})\n`;
     const treeLines = lines.map((l) => `  ${l.connector}${l.queryText}`).join("\n");
     return `${headerLine}${treeLines}\n`;
   }
 
   const bullet = themeText("•", "chrome", true);
-  const title = styleCliText("Search", "bold", true);
+  const title = styleCliText(titleText, "bold", true);
   const countText = themeText(`(${count})`, "muted", true);
   const headerLine = `${bullet} ${title} ${countText}\n`;
 
@@ -634,15 +742,16 @@ export function formatReadTreeBlockForCli(
 ): string {
   if (items.length === 0) return "";
   const { count, lines } = formatReadTreeLines(items);
+  const titleText = toolLabel("readFile");
 
   if (!colorEnabled) {
-    const headerLine = `• Read (${count})\n`;
+    const headerLine = `• ${titleText} (${count})\n`;
     const treeLines = lines.map((l) => `  ${l.connector}${l.pathWithRange}`).join("\n");
     return `${headerLine}${treeLines}\n`;
   }
 
   const bullet = themeText("•", "chrome", true);
-  const title = styleCliText("Read", "bold", true);
+  const title = styleCliText(titleText, "bold", true);
   const countText = themeText(`(${count})`, "muted", true);
   const headerLine = `${bullet} ${title} ${countText}\n`;
 
@@ -663,15 +772,16 @@ export function formatRunTreeBlockForCli(
 ): string {
   if (items.length === 0) return "";
   const { count, lines } = formatRunTreeLines(items);
+  const titleText = toolLabel("execShell");
 
   if (!colorEnabled) {
-    const headerLine = `• Run (${count})\n`;
+    const headerLine = `• ${titleText} (${count})\n`;
     const treeLines = lines.map((l) => `  ${l.connector}${l.commandText}`).join("\n");
     return `${headerLine}${treeLines}\n`;
   }
 
   const bullet = themeText("•", "chrome", true);
-  const title = styleCliText("Run", "bold", true);
+  const title = styleCliText(titleText, "bold", true);
   const countText = themeText(`(${count})`, "muted", true);
   const headerLine = `${bullet} ${title} ${countText}\n`;
 
@@ -692,15 +802,16 @@ export function formatFetchTreeBlockForCli(
 ): string {
   if (items.length === 0) return "";
   const { count, lines } = formatFetchTreeLines(items);
+  const titleText = toolLabel("fetchWebpage");
 
   if (!colorEnabled) {
-    const headerLine = `• Fetch (${count})\n`;
+    const headerLine = `• ${titleText} (${count})\n`;
     const treeLines = lines.map((l) => `  ${l.connector}${l.urlText}`).join("\n");
     return `${headerLine}${treeLines}\n`;
   }
 
   const bullet = themeText("•", "chrome", true);
-  const title = styleCliText("Fetch", "bold", true);
+  const title = styleCliText(titleText, "bold", true);
   const countText = themeText(`(${count})`, "muted", true);
   const headerLine = `${bullet} ${title} ${countText}\n`;
 
@@ -885,9 +996,46 @@ export function createToolEventFormatter(
   let searchBuffer: LocalAgentToolEvent[] = [];
   let runBuffer: LocalAgentToolEvent[] = [];
   let fetchBuffer: LocalAgentToolEvent[] = [];
+  /** Consecutive controlAgentRun(status) polls for one runId — updated in place. */
+  let statusFold: {
+    runId: string;
+    status: string;
+    agentName: string;
+    errorMessage?: string;
+    logLines?: string[];
+    logKey: string;
+    pollCount: number;
+    elapsedMs?: number;
+  } | null = null;
+  /** Last log tail emitted per runId — identical tails are not redrawn. */
+  const lastEmittedLogByRunId = new Map<string, string>();
+
+  const flushStatusFold = (): string => {
+    if (!statusFold) return "";
+    const fold = statusFold;
+    statusFold = null;
+    const prevLog = lastEmittedLogByRunId.get(fold.runId);
+    const includeLogTail = Boolean(fold.logKey) && fold.logKey !== prevLog;
+    if (fold.logKey) {
+      lastEmittedLogByRunId.set(fold.runId, fold.logKey);
+    }
+    return formatFoldedControlStatusCard(
+      {
+        runId: fold.runId,
+        status: fold.status,
+        agentName: fold.agentName,
+        errorMessage: fold.errorMessage,
+        logLines: fold.logLines,
+        pollCount: fold.pollCount,
+        elapsedMs: fold.elapsedMs,
+        includeLogTail,
+      },
+      colorEnabled
+    );
+  };
 
   const flushBuffers = (): string => {
-    let out = "";
+    let out = flushStatusFold();
     if (readBuffer.length > 0) {
       const items = readBuffer.map((evt) => {
         const call = pending.get(evt.toolCallId);
@@ -959,6 +1107,56 @@ export function createToolEventFormatter(
   const formatter = (event: LocalAgentToolEvent): string => {
     if (mode === "hide") return "";
     if (mode === "verbose") return formatVerboseToolEvent(event, colorEnabled);
+
+    // controlAgentRun(status) for the same runId folds like Read/Run trees:
+    // consecutive polls update one card (poll count + latest status/timing).
+    if (event.toolName === "controlAgentRun") {
+      if (event.type === "tool-call") {
+        pending.set(event.toolCallId, {
+          toolName: event.toolName,
+          argumentsPreview: event.argumentsPreview,
+        });
+        return "";
+      }
+      if (event.type === "tool-result") {
+        const snapshot = parseControlAgentRunStatusEvent(event);
+        if (snapshot) {
+          let out = "";
+          if (statusFold && statusFold.runId !== snapshot.runId) {
+            out += flushStatusFold();
+          }
+          if (!statusFold) {
+            statusFold = {
+              ...snapshot,
+              pollCount: 1,
+              elapsedMs: event.elapsedMs,
+            };
+          } else {
+            statusFold = {
+              runId: snapshot.runId,
+              status: snapshot.status,
+              agentName: snapshot.agentName,
+              errorMessage: snapshot.errorMessage ?? statusFold.errorMessage,
+              logLines: snapshot.logLines ?? statusFold.logLines,
+              logKey: snapshot.logKey || statusFold.logKey,
+              pollCount: statusFold.pollCount + 1,
+              elapsedMs: event.elapsedMs,
+            };
+          }
+          pending.delete(event.toolCallId);
+          // Terminal statuses must not sit hidden in the buffer.
+          if (isAgentRunTerminalStatus(snapshot.status)) {
+            out += flushBuffers();
+          }
+          return out;
+        }
+        // list / stop / not_found: flush any status fold, then render normally.
+        const flushed = flushBuffers();
+        const call = pending.get(event.toolCallId);
+        pending.delete(event.toolCallId);
+        return `${flushed}${formatCompactToolLine(event, call, colorEnabled)}`;
+      }
+    }
 
     if (isReadToolName(event.toolName)) {
       if (event.type === "tool-call") {

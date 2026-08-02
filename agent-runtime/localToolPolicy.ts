@@ -29,7 +29,12 @@ const REMOVED_LOCAL_TOOLS = new Set([
   "commitWorkspace",
 ]);
 
-const DEFAULT_LOCAL_TOOLS = new Set([
+/**
+ * Tools every local agent gets without an allowlist. Exported because tests
+ * used to keep their own transcribed copies, which silently fell behind each
+ * time a tool was added here — a stale copy makes a passing test meaningless.
+ */
+export const DEFAULT_LOCAL_TOOLS = new Set([
   "listFiles",
   "readFile",
   "writeFile",

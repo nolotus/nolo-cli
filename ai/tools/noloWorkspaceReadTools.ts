@@ -548,8 +548,18 @@ export async function listAgentsFunc(args: any, thunkApi: any): Promise<ToolResu
 
   const runtime = getRuntime(thunkApi);
   const userId = runtime?.currentUserId ?? undefined;
+  // NOTE: We intentionally do NOT pass publicRecordExists here.
+  // record.isPublic is a flag on the private record; it does NOT prove the
+  // agent-pub-<id> record actually exists (real data has isPublic=true with no
+  // readable public record). Verifying existence would require N extra remote
+  // reads — not worth it for a convenience field. Per the safe-summary contract:
+  // omit publicKey rather than emit one that cannot resolve. Explicit
+  // record.publicKey (if present) is still trusted by toSafeAgentSummary.
   let agents = Array.from(recordsMap.values()).map((record) =>
-    toSafeAgentSummary(record, { favoritesMap, userId })
+    toSafeAgentSummary(record, {
+      favoritesMap,
+      userId,
+    })
   );
 
   if (args?.publicOnly === true) {

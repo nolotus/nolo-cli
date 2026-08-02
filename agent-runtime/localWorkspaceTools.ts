@@ -42,6 +42,10 @@ type LocalWorkspaceToolArgs = {
   confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
   abortSignal?: AbortSignal;
   detachMs?: number;
+  /** Optional override for rg resolution (tests / hosts without PATH binaries). */
+  resolveRipgrepBinary?: () => string | null;
+  /** Optional override for grep resolution (tests / hosts without PATH binaries). */
+  resolveGrepBinary?: () => string | null;
 };
 
 const EXEC_SHELL_TIMEOUT_ENV = "NOLO_EXEC_SHELL_TIMEOUT_MS";
@@ -610,11 +614,47 @@ function sliceReadFileContent(args: {
   };
 }
 
-function countExactTextOccurrences(args: {
+/**
+ * Build a global RegExp that matches `oldTextLf` (already LF-normalized)
+ * against raw content, tolerating both LF and CRLF at every newline position.
+ */
+function buildEolTolerantPattern(oldTextLf: string): RegExp {
+  const escaped = oldTextLf.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = escaped.replace(/\n/g, "\\r?\\n");
+  return new RegExp(pattern, "g");
+}
+
+/**
+ * Count and replace all non-overlapping occurrences of oldText in content,
+ * tolerating mixed EOL conventions. Each match's replacement adopts the EOL
+ * style actually found at that position; unmatched bytes are untouched.
+ */
+function countAndReplaceEolTolerant(args: {
   content: string;
   oldText: string;
-}) {
-  return args.content.split(args.oldText).length - 1;
+  newText: string;
+}): { count: number; result: string } {
+  const oldTextLf = normalizeEolToLf(args.oldText);
+  const newTextLf = normalizeEolToLf(args.newText);
+  const pattern = buildEolTolerantPattern(oldTextLf);
+  let count = 0;
+  const result = args.content.replace(pattern, (match) => {
+    count++;
+    const eol: "\r\n" | "\n" = match.includes("\r\n") ? "\r\n" : "\n";
+    return convertEol(newTextLf, eol);
+  });
+  return { count, result };
+}
+
+/** Normalize CRLF sequences to LF. Lone \r is left untouched. */
+function normalizeEolToLf(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
+/** Convert text to the target EOL convention via LF as the intermediate form. */
+function convertEol(text: string, eol: "\r\n" | "\n"): string {
+  const lf = normalizeEolToLf(text);
+  return eol === "\r\n" ? lf.replace(/\n/g, "\r\n") : lf;
 }
 
 function pluralizeReplacement(count: number) {
@@ -854,6 +894,35 @@ function waitForNodeProcessExit(proc: ReturnType<typeof spawnChildProcess>) {
   });
 }
 
+export type WorkspaceSearchEngine = "ripgrep" | "grep" | "js";
+
+function isSpawnFailureError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as NodeJS.ErrnoException;
+  if (err.code === "ENOENT") return true;
+  const message = toErrorMessage(error).toLowerCase();
+  return (
+    message.includes("enoent")
+    || message.includes("executable not found")
+    || message.includes("spawn") && message.includes("not found")
+  );
+}
+
+function spawnFailedCommandResult(error: unknown, outputLimit?: number) {
+  const stderr = `spawn failed: ${toErrorMessage(error)}\n`;
+  return {
+    stdout: "",
+    stderr,
+    exitCode: 127,
+    timedOut: false as const,
+    spawnFailed: true as const,
+    content: truncateToolOutput(
+      [`stderr:\n${stderr.trim()}`, "exitCode: 127"].filter(Boolean).join("\n\n"),
+      outputLimit,
+    ),
+  };
+}
+
 /**
  * Prefer Desktop-bundled ripgrep (NOLO_BUNDLED_RG / Resources/bin), then PATH +
  * common install locations. Users do not need a system `rg` install.
@@ -870,6 +939,10 @@ export function resolveRipgrepBinary(
     }
   }
   return resolveExecutableOnPath("rg");
+}
+
+function resolveGrepBinary(): string | null {
+  return resolveExecutableOnPath("grep");
 }
 
 async function runWorkspaceCommand(args: {
@@ -992,7 +1065,23 @@ async function runWorkspaceCommand(args: {
   if (abortPromise) racers.push(abortPromise);
   if (detachPromise) racers.push(detachPromise);
 
-  const raceWinner = await Promise.race(racers);
+  let raceWinner: unknown;
+  try {
+    raceWinner = await Promise.race(racers);
+  } catch (error) {
+    if (timeout) clearTimeout(timeout);
+    if (detachTimer) clearTimeout(detachTimer);
+    if (abortListener && args.abortSignal) {
+      args.abortSignal.removeEventListener("abort", abortListener);
+    }
+    detachSignalCleanup();
+    // Only spawn failures (ENOENT / missing binary) become exitCode 127.
+    // Any other race/stream rejection must surface — this helper is shared by execShell.
+    if (isSpawnFailureError(error)) {
+      return spawnFailedCommandResult(error, args.outputLimit);
+    }
+    throw error;
+  }
   if (timeout) clearTimeout(timeout);
   if (detachTimer) clearTimeout(detachTimer);
   if (abortListener && args.abortSignal) {
@@ -1125,12 +1214,37 @@ async function runWorkspaceCommandLimitedLines(args: {
     ]);
   } catch (error) {
     const settled = await exitSettled;
-    if (!settled.ok) throw settled.error;
+    if (!settled.ok) {
+      return {
+        stdout: "",
+        stderr: `spawn failed: ${toErrorMessage(settled.error)}\n`,
+        exitCode: 127,
+        limitedByMaxResults: false,
+        spawnFailed: true as const,
+      };
+    }
+    if (isSpawnFailureError(error)) {
+      return {
+        stdout: "",
+        stderr: `spawn failed: ${toErrorMessage(error)}\n`,
+        exitCode: 127,
+        limitedByMaxResults: false,
+        spawnFailed: true as const,
+      };
+    }
     throw error;
   }
   if (!limitedByMaxResults && pending.trim()) lines.push(pending);
   const settled = await exitSettled;
-  if (!settled.ok) throw settled.error;
+  if (!settled.ok) {
+    return {
+      stdout: "",
+      stderr: `spawn failed: ${toErrorMessage(settled.error)}\n`,
+      exitCode: 127,
+      limitedByMaxResults: false,
+      spawnFailed: true as const,
+    };
+  }
   const exitCode = limitedByMaxResults ? 0 : settled.code;
   const stderr = await stderrPromise;
   return {
@@ -1293,14 +1407,22 @@ async function editFileTool(args: {
       : {}),
   });
   const content = await readFile(absolutePath, "utf8");
-  const replacementCount = countExactTextOccurrences({ content, oldText });
+  // Count and replace in a single EOL-tolerant pass so the reported count
+  // always equals the actual number of replacements, even in mixed-EOL files.
+  // Each match adopts the EOL style found at that position; unmatched bytes
+  // are left untouched (no whole-file EOL rewrite).
+  const { count: replacementCount, result: nextContent } = countAndReplaceEolTolerant({
+    content,
+    oldText,
+    newText,
+  });
   if (replacementCount !== expectedReplacements) {
     throw new Error(
       `editFile expected ${expectedReplacements} ${pluralizeReplacement(expectedReplacements)} ` +
-        `but found ${replacementCount} in ${requestedPath}.`
+        `but found ${replacementCount} in ${requestedPath} ` +
+        `(matched after EOL normalization; verify the exact text).`
     );
   }
-  const nextContent = content.split(oldText).join(newText);
   await writeFile(absolutePath, nextContent, "utf8");
   const relativePath = normalizeWorkspaceRelativePath({
     workspaceRoot: resolve(args.workspaceRoot),
@@ -1430,6 +1552,8 @@ async function searchFilesTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
   confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
+  resolveRipgrepBinary?: () => string | null;
+  resolveGrepBinary?: () => string | null;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const query = requireWorkspaceSearchQuery(parsed);
@@ -1451,8 +1575,8 @@ async function searchFilesTool(args: {
     workspaceRoot: resolve(args.workspaceRoot),
     targetPath: searchPath,
   });
-  const rgBinary = resolveRipgrepBinary();
-  const grepBinary = resolveExecutableOnPath("grep") || "grep";
+  const rgBinary = (args.resolveRipgrepBinary ?? resolveRipgrepBinary)();
+  const grepBinary = (args.resolveGrepBinary ?? resolveGrepBinary)();
   const rgCommand = rgBinary
     ? [
         rgBinary,
@@ -1474,34 +1598,25 @@ async function searchFilesTool(args: {
         relativeSearchPath,
       ]
     : null;
-  const grepCommand = [
-    grepBinary,
-    "-R",
-    "-n",
-    "-I",
-    ...(literal ? ["-F"] : []),
-    ...(caseSensitive ? [] : ["-i"]),
-    ...(contextLines !== undefined ? ["-C", String(contextLines)] : []),
-    "--exclude-dir=node_modules",
-    "--exclude-dir=.git",
-    // grep 的 --exclude-dir 只按目录 basename 匹配，无法表达 "public/assets" 这种
-    // 多段路径：压成 basename 会连 src/assets 一起排掉（过度排除会让模型以为那里
-    // 没有匹配，比不排除更危险）。所以这里只翻译无损的单段 glob，多段的统一交给
-    // 下面的 dropAlwaysExcludedLines 按完整 glob 过滤——三条路径（rg / grep / JS
-    // 兜底）因此共享同一套排除语义。
+  // grep 的 --exclude-dir 只按目录 basename 匹配，无法表达 "public/assets" 这种
+  // 多段路径：压成 basename 会连 src/assets 一起排掉（过度排除会让模型以为那里
+  // 没有匹配，比不排除更危险）。所以这里只翻译无损的单段 glob，多段的统一交给
+  // 下面的 dropAlwaysExcludedLines 按完整 glob 过滤——三条路径（rg / grep / JS
+  // 兜底）因此共享同一套排除语义。
+  const grepExcludeArgs = [
     ...ALWAYS_EXCLUDED_GLOBS.flatMap((g) => {
       if (!g.endsWith("/**")) return ["--exclude", g];
       const dir = g.replace(/\/\*\*$/, "");
       return dir.includes("/") ? [] : [`--exclude-dir=${dir}`];
     }),
     ...exclude.flatMap((excludePattern) => ["--exclude", excludePattern]),
-    query,
-    relativeSearchPath,
   ];
+  let searchEngine: WorkspaceSearchEngine = "js";
+  let binariesUnavailable = !rgBinary && !grepBinary;
   const result = await (async () => {
     if (rgCommand) {
       try {
-        return maxResults && !contextLines
+        const rgResult = maxResults && !contextLines
           ? await runWorkspaceCommandLimitedLines({
               workspaceRoot: args.workspaceRoot,
               command: rgCommand,
@@ -1511,30 +1626,59 @@ async function searchFilesTool(args: {
               workspaceRoot: args.workspaceRoot,
               command: rgCommand,
             });
+        if (!rgResult.spawnFailed) {
+          searchEngine = "ripgrep";
+          return rgResult;
+        }
       } catch {
         // Fall through to grep / scanWorkspaceTextMatches.
       }
     }
-    try {
-      return maxResults && !contextLines
-        ? await runWorkspaceCommandLimitedLines({
-            workspaceRoot: args.workspaceRoot,
-            command: grepCommand,
-            maxLines: maxResults,
-          })
-        : await runWorkspaceCommand({
-            workspaceRoot: args.workspaceRoot,
-            command: grepCommand,
-          });
-    } catch {
-      // Final path: pure JS scan below when both binaries fail.
-      return {
-        stdout: "",
-        stderr: "",
-        exitCode: 0,
-        limitedByMaxResults: false,
-      };
+    if (grepBinary) {
+      const grepCommand = [
+        grepBinary,
+        "-R",
+        "-n",
+        "-I",
+        ...(literal ? ["-F"] : []),
+        ...(caseSensitive ? [] : ["-i"]),
+        ...(contextLines !== undefined ? ["-C", String(contextLines)] : []),
+        "--exclude-dir=node_modules",
+        "--exclude-dir=.git",
+        ...grepExcludeArgs,
+        query,
+        relativeSearchPath,
+      ];
+      try {
+        const grepResult = maxResults && !contextLines
+          ? await runWorkspaceCommandLimitedLines({
+              workspaceRoot: args.workspaceRoot,
+              command: grepCommand,
+              maxLines: maxResults,
+            })
+          : await runWorkspaceCommand({
+              workspaceRoot: args.workspaceRoot,
+              command: grepCommand,
+            });
+        if (!grepResult.spawnFailed) {
+          searchEngine = "grep";
+          return grepResult;
+        }
+        binariesUnavailable = true;
+      } catch {
+        binariesUnavailable = true;
+      }
+    } else {
+      binariesUnavailable = true;
     }
+    // Both binaries missing or failed to spawn — force JS fallback below.
+    return {
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      limitedByMaxResults: false,
+      spawnFailed: true as const,
+    };
   })();
   let outputLines = result.stdout
     .split(/\r?\n/)
@@ -1542,7 +1686,14 @@ async function searchFilesTool(args: {
     .filter(Boolean);
   outputLines = dropAlwaysExcludedLines(outputLines);
   let limitedByMaxResults = "limitedByMaxResults" in result && result.limitedByMaxResults === true;
-  if (outputLines.length === 0 && result.exitCode === 0 && (includeIgnored || !(await hasRootGitignore(args.workspaceRoot)))) {
+  const forceJsFallback = binariesUnavailable || result.spawnFailed === true;
+  if (
+    outputLines.length === 0
+    && (
+      forceJsFallback
+      || (result.exitCode === 0 && (includeIgnored || !(await hasRootGitignore(args.workspaceRoot))))
+    )
+  ) {
     const fallback = await scanWorkspaceTextMatches({
       workspaceRoot: args.workspaceRoot,
       relativeSearchPath,
@@ -1555,6 +1706,7 @@ async function searchFilesTool(args: {
     });
     outputLines = fallback.lines;
     limitedByMaxResults = fallback.limitedByMaxResults;
+    searchEngine = "js";
   }
   if (contextLines && outputLines.length > 0) {
     const limited = limitSearchOutputByMatches(outputLines, maxResults);
@@ -1588,6 +1740,7 @@ async function searchFilesTool(args: {
       ...(truncatedByByteLimit ? { truncatedByByteLimit: true } : {}),
       ...(maxResults ? { maxResults } : {}),
       exitCode: result.exitCode,
+      searchEngine,
       ...(extractActivity(parsed) ? { activity: extractActivity(parsed) } : {}),
     },
   };
@@ -1754,6 +1907,7 @@ async function globFilesTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
   confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
+  resolveRipgrepBinary?: () => string | null;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const pattern = requireWorkspaceGlobPattern(parsed);
@@ -1772,8 +1926,15 @@ async function globFilesTool(args: {
     workspaceRoot: resolve(args.workspaceRoot),
     targetPath: searchPath,
   });
-  const command = [
-      "rg",
+  const pathPrefix = relativeSearchPath === "." ? "" : `${relativeSearchPath.replace(/\/+$/, "")}/`;
+  const rgBinary = (args.resolveRipgrepBinary ?? resolveRipgrepBinary)();
+  let searchEngine: Extract<WorkspaceSearchEngine, "ripgrep" | "js"> = "js";
+  let exitCode = 0;
+  let files: string[] = [];
+
+  if (rgBinary) {
+    const command = [
+      rgBinary,
       "--files",
       "--hidden",
       ...(includeIgnored ? ["--no-ignore"] : []),
@@ -1786,29 +1947,61 @@ async function globFilesTool(args: {
       ...exclude.flatMap((excludePattern) => ["--glob", `!${excludePattern}`]),
       ...(relativeSearchPath === "." ? [] : [relativeSearchPath]),
     ];
-  const result = await runWorkspaceCommand({
-    workspaceRoot: args.workspaceRoot,
-    command,
-  });
-  const pathPrefix = relativeSearchPath === "." ? "" : `${relativeSearchPath.replace(/\/+$/, "")}/`;
-  let files = result.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^\.\//, ""))
-    .filter(Boolean)
-    .filter((line) => !pathPrefix || line === relativeSearchPath || line.startsWith(pathPrefix))
-    .sort((left, right) => left.localeCompare(right));
-  files = await filterRootGitignoredFiles({
-    workspaceRoot: args.workspaceRoot,
-    files,
-    includeIgnored,
-  });
-  if (files.length === 0 && (includeIgnored || !(await hasRootGitignore(args.workspaceRoot)))) {
+    const result = await runWorkspaceCommand({
+      workspaceRoot: args.workspaceRoot,
+      command,
+    });
+    exitCode = result.exitCode;
+    if (result.spawnFailed) {
+      files = scanWorkspaceGlobFiles({
+        workspaceRoot: args.workspaceRoot,
+        pattern,
+        relativeSearchPath,
+        exclude,
+      });
+      files = await filterRootGitignoredFiles({
+        workspaceRoot: args.workspaceRoot,
+        files,
+        includeIgnored,
+      });
+      searchEngine = "js";
+    } else {
+      files = result.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim().replace(/^\.\//, ""))
+        .filter(Boolean)
+        .filter((line) => !pathPrefix || line === relativeSearchPath || line.startsWith(pathPrefix))
+        .sort((left, right) => left.localeCompare(right));
+      files = await filterRootGitignoredFiles({
+        workspaceRoot: args.workspaceRoot,
+        files,
+        includeIgnored,
+      });
+      if (files.length === 0 && (includeIgnored || !(await hasRootGitignore(args.workspaceRoot)))) {
+        files = scanWorkspaceGlobFiles({
+          workspaceRoot: args.workspaceRoot,
+          pattern,
+          relativeSearchPath,
+          exclude,
+        });
+        searchEngine = "js";
+      } else {
+        searchEngine = "ripgrep";
+      }
+    }
+  } else {
     files = scanWorkspaceGlobFiles({
       workspaceRoot: args.workspaceRoot,
       pattern,
       relativeSearchPath,
       exclude,
     });
+    files = await filterRootGitignoredFiles({
+      workspaceRoot: args.workspaceRoot,
+      files,
+      includeIgnored,
+    });
+    searchEngine = "js";
   }
   const commandLimitedByMaxResults = false;
   const totalCount = commandLimitedByMaxResults ? undefined : files.length;
@@ -1829,7 +2022,8 @@ async function globFilesTool(args: {
       truncated: limitedByMaxResults,
       limitedByMaxResults,
       ...(maxResults ? { maxResults } : {}),
-      exitCode: result.exitCode,
+      exitCode,
+      searchEngine,
       ...(activity ? { activity } : {}),
     },
   };
@@ -2080,6 +2274,14 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
   const fileAccess = args.confirmExternalFileAccess
     ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
     : {};
+  const searchBinaryResolvers = {
+    ...(args.resolveRipgrepBinary
+      ? { resolveRipgrepBinary: args.resolveRipgrepBinary }
+      : {}),
+    ...(args.resolveGrepBinary
+      ? { resolveGrepBinary: args.resolveGrepBinary }
+      : {}),
+  };
   return {
     editFile: (call: AgentRuntimeToolCallInput) => editFileTool({
       call,
@@ -2090,6 +2292,9 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       call,
       workspaceRoot: args.workspaceRoot,
       ...fileAccess,
+      ...(args.resolveRipgrepBinary
+        ? { resolveRipgrepBinary: args.resolveRipgrepBinary }
+        : {}),
     }),
     listFiles: (call: AgentRuntimeToolCallInput) => listFilesTool({
       call,
@@ -2110,6 +2315,7 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       call,
       workspaceRoot: args.workspaceRoot,
       ...fileAccess,
+      ...searchBinaryResolvers,
     }),
     captureVisualState: (call: AgentRuntimeToolCallInput) => captureVisualStateTool({
       call,

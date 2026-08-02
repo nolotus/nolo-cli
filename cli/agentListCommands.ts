@@ -9,6 +9,7 @@ import {
   listRemoteAgents,
   normalizeListedAgent,
   parseAgentListArgs,
+  toSafeListedAgentSummary,
   type ListedAgent,
 } from "./agentListHelpers";
 import {
@@ -189,7 +190,7 @@ export async function runAgentListCommand(
       }
 
       let safeAgents = agents.map((agent) =>
-        toSafeAgentSummary(agent, { favoritesMap, userId })
+        toSafeListedAgentSummary(agent, { favoritesMap, userId })
       );
       safeAgents.push(
         ...extraFavoriteRecords.map((record) =>
@@ -259,7 +260,9 @@ export async function runAgentListCommand(
           `updatedAt=${agent.updatedAt ?? "-"}`,
           // 不输出 privateKey（dbKey 属敏感标识，与 web 端 listAgentsFunc 降权
           // 对齐；需要完整记录请用 --json）。
-          `publicKey=${agent.publicKey}${flagMismatch}`,
+          // 私有 agent（publicRecordExists=false）的公开记录不存在，输出 "-" 而非
+          // 一个库里不存在的 agent-pub-<id>，避免误导调用方拿它去 readAgent。
+          `publicKey=${agent.publicRecordExists ? agent.publicKey : "-"}${flagMismatch}`,
           `tools=${agent.tools.join(", ") || "-"}`,
           credentialLine,
         ].join("\n")

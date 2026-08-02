@@ -85,9 +85,12 @@ describe("CLI local callAgent inheritance", () => {
   });
 
   it("includes callAgent in local policy tool names when declared", () => {
-    expect(source).toContain(
-      'if (name === "callAgent") extra.push("callAgent")',
-    );
+    // Assert the behavior, not the spelling. This used to pin an exact source
+    // line, so a refactor that kept callAgent working still turned it red —
+    // a test that fails for reasons unrelated to what it is guarding stops
+    // being a signal.
+    expect(source).toMatch(/toolNameSet\.has\(\s*"callAgent"\s*\)/);
+    expect(source).toMatch(/prepareTools\(\s*\[\s*"callAgent"\s*\]\s*\)/);
   });
 
   it("preallocates the parent dialog id and builds a fresh child adapter", () => {

@@ -1,6 +1,11 @@
 import type { CliKvDb } from "./client/hybridRecordStore";
 import type { CliFetchImpl } from "./cliFetch";
 import {
+  toSafeAgentSummary,
+  type SafeAgentSummary,
+  type SafeAgentSummaryOptions,
+} from "../ai/agent/safeAgentSummary";
+import {
   listUserRecordsFromServers,
   readLiveDbRecordAfterTombstoneMerge,
 } from "./globalRecordOperations";
@@ -105,6 +110,26 @@ export function normalizeListedAgent(record: any): ListedAgent | null {
       ? { cliProvider: record.cliProvider }
       : {}),
   };
+}
+
+/**
+ * `--safe` 输出用的 agent 摘要：在 toSafeAgentSummary 基础上，对私有 agent
+ * （publicRecordExists === false）省略 publicKey 字段。
+ *
+ * 私有 agent 的公开记录（agent-pub-<id>）在库里并不存在，但 toSafeAgentSummary
+ * 会从 id 反推出一个 agent-pub-<id> 写进 publicKey。模型读到这个字段会拿它去
+ * readAgent，必然失败。省略整个字段（而非输出 null）才能让模型不去用它。
+ * publicRecordExists 为 true 或未知时保持 toSafeAgentSummary 的原有行为。
+ */
+export function toSafeListedAgentSummary(
+  agent: ListedAgent,
+  options?: SafeAgentSummaryOptions
+): SafeAgentSummary {
+  const summary = toSafeAgentSummary(agent, options);
+  if (agent.publicRecordExists === false) {
+    delete (summary as { publicKey?: unknown }).publicKey;
+  }
+  return summary;
 }
 
 export function sortListedAgents(agents: ListedAgent[]) {

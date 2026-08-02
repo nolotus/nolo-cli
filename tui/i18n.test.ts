@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { formatAgentSourceLabel } from "./agentCatalog";
-import { getCliLocale, initCliLocale, newlineHint, parseCliLocale, setCliLocale, t } from "./i18n";
+import {
+  agentRunCardLabels,
+  getCliLocale,
+  initCliLocale,
+  newlineHint,
+  parseCliLocale,
+  setCliLocale,
+  t,
+  toolLabel,
+} from "./i18n";
 
 describe("i18n", () => {
   const original = getCliLocale();
@@ -250,5 +259,26 @@ describe("i18n", () => {
     expect(formatAgentSourceLabel(cliEntry)).toBe("Subscription(copilot)");
     expect(formatAgentSourceLabel(cliNoProviderEntry)).toBe("Subscription");
     expect(formatAgentSourceLabel(customEntry)).toBe("API");
+  });
+
+  test("toolLabel tree categories and agentRunCardLabels are localized", () => {
+    setCliLocale("en");
+    expect(toolLabel("searchFiles")).toBe("Search");
+    expect(toolLabel("readFile")).toBe("Read");
+    expect(toolLabel("execShell")).toBe("Run");
+    expect(toolLabel("fetchWebpage")).toBe("Fetch");
+    expect(toolLabel("fetchWebpage")).toBe("Fetch");
+    expect(agentRunCardLabels().runStatus).toBe("Run status");
+    expect(agentRunCardLabels().runs(3)).toBe("Runs (3)");
+
+    setCliLocale("zh");
+    expect(toolLabel("searchFiles")).toBe("搜索");
+    expect(toolLabel("readFile")).toBe("读取");
+    expect(toolLabel("execShell")).toBe("执行");
+    expect(toolLabel("fetchWebpage")).toBe("抓取网页");
+    expect(toolLabel("fetchWebpage")).toBe("抓取网页");
+    expect(agentRunCardLabels().runStatus).toBe("运行状态");
+    expect(agentRunCardLabels().logTail).toBe("日志尾部：");
+    expect(agentRunCardLabels().runs(3)).toBe("运行 (3)");
   });
 });

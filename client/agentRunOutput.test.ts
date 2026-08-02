@@ -7,8 +7,14 @@ import {
   finalizeCurrentTurn,
   startTurn,
 } from "../tui/tuiHistory";
+import { toolLabel } from "../tui/i18n";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import type { RunAgentTurnOptions } from "./agentRunTypes";
+
+/** Escape a localized label so it is safe to embed in a RegExp. */
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * Regression: TUI transcript showed ~19 blank lines between `▸ List … ✓`
@@ -96,9 +102,12 @@ describe("createCliTurnOutput compact tool tree regression", () => {
 
   test("folded tool trees appear in transcript", () => {
     const visible = runEventSequence();
-    expect(visible).toContain("• Read (");
-    expect(visible).toContain("• Search (");
-    expect(visible).toContain("• Run (");
+    // Tree headers are localized (toolLabel), so assert against the same label
+    // source rather than an English literal — otherwise this test just pins the
+    // current locale and breaks whenever the translation changes.
+    expect(visible).toContain(`• ${toolLabel("readFile")} (`);
+    expect(visible).toContain(`• ${toolLabel("searchFiles")} (`);
+    expect(visible).toContain(`• ${toolLabel("execShell")} (`);
   });
 
   test("no spinner frame residue (no (Ns) elapsed markers)", () => {
@@ -115,14 +124,22 @@ describe("createCliTurnOutput compact tool tree regression", () => {
     // Find the tool region: from the first tool line (List/Read/Search/Run)
     // to the last tool line (Write). Trailing blank lines after the final
     // text are finish() padding and are not part of this regression.
-    const firstToolIdx = lines.findIndex((l) =>
-      /▸ (List|Read|Search|Run|Write)/.test(l) ||
-      /• (Read|Search|Run|Fetch)\(/.test(l),
-    );
+    // Labels are localized, so build the matcher from the same label source
+    // instead of hardcoding English names.
+    const inlineNames = ["listFiles", "readFile", "searchFiles", "execShell", "writeFile"]
+      .map((name) => escapeForRegExp(toolLabel(name)))
+      .join("|");
+    const treeNames = ["readFile", "searchFiles", "execShell", "fetchWebpage"]
+      .map((name) => escapeForRegExp(toolLabel(name)))
+      .join("|");
+    const isToolLine = (l: string) =>
+      new RegExp(`▸ (${inlineNames})`).test(l) ||
+      new RegExp(`• (${treeNames})\\s*\\(`).test(l);
+
+    const firstToolIdx = lines.findIndex(isToolLine);
     const lastToolIdx = lines
       .map((l, i) => ({ l, i }))
-      .filter(({ l }) => /▸ (List|Read|Search|Run|Write)/.test(l) ||
-        /• (Read|Search|Run|Fetch)\(/.test(l))
+      .filter(({ l }) => isToolLine(l))
       .reduce((max, { i }) => Math.max(max, i), -1);
 
     expect(firstToolIdx).toBeGreaterThanOrEqual(0);

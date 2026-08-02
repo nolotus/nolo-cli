@@ -515,13 +515,16 @@ function styleRichMarkdownLine(line: string, brightness: TuiBrightness) {
     const styled = styleInlineMarkdown(bullet[3], brightness);
     return `${bullet[1]}${colorSeq("accent", brightness)}•${STYLE.reset} ${styled}`;
   }
-  // Ordered list markers (`1.`, `2.` …) and task-list markers (☐/☑): accent the
-  // marker so the leading number is as scannable as a bullet, while the body
-  // still goes through inline markdown. Keeps `1.` from blending into prose.
+  // Ordered list markers (`1.`, `2.` …): chrome, not accent. The number is
+  // structural chrome — accent made it compete with the body text it labels,
+  // and a column of saturated blue digits read as noise in long numbered lists
+  // (owner feedback 2026-08-02). Chrome keeps `1.` legible as a marker while
+  // letting the content lead. Task markers below stay accent: ☐/☑ carry state,
+  // not just position, so they earn the emphasis.
   const ordered = line.match(/^(\s*)(\d+\.)\s(.+)$/);
   if (ordered) {
     const styled = styleInlineMarkdown(ordered[3], brightness);
-    return `${ordered[1]}${colorSeq("accent", brightness)}${ordered[2]}${STYLE.reset} ${styled}`;
+    return `${ordered[1]}${colorSeq("chrome", brightness)}${ordered[2]}${STYLE.reset} ${styled}`;
   }
   const task = line.match(/^(\s*)(☐|☑)\s(.+)$/);
   if (task) {

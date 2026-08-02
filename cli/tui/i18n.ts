@@ -246,6 +246,27 @@ const STRINGS = {
     en: "Used Skill",
     zh: "已加载技能",
   },
+  // --- Agent-run orchestration cards (injected into packages/ai helpers) ---
+  runStatusLabel: {
+    en: "Run status",
+    zh: "运行状态",
+  },
+  runStartedLabel: {
+    en: "Run started",
+    zh: "运行已启动",
+  },
+  runStoppedLabel: {
+    en: "Run stopped",
+    zh: "运行已停止",
+  },
+  runLogTailLabel: {
+    en: "Log tail:",
+    zh: "日志尾部：",
+  },
+  runsListLabel: {
+    en: "Runs ({0})",
+    zh: "运行 ({0})",
+  },
   // --- Dialog (picker / confirm) copy --------------------------------------
   // Key-hint wording is unified across select / multi-select / confirm so the
   // three dialogs read as one family: "<Label>  <↑↓ move · Enter choose ·
@@ -696,7 +717,9 @@ const TOOL_LABELS: Record<string, { en: string; zh: string }> = {
   updateTableRow: { en: "Update row", zh: "更新表行" },
   deleteTableRow: { en: "Delete row", zh: "删除表行" },
   // Web
-  fetchWebpage: { en: "Fetch page", zh: "抓取网页" },
+  // Tree group header uses the same short category noun as Read/Search/Run
+  // ("Fetch" / "抓取网页"), not a longer "Fetch page" phrase.
+  fetchWebpage: { en: "Fetch", zh: "抓取网页" },
   readPage: { en: "Read page", zh: "读取网页" },
   exaSearch: { en: "Web search", zh: "联网搜索" },
   // Skill loading
@@ -706,4 +729,21 @@ const TOOL_LABELS: Record<string, { en: string; zh: string }> = {
 /** Localized action label for a tool, falling back to the raw tool name. */
 export function toolLabel(name: string): string {
   return TOOL_LABELS[name]?.[currentLocale] ?? name;
+}
+
+/** Labels injected into `packages/ai` agent-run card helpers (no cli→ai reverse dep). */
+export function agentRunCardLabels(): {
+  runStatus: string;
+  runStarted: string;
+  runStopped: string;
+  logTail: string;
+  runs: (count: number) => string;
+} {
+  return {
+    runStatus: t("runStatusLabel"),
+    runStarted: t("runStartedLabel"),
+    runStopped: t("runStoppedLabel"),
+    logTail: t("runLogTailLabel"),
+    runs: (count: number) => t("runsListLabel", String(count)),
+  };
 }

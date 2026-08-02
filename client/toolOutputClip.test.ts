@@ -78,6 +78,32 @@ describe("tokenUsage Cache Token Parsing", () => {
     expect(usage?.cacheRead).toBe(8000);
   });
 
+  test("parses DeepSeek top-level prompt_cache_hit/miss_tokens", () => {
+    // DeepSeek does NOT use the OpenAI nested shape: it reports
+    // prompt_cache_hit_tokens / prompt_cache_miss_tokens at the top level,
+    // with prompt_tokens = hit + miss. Reading through normalizeUsage is what
+    // keeps this working; a hand-rolled field list here missed it.
+    const raw = {
+      prompt_tokens: 11000,
+      completion_tokens: 400,
+      prompt_cache_hit_tokens: 9000,
+      prompt_cache_miss_tokens: 2000,
+    };
+    const usage = parseUsageRecord(raw);
+    expect(usage?.input).toBe(11000);
+    expect(usage?.cacheRead).toBe(9000);
+    expect(usage?.cacheWrite).toBe(2000);
+  });
+
+  test("parses input_tokens_details.cached_tokens", () => {
+    const usage = parseUsageRecord({
+      prompt_tokens: 5000,
+      completion_tokens: 100,
+      input_tokens_details: { cached_tokens: 4000 },
+    });
+    expect(usage?.cacheRead).toBe(4000);
+  });
+
   test("renders cache status in renderTokenStatus", () => {
     const tokens = {
       input: 15000,

@@ -26,6 +26,7 @@ import type { ContextBlockScope } from "./contextBlockScope";
 import { normalizeContextBlockScopes } from "./contextBlockScope";
 import {
   MAX_HISTORICAL_TOOL_CONTENT_CHARS,
+  FRESH_TOOL_OUTPUT_MAX_CHARS,
   clipToolText,
   resolveToolOutputProfile,
 } from "../ai/agent/toolOutputPolicy";
@@ -834,11 +835,23 @@ function prepareMessagesForProviderCall(
   // 发 provider 前的唯一咽喉点：先修掉 tool_calls/tool 配对违规（孤儿 tool、悬空 tool_calls），
   // 再走原 map。脏历史不能原样发给 OpenAI 兼容接口。
   const paired = sanitizeToolCallPairing(messages);
+  // 「最新一轮」= 消息序列末尾最长的一段连续 tool 消息。它们刚由本轮最近的工具调用
+  // 产出，下一次 provider 调用要立刻读懂它们，给宽预算 FRESH_TOOL_OUTPUT_MAX_CHARS。
+  // 这一段之前的 tool 消息属于同一 turn 内更早的轮次——它们在本轮已经不再是「最新
+  // 关注点」，但仍会在每次 provider 调用里重发，必须压回 per-tool profile 的紧上限
+  // （resolveToolOutputProfile(toolName).maxChars），否则一个 N 轮工具循环会让上下文
+  // 随轮数线性膨胀到 fresh×N。跨 turn 的历史已在 prepareHistoryForNextTurn 走过
+  // summarizeHistoricalToolContent，这里不动它们。判定只基于消息序列本身，不引入
+  // 任何可变状态/参数链/配置项。See T3.
+  let freshRunStart = paired.length;
+  while (freshRunStart > 0 && paired[freshRunStart - 1].role === "tool") {
+    freshRunStart -= 1;
+  }
   let toolMessageCount = 0;
   let rawToolContentChars = 0;
   let projectedToolContentChars = 0;
   let truncatedToolResults = 0;
-  const projected = paired.map((message) => {
+  const projected = paired.map((message, index) => {
     const { context_reference: _contextReference, ...providerMessage } = message;
     const sanitizedContent =
       providerMessage.content == null
@@ -855,12 +868,15 @@ function prepareMessagesForProviderCall(
     }
     toolMessageCount += 1;
     rawToolContentChars += contentCharCount(sanitizedContent);
-    const profile = resolveToolOutputProfile(providerMessage.toolName);
+    const isFresh = index >= freshRunStart;
+    const maxChars = isFresh
+      ? FRESH_TOOL_OUTPUT_MAX_CHARS
+      : resolveToolOutputProfile(providerMessage.toolName).maxChars;
     const projectedContent = projectToolContentForProvider({
       content: sanitizedContent,
       toolName: providerMessage.toolName,
       metadata: providerMessage.tool_result_metadata,
-      maxChars: profile.maxChars,
+      maxChars,
       label: "in-turn tool result truncated/projected before next provider call",
     });
     projectedToolContentChars += contentCharCount(projectedContent);

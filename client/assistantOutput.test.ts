@@ -286,11 +286,16 @@ describe("assistantOutput", () => {
     );
   });
 
-  test("styles ordered list markers with accent", () => {
-    // `1.` should be accent-colored like a bullet, body still inline-markdown.
+  test("styles ordered list markers with chrome, not accent", () => {
+    // `1.` is structural chrome — it labels the item, it is not the content.
+    // Accent made a numbered list read as a column of saturated blue digits
+    // competing with the prose (owner feedback 2026-08-02).
     const rich = formatAssistantDisplay("1. first step");
     const brightness = resolveTuiBrightness();
     expect(rich).toContain(
+      `${themeColorSequence("chrome", process.env, brightness)}1.\x1b[0m`
+    );
+    expect(rich).not.toContain(
       `${themeColorSequence("accent", process.env, brightness)}1.\x1b[0m`
     );
     expect(rich).toContain("first step");

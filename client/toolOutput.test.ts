@@ -6,6 +6,10 @@ import {
   createSseToolEventAdapter,
   createToolEventFormatter,
   formatActiveToolLabel,
+  formatFetchTreeBlockForCli,
+  formatReadTreeBlockForCli,
+  formatRunTreeBlockForCli,
+  formatSearchTreeBlockForCli,
   formatToolEventForCli,
   clipPathAware,
   normalizeToolDisplayMode,
@@ -201,7 +205,7 @@ describe("toolOutput", () => {
           "compact",
           false
         )
-      ).toBe("• Search (1)\n  └── packages/cli\n");
+      ).toBe("• 搜索 (1)\n  └── packages/cli\n");
       // Not in the label table (platform tool registry) — fall back verbatim.
       expect(formatActiveToolLabel({ toolName: "ziweiChart" })).toBe("ziweiChart");
     } finally {
@@ -1028,5 +1032,195 @@ describe("toolOutput", () => {
     );
     expect(failLine).toContain("✗ startAgentRun");
     expect(failLine).toContain("Error: missing agentKey");
+  });
+
+  test("compact mode folds consecutive controlAgentRun status polls for the same runId", () => {
+    const format = createToolEventFormatter("compact", false);
+    const logLines = ["agent-xxx → working locally", "✦ Used Skill: nolo-review"];
+    for (let i = 0; i < 4; i++) {
+      format(
+        toolEvent({
+          type: "tool-call",
+          toolCallId: `c-status-${i}`,
+          toolName: "controlAgentRun",
+        })
+      );
+      expect(
+        format(
+          toolEvent({
+            type: "tool-result",
+            toolCallId: `c-status-${i}`,
+            toolName: "controlAgentRun",
+            elapsedMs: 10 + i,
+            content: JSON.stringify({
+              runId: "run-fold-1",
+              found: true,
+              status: "running",
+              agentName: "Worker",
+              logLines,
+            }),
+          })
+        )
+      ).toBe("");
+    }
+    const out = format.flush ? format.flush() : "";
+    // One card, not four full cards.
+    expect(out.match(/● controlAgentRun/g)?.length ?? 0).toBe(1);
+    expect(out.match(/Run status/g)?.length ?? 0).toBe(1);
+    expect(out).toContain("⏳ running");
+    expect(out).toContain("polls   4");
+    expect(out).toContain("last    13ms");
+    expect(out).toContain("agent   Worker");
+    // Identical log tail appears once, not once per poll.
+    expect(out.match(/Log tail:/g)?.length ?? 0).toBe(1);
+    expect(out.match(/agent-xxx → working locally/g)?.length ?? 0).toBe(1);
+  });
+
+  test("folded controlAgentRun status omits unchanged log tail on a later fold", () => {
+    const format = createToolEventFormatter("compact", false);
+    const logLines = ["same-tail"];
+    format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "s1",
+        toolName: "controlAgentRun",
+        elapsedMs: 5,
+        content: JSON.stringify({
+          runId: "run-fold-2",
+          status: "running",
+          agentName: "Worker",
+          logLines,
+        }),
+      })
+    );
+    // Interrupt with a write so the first fold emits (with log).
+    const first = format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "w1",
+        toolName: "writeFile",
+        argumentsPreview: "out.txt",
+      })
+    );
+    expect(first).toContain("Log tail:");
+    expect(first).toContain("same-tail");
+
+    format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "s2",
+        toolName: "controlAgentRun",
+        elapsedMs: 8,
+        content: JSON.stringify({
+          runId: "run-fold-2",
+          status: "running",
+          agentName: "Worker",
+          logLines,
+        }),
+      })
+    );
+    const second = format.flush ? format.flush() : "";
+    expect(second).toContain("● controlAgentRun");
+    expect(second).toContain("polls   1");
+    expect(second).not.toContain("Log tail:");
+    expect(second).not.toContain("same-tail");
+  });
+
+  test("controlAgentRun status without agentName does not render agent   agent", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "controlAgentRun",
+        content: JSON.stringify({
+          runId: "run-x",
+          status: "running",
+          logLines: ["hello"],
+        }),
+      }),
+      "compact",
+      false
+    );
+    expect(line).toContain("● controlAgentRun");
+    expect(line).toContain("⏳ running");
+    expect(line).not.toContain("agent   agent");
+    expect(line.split("\n").some((l) => /^\s*agent\s+agent\s*$/.test(l))).toBe(false);
+  });
+
+  test("folded controlAgentRun keeps terminal status and errorMessage visible", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "t1",
+        toolName: "controlAgentRun",
+        elapsedMs: 11,
+        content: JSON.stringify({
+          runId: "run-term",
+          status: "running",
+          agentName: "Worker",
+          logLines: ["working"],
+        }),
+      })
+    );
+    // Terminal poll flushes immediately with error still present.
+    const out = format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "t2",
+        toolName: "controlAgentRun",
+        elapsedMs: 22,
+        content: JSON.stringify({
+          runId: "run-term",
+          status: "failed",
+          agentName: "Worker",
+          errorMessage: "API key expired",
+          logLines: ["working", "boom"],
+        }),
+      })
+    );
+    expect(out).toContain("● controlAgentRun");
+    expect(out).toContain("✗ failed");
+    expect(out).toContain("error   API key expired");
+    expect(out).toContain("polls   2");
+    expect(out).toContain("last    22ms");
+    // Flush should be empty — terminal already emitted.
+    expect(format.flush ? format.flush() : "").toBe("");
+  });
+
+  test("tree group headers follow locale on both colorEnabled branches", () => {
+    const items = {
+      read: [{ path: "a.ts" }],
+      search: [{ query: "foo" }],
+      run: [{ command: "echo hi" }],
+      fetch: [{ url: "https://example.com" }],
+    };
+
+    setCliLocale("en");
+    for (const colorEnabled of [false, true]) {
+      const read = stripAnsi(formatReadTreeBlockForCli(items.read, colorEnabled));
+      const search = stripAnsi(formatSearchTreeBlockForCli(items.search, colorEnabled));
+      const run = stripAnsi(formatRunTreeBlockForCli(items.run, colorEnabled));
+      const fetch = stripAnsi(formatFetchTreeBlockForCli(items.fetch, colorEnabled));
+      expect(read).toContain("• Read (1)");
+      expect(search).toContain("• Search (1)");
+      expect(run).toContain("• Run (1)");
+      expect(fetch).toContain("• Fetch (1)");
+      expect(read).not.toContain("读取");
+      expect(fetch).not.toContain("抓取网页");
+    }
+
+    setCliLocale("zh");
+    for (const colorEnabled of [false, true]) {
+      const read = stripAnsi(formatReadTreeBlockForCli(items.read, colorEnabled));
+      const search = stripAnsi(formatSearchTreeBlockForCli(items.search, colorEnabled));
+      const run = stripAnsi(formatRunTreeBlockForCli(items.run, colorEnabled));
+      const fetch = stripAnsi(formatFetchTreeBlockForCli(items.fetch, colorEnabled));
+      expect(read).toContain("• 读取 (1)");
+      expect(search).toContain("• 搜索 (1)");
+      expect(run).toContain("• 执行 (1)");
+      expect(fetch).toContain("• 抓取网页 (1)");
+      expect(read).not.toContain("• Read (");
+      expect(fetch).not.toContain("• Fetch (");
+    }
   });
 });

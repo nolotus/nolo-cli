@@ -1,5 +1,6 @@
 // @ts-nocheck — incomplete db/fetch stubs for dry-run local runtime paths.
 import { describe, expect, test } from "bun:test";
+import { DEFAULT_LOCAL_TOOLS } from "../agent-runtime/localToolPolicy";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -13,33 +14,6 @@ function createAdapter(deps: any) {
 }
 
 describe("CLI local runtime dry run", () => {
-  const DEFAULT_PRIVATE_LOCAL_TOOL_NAMES = [
-    "listFiles",
-    "readFile",
-    "writeFile",
-    "editFile",
-    "globFiles",
-    "searchFiles",
-    "execShell",
-    "launchProcess",
-    "listProcesses",
-    "exa_search",
-    "fetchWebpage",
-    "listDialogs",
-    "readDialog",
-    "queryDialogsBySubjectRef",
-    "listAgents",
-    "readAgent",
-    "listSpaces",
-    "readSpace",
-    "readDoc",
-    "readSkillDoc",
-    "loadSkill",
-    "listTables",
-    "queryTableRows",
-    "cliWhoami",
-    "cliDoctor",
-  ];
 
   test("lets a declared workspace file tool write a file and save the tool trace", async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "nolo-local-runtime-dry-run-"));
@@ -86,7 +60,21 @@ describe("CLI local runtime dry run", () => {
           const body = JSON.parse(String(init?.body));
           completeCount += 1;
           if (completeCount === 1) {
-            expect(body.tools.map((tool: any) => tool.function.name)).toEqual(["ui_ask_choice", ...DEFAULT_PRIVATE_LOCAL_TOOL_NAMES]);
+            const sentToolNames: string[] = body.tools.map((tool: any) => tool.function.name);
+            // Assert the surface contains what a local agent must have, rather
+            // than pinning an exact ordered list: the old transcribed list went
+            // stale the moment startAgentRun/controlAgentRun were added, and a
+            // list that breaks on every new tool stops being read.
+            expect(sentToolNames).toContain("ui_ask_choice");
+            for (const name of DEFAULT_LOCAL_TOOLS) {
+              expect(sentToolNames).toContain(name);
+            }
+            // Relaxing the exact-list assertion above lost the guard against
+            // the surface silently growing, so keep an explicit deny side:
+            // tools retired for being unsafe must never come back by default.
+            for (const retired of ["gitCommit", "gitAdd", "commitWorkspace", "createAgent"]) {
+              expect(sentToolNames).not.toContain(retired);
+            }
             return Response.json({
               model: "qwen-coder",
               choices: [{
@@ -107,11 +95,18 @@ describe("CLI local runtime dry run", () => {
               }],
             });
           }
-          expect(body.messages.at(-1)).toMatchObject({
+          const toolMessage = body.messages.at(-1);
+          expect(toolMessage).toMatchObject({
             role: "tool",
-            content: "wrote src/notification.css",
             tool_call_id: "call-1",
           });
+          // projectToolContentForProvider appends a diagnostic and a
+          // [tool metadata] block, so match the leading result text instead of
+          // the whole string — otherwise this breaks on projection changes that
+          // have nothing to do with the write this test is guarding.
+          expect(String(toolMessage.content)).toStartWith(
+            "wrote src/notification.css",
+          );
           return Response.json({
             model: "qwen-coder",
             choices: [{ message: { content: "updated" } }],

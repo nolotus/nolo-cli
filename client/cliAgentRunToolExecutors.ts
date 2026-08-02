@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
   formatListRunsCard,
+  formatNotFoundRunCard,
   formatStartRunCard,
   formatStatusRunCard,
   formatStopRunCard,
@@ -24,6 +25,7 @@ import {
   listRunRecords,
   spawnLocalBackgroundRun,
 } from "../agentRunControl";
+import { agentRunCardLabels } from "../tui/i18n";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -106,10 +108,15 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
     );
 
     const displayName = agentName ?? "agent";
+    const labels = agentRunCardLabels();
     return {
-      content: JSON.stringify({ runId, status: "running" }),
+      content: JSON.stringify({
+        runId,
+        status: "running",
+        ...(agentName ? { agentName } : {}),
+      }),
       metadata: {
-        displayData: formatStartRunCard(displayName, "running"),
+        displayData: formatStartRunCard(displayName, "running", labels),
       },
     };
   };
@@ -135,10 +142,11 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
           startedAt: reconciled.startedAt,
         };
       });
+      const labels = agentRunCardLabels();
       return {
         content: JSON.stringify({ runs, count: runs.length }),
         metadata: {
-          displayData: formatListRunsCard(runs),
+          displayData: formatListRunsCard(runs, labels),
         },
       };
     }
@@ -150,9 +158,10 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
 
     const record = findRunRecord(String(args.runId), deps);
     if (!record) {
+      const labels = agentRunCardLabels();
       return {
         content: JSON.stringify({ runId: args.runId, found: false }),
-        metadata: { displayData: `Run status\n  ? not_found` },
+        metadata: { displayData: formatNotFoundRunCard(labels) },
       };
     }
 
@@ -164,6 +173,7 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
           : undefined;
       const name = reconciled.agentName || "agent";
       const logLines = logTail ? logTail.split("\n") : undefined;
+      const labels = agentRunCardLabels();
       return {
         content: JSON.stringify({
           runId: reconciled.runId,
@@ -176,9 +186,10 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
           endedAt: reconciled.endedAt ?? null,
           exitCode: reconciled.exitCode ?? null,
           ...(logTail !== undefined ? { logTail } : {}),
+          ...(logLines ? { logLines } : {}),
         }),
         metadata: {
-          displayData: formatStatusRunCard(name, reconciled.status, { logLines }),
+          displayData: formatStatusRunCard(name, reconciled.status, { logLines, labels }),
         },
       };
     }
@@ -195,9 +206,10 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
       }
     }
     finalizeRunRecord(record.runId, { status: "killed" }, deps);
+    const labels = agentRunCardLabels();
     return {
       content: JSON.stringify({ runId: record.runId, found: true, status: "killed" }),
-      metadata: { displayData: formatStopRunCard("killed") },
+      metadata: { displayData: formatStopRunCard("killed", labels) },
     };
   };
 }

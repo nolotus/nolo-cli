@@ -2,7 +2,8 @@ import { getModelAbility, type ModelAbility } from "../llm/modelAbility";
 
 export interface SafeAgentSummary {
   id: string | null;
-  publicKey: string | null;
+  /** Only present when a real public record is confirmed; omitted for private agents. */
+  publicKey?: string;
   name: string;
   handle: string | null;
   introduction: string | null;
@@ -29,6 +30,8 @@ export interface SafeAgentSummaryOptions {
   isFavorite?: boolean;
   favoritedAt?: number | string | null;
   userId?: string;
+  /** Caller-confirmed signal: does the public record agent-pub-<id> actually exist? */
+  publicRecordExists?: boolean;
 }
 
 function parseTimestamp(val: unknown): number {
@@ -127,12 +130,18 @@ export function toSafeAgentSummary(
   );
   const id = rawId ?? (typeof record?.id === "string" ? record.id : null);
 
-  let publicKey: string | null = null;
-  if (typeof record?.publicKey === "string" && record.publicKey) {
+  const publicRecordDenied = record?.publicRecordExists === false || options?.publicRecordExists === false;
+  const publicRecordConfirmed = record?.publicRecordExists === true || options?.publicRecordExists === true;
+
+  let publicKey: string | undefined;
+  if (typeof record?.publicKey === "string" && record.publicKey && !publicRecordDenied) {
+    // Record carries an explicit publicKey — trust it unless caller denies the public record.
     publicKey = record.publicKey;
-  } else if (id) {
+  } else if (publicRecordConfirmed && id) {
+    // Caller confirmed the public record exists — safe to derive the well-known key.
     publicKey = `agent-pub-${id}`;
   }
+  // Otherwise: omit entirely so models never see a key that cannot resolve.
 
   const name = typeof record?.name === "string" && record.name ? record.name : "(unnamed)";
   const handle = typeof record?.handle === "string" && record.handle ? record.handle : null;
@@ -173,7 +182,7 @@ export function toSafeAgentSummary(
 
   return {
     id,
-    publicKey,
+    ...(publicKey !== undefined ? { publicKey } : {}),
     name,
     handle,
     introduction,

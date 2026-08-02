@@ -37,7 +37,7 @@ export async function runAgentReadCommand(
   const fallbackFetchImpl = deps.fallbackFetchImpl;
 
   try {
-    const result = await resolveAgentRecordFromHybridStore({
+    let result = await resolveAgentRecordFromHybridStore({
       agentInput,
       cliArgs: args,
       env,
@@ -45,6 +45,22 @@ export async function runAgentReadCommand(
       fetchImpl,
       fallbackFetchImpl,
     });
+    // 容错：传入 agent-pub-<id> 但公开记录不存在时，剥掉前缀用裸 id 再走一次
+    // 现有的双候选解析（同时尝试 agent-{userId}-<id> 私有键和 agent-pub-<id>）。
+    // 这只是兜底——两次都查不到仍然报 not found，不静默返回错误的 agent。
+    if (!result && agentKey.startsWith("agent-pub-")) {
+      const bareId = agentKey.slice("agent-pub-".length);
+      if (bareId) {
+        result = await resolveAgentRecordFromHybridStore({
+          agentInput: bareId,
+          cliArgs: args,
+          env,
+          db,
+          fetchImpl,
+          fallbackFetchImpl,
+        });
+      }
+    }
     if (!result) {
       throw new Error(`agent not found: ${agentKey}`);
     }

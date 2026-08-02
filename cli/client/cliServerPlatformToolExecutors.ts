@@ -18,6 +18,10 @@ import {
   LOCAL_SERVER_TABLE_TOOL_NAMES,
   LOCAL_SERVER_WEB_TOOL_NAMES,
 } from "./cliToolClassification";
+import {
+  classifyFetchWebpageUrl,
+  fetchWebpageLocally,
+} from "./fetchWebpageContent";
 
 export function buildServerPlatformToolExecutors(args: {
   env: EnvLike;
@@ -100,36 +104,65 @@ export function buildServerPlatformToolExecutors(args: {
   // Web access tools (fetchWebpage / exa_search) bridge to the same server
   // routes the desktop runtime uses. The CLI holds no local API keys, so these
   // only work when NOLO_SERVER_URL + auth are configured.
+  //
+  // Exception: private/loopback fetchWebpage targets must stay on-box. Bridging
+  // them to the server hits the server's own SSRF guard (correctly) and would
+  // never reach the user's machine. Public URLs still bridge for billing/UA.
   const webExecutors = Object.fromEntries(
     LOCAL_SERVER_WEB_TOOL_NAMES.map((toolName) => [
       toolName,
       async (call: any) => {
         const parsed = parseNoloWorkspaceToolArguments(call.arguments);
-        const path =
-          toolName === "fetchWebpage" ? "/api/fetch-webpage" : "/api/exa-search";
-        const body =
-          toolName === "fetchWebpage"
-            ? { url: parsed.url }
-            : {
-                query: parsed.query,
-                numResults: parsed.numResults ?? 5,
-                useAutoprompt: parsed.useAutoprompt ?? true,
-                type: parsed.type ?? "neural",
-                // Model schema uses `includeContent` (boolean); the Exa API
-                // expects `contents: { text: true }`. Mirror exaSearchFunc's
-                // conversion so CLI proxy results match web behavior.
-                contents:
-                  parsed.includeContent !== false ? { text: true } : undefined,
-              };
-        const content = await postServer(path, body);
+        if (toolName === "fetchWebpage") {
+          const route = classifyFetchWebpageUrl(parsed.url);
+          if (route.kind === "reject") {
+            throw new Error(route.error);
+          }
+          if (route.kind === "local") {
+            const content = await fetchWebpageLocally({
+              url: route.url,
+              fetchImpl: args.fetchImpl,
+            });
+            return {
+              content,
+              metadata: {
+                serverPlatformTool: true,
+                webTool: toolName,
+                url: parsed.url,
+                localFetch: true,
+              },
+            };
+          }
+          const content = await postServer("/api/fetch-webpage", {
+            url: route.url,
+          });
+          return {
+            content,
+            metadata: {
+              serverPlatformTool: true,
+              webTool: toolName,
+              url: parsed.url,
+            },
+          };
+        }
+
+        const body = {
+          query: parsed.query,
+          numResults: parsed.numResults ?? 5,
+          useAutoprompt: parsed.useAutoprompt ?? true,
+          type: parsed.type ?? "neural",
+          // Model schema uses `includeContent` (boolean); the Exa API
+          // expects `contents: { text: true }`. Mirror exaSearchFunc's
+          // conversion so CLI proxy results match web behavior.
+          contents:
+            parsed.includeContent !== false ? { text: true } : undefined,
+        };
+        const content = await postServer("/api/exa-search", body);
         return {
           content,
           metadata: {
             serverPlatformTool: true,
             webTool: toolName,
-            ...(toolName === "fetchWebpage" || toolName === "fetch_webpage"
-              ? { url: parsed.url }
-              : {}),
           },
         };
       },

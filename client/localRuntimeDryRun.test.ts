@@ -39,8 +39,6 @@ describe("CLI local runtime dry run", () => {
     "queryTableRows",
     "cliWhoami",
     "cliDoctor",
-    "startAgentRun",
-    "controlAgentRun",
   ];
 
   test("lets a declared workspace file tool write a file and save the tool trace", async () => {

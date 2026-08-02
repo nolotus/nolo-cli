@@ -1,5 +1,6 @@
 import { selectRuntimeSnapshot } from "../../app/stateViews/runtime";
 import { DataType } from "../../create/types";
+import { toSafeAgentSummary, sortSafeAgentSummaries } from "../agent/safeAgentSummary";
 import { createSpaceKey } from "../../create/space/spaceKeys";
 import { toErrorMessage } from "../../core/errorMessage";
 import { isRecord } from "../../core/isRecord";
@@ -438,9 +439,77 @@ export async function deleteDialogsFunc(args: any, thunkApi: any): Promise<ToolR
   };
 }
 
+async function fetchUserFavoriteAgentMap(thunkApi: any): Promise<Record<string, number>> {
+  const runtime = getRuntime(thunkApi);
+  if (!runtime?.currentServer || !runtime?.currentToken) return {};
+
+  try {
+    const serverBase = normalizeServerOrigin(runtime.currentServer);
+    if (!serverBase) return {};
+    const response = await fetch(`${serverBase}/rpc/listFavorites`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(runtime.currentToken),
+      },
+      body: JSON.stringify({ targetType: "agent" }),
+    } as RequestInit).catch(() => null);
+    if (!response || !response.ok) return {};
+
+    const data: any = await response.json().catch(() => ({}));
+    const favoritedAtByKey: Record<string, number> = {};
+    const items = Array.isArray(data?.items) ? data.items : [];
+    for (const item of items) {
+      const id = typeof item?.id === "string" ? item.id : "";
+      if (!id) continue;
+      const at = Number(item?.favoritedAt) || 0;
+      favoritedAtByKey[id] = Math.max(favoritedAtByKey[id] ?? 0, at || Date.now());
+    }
+    const ids = Array.isArray(data?.ids) ? data.ids : [];
+    for (const id of ids) {
+      if (typeof id === "string" && id && !(id in favoritedAtByKey)) {
+        favoritedAtByKey[id] = 1;
+      }
+    }
+    return favoritedAtByKey;
+  } catch {
+    return {};
+  }
+}
+
+export interface SafeAgentSummaryForCard {
+  name?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  apiSource?: string | null;
+  cliProvider?: string | null;
+  isFavorite?: boolean;
+  /** Prefer publicKey for delegation; fall back to id. */
+  publicKey?: string | null;
+  id?: string | null;
+}
+
+export function formatAgentListCard(agents: SafeAgentSummaryForCard[], maxDisplay = 20): string {
+  const total = agents.length;
+  const lines: string[] = [`Agents (${total})`];
+  const visible = agents.slice(0, maxDisplay);
+  for (const agent of visible) {
+    const star = agent.isFavorite ? "★" : " ";
+    const name = agent.name || "(unnamed)";
+    const model = agent.model || "—";
+    const source = agent.apiSource || agent.provider || agent.cliProvider || "—";
+    lines.push(`${star} ${name}  ${model}  ${source}`);
+  }
+  if (total > maxDisplay) {
+    lines.push(`… +${total - maxDisplay} more`);
+  }
+  return lines.join("\n");
+}
+
 export const listAgentsFunctionSchema = {
   name: "listAgents",
-  description: "List the current user's Nolo agents.",
+  description:
+    "List the current user's Nolo agents as safe summaries. Use readAgent with the selected id/publicKey to resolve the runnable agentKey before delegation.",
   parameters: {
     type: "object",
     properties: {
@@ -452,26 +521,44 @@ export const listAgentsFunctionSchema = {
 
 export async function listAgentsFunc(args: any, thunkApi: any): Promise<ToolResult> {
   const limit = clampNoloPositiveInteger(args?.limit, 100, 500);
-  const records = await queryBestRecords(thunkApi, DataType.AGENT, limit);
-  const agents = records
-    .sort((left: any, right: any) => getNoloComparableUpdatedAt(right) - getNoloComparableUpdatedAt(left))
-    .map((record: any) => ({
-      id: record?.id ?? null,
-      // 不返回 privateKey/dbKey：这是私有 workspace 工具，dbKey 属于敏感标识，
-      // 避免出现在公开/分享文本（与 readAgent 的 redactAgentRecordForWorkspaceTool
-      // 脱敏策略对齐）。后续读取走 readAgent（id/publicKey 已足够）。
-      publicKey: typeof record?.id === "string" ? `agent-pub-${record.id}` : null,
-      name: record?.name ?? "(unnamed)",
-      model: record?.model ?? null,
-      provider: record?.provider ?? record?.apiSource ?? null,
-      isPublic: record?.isPublic === true,
-      updatedAt: record?.updatedAt ?? record?.createdAt ?? null,
-      tools: Array.isArray(record?.tools) ? record.tools : [],
-    }))
-    .filter((agent: any) => args?.publicOnly !== true || agent.isPublic);
+  const userRecords = await queryBestRecords(thunkApi, DataType.AGENT, limit);
+  const favoritesMap = await fetchUserFavoriteAgentMap(thunkApi);
+
+  const recordsMap = new Map<string, any>();
+  for (const record of userRecords) {
+    const key = record?.dbKey || record?.id || record?.publicKey;
+    if (key) recordsMap.set(key, record);
+  }
+
+  for (const favKey of Object.keys(favoritesMap)) {
+    const isAlreadyPresent = Array.from(recordsMap.values()).some((record) =>
+      record?.dbKey === favKey ||
+      record?.id === favKey ||
+      record?.publicKey === favKey ||
+      `agent-pub-${record?.id}` === favKey
+    );
+    if (!isAlreadyPresent) {
+      const favRecord = await readBestRecord(thunkApi, favKey).catch(() => null);
+      if (favRecord) {
+        const key = favRecord?.dbKey || favRecord?.id || favKey;
+        recordsMap.set(key, favRecord);
+      }
+    }
+  }
+
+  const runtime = getRuntime(thunkApi);
+  const userId = runtime?.currentUserId ?? undefined;
+  let agents = Array.from(recordsMap.values()).map((record) =>
+    toSafeAgentSummary(record, { favoritesMap, userId })
+  );
+
+  if (args?.publicOnly === true) {
+    agents = agents.filter((agent) => agent.isPublic);
+  }
+  agents = sortSafeAgentSummaries(agents);
   return {
     rawData: { success: true, total: agents.length, agents },
-    displayData: jsonPreview({ total: agents.length, agents }),
+    displayData: formatAgentListCard(agents),
   };
 }
 

@@ -230,6 +230,7 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   },
   deepseek: {
     default: "https://api.deepseek.com/chat/completions",
+    responses: "https://api.deepseek.com/v1/responses",
   },
   deepinfra: {
     default: "https://api.deepinfra.com/v1/openai/chat/completions",

@@ -63,6 +63,7 @@ export function getSystemInternalCommandEntries(renderHelpText: () => string): C
     }),
     createContextCommand(["doctor"], "Show CLI doctor information", async (_args, ctx) => {
       const { buildCliDoctorText, getCliInstallChannel, resolveSelfUpdateServerUrl } = await import("./updateCommands");
+      const { isCompiledBinary } = await import("./cliEnvHelpers");
       const serverUrl = resolveSelfUpdateServerUrl(ctx.env);
       console.log(
         buildCliDoctorText({
@@ -71,7 +72,7 @@ export function getSystemInternalCommandEntries(renderHelpText: () => string): C
           entrypoint: ctx.entrypointPath,
           serverUrl,
           profileName: ctx.env.NOLO_PROFILE || "local",
-          installKind: "npm-global",
+          installKind: isCompiledBinary() ? "standalone-bundle" : "npm-global",
           updateChannel: getCliInstallChannel(serverUrl),
         })
       );

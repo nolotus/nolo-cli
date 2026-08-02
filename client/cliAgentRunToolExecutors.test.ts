@@ -67,7 +67,8 @@ describe("cli startAgentRun executor", () => {
     });
 
     expect(JSON.parse(result.content)).toEqual({ runId: "run-1", status: "running" });
-    expect(result.metadata?.displayData).toContain("runId: run-1");
+    expect(result.metadata?.displayData).toContain("Run started");
+    expect(result.metadata?.displayData).not.toContain("runId");
 
     // 注册表记录已写入
     const record = JSON.parse(deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!);
@@ -152,7 +153,7 @@ describe("cli controlAgentRun executor", () => {
     expect(data.status).toBe("running");
     expect(data.agentKey).toBe("agent-pub-x");
     expect(data.logTail).toBe("line2\nline3");
-    expect(result.metadata?.displayData).toContain("status=running");
+    expect(result.metadata?.displayData).toContain("⏳ running");
   });
 
   it("status without tailLines omits log tail", async () => {

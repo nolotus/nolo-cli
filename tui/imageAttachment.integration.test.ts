@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+// Hermetic: never spawn real git for the status chip in workspace tests.
+// refreshGitStatus falls back to process.env per key because tests pass env: {}.
+process.env.NOLO_CLI_GIT_STATUS ??= "0";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

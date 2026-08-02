@@ -28,7 +28,10 @@ export type ActionGateKind = "confirm" | "handoff" | "input";
 export type ActionGate = {
   id: string;
   kind: ActionGateKind;
+  /** Display title, or an i18n key resolved by the consumer (e.g. chat web). */
   title: string;
+  /** Optional i18n interpolation params for `title` when it is a locale key. */
+  titleParams?: Record<string, string | number>;
   body?: string;
   payload?: unknown;
 };
@@ -66,11 +69,27 @@ export function readActionGate(value: unknown): ActionGate | null {
   if (typeof value.id !== "string" || !value.id.trim()) return null;
   if (value.kind !== "confirm" && value.kind !== "handoff" && value.kind !== "input") return null;
   if (typeof value.title !== "string" || !value.title.trim()) return null;
+  const titleParams = readTitleParams(value.titleParams);
   return {
     id: value.id.trim(),
     kind: value.kind,
     title: value.title.trim(),
+    ...(titleParams ? { titleParams } : {}),
     ...(asOptionalTrimmedString(value.body) ? { body: asOptionalTrimmedString(value.body) } : {}),
     ...(Object.prototype.hasOwnProperty.call(value, "payload") ? { payload: value.payload } : {}),
   };
+}
+
+function readTitleParams(
+  value: unknown
+): Record<string, string | number> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value).flatMap(([key, raw]) => {
+    if (typeof raw === "string" || typeof raw === "number") {
+      return [[key, raw] as const];
+    }
+    return [];
+  });
+  if (entries.length === 0) return undefined;
+  return Object.fromEntries(entries);
 }

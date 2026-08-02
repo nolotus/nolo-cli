@@ -1,3 +1,4 @@
+import { estimateTokenCount } from "../context/tokenUtils";
 // Simple deterministic hash for cache-key purposes (browser + server compatible)
 function createHash(_algo: string) {
   let buf = "";
@@ -61,8 +62,16 @@ const hasLayerContent = (
   layer: ContextLayer
 ): layer is ContextLayer & { content: string } => Boolean(layer.content);
 
+/**
+ * 上下文层的 token 估算。
+ *
+ * 委托给 `ai/context/tokenUtils` 的唯一实现——它是中文感知的
+ * （中文 1.5 tok/字，其他 0.25 tok/字符）。此处原本是平铺 `length / 4`，
+ * 对非中文与前者等价，但对中文低估约 6 倍。本仓库的 system prompt 大量是中文，
+ * 低估会让 `stablePrefixEstimatedTokens` 这个落库的观测字段失真。
+ */
 export const estimateContextTokens = (content: string): number =>
-  Math.ceil(content.length / 4);
+  estimateTokenCount(content);
 
 export const compileContextLayers = (
   layers: ContextLayer[]

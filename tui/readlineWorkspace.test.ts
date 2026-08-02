@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
+
+// Hermetic: never spawn real git for the status chip in workspace tests.
+// refreshGitStatus falls back to process.env per key because tests pass env: {}.
+process.env.NOLO_CLI_GIT_STATUS ??= "0";
+import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
+import { spawn } from "bun";
+import { join } from "node:path";
 
 import {
   ANSI_ESCAPE_REGEX,
@@ -12,8 +19,10 @@ import {
   createTurnHistory,
   displayWidth,
   countPhysicalLines,
+  enterAltScreen,
   finalizeCurrentTurn,
   fitAnsiLine,
+  installAltScreenRestoreHandlers,
   padOrTruncateToWidth,
   parseScrollAction,
   renderHistory,
@@ -784,17 +793,69 @@ describe("splitRawInput", () => {
   });
 
   test("identifies bracketed paste sequences and returns payload as a single token with raw newlines intact", () => {
-    expect(splitRawInput("\x1b[?2004hline1\r\nline2\r\nline3\x1b[?2004l")).toEqual([
+    // Real terminal markers are CSI 200~ / 201~, NOT the DECSET 2004 enable/disable.
+    expect(splitRawInput("\x1b[200~line1\r\nline2\r\nline3\x1b[201~")).toEqual([
       "\x00PASTE\x00line1\r\nline2\r\nline3",
     ]);
   });
 
   test("splits normal characters outside bracketed paste as individual tokens", () => {
-    expect(splitRawInput("a\x1b[?2004hline1\r\nline2\x1b[?2004lb")).toEqual([
+    expect(splitRawInput("a\x1b[200~line1\r\nline2\x1b[201~b")).toEqual([
       "a",
       "\x00PASTE\x00line1\r\nline2",
       "b",
     ]);
+  });
+
+  test("does not mistake DECSET 2004 enable/disable for a paste bracket", () => {
+    // App writes these to enable the mode; if they were echoed/misread as
+    // brackets, collapse would silently never fire on real pastes.
+    const tokens = splitRawInput("\x1b[?2004hx\x1b[?2004l");
+    expect(tokens).toEqual(["\x1b[?2004h", "x", "\x1b[?2004l"]);
+  });
+
+  test("holds an open paste across chunks until 201~ arrives", async () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 10,
+    });
+    decode("\x1b[200~line1\nli");
+    // Still open — must not emit a partial PASTE yet.
+    expect(tokens).toEqual([]);
+    // Slow-SSH style gap: must NOT force-complete just because time passed.
+    await Bun.sleep(60);
+    expect(tokens).toEqual([]);
+    decode("ne2\nline3\x1b[201~");
+    expect(tokens).toEqual(["\x00PASTE\x00line1\nline2\nline3"]);
+  });
+
+  test("promotes unmarked multi-line bursts to a single PASTE token", async () => {
+    const body = Array.from({ length: 10 }, (_, i) => `raw-${i}`).join("\n");
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      unmarkedPasteDebounceMs: 15,
+    });
+    decode(body.slice(0, 20));
+    decode(body.slice(20));
+    await Bun.sleep(40);
+    expect(tokens).toEqual([`\x00PASTE\x00${body}`]);
+  });
+
+  test("literal CSI 201~ inside bracketed payload closes early; oversized remainder still collapses", async () => {
+    // Protocol: first 201~ ends the paste. Remainder is reparsed — if large,
+    // unmarked-burst heuristic still yields a PASTE token (not keystroke flood).
+    const remainder = Array.from({ length: 10 }, (_, i) => `tail-${i}`).join(
+      "\n",
+    );
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      unmarkedPasteDebounceMs: 15,
+    });
+    decode(`\x1b[200~before\x1b[201~${remainder}`);
+    await Bun.sleep(40);
+    expect(tokens[0]).toBe("\x00PASTE\x00before");
+    expect(tokens[1]).toBe(`\x00PASTE\x00${remainder}`);
+    expect(tokens).toHaveLength(2);
   });
 });
 
@@ -1799,5 +1860,599 @@ describe("composer draft stays visible during a busy turn (shadow-buffer regress
     input.write("/exit\r");
     input.end();
     await Promise.race([workspacePromise, tick(3000)]);
+  });
+});
+
+// 缺陷 B：Esc 即时反馈 + 第二次 Esc 强制停止。
+// 这些测试用 startTuiWorkspace + agentRunner 驱动，模拟真实 TUI 的 Esc 按键
+// 流和迟到的 runAgentChat 返回，验证 busyLock 解除和迟到返回值被丢弃。
+describe("Esc 即时反馈与强制停止", () => {
+  type FakeInput = PassThrough & {
+    isTTY?: boolean;
+    setRawMode?: (mode: boolean) => void;
+  };
+  type FakeOutput = PassThrough & {
+    isTTY?: boolean;
+    rows?: number;
+    columns?: number;
+  };
+
+  const makeStreams = () => {
+    const input = new PassThrough() as FakeInput;
+    const output = new PassThrough() as FakeOutput;
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    return { input, output, chunks, stdout: () => Buffer.concat(chunks).toString("utf8") };
+  };
+
+  test("第二次 Esc 后 busyLock 解除、composer 可再次输入", async () => {
+    const { input, output, stdout } = makeStreams();
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let turnCount = 0;
+    let resolveHold: (() => void) | null = null;
+    const holdGate = new Promise<void>((r) => { resolveHold = r; });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        opt.output.write("working");
+        await tick(20);
+        // 把 turn 挂住，模拟还在跑。测试期间发两次 Esc 强制停止。
+        await holdGate;
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    // 启动 turn 1
+    input.write("start\r");
+    while (turnCount < 1) await tick(10);
+    await tick(40);
+
+    // 第一次 Esc：协作停止 + 即时反馈（markStopping）
+    input.write("\x1b");
+    await tick(40);
+    // 第二次 Esc：强制停止，busyLock 解除
+    input.write("\x1b");
+    await tick(60);
+
+    const out = stripAnsi(stdout());
+    // 强制停止提示出现
+    expect(out).toContain(t("forceStopped"));
+
+    // busyLock 解除后，用户可以输入（不提交，只验证 composer 接受输入不卡死）。
+    // 发一个普通字符，不应被 busyLock 拦截。无法直接读 busy 变量，但能验证
+    // composer 重绘发生了（forceStopped 提示后有 composer frame）。
+    input.write("x");
+    await tick(40);
+    // 能输入说明 busy 已解除——如果 busy 仍锁着，Enter 会走 queue 而非 submit。
+    // 这里验证发 Enter 能启动新 turn（turnCount 变 2），证明 busyLock 解除。
+    input.write("\r");
+    let waited = 0;
+    while (turnCount < 2 && waited < 2000) {
+      await tick(20);
+      waited += 20;
+    }
+    expect(turnCount).toBe(2);
+
+    // 清理：释放第二个 turn 的 hold，然后退出。
+    resolveHold!();
+    await tick(30);
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, tick(3000)]);
+  });
+
+  test("强制停止后迟到的 runAgentChat 返回值被丢弃：不重复打印 turnStopped", async () => {
+    // 这是本任务最容易出错的地方：强制停止后 activeTurnAbort 已被清空、
+    // busyLock 已解除，但 runAgentChat 的 await 仍会在稍后返回。返回值走
+    // runOneAgentTurn 的收尾段时，必须被 forcedStop epoch 分支丢弃：
+    // 不读已 null 的 activeTurnAbort（NPE）、不打印 turnStopped（重复）、
+    // 不重绘（污染用户可能已开始的新输入）。
+    const { input, output, stdout } = makeStreams();
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let turnCount = 0;
+    let resolveHold: (() => void) | null = null;
+    const holdGate = new Promise<void>((r) => { resolveHold = r; });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        opt.output.write("working");
+        await tick(20);
+        // 挂住 turn，让测试先强制停止，再释放让迟到返回值流入。
+        await holdGate;
+        return { exitCode: 0, dialogId: "late-dialog" };
+      },
+    });
+
+    input.write("start\r");
+    while (turnCount < 1) await tick(10);
+    await tick(40);
+
+    // 两次 Esc 强制停止
+    input.write("\x1b");
+    await tick(40);
+    input.write("\x1b");
+    await tick(60);
+
+    // 注意：emitCommandOutput 把 forceStopped 写进 history，之后每次
+    // renderHistory 重绘都会重新输出该行，所以输出流里 forceStopped 文本
+    // 会出现多次（每帧一次）。用「释放 hold 前后的增量」判定迟到返回值是否
+    // 又打印了新的提示，而非绝对出现次数。
+    const outBefore = stripAnsi(stdout());
+    const forceStoppedBefore = countOccurrences(outBefore, t("forceStopped"));
+    const turnStoppedBefore = countOccurrences(outBefore, t("turnStopped"));
+    // 强制停止已发生：forceStopped 至少出现一次。
+    expect(forceStoppedBefore).toBeGreaterThanOrEqual(1);
+    // 强制停止时不打印 turnStopped。
+    expect(turnStoppedBefore).toBe(0);
+
+    // 现在释放 hold，让迟到的 runAgentChat 返回。返回值走 forcedStop 分支，
+    // 必须被丢弃——不重复打印 turnStopped、不新增 forceStopped。
+    resolveHold!();
+    await tick(80);
+
+    const outAfter = stripAnsi(stdout());
+    const forceStoppedAfter = countOccurrences(outAfter, t("forceStopped"));
+    const turnStoppedAfter = countOccurrences(outAfter, t("turnStopped"));
+
+    // 迟到返回值不应增加任何停止提示的打印次数（可能因重绘次数变化而
+    // 有少量波动，但 turnStopped 必须仍为 0——它根本没被 emitCommandOutput
+    // 调用过，所以无论重绘多少次都不该出现）。
+    expect(turnStoppedAfter).toBe(0);
+    // forceStopped 增量应为 0：迟到返回值不应再 emitCommandOutput(forceStopped)。
+    // 允许重绘导致的帧数波动，但新增 emit 调用会让文本作为新行追加，次数跳增。
+    // 这里用「不显著增加」判定：迟到返回值的 forcedStop 分支只做 state 折叠，
+    // 不调 emitCommandOutput，所以 forceStopped 的出现应只来自重绘（帧数不变
+    // 则次数不变）。
+    expect(forceStoppedAfter).toBe(forceStoppedBefore);
+
+    // 清理
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, tick(3000)]);
+  });
+
+  test("第一次 Esc 显示停止中文案（即时反馈），不打印 turnStopped", async () => {
+    const { input, output, stdout } = makeStreams();
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let turnCount = 0;
+    let resolveHold: (() => void) | null = null;
+    const holdGate = new Promise<void>((r) => { resolveHold = r; });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        opt.output.write("working");
+        await tick(20);
+        await holdGate;
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    input.write("start\r");
+    while (turnCount < 1) await tick(10);
+    await tick(40);
+
+    // 第一次 Esc：markStopping 即时反馈
+    input.write("\x1b");
+    await tick(60);
+
+    const out = stripAnsi(stdout());
+    // 停止中文案出现在活动行
+    expect(out).toContain(t("turnStopping"));
+    // turnStopped 要等链路 unwind，此刻还没打印
+    expect(out).not.toContain(t("turnStopped"));
+
+    // 清理：直接释放（不再发第二次 Esc，走正常 abort 收尾）
+    resolveHold!();
+    await tick(60);
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, tick(3000)]);
+  });
+
+  test("abort 时带 pendingToolName：打印带工具名的提示，不打印 turnStopped", async () => {
+    const { input, output, stdout } = makeStreams();
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let turnCount = 0;
+    let resolveHold: (() => void) | null = null;
+    const holdGate = new Promise<void>((r) => { resolveHold = r; });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        opt.output.write("working");
+        await tick(20);
+        await holdGate;
+        return {
+          exitCode: 0,
+          dialogId: "test-dialog",
+          pendingToolName: "editFile",
+        };
+      },
+    });
+
+    input.write("start\r");
+    while (turnCount < 1) await tick(10);
+    await tick(40);
+
+    // 第一次 Esc：协作中止，释放 hold 让 runAgentChat 带 pendingToolName 返回。
+    input.write("\x1b");
+    await tick(60);
+    resolveHold!();
+    await tick(80);
+
+    const out = stripAnsi(stdout());
+    // 带工具名的协作中止提示出现；原 turnStopped 不再打印。
+    expect(out).toContain(t("turnStoppedToolPending", "editFile"));
+    expect(out).not.toContain(t("turnStopped"));
+
+    // 清理
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, tick(3000)]);
+  });
+
+  test("abort 时无 pendingToolName：仍打印原 turnStopped", async () => {
+    const { input, output, stdout } = makeStreams();
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let turnCount = 0;
+    let resolveHold: (() => void) | null = null;
+    const holdGate = new Promise<void>((r) => { resolveHold = r; });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        opt.output.write("working");
+        await tick(20);
+        await holdGate;
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    input.write("start\r");
+    while (turnCount < 1) await tick(10);
+    await tick(40);
+
+    // 第一次 Esc：协作中止，释放 hold，返回不带 pendingToolName。
+    input.write("\x1b");
+    await tick(60);
+    resolveHold!();
+    await tick(80);
+
+    const out = stripAnsi(stdout());
+    // 原 turnStopped 照旧打印；带工具名的提示不出现。
+    expect(out).toContain(t("turnStopped"));
+    expect(out).not.toContain(t("turnStoppedToolPending", "editFile"));
+
+    // 清理
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, tick(3000)]);
+  });
+});
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let idx = haystack.indexOf(needle);
+  while (idx !== -1) {
+    count += 1;
+    idx = haystack.indexOf(needle, idx + needle.length);
+  }
+  return count;
+}
+
+// --- alternate screen (DECSET 1049) integration ---------------------------
+// These drive startTuiWorkspace end-to-end to verify the alternate-screen
+// isolation layer is wired into the real startup sequence and the
+// /altscreen runtime toggle, plus the process-handler registration guard.
+function makeTtyIo() {
+  const input = new PassThrough() as PassThrough & {
+    isTTY?: boolean;
+    setRawMode?: (mode: boolean) => void;
+  };
+  const output = new PassThrough() as PassThrough & {
+    isTTY?: boolean;
+    rows?: number;
+    columns?: number;
+  };
+  input.isTTY = true;
+  output.isTTY = true;
+  output.rows = TERM_ROWS;
+  output.columns = TERM_COLS;
+  input.setRawMode = () => {};
+  const chunks: Uint8Array[] = [];
+  output.on("data", (chunk) => {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  });
+  return { input, output, chunks, stdout: () => Buffer.concat(chunks).toString("utf8") };
+}
+
+describe("alternate screen isolation (startTuiWorkspace)", () => {
+  test("TTY 启动写 ?1049h 且启动序列不再含 \\x1b[3J", async () => {
+    // 覆盖测试要求 1（启动）+ 4（3J 被删）。启动序列里必须有 ?1049h，
+    // 绝不能有 \x1b[3J（它会清主屏 scrollback，切到备用屏后是无意义且有害的）。
+    const { input, output, stdout } = makeTtyIo();
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async () => ({ exitCode: 0, dialogId: "d" }),
+    });
+    // 等启动 banner + 清屏序列落地。
+    await new Promise((r) => setTimeout(r, 60));
+    const out = stdout();
+    expect(out).toContain("\x1b[?1049h");
+    expect(out).not.toContain("\x1b[3J");
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+  });
+
+  test("/altscreen off 写 ?1049l 且触发历史重绘；on 反之", async () => {
+    // 覆盖测试要求 5。off → 写 ?1049l 并重绘历史（否则切过去是空屏），
+    // on → 写 ?1049h。同时验证反馈文案出现。
+    const { input, output, stdout } = makeTtyIo();
+    let resolveFirst: (() => void) | null = null;
+    const firstTurn = new Promise<void>((r) => { resolveFirst = r; });
+    let turnCount = 0;
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        opt.output.write(`reply ${turnCount}`);
+        resolveFirst!();
+        return { exitCode: 0, dialogId: "d" };
+      },
+    });
+    // 发一条消息产生一个 assistant turn，让历史里有点东西可重绘。
+    input.write("hello\r");
+    while (turnCount < 1) await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 40));
+
+    // off：必须写 ?1049l 并出现 altscreenOff 文案。
+    input.write("/altscreen off\r");
+    await new Promise((r) => setTimeout(r, 60));
+    let out = stdout();
+    expect(out).toContain("\x1b[?1049l");
+    expect(out).toContain(t("altscreenOff"));
+
+    // on：必须写 ?1049h 并出现 altscreenOn 文案，且重绘（composer 状态行
+    // 🏔 在 altscreenOn 文案之后再次出现，证明 repaint 被调用，而非空屏）。
+    input.write("/altscreen on\r");
+    await new Promise((r) => setTimeout(r, 60));
+    out = stdout();
+    expect(out).toContain("\x1b[?1049h");
+    expect(out).toContain(t("altscreenOn"));
+    // 重绘落地：切回 on 后历史内容仍在输出里（证明 renderHistoryToOutput 被调）。
+    expect(out).toContain("reply 1");
+    // composer 重绘证据：?1049h 之后必须出现一次 🏔 状态行（action handler 的
+    // renderHistoryToOutput+repaint 在切屏后才补绘，证明切过去不是空屏）。
+    const onSeqIdx = out.lastIndexOf("\x1b[?1049h");
+    expect(onSeqIdx).toBeGreaterThanOrEqual(0);
+    const statusAfterOn = out.indexOf("🏔", onSeqIdx);
+    expect(statusAfterOn, "composer 应在切到备用屏后重绘").toBeGreaterThan(onSeqIdx);
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+  });
+
+  test("信号 handler 注册防重复：多次 TTY 启动后 listener 数不增长", async () => {
+    // 覆盖测试要求 7。readlineWorkspace 可能在测试/重入里多次调用入口；
+    // process 监听器必须只注册一次，否则 Node 报 MaxListenersExceededWarning。
+    const before = process.listenerCount("exit") +
+      process.listenerCount("SIGINT") +
+      process.listenerCount("SIGTERM") +
+      process.listenerCount("SIGHUP");
+    // 跑两次启动-退出周期。
+    for (let i = 0; i < 2; i++) {
+      const { input, output } = makeTtyIo();
+      const wp = startTuiWorkspace({
+        scriptDir: "",
+        input,
+        output,
+        env: {},
+        agentRunner: async () => ({ exitCode: 0, dialogId: "d" }),
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      input.write("/exit\r");
+      input.end();
+      await Promise.race([wp, new Promise((r) => setTimeout(r, 3000))]);
+    }
+    const after = process.listenerCount("exit") +
+      process.listenerCount("SIGINT") +
+      process.listenerCount("SIGTERM") +
+      process.listenerCount("SIGHUP");
+    // 第二次启动不应新增任何 listener（install 是幂等的）。
+    expect(after).toBe(before);
+  });
+});
+
+// --- alternate screen signal / crash exit semantics ----------------------
+// These run real signals through a subprocess (Bun.spawn) so the test runner
+// itself is never killed. Each probe installs the real handlers, then the
+// parent sends a real signal / waits for a crash and asserts the exit code
+// and stderr output. The probe lives at packages/cli/tui/__altScreenSigProbe.ts.
+
+const PROBE_PATH = join(import.meta.dir, "__altScreenSigProbe.ts");
+
+/** Spawn the probe and expose a `ready` promise that resolves once the
+ *  child prints "ready\n" (handlers installed). Callers should `await ready`
+ *  before sending signals instead of relying on a fixed delay. */
+function spawnProbe(mode: string): {
+  child: ReturnType<typeof spawn>;
+  ready: Promise<void>;
+  exited: Promise<{ code: number | null; stderr: string }>;
+} {
+  const child = spawn({
+    cmd: ["bun", "run", PROBE_PATH, mode],
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  let resolveReady!: () => void;
+  const ready = new Promise<void>((r) => { resolveReady = r; });
+  const exited = (async () => {
+    const stderr = Bun.readableStreamToText(child.stderr);
+    // Drain stdout until "ready" appears (handlers installed) or proc exits.
+    const stdoutReader = child.stdout.getReader();
+    let buf = "";
+    while (true) {
+      const { value, done } = await stdoutReader.read();
+      if (done) break;
+      buf += new TextDecoder().decode(value);
+      if (buf.includes("ready\n")) { resolveReady(); break; }
+    }
+    const res = await child.exited;
+    const stderrText = await stderr;
+    return { code: res, stderr: stderrText };
+  })();
+  return { child, ready, exited };
+}
+
+describe("altScreen signal/crash exit semantics (subprocess)", () => {
+  test("SIGTERM 无既有 listener → 恢复后以 143 退出（不挂住）", async () => {
+    const { child, ready, exited } = spawnProbe("install");
+    await ready;
+    process.kill(child.pid!, "SIGTERM");
+    const { code } = await Promise.race([
+      exited,
+      new Promise<{ code: number | null }>((_, rej) =>
+        setTimeout(() => rej(new Error("timeout")), 4000)
+      ),
+    ]);
+    expect(code).toBe(143);
+  });
+
+  test("SIGINT 无既有 listener → 恢复后以 130 退出", async () => {
+    const { child, ready, exited } = spawnProbe("install");
+    await ready;
+    process.kill(child.pid!, "SIGINT");
+    const { code } = await Promise.race([
+      exited,
+      new Promise<{ code: number | null }>((_, rej) =>
+        setTimeout(() => rej(new Error("timeout")), 4000)
+      ),
+    ]);
+    expect(code).toBe(130);
+  });
+
+  test("SIGHUP 无既有 listener → 恢复后以 129 退出", async () => {
+    const { child, ready, exited } = spawnProbe("install");
+    await ready;
+    process.kill(child.pid!, "SIGHUP");
+    const { code } = await Promise.race([
+      exited,
+      new Promise<{ code: number | null }>((_, rej) =>
+        setTimeout(() => rej(new Error("timeout")), 4000)
+      ),
+    ]);
+    expect(code).toBe(129);
+  });
+
+  test("有既有 SIGINT listener → 该 listener 恰好执行一次（不是两次）", async () => {
+    const { child, ready, exited } = spawnProbe("install+listener");
+    await ready;
+    process.kill(child.pid!, "SIGINT");
+    const { code, stderr } = await Promise.race([
+      exited,
+      new Promise<{ code: number | null; stderr: string }>((_, rej) =>
+        setTimeout(() => rej(new Error("timeout")), 4000)
+      ),
+    ]);
+    // The pre-existing listener exits with its run-count as the code.
+    // Exactly-once => exit code 1. If our handler had auto-exited on empty
+    // cached (the snapshot-miss bug) the code would be 130 and the listener
+    // never runs. If double-fired, the listener exits on call #1 so a second
+    // call is impossible — but the stderr marker "listener-runs=1" appears
+    // exactly once, confirming no double-fire.
+    expect(code).toBe(1);
+    const runs = stderr.match(/listener-runs=(\d+)/g) ?? [];
+    expect(runs.length, `stderr: ${JSON.stringify(stderr)}`).toBe(1);
+    expect(runs[0]).toBe("listener-runs=1");
+  });
+
+  test("uncaughtException → 打印错误信息并以非 0 退出", async () => {
+    const { child, ready, exited } = spawnProbe("throw");
+    const { code, stderr } = await Promise.race([
+      exited,
+      new Promise<{ code: number | null; stderr: string }>((_, rej) =>
+        setTimeout(() => rej(new Error("timeout")), 4000)
+      ),
+    ]);
+    expect(code).not.toBe(0);
+    expect(code).not.toBe(null);
+    expect(stderr).toContain("uncaughtException:");
+    expect(stderr).toContain("probe-boom");
+  });
+});
+
+describe("restoreAltScreen error guard", () => {
+  test("output 已销毁时不抛（写失败静默跳过）", () => {
+    // restoreAltScreen is not exported; it is registered on the "exit" event
+    // by installAltScreenRestoreHandlers. We point altScreenRestoreOutput at a
+    // destroyed TTY-named stream, flip the altScreenOn flag via enterAltScreen,
+    // then emit "exit" — restoreAltScreen will try to write the leave sequence
+    // to a destroyed stream, which throws synchronously in Node. The try/catch
+    // guard must swallow it so the test does not throw.
+    const stream = new PassThrough();
+    (stream as { isTTY?: boolean }).isTTY = true;
+    enterAltScreen(stream); // sets altScreenOn=true, writes ?1049h
+    stream.destroy();
+    installAltScreenRestoreHandlers(stream); // sets altScreenRestoreOutput=stream
+    expect(() => process.emit("exit", 0)).not.toThrow();
+  });
+});
+
+describe("readlineWorkspace paste store clearance contract", () => {
+  test("clearCollapsedPasteStore is invoked on pick-dialog selection success", async () => {
+    const code = readFileSync(
+      join(import.meta.dir, "readlineWorkspace.ts"),
+      "utf8",
+    );
+    const pickDialogBlock = code.slice(
+      code.indexOf('result.action?.type === "pick-dialog"'),
+      code.indexOf('result.action?.type === "list-agents"'),
+    );
+    expect(pickDialogBlock).toContain("clearCollapsedPasteStore(pasteStore)");
   });
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,8 +18,12 @@ import {
   renderWelcome,
 } from "./sessionRender";
 import { getCliLocale, setCliLocale, t, type CliLocale } from "./i18n";
-import { displayWidth, stripAnsi } from "./readlineWorkspace";
+import { displayWidth, stripAnsi, createRawInputDecoder } from "./readlineWorkspace";
 import { detectImagePaths } from "./pasteImage";
+import {
+  createCollapsedPasteStore,
+  expandCollapsedPastes,
+} from "../core/collapsedPaste";
 import {
   getActiveThemeName,
   getActiveDensity,
@@ -29,6 +33,19 @@ import {
   type TuiDensity,
 } from "./theme";
 import { getProcessRegistry } from "../agent-runtime/processRegistry";
+
+// Command-output assertions target English strings; pin the locale for
+// machines whose LANG resolves to zh. Locale-dependent describes further down
+// set zh/en explicitly and restore to the pinned value.
+// beforeEach, not just beforeAll: the CLI locale is module-global, and in a
+// full-suite run other test files interleave with this one and leave it on zh
+// (they restore in afterAll, which is too late for us). Pinning per test makes
+// this file's English assertions independent of who ran last — it passed alone
+// and failed in the suite before this.
+const originalLocale = getCliLocale();
+beforeAll(() => setCliLocale("en"));
+beforeEach(() => setCliLocale("en"));
+afterAll(() => setCliLocale(originalLocale));
 
 // 1x1 transparent PNG
 const TINY_PNG_BASE64 =
@@ -140,6 +157,116 @@ describe("applyTuiInputKey", () => {
       cursorPos: 0,
       submit: "line1\nline2\nline3",
     });
+  });
+
+  test("collapses oversized paste into a one-line placeholder and expands on submit", () => {
+    const pasteStore = createCollapsedPasteStore();
+    const body = Array.from({ length: 12 }, (_, i) => `line-${i}`).join("\n");
+    const pasteToken = `\x00PASTE\x00${body}`;
+    const pasteRes = applyTuiInputKey("", pasteToken, {}, 0, { pasteStore });
+    expect(pasteRes.buffer).toBe("[paste #1 · 12 lines]");
+    expect(pasteRes.buffer.includes("\n")).toBe(false);
+    expect(pasteStore.items.get(1)).toBe(body);
+
+    const enterRes = applyTuiInputKey(pasteRes.buffer, "\r", { name: "enter" });
+    expect(expandCollapsedPastes(enterRes.submit ?? "", pasteStore)).toBe(body);
+  });
+
+  test("collapses unmarked multi-line paste bursts via decoder PASTE token", async () => {
+    const pasteStore = createCollapsedPasteStore();
+    const body = Array.from({ length: 10 }, (_, i) => `raw-${i}`).join("\n");
+    // Real pipeline: decoder must promote the burst to PASTE before
+    // applyTuiInputKey — a raw multi-line seq never reaches it as one token.
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      unmarkedPasteDebounceMs: 15,
+    });
+    decode(body);
+    await Bun.sleep(40);
+    expect(tokens).toEqual([`\x00PASTE\x00${body}`]);
+    const pasteRes = applyTuiInputKey("", tokens[0]!, {}, 0, { pasteStore });
+    expect(pasteRes.buffer).toBe("[paste #1 · 10 lines]");
+    expect(pasteStore.items.get(1)).toBe(body);
+  });
+
+  test("backspace deletes a collapsed paste chip atomically", () => {
+    const pasteStore = createCollapsedPasteStore();
+    const body = Array.from({ length: 10 }, (_, i) => `L${i}`).join("\n");
+    const pasteRes = applyTuiInputKey("hi ", `\x00PASTE\x00${body}`, {}, 3, {
+      pasteStore,
+    });
+    expect(pasteRes.buffer.startsWith("hi [paste #1")).toBe(true);
+    const afterBackspace = applyTuiInputKey(
+      pasteRes.buffer,
+      "\x7f",
+      { name: "backspace" },
+      pasteRes.cursorPos,
+      { pasteStore },
+    );
+    expect(afterBackspace.buffer).toBe("hi ");
+    expect(pasteStore.items.size).toBe(0);
+  });
+
+  test("Ctrl+W after chip+word deletes only the word, not the chip", () => {
+    const pasteStore = createCollapsedPasteStore();
+    const body = Array.from({ length: 10 }, (_, i) => `L${i}`).join("\n");
+    const pasteRes = applyTuiInputKey("", `\x00PASTE\x00${body}`, {}, 0, {
+      pasteStore,
+    });
+    const withWord = applyTuiInputKey(
+      pasteRes.buffer,
+      "foo",
+      {},
+      pasteRes.cursorPos,
+      { pasteStore },
+    );
+    expect(withWord.buffer.endsWith("foo")).toBe(true);
+    const afterWordDelete = applyTuiInputKey(
+      withWord.buffer,
+      "\x17",
+      { ctrl: true, name: "w" },
+      withWord.cursorPos,
+      { pasteStore },
+    );
+    expect(afterWordDelete.buffer).toBe(pasteRes.buffer);
+    expect(pasteStore.items.size).toBe(1);
+    expect(expandCollapsedPastes(afterWordDelete.buffer, pasteStore)).toBe(body);
+  });
+
+  test("paste while caret is inside an existing chip does not nest placeholders", () => {
+    const pasteStore = createCollapsedPasteStore();
+    const body1 = Array.from({ length: 10 }, (_, i) => `A${i}`).join("\n");
+    const body2 = Array.from({ length: 10 }, (_, i) => `B${i}`).join("\n");
+    const first = applyTuiInputKey("", `\x00PASTE\x00${body1}`, {}, 0, {
+      pasteStore,
+    });
+    const nested = applyTuiInputKey(
+      first.buffer,
+      `\x00PASTE\x00${body2}`,
+      {},
+      5,
+      { pasteStore },
+    );
+    expect(nested.buffer).toBe(`${first.buffer}[paste #2 · 10 lines]`);
+    expect(expandCollapsedPastes(nested.buffer, pasteStore)).toBe(
+      `${body1}${body2}`,
+    );
+  });
+
+  test("left arrow from inside a chip jumps to chip start", () => {
+    const pasteStore = createCollapsedPasteStore();
+    const body = Array.from({ length: 10 }, (_, i) => `L${i}`).join("\n");
+    const pasteRes = applyTuiInputKey("xx", `\x00PASTE\x00${body}`, {}, 2, {
+      pasteStore,
+    });
+    const left = applyTuiInputKey(
+      pasteRes.buffer,
+      "\x1b[D",
+      { name: "left" },
+      5,
+      { pasteStore },
+    );
+    expect(left.cursorPos).toBe(2);
   });
 
   test("handles forward Delete key and modifier Delete/Backspace variants", () => {
@@ -490,6 +617,10 @@ describe("completeSlashCommand", () => {
 });
 
 describe("handleTuiInput - /switch, /agent, /tasks, /jobs aliases", () => {
+  beforeEach(() => {
+    getProcessRegistry().clear();
+  });
+
   test("handles /switch and /agent without arguments to open agent picker", () => {
     const state = createInitialTuiState({});
     const switchRes = handleTuiInput("/switch", state);
@@ -513,6 +644,71 @@ describe("handleTuiInput - /switch, /agent, /tasks, /jobs aliases", () => {
     expect(handleTuiInput("/tasks", state).output).toBe("No processes.");
     expect(handleTuiInput("/jobs", state).output).toBe("No processes.");
     expect(handleTuiInput("/procs", state).output).toBe("No processes.");
+  });
+});
+
+describe("handleTuiInput - /altscreen dispatch", () => {
+  // 覆盖 /altscreen on|off 的派发契约：无参数显示用法，on/off 返回
+  // set-altscreen 动作 + 对应本地化文案。实际序列写入在 readlineWorkspace 层。
+  test("/altscreen on returns set-altscreen enabled true", () => {
+    const state = createInitialTuiState({});
+    const res = handleTuiInput("/altscreen on", state);
+    expect(res.action).toEqual({ type: "set-altscreen", enabled: true });
+    setCliLocale("en");
+    expect(res.output).toBe(t("altscreenOn"));
+  });
+
+  test("/altscreen off returns set-altscreen enabled false", () => {
+    const state = createInitialTuiState({});
+    const res = handleTuiInput("/altscreen off", state);
+    expect(res.action).toEqual({ type: "set-altscreen", enabled: false });
+    setCliLocale("en");
+    expect(res.output).toBe(t("altscreenOff"));
+  });
+
+  test("/altscreen with no/bad arg shows usage (follows /mouse behavior)", () => {
+    const state = createInitialTuiState({});
+    setCliLocale("en");
+    expect(handleTuiInput("/altscreen", state).output).toBe(t("altscreenUsage"));
+    expect(handleTuiInput("/altscreen maybe", state).output).toBe(t("altscreenUsage"));
+  });
+});
+
+describe("Task B - localized slash-command output", () => {
+  beforeEach(() => {
+    getProcessRegistry().clear();
+  });
+
+  const state = () => createInitialTuiState({});
+
+  test("/runtime, /stop, /skill usage lines follow the active locale", () => {
+    setCliLocale("zh");
+    expect(handleTuiInput("/runtime bogus", state()).output).toBe(
+      "用法：/runtime <auto|local|server>",
+    );
+    expect(handleTuiInput("/stop", state()).output).toBe(
+      "用法：/stop <pid|label|all>",
+    );
+    expect(handleTuiInput("/skill attach", state()).output).toBe(
+      "用法：/skill attach <skill-ref>",
+    );
+    setCliLocale("en");
+    expect(handleTuiInput("/runtime bogus", state()).output).toBe(
+      "Usage: /runtime <auto|local|server>",
+    );
+    expect(handleTuiInput("/stop", state()).output).toBe(
+      "Usage: /stop <pid|label|all>",
+    );
+    expect(handleTuiInput("/skill attach", state()).output).toBe(
+      "Usage: /skill attach <skill-ref>",
+    );
+  });
+
+  test("/tasks empty state follows the active locale", () => {
+    setCliLocale("zh");
+    expect(handleTuiInput("/tasks", state()).output).toBe("没有运行中的进程。");
+    setCliLocale("en");
+    expect(handleTuiInput("/tasks", state()).output).toBe("No processes.");
   });
 });
 

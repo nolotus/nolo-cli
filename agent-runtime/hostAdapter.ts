@@ -103,6 +103,11 @@ export type AgentRuntimeSaveTurnInput = {
   parentDialogId?: string;
 };
 
+export type AgentRuntimeDialogSummary = {
+  summary: string;
+  summarizedBeforeId?: string;
+};
+
 export type AgentRuntimeHostAdapter = {
   host: AgentRuntimeHost;
   capabilities: string[];
@@ -114,6 +119,22 @@ export type AgentRuntimeHostAdapter = {
     call: AgentRuntimeToolCallInput,
     opts?: { abortSignal?: AbortSignal },
   ): Promise<AgentRuntimeToolResult>;
+  /**
+   * Optional: load a persisted dialog summary for local auto-compaction.
+   * Missing method = host does not support auto-compaction (behavior unchanged).
+   */
+  loadDialogSummary?(
+    dialogId: string,
+  ): Promise<AgentRuntimeDialogSummary | null>;
+  /**
+   * Optional: persist a dialog summary generated at a compression point.
+   * Must only be called when a new summary is produced — never per-turn rewrite.
+   */
+  saveDialogSummary?(input: {
+    dialogId: string;
+    summary: string;
+    summarizedBeforeId?: string;
+  }): Promise<void>;
 };
 
 export function createRuntimeHostDescriptor(adapter: AgentRuntimeHostAdapter) {

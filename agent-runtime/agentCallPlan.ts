@@ -14,7 +14,7 @@ import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import { isAntigravityOAuthAgent, ANTIGRAVITY_CLOUD_CODE_BASE_URL } from "./antigravityOAuth";
 import {
   isOpenAiResponsesModel,
-  OPENAI_RESPONSES_ENDPOINT,
+  resolvePlatformResponsesEndpoint,
   resolvePlatformChatCompletionsEndpoint,
 } from "./platformProviderEndpoints";
 import { shouldUseServerProxy } from "./serverProxyPolicy";
@@ -262,7 +262,7 @@ export function resolveAgentCallPlan(
 
   // Compute endpoint for platform providers
   const endpoint = useResponses
-    ? OPENAI_RESPONSES_ENDPOINT
+    ? resolvePlatformResponsesEndpoint(provider) ?? ""
     : resolvePlatformChatCompletionsEndpoint(provider) ?? "";
 
   return {

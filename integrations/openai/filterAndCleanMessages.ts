@@ -26,6 +26,7 @@ export interface OpenAIMessage {
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  reasoning_content?: string;
 }
 
 export interface InternalMessage extends Omit<Partial<OpenAIMessage>, "content"> {
@@ -180,6 +181,16 @@ const toOpenAIMessage = (rawMsg: any): OpenAIMessage | null => {
 
   if (role === "assistant" && toolCalls) {
     cleaned.tool_calls = toolCalls;
+  }
+
+  if (role === "assistant") {
+    const reasoningContent =
+      typeof msg.reasoning_content === "string"
+        ? msg.reasoning_content
+        : typeof msg.thinkContent === "string"
+          ? msg.thinkContent
+          : "";
+    if (reasoningContent) cleaned.reasoning_content = reasoningContent;
   }
 
   if (role === "tool") {

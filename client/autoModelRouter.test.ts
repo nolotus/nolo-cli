@@ -62,7 +62,8 @@ describe("classifyCliAutoRoute", () => {
 
     expect(result).toEqual({
       agentKey: CLI_AUTO_TIER_AGENT_KEYS.balanced,
-      tier: "balanced",
+      // balanced 当前与 flash 同 key（临时降配），解析归一为 flash。
+      tier: "flash",
       classified: true,
       confidence: 0.9,
       needsWorkspace: false,

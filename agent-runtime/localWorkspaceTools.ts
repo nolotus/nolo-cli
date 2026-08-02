@@ -49,6 +49,31 @@ const EXEC_SHELL_DETACH_ENV = "NOLO_EXEC_SHELL_DETACH_MS";
 const DEFAULT_EXEC_SHELL_DETACH_MS = 120000;
 const DEFAULT_LOCAL_API_ORIGIN = "http://127.0.0.1:38123";
 
+/**
+ * Build/generated artifact globs that are ALWAYS excluded from searchFiles,
+ * even when `includeIgnored: true`. User-supplied `exclude` patterns are
+ * additive — they cannot re-include these.
+ */
+export const ALWAYS_EXCLUDED_GLOBS: readonly string[] = [
+  "*.tsbuildinfo",
+  "dist/**",
+  "build/**",
+  "out/**",
+  "coverage/**",
+  ".next/**",
+  ".turbo/**",
+  "public/assets/**",
+  "*.min.js",
+  "*.min.css",
+  "*.map",
+  "*.lock",
+  "bun.lockb",
+  "*.ldb",
+];
+
+const DEFAULT_SEARCH_MAX_RESULTS = 200;
+const SEARCH_OUTPUT_CHAR_LIMIT = 20_000;
+
 export type ActivityRef =
   | { type: "file"; path: string }
   | { type: "terminal"; id?: string; label?: string }
@@ -628,8 +653,8 @@ function requireWorkspaceGlobPattern(args: WorkspaceFileArgs) {
   return pattern;
 }
 
-function readWorkspaceMaxResults(args: WorkspaceFileArgs) {
-  if (args.maxResults === undefined) return undefined;
+function readWorkspaceMaxResults(args: WorkspaceFileArgs, defaultValue?: number) {
+  if (args.maxResults === undefined) return defaultValue;
   const value = Number(args.maxResults);
   if (!Number.isInteger(value) || value < 1) {
     throw new Error("maxResults must be a positive integer.");
@@ -1409,7 +1434,7 @@ async function searchFilesTool(args: {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const query = requireWorkspaceSearchQuery(parsed);
   const exclude = readWorkspaceExcludeGlobs(parsed);
-  const maxResults = readWorkspaceMaxResults(parsed);
+  const maxResults = readWorkspaceMaxResults(parsed, DEFAULT_SEARCH_MAX_RESULTS);
   const contextLines = readWorkspaceContextLines(parsed);
   const literal = parsed.literal === true;
   const caseSensitive = parsed.caseSensitive === false ? false : true;
@@ -1442,6 +1467,7 @@ async function searchFilesTool(args: {
         "!node_modules",
         "--glob",
         "!.git",
+        ...ALWAYS_EXCLUDED_GLOBS.flatMap((g) => ["--glob", `!${g}`]),
         ...exclude.flatMap((excludePattern) => ["--glob", `!${excludePattern}`]),
         "--",
         query,
@@ -1458,6 +1484,16 @@ async function searchFilesTool(args: {
     ...(contextLines !== undefined ? ["-C", String(contextLines)] : []),
     "--exclude-dir=node_modules",
     "--exclude-dir=.git",
+    // grep 的 --exclude-dir 只按目录 basename 匹配，无法表达 "public/assets" 这种
+    // 多段路径：压成 basename 会连 src/assets 一起排掉（过度排除会让模型以为那里
+    // 没有匹配，比不排除更危险）。所以这里只翻译无损的单段 glob，多段的统一交给
+    // 下面的 dropAlwaysExcludedLines 按完整 glob 过滤——三条路径（rg / grep / JS
+    // 兜底）因此共享同一套排除语义。
+    ...ALWAYS_EXCLUDED_GLOBS.flatMap((g) => {
+      if (!g.endsWith("/**")) return ["--exclude", g];
+      const dir = g.replace(/\/\*\*$/, "");
+      return dir.includes("/") ? [] : [`--exclude-dir=${dir}`];
+    }),
     ...exclude.flatMap((excludePattern) => ["--exclude", excludePattern]),
     query,
     relativeSearchPath,
@@ -1504,13 +1540,14 @@ async function searchFilesTool(args: {
     .split(/\r?\n/)
     .map((line) => line.trimEnd().replace(/^\.\//, ""))
     .filter(Boolean);
+  outputLines = dropAlwaysExcludedLines(outputLines);
   let limitedByMaxResults = "limitedByMaxResults" in result && result.limitedByMaxResults === true;
   if (outputLines.length === 0 && result.exitCode === 0 && (includeIgnored || !(await hasRootGitignore(args.workspaceRoot)))) {
     const fallback = await scanWorkspaceTextMatches({
       workspaceRoot: args.workspaceRoot,
       relativeSearchPath,
       query,
-      exclude,
+      exclude: [...ALWAYS_EXCLUDED_GLOBS, ...exclude],
       maxResults,
       literal,
       caseSensitive,
@@ -1529,8 +1566,11 @@ async function searchFilesTool(args: {
     const match = line.match(/^(.*?):\d+:/);
     return match?.[1] ? [match[1]] : [];
   })));
+  const rawContent = outputLines.join("\n");
+  const content = truncateToolOutput(rawContent, SEARCH_OUTPUT_CHAR_LIMIT);
+  const truncatedByByteLimit = content.length !== rawContent.length;
   return {
-    content: outputLines.join("\n"),
+    content,
     metadata: {
       query,
       path: requestedPath,
@@ -1543,8 +1583,9 @@ async function searchFilesTool(args: {
       count: outputLines.length,
       matchCount: matchLines.length,
       matchedFiles,
-      truncated: limitedByMaxResults,
+      truncated: limitedByMaxResults || truncatedByByteLimit,
       limitedByMaxResults,
+      ...(truncatedByByteLimit ? { truncatedByByteLimit: true } : {}),
       ...(maxResults ? { maxResults } : {}),
       exitCode: result.exitCode,
       ...(extractActivity(parsed) ? { activity: extractActivity(parsed) } : {}),
@@ -1587,6 +1628,21 @@ async function filterRootGitignoredFiles(args: {
   if (patterns.length === 0) return args.files;
   const globs = patterns.map((pattern) => createGlob(pattern));
   return args.files.filter((file) => !globs.some((glob) => glob.match(file)));
+}
+
+/**
+ * 按 ALWAYS_EXCLUDED_GLOBS 过滤搜索输出行（形如 "path:line:content"）。
+ *
+ * 存在的理由：ripgrep 与 JS 兜底都能表达完整路径 glob，grep 不能。统一在输出侧
+ * 过滤，保证三条路径的排除语义一致，且不依赖 grep 的有损翻译。
+ */
+export function dropAlwaysExcludedLines(lines: string[]): string[] {
+  const globs = ALWAYS_EXCLUDED_GLOBS.map((pattern) => createGlob(pattern));
+  return lines.filter((line) => {
+    const filePath = line.match(/^(.*?):\d+[:-]/)?.[1];
+    if (!filePath) return true;
+    return !globs.some((glob) => glob.match(filePath));
+  });
 }
 
 function scanWorkspaceGlobFiles(args: {

@@ -123,6 +123,7 @@ export {
   parsePlatformChatCompletionData,
   parsePlatformChatCompletionResponse,
   readPlatformChatSseCompletion,
+  resolveLegacyDeepSeekProxyChatFallback,
   resolvePlatformChatProviderConfig,
   shouldUsePlatformChatProvider,
 } from "./platformChatProvider";
@@ -240,6 +241,7 @@ export type {
 } from "./noloWorkspaceTools";
 export type {
   AgentRuntimeAgentConfig,
+  AgentRuntimeDialogSummary,
   AgentRuntimeHostAdapter,
   AgentRuntimeProvider,
   AgentRuntimeSaveTurnInput,
@@ -308,6 +310,11 @@ export {
   createCloudCredentialGrant,
   uploadCloudCredentialGrant,
 } from "./cloudCredentialGrant";
+export type {
+  ContextBlockCacheScope,
+  ContextBlockScope,
+} from "./contextBlockScope";
+export { normalizeContextBlockScopes } from "./contextBlockScope";
 export type {
   CloudCredentialGrant,
   CloudCredentialGrantStatus,

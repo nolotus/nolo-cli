@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { resolveTuiBrightness, themeColorSequence } from "../tui/theme";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { getActiveThemeName, resolveTuiBrightness, setActiveThemeName, themeColorSequence } from "../tui/theme";
 import {
   convertMarkdownTablesForTerminal,
   createRenderAwareStreamWriter,
@@ -407,6 +407,16 @@ describe("assistantOutput", () => {
 });
 
 describe("code block syntax highlighting", () => {
+  // Pin trail so accent ≠ info; catppuccin and iris map both tokens to the
+  // same sequence, which makes the keyword-vs-identifier assertion vacuous
+  // and order-dependent on whatever theme a prior file left active.
+  let prevTheme: string;
+  beforeAll(() => {
+    prevTheme = getActiveThemeName();
+    setActiveThemeName("trail");
+  });
+  afterAll(() => setActiveThemeName(prevTheme));
+
   const brightness = resolveTuiBrightness();
   const seq = (token: "accent" | "success" | "chrome" | "warning" | "info") =>
     themeColorSequence(token, process.env, brightness);
@@ -459,5 +469,117 @@ describe("code block syntax highlighting", () => {
       .split("\n")
       .find((line) => line.includes("const"));
     expect(streamedCode).toBe(codeLine("ts", "const x = 1; // note"));
+  });
+});
+
+describe("diff fence rendering", () => {
+  const DIFF_BODY = [
+    "@@ -1,2 +1,3 @@",
+    "-old line",
+    "+new line",
+    " context line",
+    "+++ b/file",
+    "--- a/file",
+  ];
+
+  /** Run `fn` with a controlled env, restoring the previous env afterwards. */
+  const withEnv = (env: Record<string, string | undefined>, fn: () => void) => {
+    const prev = new Map<string, string | undefined>();
+    for (const [k, v] of Object.entries(env)) {
+      prev.set(k, process.env[k]);
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      fn();
+    } finally {
+      for (const [k, v] of prev) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+
+  const truecolorEnv = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
+
+  test("streamed diff lines are byte-identical to a whole-message redraw", () => {
+    // The stream path (createRenderAwareStreamWriter → highlightCodeLine) and
+    // the redraw path (formatAssistantDisplay → highlightCodeLine) must paint
+    // the same escape sequences per line, or a reply recolors on scroll-back.
+    withEnv(truecolorEnv, () => {
+      const source = ["```diff", ...DIFF_BODY, "```"].join("\n");
+
+      const redraw = formatAssistantDisplay(source);
+
+      const chunks: string[] = [];
+      const writer = createRenderAwareStreamWriter({
+        write: (chunk) => chunks.push(chunk),
+      });
+      for (const line of source.split("\n")) writer.push(line + "\n");
+      writer.flush();
+
+      // Fence interior only (indices 1..6).
+      expect(chunks.join("").split("\n").slice(1, 7)).toEqual(
+        redraw.split("\n").slice(1, 7)
+      );
+    });
+  });
+
+  test("truecolor diff lines carry a background tint (48;2)", () => {
+    withEnv(truecolorEnv, () => {
+      const line =
+        formatAssistantDisplay("```diff\n+new line\n```").split("\n")[1] ?? "";
+      expect(line).toContain("\x1b[48;2"); // background tint
+      expect(line).toContain("\x1b[38;2"); // foreground color
+    });
+  });
+
+  test("diff lines end with \\x1b[0m so the tint never leaks", () => {
+    withEnv(truecolorEnv, () => {
+      const lines = formatAssistantDisplay(
+        ["```diff", "-gone", "+added", "```"].join("\n")
+      ).split("\n");
+      for (const line of lines.slice(1, 3)) {
+        expect(line).toMatch(/\x1b\[0m$/); // full reset (fg + bg)
+        expect(line.endsWith("\x1b[39m")).toBe(false); // fg-only reset would leak the tint
+      }
+    });
+  });
+
+  test("+++ / --- headers are context, not added/removed", () => {
+    withEnv(truecolorEnv, () => {
+      const lines = formatAssistantDisplay(
+        ["```diff", "+++ b/file", "--- a/file", "+real add", "-real del", "```"].join("\n")
+      ).split("\n");
+      // +++/--- headers share the exact context wrapper (no fg, no bg)…
+      expect(lines[1]!.replace("+++ b/file", "--- a/file")).toBe(lines[2]);
+      expect(lines[1]).not.toContain("38;2");
+      expect(lines[1]).not.toContain("48;2");
+      // …while genuine added/removed rows carry fg + bg colors.
+      expect(lines[3]).toContain("38;2");
+      expect(lines[3]).toContain("48;2");
+      expect(lines[4]).toContain("38;2");
+      expect(lines[4]).toContain("48;2");
+    });
+  });
+
+  test("non-truecolor diff lines have no background (no 48;2)", () => {
+    withEnv(
+      {
+        COLORTERM: "xterm-256color",
+        NOLO_TUI_TRUECOLOR: "0",
+        NOLO_TUI_THEME: "dark",
+      },
+      () => {
+        const lines = formatAssistantDisplay(
+          ["```diff", "+added", "-removed", "```"].join("\n")
+        ).split("\n");
+        expect(lines[1]).not.toContain("48;2");
+        expect(lines[2]).not.toContain("48;2");
+        // Degraded path still colors the foreground (ANSI-16 fallback).
+        expect(lines[1]).toMatch(/\x1b\[3[0-9]m/);
+        expect(lines[2]).toMatch(/\x1b\[3[0-9]m/);
+      }
+    );
   });
 });

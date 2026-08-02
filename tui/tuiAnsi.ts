@@ -266,11 +266,7 @@ function tokenizeAnsiLine(line: string): WrapToken[] {
  * - prefers breaking after the last space/tab so latin words survive wrapping
  * (CJK breaks anywhere, which is correct for those scripts).
  */
-export function wrapTranscriptLine(
-  line: string,
-  columns: number,
-  hangingIndent = ""
-): string[] {
+export function wrapTranscriptLine(line: string, columns: number): string[] {
   if (line === "") return [""];
   const tokens = tokenizeAnsiLine(line);
   const result: string[] = [];
@@ -292,10 +288,6 @@ export function wrapTranscriptLine(
       if (result.length > 0) break;
     }
     const openingStyles = [...activeStyles];
-    const isContinuation = result.length > 0 && hangingIndent.length > 0;
-    const indentWidth = isContinuation ? displayWidth(hangingIndent) : 0;
-    const maxSegmentWidth = Math.max(1, columns - indentWidth);
-
     let width = 0;
     let end = start;
     let lastBreak = -1; // index just after a breakable char
@@ -305,7 +297,7 @@ export function wrapTranscriptLine(
         end += 1;
         continue;
       }
-      if (width + token.width > maxSegmentWidth && width > 0) break;
+      if (width + token.width > columns && width > 0) break;
       width += token.width;
       end += 1;
       if (token.value === " " || token.value === "\t") {
@@ -336,8 +328,7 @@ export function wrapTranscriptLine(
     const prefix = openingStyles.join("");
     const needsReset =
       (sawStyle || activeStyles.length > 0) && !segment.endsWith("\x1b[0m");
-    const lineContent = `${prefix}${segment}${needsReset ? "\x1b[0m" : ""}`;
-    result.push(isContinuation ? `${hangingIndent}${lineContent}` : lineContent);
+    result.push(`${prefix}${segment}${needsReset ? "\x1b[0m" : ""}`);
     start = segmentEnd;
     // Continuation rows never start with the space we just wrapped at.
     while (start < tokens.length) {

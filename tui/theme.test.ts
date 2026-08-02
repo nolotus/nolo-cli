@@ -3,13 +3,10 @@ import {
   resolveTuiBrightness,
   themeColorSequence,
   themeText,
+  highlightMarkdown,
   blendHex,
   diffLineSequences,
   setActiveThemeName,
-  supportsTruecolor,
-  setActiveTerminalBaseHex,
-  getActiveTerminalBaseHex,
-  renderDiffLine,
 } from "./theme";
 
 describe("tui theme", () => {
@@ -98,6 +95,75 @@ describe("tui theme", () => {
     expect(lightStyled).not.toBe(darkStyled);
   });
 
+  describe("markdown highlighter", () => {
+    test("leaves plain text alone when color is disabled", () => {
+      expect(highlightMarkdown("hello **world**", false)).toBe("hello **world**");
+    });
+
+    test("formats bold text with bold escape codes", () => {
+      const formatted = highlightMarkdown("hello **world**", true);
+      expect(formatted).toBe("hello \x1b[1mworld\x1b[22m");
+    });
+
+    test("formats inline code with muted color, not the code-block info hue", () => {
+    setActiveThemeName("trail");
+      const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
+      const formatted = highlightMarkdown("this is `code`", true, env);
+      expect(formatted).toContain("\x1b[38;2;154;163;184mcode\x1b[39m"); // trail dark muted
+      expect(formatted).not.toContain("\x1b[38;2;148;226;213m"); // info stays for blocks only
+    });
+
+    test("formats code blocks with custom frame and info color", () => {
+      const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
+      const codeBlock = "```ts\nconst x = 1;\n```";
+      const formatted = highlightMarkdown(codeBlock, true, env);
+      expect(formatted).toContain("┌───");
+      expect(formatted).toContain("└───");
+      expect(formatted).toContain(themeText("│", "chrome", true, env));
+      expect(formatted).toContain("const x = 1;");
+    });
+
+    test("formats italic with dim, not leaking asterisks", () => {
+      const formatted = highlightMarkdown("this is *important*", true);
+      expect(formatted).toBe("this is \x1b[2mimportant\x1b[22m");
+    });
+
+    test("bold runs before italic so ** is not half-consumed", () => {
+      const formatted = highlightMarkdown("**bold** and *italic*", true);
+      expect(formatted).toContain("\x1b[1mbold\x1b[22m");
+      expect(formatted).toContain("\x1b[2mitalic\x1b[22m");
+    });
+
+    test("does not corrupt snake_case identifiers as italic", () => {
+      // _italic_ is intentionally NOT supported. snake_case must pass through.
+      const formatted = highlightMarkdown("call foo_bar_baz here", true);
+      expect(formatted).not.toContain("\x1b[2mbar\x1b[22m");
+      expect(formatted).toContain("foo_bar_baz");
+    });
+
+    test("formats strikethrough with dim+strike, not leaking tildes", () => {
+      const formatted = highlightMarkdown("this is ~~removed~~", true);
+      expect(formatted).toBe("this is \x1b[2m\x1b[9mremoved\x1b[29m\x1b[22m");
+    });
+
+    test("dims the 进入 nolo-plan status line with chrome", () => {
+      // Repo convention forces every reply to start with "进入 nolo-plan…".
+      // Downgrade to chrome + dim to cut visual noise. Must match the streaming
+      // renderer (assistantOutput.ts styleRichMarkdownLine) so repaint from
+      // history doesn't shift colors.
+      const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
+      const formatted = highlightMarkdown(
+        "进入 nolo-plan（4 项串行小改）。\nbody text",
+        true,
+        env
+      );
+      const chrome = themeColorSequence("chrome", env);
+      expect(formatted).toContain(`${chrome}\x1b[2m进入 nolo-plan（4 项串行小改）。`);
+      // The body line is NOT dimmed by this rule.
+      expect(formatted).toContain("body text");
+      expect(formatted).not.toContain("\x1b[2mbody text");
+    });
+  });
 
   describe("blendHex & diffLineSequences", () => {
     test("blendHex calculates weighted color mix correctly", () => {
@@ -142,89 +208,6 @@ describe("tui theme", () => {
       } finally {
         setActiveThemeName("trail");
       }
-    });
-  });
-
-  describe("supportsTruecolor", () => {
-    test("NOLO_TUI_TRUECOLOR=0 overrides COLORTERM=truecolor", () => {
-      expect(
-        supportsTruecolor({ COLORTERM: "truecolor", NOLO_TUI_TRUECOLOR: "0" })
-      ).toBe(false);
-    });
-
-    test("NOLO_TUI_TRUECOLOR=1 forces truecolor without any other signal", () => {
-      expect(supportsTruecolor({ NOLO_TUI_TRUECOLOR: "1" })).toBe(true);
-    });
-
-    test("TERM_PROGRAM=ghostty with no COLORTERM is truecolor", () => {
-      // tmux / SSH / VS Code integrated terminal don't set COLORTERM; the
-      // TERM_PROGRAM allowlist is the second signal that keeps backgrounds on.
-      expect(supportsTruecolor({ TERM_PROGRAM: "ghostty" })).toBe(true);
-    });
-
-    test("TERM_PROGRAM=Apple_Terminal is not truecolor", () => {
-      // Apple Terminal is 256-color; admitting it would approximate 24-bit
-      // SGR into the wrong hue.
-      expect(supportsTruecolor({ TERM_PROGRAM: "Apple_Terminal" })).toBe(false);
-    });
-
-    test("TERM containing direct/24bit is truecolor", () => {
-      expect(supportsTruecolor({ TERM: "xterm-direct" })).toBe(true);
-      expect(supportsTruecolor({ TERM: "xterm-24bit" })).toBe(true);
-    });
-  });
-
-  describe("activeTerminalBaseHex", () => {
-    beforeEach(() => {
-      // Module-level state must not leak between cases.
-      setActiveTerminalBaseHex(null);
-    });
-
-    test("invalid hex stores null and diffLineSequences never emits NaN", () => {
-      setActiveTerminalBaseHex("ZZZZZZ");
-      expect(getActiveTerminalBaseHex()).toBeNull();
-      const diff = diffLineSequences({ COLORTERM: "truecolor" }, "dark");
-      expect(diff).not.toBeNull();
-      // NaN would render as a literal "NaN" channel, which \d+ must reject.
-      // Check every background-bearing kind, not just added.
-      const bgSgr = /^\x1b\[48;2;\d+;\d+;\d+m$/;
-      for (const kind of ["added", "removed", "hunk"] as const) {
-        expect(diff![kind].bg).toMatch(bgSgr);
-      }
-    });
-
-    test("a non-default base changes added.bg vs the default base", () => {
-      const env = { COLORTERM: "truecolor" };
-      const defaultDiff = diffLineSequences(env, "dark");
-      expect(defaultDiff).not.toBeNull();
-      setActiveTerminalBaseHex("000000");
-      expect(getActiveTerminalBaseHex()).toBe("000000");
-      const blackBaseDiff = diffLineSequences(env, "dark");
-      expect(blackBaseDiff).not.toBeNull();
-      expect(blackBaseDiff!.added.bg).not.toBe(defaultDiff!.added.bg);
-    });
-  });
-
-  describe("renderDiffLine", () => {
-    const env = { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" };
-
-    test("pads by display width, not code-unit count, for CJK text", () => {
-      // displayWidth("+ 中文") = 1 + 1 + 2 + 2 = 6 (CJK double-width);
-      // code-unit length is 4. padTo=10 → 4 spaces, not 6.
-      const out = renderDiffLine({ kind: "added", text: "+ 中文", padTo: 10, env, colorEnabled: true });
-      expect(out.endsWith("    \x1b[0m")).toBe(true);
-      expect(out.endsWith("      \x1b[0m")).toBe(false);
-    });
-
-    test("output ends with \\x1b[0m so the tint never leaks", () => {
-      const out = renderDiffLine({ kind: "removed", text: "- gone", padTo: 8, env, colorEnabled: true });
-      expect(out.endsWith("\x1b[0m")).toBe(true);
-    });
-
-    test("non-truecolor env renders no background (no 48;2) and context passes through", () => {
-      const out = renderDiffLine({ kind: "added", text: "+ foo", env: {}, colorEnabled: true });
-      expect(out).not.toContain("48;2");
-      expect(renderDiffLine({ kind: "context", text: " ctx", env: {}, colorEnabled: true })).toBe(" ctx");
     });
   });
 });

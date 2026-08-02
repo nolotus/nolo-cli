@@ -46,9 +46,6 @@ const LEGACY_TOOL_NAME_ALIASES: Record<string, string> = {
   web_fetch: "fetchWebpage",
   fetchweb: "fetchWebpage",
   fetch_web: "fetchWebpage",
-  // 模型偶尔会把 loadSkill 幻觉成 readSkill（参数风格 name= 一致），
-  // 规范化到 loadSkill，避免 localToolPolicy 把这种调用直接拦死。
-  readSkill: "loadSkill",
 };
 
 const normalizeToolName = (name: string): string =>

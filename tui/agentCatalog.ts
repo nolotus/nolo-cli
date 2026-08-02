@@ -15,7 +15,6 @@ import {
   resolveServerUrl,
 } from "../cliEnvHelpers";
 import { sortAgentsFavoriteOwnedPublic, type SortableAgentItem } from "../ai/agent/utils/sortUtils";
-import { t } from "./i18n";
 export const DEFAULT_TUI_AGENT_KEY = "agent-pub-01NOLOAPPBLD000000019KCKT0";
 
 export type AgentCatalogEntry = {
@@ -38,12 +37,12 @@ export type AgentCatalogEntry = {
  * 目录与 picker 统一使用。
  */
 export function formatAgentSourceLabel(entry: AgentCatalogEntry): string {
-  if (entry.kind === "platform" || entry.apiSource === "platform") return t("agentSourcePlatform");
+  if (entry.kind === "platform" || entry.apiSource === "platform") return "平台";
   if (entry.apiSource === "cli") {
-    return entry.cliProvider ? `${t("agentSourceSubscription")}(${entry.cliProvider})` : t("agentSourceSubscription");
+    return entry.cliProvider ? `订阅(${entry.cliProvider})` : "订阅";
   }
-  if (entry.apiSource === "custom") return t("agentSourceApi");
-  return t("agentSourcePlatform");
+  if (entry.apiSource === "custom") return "API";
+  return "平台";
 }
 
 export const PLATFORM_AGENTS: AgentCatalogEntry[] = [
@@ -328,18 +327,7 @@ export function findAgentCatalogEntry(
 
   if (/^\d+$/.test(target)) {
     const entry = entries[Number(target) - 1];
-    return entry
-      ? {
-          name: entry.name,
-          key: entry.key,
-          model: entry.model,
-          ...(entry.apiSource
-            ? { apiSource: entry.apiSource }
-            : entry.kind === "platform"
-              ? { apiSource: "platform" }
-              : {}),
-        }
-      : null;
+    return entry ? { name: entry.name, key: entry.key } : null;
   }
 
   const lower = target.toLowerCase();
@@ -349,18 +337,7 @@ export function findAgentCatalogEntry(
       entry.key.toLowerCase() === lower ||
       entry.key.toLowerCase().endsWith(`-${lower}`)
   );
-  if (byName) {
-    return {
-      name: byName.name,
-      key: byName.key,
-      model: byName.model,
-      ...(byName.apiSource
-        ? { apiSource: byName.apiSource }
-        : byName.kind === "platform"
-          ? { apiSource: "platform" }
-          : {}),
-    };
-  }
+  if (byName) return { name: byName.name, key: byName.key };
 
   if (target.startsWith("agent-") || target.startsWith("agent-pub-")) {
     return { name: target, key: target };

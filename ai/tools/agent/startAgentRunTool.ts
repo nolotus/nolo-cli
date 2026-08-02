@@ -14,9 +14,6 @@
 import { runAgentBackground } from "../../agent/runAgentBackground";
 import { toErrorMessage } from "../../../core/errorMessage";
 import { buildDelegatedTaskContent } from "./callAgentTool";
-import { formatStartRunCard } from "./agentRunDisplayHelpers";
-import { getActiveDialogKey } from "../../../chat/dialog/dialogRuntimeStore";
-import { extractCustomId } from "../../../core/prefix";
 
 export const startAgentRunFunctionSchema = {
     name: "startAgentRun",
@@ -30,7 +27,7 @@ export const startAgentRunFunctionSchema = {
         properties: {
             agentKey: {
                 type: "string",
-                description: "要启动的 Agent 的可运行 dbKey（优先使用 readAgent 返回的 agentKey，格式如 agent-xxx）。",
+                description: "要启动的 Agent 的唯一 ID（dbKey，格式如 agent-xxx）。",
             },
             task: {
                 type: "string",
@@ -76,32 +73,24 @@ export async function startAgentRunFunc(
 
     const content = buildDelegatedTaskContent(task, input);
 
-    // 从模块级单例取当前对话 key，提取 id 作为 parentDialogId 透传给服务端，
-    // 让后台子对话记录父子关系，供侧边栏折叠。无当前对话时不传。
-    const activeDialogKey = getActiveDialogKey();
-    const parentDialogId = activeDialogKey ? extractCustomId(activeDialogKey) : undefined;
-
     try {
         const bgResult = await dispatch(
             runAgentBackground({
                 agentKey,
                 userInput: content,
                 waitForCompletion: false,
-                ...(parentDialogId ? { parentDialogId } : {}),
             })
         ).unwrap();
 
         const runId = bgResult.dialogId;
         const status = bgResult.status ?? "pending";
-        const name = bgResult.agentName || bgResult.name || "agent";
 
         return {
             rawData: {
                 runId,
                 status,
-                ...(bgResult.agentName ? { agentName: bgResult.agentName } : {}),
             },
-            displayData: formatStartRunCard(name, status),
+            displayData: `⏳ 后台 run 已启动，runId: ${runId}。用 controlAgentRun(action:"status", runId:"${runId}") 查进度。`,
         };
     } catch (e: any) {
         throw new Error(`startAgentRun 启动 Agent [${agentKey}] 失败: ${toErrorMessage(e)}`);

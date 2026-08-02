@@ -9,6 +9,8 @@
 
 import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
+  PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
+  PUBLIC_GLM_52_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
 } from "../../core/builtinAgents";
 import {
@@ -35,26 +37,12 @@ import type { CliFetchImpl } from "../cliFetch";
  */
 export const CLI_AUTO_TIER_AGENT_KEYS = {
   flash: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  balanced: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  quality: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-} as const;
-
-/**
- * Tier agent → catalog model id. Used by TUI context-window resolution so
- * status chips show the routed model's window (e.g. flash → 1M) instead of
- * falling back through the default "nolo" display name to 256k.
- */
-export const CLI_AUTO_TIER_MODELS = {
-  flash: "deepseek-v4-flash",
-  balanced: "deepseek-v4-flash",
-  quality: "deepseek-v4-flash",
+  balanced: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
+  quality: PUBLIC_GLM_52_AGENT_KEY,
 } as const;
 
 /** 图片输入时自动切换到的 vision agent key（Kimi K2.6）。 */
 export const CLI_IMAGE_AGENT_KEY = PUBLIC_KIMI_K26_IMAGE_AGENT_KEY;
-
-/** Vision auto-switch target model id (paired with CLI_IMAGE_AGENT_KEY). */
-export const CLI_IMAGE_AGENT_MODEL = "kimi-k2.6";
 
 /** 所有 tier agent key 的查表（用于判断是否为自动路由的内置档）。 */
 export const CLI_AUTO_TIER_AGENT_KEY_TABLE: Record<string, true> = {
@@ -62,19 +50,6 @@ export const CLI_AUTO_TIER_AGENT_KEY_TABLE: Record<string, true> = {
   [CLI_AUTO_TIER_AGENT_KEYS.balanced]: true,
   [CLI_AUTO_TIER_AGENT_KEYS.quality]: true,
 };
-
-/** Resolve the catalog model id for a known auto-route / image-tier agent key. */
-export function resolveCliAutoAgentModel(agentKey: string): string | undefined {
-  if (agentKey === CLI_AUTO_TIER_AGENT_KEYS.flash) return CLI_AUTO_TIER_MODELS.flash;
-  if (agentKey === CLI_AUTO_TIER_AGENT_KEYS.balanced) {
-    return CLI_AUTO_TIER_MODELS.balanced;
-  }
-  if (agentKey === CLI_AUTO_TIER_AGENT_KEYS.quality) {
-    return CLI_AUTO_TIER_MODELS.quality;
-  }
-  if (agentKey === CLI_IMAGE_AGENT_KEY) return CLI_IMAGE_AGENT_MODEL;
-  return undefined;
-}
 
 export type CliAutoTier = keyof typeof CLI_AUTO_TIER_AGENT_KEYS;
 

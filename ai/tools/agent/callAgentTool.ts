@@ -2,8 +2,6 @@
 
 import { runAgentBackground } from "../../agent/runAgentBackground";
 import { toErrorMessage } from "../../../core/errorMessage";
-import { getActiveDialogKey } from "../../../chat/dialog/dialogRuntimeStore";
-import { extractCustomId } from "../../../core/prefix";
 
 /**
  * 组装委托任务的 content：统一用「指令 + 输入」的简单文本协议
@@ -97,18 +95,12 @@ export async function callAgentFunc(
 
     const content = buildDelegatedTaskContent(task, input);
 
-    // 从模块级单例取当前对话 key，提取 id 作为 parentDialogId 透传，
-    // 让子对话记录父子关系，供侧边栏折叠。无当前对话时不传。
-    const activeDialogKey = getActiveDialogKey();
-    const parentDialogId = activeDialogKey ? extractCustomId(activeDialogKey) : undefined;
-
     try {
         const bgResult = await dispatch(
             runAgentBackground({
                 agentKey,
                 userInput: content,
                 ...(background === true ? { waitForCompletion: false } : {}),
-                ...(parentDialogId ? { parentDialogId } : {}),
             })
         ).unwrap();
 

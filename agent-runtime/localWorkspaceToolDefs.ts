@@ -273,7 +273,7 @@ function buildSearchWorkspaceParameters(variant?: SearchFilesParameterVariant) {
   const includeIgnored = {
     type: "boolean",
     description:
-      "When true, search files ignored by .gitignore such as .tmp. Defaults to false. Build artifacts (dist/, *.tsbuildinfo, *.min.js, etc.) are always excluded regardless of this flag. .git and node_modules remain excluded.",
+      "When true, search files ignored by .gitignore such as .tmp. Defaults to false; .git and node_modules remain excluded.",
   };
   const exclude = {
     type: "array",

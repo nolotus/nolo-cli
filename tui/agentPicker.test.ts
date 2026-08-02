@@ -43,7 +43,6 @@ describe("agentPicker", () => {
     expect(resolveAgentSwitchTarget("minimax-m3", catalog)).toEqual({
       name: "MiniMax M3",
       key: "agent-0e95801d90-minimax-m3",
-      model: "MiniMax-M3",
     });
     expect(resolveAgentSwitchTarget("2", catalog)?.key).toBe(PLATFORM_AGENTS[1].key);
   });

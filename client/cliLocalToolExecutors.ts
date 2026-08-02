@@ -8,7 +8,6 @@
  * Direct imports replace lazy ensureHeavyCliLocalRuntimeModules indirection.
  */
 import type { EnvLike } from "./localRuntimeHelpers";
-import type { CollapsedPasteStore } from "../core/collapsedPaste";
 import type { CliFetchImpl } from "../cliFetch";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
 import {
@@ -44,63 +43,6 @@ export type LocalCliExecutor = (
   options: { workspaceRoot: string; env: EnvLike },
 ) => Promise<{ content: string; stopReason?: string; usage?: unknown }>;
 
-const MAX_PASTED_TEXT_LINES_PER_READ = 200;
-
-function createReadPastedTextExecutor(store: CollapsedPasteStore) {
-  return async (call: any) => {
-    let parsed: Record<string, unknown> = {};
-    try {
-      const value = JSON.parse(call.arguments || "{}");
-      if (value && typeof value === "object") parsed = value;
-    } catch {
-      return {
-        content: "readPastedText requires a JSON object with pasteId.",
-        metadata: { error: true, code: "invalid_arguments" },
-      };
-    }
-    const pasteId = Number(parsed.pasteId);
-    if (!Number.isInteger(pasteId) || pasteId < 1) {
-      return {
-        content: "readPastedText requires a positive integer pasteId.",
-        metadata: { error: true, code: "invalid_paste_id" },
-      };
-    }
-    const text = store.items.get(pasteId);
-    if (text === undefined) {
-      return {
-        content: `pasted text #${pasteId} is no longer available in this TUI turn.`,
-        metadata: { error: true, code: "paste_not_found", pasteId },
-      };
-    }
-
-    const lines = text.split("\n");
-    const requestedStart = Number(parsed.startLine);
-    const requestedEnd = Number(parsed.endLine);
-    const startLine = Number.isInteger(requestedStart) && requestedStart > 0
-      ? Math.min(requestedStart, lines.length)
-      : 1;
-    const endLine = Math.min(
-      lines.length,
-      Number.isInteger(requestedEnd) && requestedEnd >= startLine
-        ? requestedEnd
-        : startLine + MAX_PASTED_TEXT_LINES_PER_READ - 1,
-      startLine + MAX_PASTED_TEXT_LINES_PER_READ - 1,
-    );
-    return {
-      content: lines.slice(startLine - 1, endLine).join("\n"),
-      metadata: {
-        pasteId,
-        startLine,
-        endLine,
-        totalLines: lines.length,
-        totalChars: text.length,
-        truncated: endLine < lines.length,
-        source: "tui-paste-store",
-      },
-    };
-  };
-}
-
 export function buildCliWorkspaceToolExecutors(args: {
   env: EnvLike;
   cliEntrypoint?: string;
@@ -128,7 +70,6 @@ export function buildLocalToolExecutors(args: {
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
   /** Interactive choice dialog for ui_ask_choice; absent in headless/CI mode. */
   requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
-  pastedTextStore?: CollapsedPasteStore;
   /** CLI entrypoint path (for re-launching workspace tools). */
   cliEntrypoint?: string;
 }) {
@@ -300,9 +241,6 @@ export function buildLocalToolExecutors(args: {
     controlAgentRun: createCliControlAgentRunExecutor({
       env: args.env,
     }),
-    ...(args.pastedTextStore
-      ? { readPastedText: createReadPastedTextExecutor(args.pastedTextStore) }
-      : {}),
     ...(args.localToolExecutors ?? {}),
   };
 }

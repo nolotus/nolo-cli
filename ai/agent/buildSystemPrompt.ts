@@ -38,28 +38,10 @@ const CONTEXT_USAGE_INSTRUCTIONS = `参考资料使用说明：
 // ============================================================================
 const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run） ---
 你可用 startAgentRun 后台启动子 Agent（fork+exec，返回 runId），用 controlAgentRun 观察/停止（wait+signal+proc）。核心纪律（反面教材：子代理崩溃/挂起而编排器毫无察觉）：
-1. 先发现再派发。调用 listAgents 读取安全摘要。选人按优先级：特定工具需求 → 任务档与成本/能力匹配 → 胜任者中的 isFavorite → modelAbility / inputPrice/outputPrice。
-   - 先估任务档：微/简单（≤2 步、文案、单点 polish）｜中（多文件读改验）｜高（架构、深 review、高风险推理）。
-   - 高价/顶档模型（Opus、GPT-5.6 Sol、同级 Pro/K 顶档等）默认不接简单活；简单活优先 Flash/Luna/低价或收藏里的轻量候选。
-   - 禁止凭名字编造细能力，但允许用价格、modelAbility 及明显顶档族系做粗档位匹配，避免大模型干杂活。不要查指派表，不要求 recommendedFor。
-2. coding 是默认能力。tools 只用于浏览器、图片、表格、邮件、数据库等特定工具任务；不要因为 coding agent 的 tools 摘要为空就淘汰它。
-3. listAgents 返回的 id、publicKey、handle 只是候选标识。选中后优先调用 readAgent 解析可运行的 agentKey，再把该 agentKey 传给 startAgentRun；不要凭展示名称或 id 猜 key，也不要索取 prompt、密钥或数据库 key 来选人。没有 readAgent 时只能使用已有上下文中明确的 agentKey。
-4. 派发后必须轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:30) 轮询（建议 5–10s 一次），不要只靠聊天复述结果。不轮询 = 没编排。
-5. 读日志确认进展。tailLines>0 读实际输出/工具调用，不只看 status=running——后台监视器可能空转。
-6. stop 前先看日志。用 status 判断是真卡死还是正常跑，确认需要叫停再 controlAgentRun(action:"stop", runId)；用 list/status 确认 run 真实存在且非终态，别假设"派发了就在跑"。
+1. 派发后必须轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:30) 轮询（建议 5–10s 一次），不要只靠聊天复述结果。不轮询 = 没编排。
+2. 读日志确认进展。tailLines>0 读实际输出/工具调用，不只看 status=running——后台监视器可能空转。
+3. stop 前先看日志。用 status 判断是真卡死还是正常跑，确认需要叫停再 controlAgentRun(action:"stop", runId)；用 list/status 确认 run 真实存在且非终态，别假设"派发了就在跑"。
 工具选择：子任务 <100s 且要立即拿结果 → callAgent（同步）；长任务 / 并行 / 需要观察或叫停 → startAgentRun（本段）。`;
-
-// ============================================================================
-// 多 Agent 协作 - 计划/派发/审查 方法论纪律（命中编排工具时注入）
-// 通用方法论（任何 TUI 项目适用），不含项目特有规则（提交规范/部署边界等在
-// 项目自己的 skill 里）。原则：默认提供，agent 无编排工具则不注入。
-// ============================================================================
-const AGENT_COLLABORATION_INSTRUCTIONS = `--- 多 Agent 协作（计划 → 派发 → 审查） ---
-用子代理完成中大型任务时，按三段纪律执行：
-1. 计划先行：动手前先想清楚目标、边界、验证方式和停止条件；预计 3 步以上（读改验、多文件、任何派发）先定计划，再决定自己做完还是派发。
-2. 派发原则：子任务自包含、边界清晰、能并行则并行；给执行者写清任务、验收和禁区，不传无关历史。派发后轮询结果，不假设成功。
-3. 独立审查：重要产出（代码、迁移、数据变更）交给非作者（最好是不同模型的）独立 review；review 只看 diff/证据，产出 finding 或 Clean review，再决定返工或收尾。
-最小实现：能删解决就不加，能复用就不新建；新抽象前先搜已有实现。不要为了显得忙碌而派发或过度设计。`;
 
 // ============================================================================
 // 交互说明（有 ui_ask_choice 工具时注入）
@@ -225,16 +207,6 @@ const TOOL_GUIDED_SECTIONS: ToolGuidedSection[] = [
             ]
                 .filter(Boolean)
                 .join("\n\n"),
-    },
-    {
-        id: "agentCollaboration",
-        triggerTools: [
-            "callAgent",
-            "runStreamingAgent",
-            "startAgentRun",
-            "controlAgentRun",
-        ],
-        build: () => AGENT_COLLABORATION_INSTRUCTIONS,
     },
     { id: "menuUsage", triggerTools: ["ui_ask_choice"], build: () => MENU_USAGE_INSTRUCTIONS },
     {
@@ -505,7 +477,6 @@ export const buildSystemPromptContext = (options: {
     { id: "startup-protocol", owner: "platform", cacheScope: "static", content: startupProtocol },
     { id: "core-persona", owner: "agent", cacheScope: "session", content: corePersonaSection },
     { id: "agent-orchestration", owner: "platform", cacheScope: "session", content: toolSections.agentOrchestration },
-    { id: "agent-collaboration", owner: "platform", cacheScope: "session", content: toolSections.agentCollaboration },
     { id: "web-access", owner: "platform", cacheScope: "session", content: toolSections.webAccess },
     { id: "menu-usage", owner: "platform", cacheScope: "session", content: toolSections.menuUsage },
     { id: "clarification-mode", owner: "platform", cacheScope: "session", content: clarifyingSection },

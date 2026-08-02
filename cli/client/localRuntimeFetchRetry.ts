@@ -14,10 +14,6 @@ import type { CliFetchImpl } from "../cliFetch";
 import { toErrorMessage } from "../../core/errorMessage";
 import { CORE_DRAIN_REASON } from "../../core/drainReason";
 import { isLoopbackHostname } from "../../core/localOrigins";
-import {
-  normalizeNonNegativeMs,
-  parseRetryAfterHeaderMs,
-} from "../../core/retryAfterMs";
 
 export type FetchInput = string | URL | Request;
 export type FetchInit = RequestInit;
@@ -61,26 +57,25 @@ function transientFetchRetryDelayMs(attempt: number) {
  * 而 503 是一次成功的 HTTP 交换，于是服务端说「可以重试、等我 1.5 秒」，
  * 客户端却直接把它当成终局失败上报给用户。
  *
- * 优先级：标准 `Retry-After` 头（复用 core/retryAfterMs，支持秒与 HTTP-date）
- * > 响应体 `retryAfterMs` > 既有退避。读体前先 clone，避免把调用方要用的 body 消费掉。
+ * 优先级：标准 `Retry-After` 头 > 响应体 `retryAfterMs` > 既有退避。
+ * 读体前先 clone，避免把调用方要用的 body 消费掉。
  */
-const MAX_RETRY_DELAY_MS = 10_000;
-
 async function resolveRetryAfterMs(
   response: Response,
   attempt: number,
 ): Promise<number> {
-  const headerMs = parseRetryAfterHeaderMs(
-    response.headers.get("retry-after"),
-  );
-  if (headerMs !== null) {
-    return Math.min(headerMs, MAX_RETRY_DELAY_MS);
+  const header = response.headers.get("retry-after");
+  if (header) {
+    const seconds = Number(header.trim());
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, 10_000);
+    }
   }
   try {
     const body = await response.clone().text();
     const parsed = JSON.parse(body) as { retryAfterMs?: unknown };
-    const ms = normalizeNonNegativeMs(parsed?.retryAfterMs, 0);
-    if (ms > 0) return Math.min(ms, MAX_RETRY_DELAY_MS);
+    const ms = Number(parsed?.retryAfterMs);
+    if (Number.isFinite(ms) && ms >= 0) return Math.min(ms, 10_000);
   } catch {
     // 非 JSON 或 body 不可读：退回既有退避。
   }

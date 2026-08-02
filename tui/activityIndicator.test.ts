@@ -21,7 +21,6 @@ function setup(opts: { turnActive?: boolean } = {}) {
   const indicator = createActivityIndicator({
     isTurnActive: () => turnActive,
     fallbackLabel: () => "glm-5.2 -> working",
-    stoppingLabel: () => "Stopping… press Esc again to force",
     onRepaint: () => {
       repaints += 1;
     },
@@ -164,7 +163,6 @@ describe("activityIndicator", () => {
     const ind = createActivityIndicator({
       isTurnActive: () => true,
       fallbackLabel: () => "x -> working",
-      stoppingLabel: () => "Stopping…",
       onRepaint: () => {},
       now: () => nowMs,
       setIntervalFn: (cb) => {
@@ -201,79 +199,5 @@ describe("activityIndicator getView turn-end guard", () => {
     expect(s2.indicator.getView()?.label).toBe("glm-5.2 -> working");
     s2.setTurnActive(false);
     expect(s2.indicator.getView()).toBeNull();
-  });
-});
-
-describe("activityIndicator markStopping", () => {
-  test("markStopping 后 getView().label 变成停止中文案", () => {
-    // 缺陷 B 即时反馈：Esc 同帧把活动行标签换成停止中文案，不等链路 unwind。
-    const s = setup();
-    s.indicator.report("Run bun test");
-    expect(s.indicator.getView()?.label).toBe("Run bun test");
-
-    s.indicator.markStopping();
-    const view = s.indicator.getView();
-    expect(view?.label).toBe("Stopping… press Esc again to force");
-    expect(s.indicator.isStopping()).toBe(true);
-  });
-
-  test("markStopping 后 tick 不再推进 frame（冻结）", () => {
-    const s = setup();
-    s.indicator.report("x");
-    const frameBefore = s.indicator.getView()?.frame;
-    s.indicator.markStopping();
-    s.tick();
-    s.tick();
-    s.tick();
-    // frame 冻结在 markStopping 时的值，不随 tick 变化。
-    expect(s.indicator.getView()?.frame).toBe(frameBefore);
-  });
-
-  test("markStopping 覆盖 fallback label", () => {
-    const s = setup();
-    s.indicator.report(null);
-    s.advance(ACTIVITY_FALLBACK_DELAY_MS + 100);
-    s.tick();
-    expect(s.indicator.getView()?.label).toBe("glm-5.2 -> working");
-
-    s.indicator.markStopping();
-    expect(s.indicator.getView()?.label).toBe("Stopping… press Esc again to force");
-  });
-
-  test("stop 清掉停止中标志，下一轮 getView 不再显示停止中", () => {
-    // 缺陷 B：stop() 必须清 stopping 标志，否则下一轮 turn 一开始就显示"停止中"。
-    const s = setup();
-    s.indicator.report("x");
-    s.indicator.markStopping();
-    expect(s.indicator.isStopping()).toBe(true);
-
-    s.indicator.stop();
-    expect(s.indicator.isStopping()).toBe(false);
-
-    // 模拟下一轮 turn：turn 仍 active，report 一个新标签。
-    s.indicator.report("new turn label");
-    const view = s.indicator.getView();
-    expect(view?.label).toBe("new turn label");
-    expect(view?.label).not.toBe("Stopping… press Esc again to force");
-  });
-
-  test("markStopping 立即触发一次 onRepaint", () => {
-    let repaints = 0;
-    let nowMs = 1000;
-    const ind = createActivityIndicator({
-      isTurnActive: () => true,
-      fallbackLabel: () => "x -> working",
-      stoppingLabel: () => "Stopping…",
-      onRepaint: () => {
-        repaints += 1;
-      },
-      now: () => nowMs,
-      setIntervalFn: () => ({}),
-      clearIntervalFn: () => {},
-    });
-    ind.report("x");
-    const before = repaints;
-    ind.markStopping();
-    expect(repaints).toBe(before + 1);
   });
 });

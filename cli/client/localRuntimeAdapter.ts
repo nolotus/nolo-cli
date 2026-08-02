@@ -41,7 +41,6 @@ import {
 import { isCompiledBinary } from "../cliEnvHelpers";
 import type { CliFetchImpl } from "../cliFetch";
 import { clipCompactText } from "../../core/clipCompactText";
-import type { CollapsedPasteStore } from "../../core/collapsedPaste";
 import { normalizeAgentHandle } from "../../core/agentHandle";
 import { toErrorMessage } from "../../core/errorMessage";
 import { isRecord } from "../../core/isRecord";
@@ -180,6 +179,7 @@ import {
   LOCAL_SERVER_TABLE_TOOL_NAME_SET,
   LOCAL_SERVER_WEB_TOOL_NAMES,
   LOCAL_SERVER_WEB_TOOL_NAME_SET,
+  REGISTRY_INJECTED_TOOL_NAMES,
 } from "./cliToolClassification";
 import { buildServerPlatformToolExecutors } from "./cliServerPlatformToolExecutors";
 export type {
@@ -201,6 +201,7 @@ import {
 // Direct static imports replace the former lazy ensureHeavyCliLocalRuntimeModules
 // indirection — see the rationale block at the top of this file.
 import {
+  buildLocalWorkspacePolicyToolNames,
   buildLocalWorkspaceToolset,
   buildLocalWorkspaceOpenAiTools,
   executeOpenAiCompatibleChatCompletion,
@@ -209,7 +210,6 @@ import {
   createLocalWorkspaceToolExecutors,
   parsePlatformChatCompletionData,
   parsePlatformChatCompletionResponse,
-  resolveLegacyDeepSeekProxyChatFallback,
   resolvePlatformChatProviderConfig,
   resolveCurrentRunRuntimeToolPolicy,
   resolveLocalWorkspaceExecutorOptionsFromPolicy,
@@ -252,7 +252,6 @@ import {
   FORCED_TOOLS,
   applyDisabledTools,
   expandEnabledPacks,
-  appendEnabledPackPromptPatches,
   addDefaultLightWebToolsForConfiguredAgents,
 } from "../../ai/tools/toolPacks";
 import { prepareTools } from "../../ai/tools/prepareTools";
@@ -260,6 +259,7 @@ import { canonicalizeToolNames } from "../../ai/tools/toolNameAliases";
 import {
   buildNoloWorkspaceCliToolExecutors,
   buildNoloWorkspaceOpenAiTools,
+  filterNoloWorkspaceToolNames,
   parseNoloWorkspaceToolArguments,
 } from "../../agent-runtime/noloWorkspaceTools";
 import {
@@ -364,7 +364,6 @@ type CliLocalRuntimeAdapterDeps = {
   buildProviderOpenAiTools?: typeof buildOpenAiTools;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
   requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
-  pastedTextStore?: CollapsedPasteStore;
 };
 
 async function defaultLocalRuntimeDb(): Promise<CliLocalRuntimeDb> {
@@ -403,8 +402,7 @@ function summarizeOpenAiToolNames(tools: Array<Record<string, unknown>>) {
   }, []);
 }
 
-// 导出供测试（localRuntimeAdapter.test.ts 的 policy 派生回归用）。
-export function buildOpenAiTools(args: {
+function buildOpenAiTools(args: {
   agentKey?: string;
   toolNames?: string[];
   env: EnvLike;
@@ -418,45 +416,9 @@ export function buildOpenAiTools(args: {
   const uiAskChoiceTools = toolNameSet.has("ui_ask_choice")
     ? prepareTools(["ui_ask_choice"])
     : [];
-  const readPastedTextTools = toolNameSet.has("readPastedText")
-    ? [
-        {
-          type: "function",
-          function: {
-            name: "readPastedText",
-            description:
-              "Read a chunk of a large TUI paste by pasteId. Use startLine and endLine to page through the full content.",
-            parameters: {
-              type: "object",
-              properties: {
-                pasteId: {
-                  type: "integer",
-                  minimum: 1,
-                  description: "The paste id from the user message reference.",
-                },
-                startLine: {
-                  type: "integer",
-                  minimum: 1,
-                  description: "First 1-based line to return; defaults to 1.",
-                },
-                endLine: {
-                  type: "integer",
-                  minimum: 1,
-                  description:
-                    "Last 1-based line to return; each call is bounded to a 200-line chunk.",
-                },
-              },
-              required: ["pasteId"],
-              additionalProperties: false,
-            },
-          },
-        },
-      ]
-    : [];
   return [
     ...callAgentTools,
     ...uiAskChoiceTools,
-    ...readPastedTextTools,
     ...buildLocalWorkspaceOpenAiTools({
       toolNames: toolset.toolNames,
       exposeShellTools: toolset.exposeShellTools,
@@ -547,43 +509,11 @@ export function resolveCliEffectiveEnabledPacks(args: {
 }
 
 /**
- * 把 rawRecord 里被 resolveAgentRuntimeConfigFromRecord 丢弃的 enabledPacks 补回
- * config，并把启用能力包的 promptPatch（方法论文档）追加进 agent prompt。
- * CLI 端 system prompt 直用 agentConfig.prompt、工具展开读 agentConfig.enabledPacks，
- * 两处都依赖这份回补；与 web 端 skillPromptPatches 注入链对齐。无 patch 时原样返回。
- */
-function withRuntimeEnabledPacksAndPrompt(
-  config: AgentRuntimeAgentConfig,
-): AgentRuntimeAgentConfig {
-  const rawRecord = (config as unknown as { rawRecord?: Record<string, unknown> })
-    .rawRecord ?? {};
-  const enabledPacks =
-    (config as unknown as { enabledPacks?: string[] }).enabledPacks ??
-    (rawRecord.enabledPacks as string[] | undefined);
-  const prompt = appendEnabledPackPromptPatches(
-    (config as { prompt?: string }).prompt,
-    enabledPacks,
-  );
-  if (
-    prompt === (config as { prompt?: string }).prompt &&
-    !enabledPacks?.length
-  ) {
-    return config;
-  }
-  return {
-    ...config,
-    ...(enabledPacks?.length ? { enabledPacks } : {}),
-    ...(prompt ? { prompt } : {}),
-  };
-}
-
-/**
  * CLI 端 requestedToolNames 管道：expandEnabledPacks → canonicalize →
  * addDefaultCliCoreTools → addDefaultLightWebToolsForConfiguredAgents → applyDisabledTools。
  * resolveProviderOpenAiToolBundle 和 loadAgentConfig 两条路径共用，避免重复。
  */
-// 导出供测试（localRuntimeAdapter.test.ts 的 policy 派生回归用）。
-export function resolveCliRequestedToolNames(
+function resolveCliRequestedToolNames(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
 ): string[] {
@@ -616,14 +546,8 @@ function resolveProviderOpenAiToolBundle(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
   buildTools: typeof buildOpenAiTools = buildOpenAiTools,
-  additionalToolNames: string[] = [],
 ) {
-  const requestedToolNames = [
-    ...new Set([
-      ...resolveCliRequestedToolNames(agentConfig, env),
-      ...additionalToolNames,
-    ]),
-  ];
+  const requestedToolNames = resolveCliRequestedToolNames(agentConfig, env);
   const tools = buildTools({
     agentKey: agentConfig.key,
     toolNames: requestedToolNames,
@@ -646,40 +570,29 @@ function buildLocalWorkspaceToolsetForEnv(args: {
   return toolset;
 }
 
-// Policy 名单直接派生自 schema 侧暴露的工具名，不再按类别独立收集。
-// 理由：policy 的「agent 有没有声明这个工具」检查，语义就是「模型不能调
-// 我没给它的工具」，唯一权威真值就是 buildOpenAiTools 的 schema 列表。
-// 重新推导第二份名单必然漂移（startAgentRun/controlAgentRun 就是因此掉出
-// 放行名单）。复用 summarizeOpenAiToolNames 提取 function.name，再去重。
-// 导出供测试（localRuntimeAdapter.test.ts 的 policy 派生回归用）。
-export function buildLocalPolicyToolNames(args: {
-  agentKey?: string;
+function buildLocalPolicyToolNames(args: {
   toolNames?: string[];
   env: EnvLike;
-  /**
-   * schema 构造器，默认用模块级 buildOpenAiTools。
-   *
-   * 注意 deps.buildProviderOpenAiTools 这个注入口：把它透传进来会让
-   * policy 与 provider 用同一个构造器，理论上更严格，但代价是每个 prepared
-   * runtime 多构造一次工具表，并且会打破既有的
-   * 「builds provider OpenAI tools once per resolveProvider」性能守卫。
-   * 该注入口目前只有测试在用，且注入的是比默认更窄的工具表（方向安全：
-   * policy 宽于 schema 只会多放行没暴露的名字，不会误拒模型看得到的工具）。
-   * 若将来有生产代码注入**更宽**的构造器，必须改走透传，否则漂移复现。
-   */
-  buildTools?: typeof buildOpenAiTools;
 }) {
-  const buildTools = args.buildTools ?? buildOpenAiTools;
   return [
-    ...new Set(
-      summarizeOpenAiToolNames(
-        buildTools({
-          agentKey: args.agentKey,
-          toolNames: args.toolNames,
-          env: args.env,
-        }) as Array<Record<string, unknown>>,
+    ...buildLocalWorkspacePolicyToolNames({
+      declaredToolNames: args.toolNames,
+      exposeShellTools: true,
+      useDeclaredToolNamesOnly: shouldUseDeclaredOnlyLocalWorkspaceTools(
+        args.env,
       ),
-    ),
+    }),
+    ...(() => {
+      const extra: string[] = [];
+      const names = args.toolNames ?? [];
+      for (const name of names) {
+        if (REGISTRY_INJECTED_TOOL_NAMES.has(name)) extra.push(name);
+        if (LOCAL_SERVER_TABLE_TOOL_NAME_SET.has(name)) extra.push(name);
+        if (LOCAL_SERVER_WEB_TOOL_NAME_SET.has(name)) extra.push(name);
+      }
+      return extra;
+    })(),
+    ...filterNoloWorkspaceToolNames(args.toolNames),
   ];
 }
 
@@ -1101,7 +1014,6 @@ export function createCliLocalRuntimeAdapter(
   const localToolUsage = new Map<string, number>();
   const buildProviderOpenAiTools =
     deps.buildProviderOpenAiTools ?? buildOpenAiTools;
-  const additionalToolNames = deps.pastedTextStore ? ["readPastedText"] : [];
   let activeAgentToolNames: string[] = [];
   const workspaceRoot = deps.cwd ?? process.cwd();
   let runtimeToolExecutionLimits: ReturnType<
@@ -1126,9 +1038,6 @@ export function createCliLocalRuntimeAdapter(
     ...(deps.requestUserChoice
       ? { requestUserChoice: deps.requestUserChoice }
       : {}),
-    ...(deps.pastedTextStore
-      ? { pastedTextStore: deps.pastedTextStore }
-      : {}),
     ...runtimeToolExecutionLimits,
   });
 
@@ -1146,12 +1055,7 @@ export function createCliLocalRuntimeAdapter(
         agentRef,
         cwd: normalizeRuntimeCacheCwd(workspaceRoot),
       });
-      // Paste executors close over the current TUI store. A prepared runtime
-      // cache hit would otherwise reuse an executor bound to an older paste
-      // store, so paste-aware runs are intentionally per-turn.
-      const cached = deps.pastedTextStore
-        ? undefined
-        : preparedAgentRuntimeCache.get(cacheKey);
+      const cached = preparedAgentRuntimeCache.get(cacheKey);
       if (cached) {
         activeAgentToolNames = cached.activeAgentToolNames;
         runtimeToolExecutionLimits = cached.runtimeToolExecutionLimits;
@@ -1167,22 +1071,15 @@ export function createCliLocalRuntimeAdapter(
       const fallbackLocalCliAgentConfig = storedAgentConfig
         ? null
         : resolveBuiltinLocalCliAgentConfig(agentRef, userId);
-      const baseAgentConfig = withResolvedRuntimeToolSurface(
+      const agentConfig = withResolvedRuntimeToolSurface(
         storedAgentConfig ?? fallbackLocalCliAgentConfig,
         deps.env,
       );
-      // CLI 端 system prompt 直用 agentConfig.prompt（不经 buildSystemPrompt 的
-      // skill-guidance 层），这里把启用能力包的 promptPatch 纪律追加进 prompt，
-      // 与 web 端 skillPromptPatches 注入对齐。
-      const agentConfig = baseAgentConfig
-        ? withRuntimeEnabledPacksAndPrompt(baseAgentConfig)
-        : baseAgentConfig;
       const requestedToolNames = agentConfig
         ? resolveCliRequestedToolNames(agentConfig, deps.env)
         : [];
       activeAgentToolNames = buildLocalPolicyToolNames({
-        agentKey: agentConfig?.key,
-        toolNames: [...requestedToolNames, ...additionalToolNames],
+        toolNames: requestedToolNames,
         env: deps.env,
       });
       runtimeToolExecutionLimits =
@@ -1203,12 +1100,9 @@ export function createCliLocalRuntimeAdapter(
         ...(deps.requestUserChoice
           ? { requestUserChoice: deps.requestUserChoice }
           : {}),
-        ...(deps.pastedTextStore
-          ? { pastedTextStore: deps.pastedTextStore }
-          : {}),
         ...runtimeToolExecutionLimits,
       });
-      if (agentConfig && !deps.pastedTextStore) {
+      if (agentConfig) {
         preparedAgentRuntimeCache.set(cacheKey, {
           agentConfig,
           activeAgentToolNames,
@@ -1327,7 +1221,6 @@ export function createCliLocalRuntimeAdapter(
           agentConfig,
           deps.env,
           buildProviderOpenAiTools,
-          additionalToolNames,
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1437,7 +1330,6 @@ export function createCliLocalRuntimeAdapter(
           agentConfig,
           deps.env,
           buildProviderOpenAiTools,
-          additionalToolNames,
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1518,7 +1410,6 @@ export function createCliLocalRuntimeAdapter(
           agentConfig,
           deps.env,
           buildProviderOpenAiTools,
-          additionalToolNames,
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1611,7 +1502,6 @@ export function createCliLocalRuntimeAdapter(
           agentConfig,
           deps.env,
           buildProviderOpenAiTools,
-          additionalToolNames,
         );
         return {
           model: providerConfig.model,
@@ -1637,7 +1527,7 @@ export function createCliLocalRuntimeAdapter(
               openAiToolNames: summarizeOpenAiToolNames(tools),
               stream,
             });
-            let res = await fetchWithTransientRetry(
+            const res = await fetchWithTransientRetry(
               fetchImpl,
               request.url,
               {
@@ -1648,47 +1538,8 @@ export function createCliLocalRuntimeAdapter(
                 loopbackRequest,
               },
             );
-            let responseProviderConfig = providerConfig;
-            let firstErrorRaw: string | undefined;
             if (!res.ok) {
-              firstErrorRaw = await res.text().catch(() => "");
-              const fallbackProviderConfig =
-                resolveLegacyDeepSeekProxyChatFallback({
-                  providerConfig,
-                  status: res.status,
-                  raw: firstErrorRaw,
-                });
-              if (fallbackProviderConfig) {
-                responseProviderConfig = fallbackProviderConfig;
-                const fallbackRequest = buildPlatformChatCompletionRequest({
-                  providerConfig: fallbackProviderConfig,
-                  messages,
-                  tools,
-                  stream: false,
-                });
-                logLocalRuntimeDiagnostic("provider.request.compatibility-fallback", {
-                  agentKey: agentConfig.key,
-                  provider: providerConfig.provider,
-                  fromEndpoint: summarizeEndpoint(providerConfig.endpoint) ?? null,
-                  toEndpoint:
-                    summarizeEndpoint(fallbackProviderConfig.endpoint) ?? null,
-                  reason: "legacy-proxy-responses-schema",
-                });
-                res = await fetchWithTransientRetry(
-                  fetchImpl,
-                  fallbackRequest.url,
-                  { ...fallbackRequest.init },
-                  {
-                    sleep: deps.sleep,
-                    loopbackRequest,
-                  },
-                );
-                firstErrorRaw = undefined;
-              }
-            }
-            if (!res.ok) {
-              const raw =
-                firstErrorRaw ?? (await res.text().catch(() => ""));
+              const raw = await res.text().catch(() => "");
               const data = parsePlatformChatCompletionData(raw);
               // `JSON.stringify(data)` collapses an empty/HTML/Cloudflare body into
               // `{}`, which is ambiguous and forces a long post-hoc investigation.
@@ -1758,7 +1609,7 @@ export function createCliLocalRuntimeAdapter(
             });
             const data = parsePlatformChatCompletionData(raw);
             return parsePlatformChatCompletionResponse({
-              providerConfig: responseProviderConfig,
+              providerConfig,
               data,
               trace: messages,
             });
@@ -1801,7 +1652,6 @@ export function createCliLocalRuntimeAdapter(
         agentConfig,
         deps.env,
         buildProviderOpenAiTools,
-        additionalToolNames,
       );
       return {
         model: providerConfig.model,
@@ -1871,3 +1721,4 @@ export function createCliLocalRuntimeAdapter(
     },
   };
 }
+

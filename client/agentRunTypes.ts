@@ -8,7 +8,6 @@
  */
 
 import { isLoopbackUrl } from "../core/localOrigins";
-import type { CollapsedPasteStore } from "../core/collapsedPaste";
 import { asOptionalTrimmedString } from "../core/optionalString";
 import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { asTrimmedString } from "../core/trimmedString";
@@ -18,7 +17,6 @@ import type { PermissionRequest } from "../agent-runtime/actionGate";
 import type { UserChoiceRequest, UserChoiceResult } from "./localRuntimeAdapter";
 import type { CliFetchImpl } from "../cliFetch";
 import type { ModelLayerOverride } from "../agent-runtime/modelLayerOverride";
-import type { ContextBlockScope } from "../agent-runtime/contextBlockScope";
 import type { TurnTokenUsage } from "./tokenUsage";
 
 export type EnvLike = Record<string, string | undefined>;
@@ -135,12 +133,6 @@ export type RunAgentTurnOptions = {
   agentKey: string;
   serverUrl: string;
   message: string;
-  /**
-   * Ephemeral TUI paste bodies. Local runs expose a read tool while HTTP runs
-   * expand the reference before transport; the durable local dialog receives
-   * the expanded user input through the local loop's persistedInput field.
-   */
-  pastedTextStore?: CollapsedPasteStore;
   imageUrls?: string[];
   continueDialogId?: string;
   spaceId?: string;
@@ -213,10 +205,9 @@ export type RunAgentTurnOptions = {
    * contextBlockScopes. When provided, localLoop.buildMessages splits the
    * system message into a stable prefix (session-scope blocks + agent prompt)
    * and a dynamic suffix (turn-scope blocks), enabling prefix-cache hits.
-   * Falls back to extraContextBlocks by converting each legacy block to a
-   * turn-scope block once.
+   * Falls back to extraContextBlocks (plain strings, no scope split).
    */
-  contextBlockScopes?: ContextBlockScope[];
+  contextBlockScopes?: Array<{ content: string; cacheScope: "session" | "turn" }>;
   /**
    * 当前活动标签的外部接收者（TUI 用来在 composer 上方画 docked 活动行）。
    * 传入时 Spinner 不再向 output 写帧，避免两个 live 指示重复。
@@ -228,14 +219,6 @@ export type RunAgentTurnResult = {
   exitCode: number;
   dialogId?: string;
   streamInterrupted?: boolean;
-  /**
-   * Cooperative stop (TUI Esc) while a tool was still running: the tool name
-   * the local loop abandoned mid-flight. The tool may still finish in the
-   * background; its result won't be added to this conversation.
-   */
-  pendingToolName?: string;
   localError?: unknown;
   turnTokens?: TurnTokenUsage;
-  /** Resolved context window for the agent that actually ran (auto-route aware). */
-  contextWindow?: number;
 };

@@ -50,7 +50,6 @@ import {
   getPublicImageAgentDefaultProfile,
   getPublicImageAgentMode,
 } from "../agent/utils/publicImageAgentMode";
-import { isResponsesConversationStateRejection } from "../../agent-runtime/responsesConversationState";
 
 type Segment = { type: "text"; text: string };
 const seg = (txt: string): Segment[] => [{ type: "text", text: txt ?? "" }];
@@ -112,7 +111,6 @@ type StreamState = {
   usage: any | null;
   assistantToolCalls: AssistantToolCall[];
   completedResponse: any | null;
-  responsesStateFallback?: boolean;
 };
 
 const safeCancel = async (
@@ -191,7 +189,6 @@ export const sendOpenAIResponseRequest = async ({
   parentMessageId,
   messageMetadata,
   quickChatPerfStartedAt,
-  fallbackBodyData,
 }: {
   bodyData: any;
   agentConfig: any;
@@ -200,8 +197,6 @@ export const sendOpenAIResponseRequest = async ({
   parentMessageId?: string;
   messageMetadata?: Partial<Message>;
   quickChatPerfStartedAt?: number;
-  /** Full-input stateless body used once when a previous response is stale. */
-  fallbackBodyData?: any;
 }): Promise<CompletionMeta> => {
   const { dispatch, getState, signal: thunkSignal } = thunkApi;
   const dialogId = extractCustomId(dialogKey);
@@ -244,11 +239,6 @@ export const sendOpenAIResponseRequest = async ({
     finishReason,
     messageId,
     usage: state.usage ?? undefined,
-    responseId:
-      typeof state.completedResponse?.id === "string"
-        ? state.completedResponse.id
-        : undefined,
-    ...(state.responsesStateFallback ? { responsesStateFallback: true } : {}),
   });
   const resetStateForRetry = () => {
     state.content = "";
@@ -493,7 +483,6 @@ export const sendOpenAIResponseRequest = async ({
   };
 
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  let responsesStateFallbackUsed = false;
 
   try {
     if (!parentMessageId) {
@@ -545,25 +534,19 @@ export const sendOpenAIResponseRequest = async ({
     // （arguments 无法 JSON.parse），provider 会拒绝并让对话永久卡死。
     // 这里清洗 input：替换坏 arguments 为 {"_invalid":true}，并为缺配对
     // function_call_output 的 function_call 补占位输出，避免孤儿调用。
-    const buildRequestBody = (sourceBodyData: any) => {
-      const sanitizedInput = Array.isArray(sourceBodyData?.input)
-        ? sanitizeOutboundResponsesInput(sourceBodyData.input)
-        : sourceBodyData?.input;
-      const baseBodyData =
-        sanitizedInput !== sourceBodyData?.input
-          ? { ...sourceBodyData, input: sanitizedInput }
-          : sourceBodyData;
-      return {
-        ...baseBodyData,
-        ...(tools.length ? { tools, tool_choice: baseBodyData.tool_choice ?? "auto" } : {}),
-        stream: true,
-      };
-    };
+    const sanitizedInput = Array.isArray(bodyData?.input)
+      ? sanitizeOutboundResponsesInput(bodyData.input)
+      : bodyData?.input;
+    const baseBodyData =
+      sanitizedInput !== bodyData?.input
+        ? { ...bodyData, input: sanitizedInput }
+        : bodyData;
 
-    let requestBody = buildRequestBody(bodyData);
-    const fallbackRequestBody = fallbackBodyData
-      ? buildRequestBody(fallbackBodyData)
-      : null;
+    const requestBody = {
+      ...baseBodyData,
+      ...(tools.length ? { tools, tool_choice: baseBodyData.tool_choice ?? "auto" } : {}),
+      stream: true,
+    };
 
     const api = getApiEndpoint(agentConfig);
     const token = selectIdentityToken(getState() as RootState);
@@ -611,23 +594,6 @@ export const sendOpenAIResponseRequest = async ({
       }
 
       if (!response.ok) {
-        const rejectedStoredState =
-          !!requestBody.previous_response_id &&
-          !!fallbackRequestBody &&
-          isResponsesConversationStateRejection(
-            response.status,
-            await response.clone().text().catch(() => ""),
-          );
-        if (
-          !responsesStateFallbackUsed &&
-          rejectedStoredState
-        ) {
-          responsesStateFallbackUsed = true;
-          state.responsesStateFallback = true;
-          requestBody = fallbackRequestBody;
-          resetStateForRetry();
-          continue attemptLoop;
-        }
         const errorMessage = await parseApiError(response);
         state.content = `[错误: ${errorMessage}]`;
         await finalize();
@@ -735,12 +701,6 @@ export const sendOpenAIResponseRequest = async ({
                   flush();
                 }
                 break;
-              case "response.reasoning_text.delta":
-                if (typeof event.delta === "string" && event.delta) {
-                  state.reasoning += event.delta;
-                  flush();
-                }
-                break;
               case "response.reasoning.done":
                 if (event.text) {
                   state.reasoning += event.text;
@@ -805,9 +765,6 @@ export const sendOpenAIResponseRequest = async ({
               }
               case "response.completed":
                 state.completedResponse = event.response ?? null;
-                if (responsesStateFallbackUsed) {
-                  state.responsesStateFallback = true;
-                }
                 finishReason =
                   event.response?.status === "completed"
                     ? "stop"

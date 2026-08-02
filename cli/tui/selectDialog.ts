@@ -1,8 +1,7 @@
 import {
+  renderDialogOverflow,
   renderDialogRow,
   renderDialogTitle,
-  renderOverflowAbove,
-  renderOverflowBelow,
 } from "./dialogFrame";
 import { t } from "./i18n";
 import { consumeSgrMouseSequence, parseScrollAction } from "./tuiScrollbar";
@@ -77,7 +76,7 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
   const lines = [...titleLines, ""];
 
   if (window.start > 0) {
-    lines.push(renderOverflowAbove(window.start));
+    lines.push(renderDialogOverflow(`↑ ${window.start} more`));
   }
 
   for (let index = window.start; index < window.end; index += 1) {
@@ -92,7 +91,7 @@ export function renderSelectDialog<T extends SelectDialogItem>(args: {
   }
 
   if (window.end < total) {
-    lines.push("", renderOverflowBelow(total - window.end));
+    lines.push("", renderDialogOverflow(`↓ ${total - window.end} more`));
   }
 
   return lines.join("\n");

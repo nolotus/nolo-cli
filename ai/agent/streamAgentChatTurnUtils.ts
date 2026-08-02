@@ -55,7 +55,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, applyDefaultWebToolPacks } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -247,10 +247,9 @@ export const trimMessagesWithSummary = (
     let cutIndex = messages.length - keepCount;
     if (cutIndex < 0) cutIndex = 0;
 
-    // 避免从 tool 消息中间开始：向前带上调用方 assistant 和完整的
-    // tool-result 配对，不能为了规避孤儿结果而把这一轮工具状态直接丢掉。
-    while (cutIndex > 0 && messages[cutIndex]?.role === "tool") {
-        cutIndex--;
+    // 避免从 tool 消息中间开始，丢失其调用方 assistant
+    while (cutIndex < messages.length && messages[cutIndex].role === "tool") {
+        cutIndex++;
     }
 
     return messages.slice(cutIndex);
@@ -804,13 +803,7 @@ export const mergeAgentToolsWithRuntime = (
         ...new Set(asNonEmptyStringArray((agentConfig as any).recommendedSkillHints)),
     ];
     const skillPromptPatches = [
-        ...new Set([
-            ...asNonEmptyStringArray((agentConfig as any).skillPromptPatches),
-            // 能力包的 promptPatch（方法论文档）与 skill reference 的 patch 走同一条
-            // 注入链（buildSkillGuidanceBlock → buildSkillGuidancePromptBlock），
-            // 让「工具 + 配套纪律」作为一个能力包整体注入 system prompt。
-            ...expandEnabledPackPromptPatches(effectiveEnabledPacks),
-        ]),
+        ...new Set(asNonEmptyStringArray((agentConfig as any).skillPromptPatches)),
     ];
     // LIGHT_WEB + FULL_BROWSER auto-injection (shared with server runtime).
     // skipWeb for inline-visual-artifact agents (pure output generators).

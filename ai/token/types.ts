@@ -72,9 +72,6 @@ export interface NormalizedUsage extends BillingUsageMetadata {
 export interface TokenUsageData extends NormalizedUsage {
   userId?: string;
   username?: string;
-  /** Canonical agent identity (new records). Kept in sync with cybotId. */
-  agentId?: string;
-  /** Legacy agent identity; retained for old rows. New records write both. */
   cybotId: string;
   model: string;
   provider: string;
@@ -95,10 +92,7 @@ export interface TokenRecord {
   id: string;
   userId: string;
   username: string;
-  /** Canonical agent identity (new records). Kept in sync with cybotId. */
-  agentId?: string;
-  /** Legacy agent identity; optional on new records that carry agentId. */
-  cybotId?: string;
+  cybotId: string;
   model: string;
   provider: string;
   /** Optional: explicit served-upstream audit (may match provider after resolve). */

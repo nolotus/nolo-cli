@@ -155,6 +155,8 @@ type FixedInputConfig = {
   getStatusLine: () => string;
   /** turn 进行中的活动行；无活动时返回 null。 */
   getActivityLine?: () => string | null;
+  /** 可选多行活动面板（如子 Agent 执行状态与日志行）。优先于 getActivityLine。 */
+  getActivityLines?: () => string[] | string | null;
   /**
    * Optional extra lines rendered above the composer (below the status line),
    * e.g. a preview of queued follow-up messages. Each entry is one line.
@@ -223,13 +225,23 @@ export function createFixedInput(
       sections.push(fitAnsiLine(dimCliText(completions.join("  "), colorEnabled), cols));
     }
 
-    // Activity line (e.g. active tool execution like "~ Run ... · Esc to stop")
-    // sits ABOVE the top divider rule so ongoing step operations appear in the
+    // Activity line(s) (e.g. active tool execution or sub-agent run panel)
+    // sit ABOVE the top divider rule so ongoing step operations appear in the
     // scrollback stream area, keeping the composer chrome (status, queues, prompt)
     // cleanly bounded below the line.
-    const activityLine = config.getActivityLine?.() ?? null;
-    if (activityLine) {
-      sections.push(fitAnsiLine(activityLine.replace(/\r?\n/g, " "), cols));
+    const rawActivity = config.getActivityLines
+      ? config.getActivityLines()
+      : config.getActivityLine
+        ? config.getActivityLine()
+        : null;
+    const activityLines = Array.isArray(rawActivity)
+      ? rawActivity.filter((line) => line !== null && line !== undefined)
+      : typeof rawActivity === "string" && rawActivity.length > 0
+        ? [rawActivity]
+        : [];
+
+    for (const actLine of activityLines) {
+      sections.push(fitAnsiLine(actLine.replace(/\r?\n/g, " "), cols));
     }
 
     // The composer rules follow the theme's chrome token rather than a
@@ -316,8 +328,8 @@ export function createFixedInput(
     const headerRows =
       (completions.length > 0 ? 1 : 0) +
       2 +
-      (activityLine ? 1 : 0) +
-      queueLines.length; // completion? + top rule + status + activity + queued preview
+      activityLines.length +
+      queueLines.length; // completion? + top rule + status + activity lines + queued preview
     return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 

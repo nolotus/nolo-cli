@@ -9,6 +9,13 @@
 export const COLLAPSE_PASTE_MIN_LINES = 8;
 export const COLLAPSE_PASTE_MIN_CHARS = 400;
 
+export const WEB_COLLAPSE_PASTE_MIN_LINES = 100;
+export const WEB_COLLAPSE_PASTE_MIN_CHARS = 5000;
+export const WEB_PASTE_THRESHOLD: CollapsePasteThreshold = {
+  minLines: WEB_COLLAPSE_PASTE_MIN_LINES,
+  minChars: WEB_COLLAPSE_PASTE_MIN_CHARS,
+};
+
 /** Stable placeholder: `[paste #12 · 345 lines]` */
 export const COLLAPSED_PASTE_PLACEHOLDER_RE =
   /\[paste #(\d+) · (\d+) lines\]/g;

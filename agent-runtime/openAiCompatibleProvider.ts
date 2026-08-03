@@ -2,6 +2,11 @@ import type {
   AgentRuntimeChatMessage,
   AgentRuntimeResult,
 } from "./types";
+import {
+  requiresBareImageUrl,
+  toBareImageUrlMessages,
+} from "../core/chat/bareImageUrlShape";
+import { providerHttpFailure } from "../core/chat/providerFailureMessage";
 import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
 import { buildProviderAuthHeaders } from "./providerResolution";
 import { kimiIdentityHeaders } from "./kimiUserAgent";
@@ -14,7 +19,10 @@ import {
   throwIfChatCompletionStreamFailed,
   type ChatCompletionStreamState,
 } from "./processChatCompletionDelta";
-import { finalizeAccumulatedToolCalls, type AccumulatedToolCall } from "./toolCallAccumulator";
+import {
+  createToolCallAccumulator,
+  finalizeAccumulatedToolCalls,
+} from "./toolCallAccumulator";
 
 export type OpenAiCompatibleProviderConfig = {
   model: string;
@@ -33,9 +41,16 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
   tools?: OpenAiCompatibleTool[];
   stream?: boolean;
 }) {
+  const messages = toOpenAiCompatibleMessages(args.messages);
   const body = {
     model: args.providerConfig.model,
-    messages: toOpenAiCompatibleMessages(args.messages),
+    messages: requiresBareImageUrl({
+      endpoint: args.providerConfig.endpoint,
+      provider: args.providerConfig.provider,
+      model: args.providerConfig.model,
+    })
+      ? toBareImageUrlMessages(messages)
+      : messages,
     stream: args.stream ?? false,
     ...args.providerConfig.requestOptions,
     ...(args.tools && args.tools.length > 0 ? { tools: args.tools } : {}),
@@ -84,6 +99,9 @@ export function parseOpenAiCompatibleChatCompletionResponse(args: {
     ...(typeof rawFinishReason === "string" && rawFinishReason.length > 0
       ? { finish_reason: rawFinishReason }
       : {}),
+    // 非流式：拿到完整的 200 JSON body 本身就证明这次调用走完了，
+    // 不必等 finish_reason（有从不发它的上游，见 AgentRuntimeResult）。
+    stream_complete: true,
     usage: args.data?.usage,
     trace: args.trace,
   };
@@ -109,7 +127,7 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     content: "",
     reasoning: "",
     usage: undefined,
-    accumulatedToolCalls: {},
+    accumulatedToolCalls: createToolCallAccumulator(),
     thinkState: createThinkParserState(),
     onTextDelta: args.onTextDelta,
     onReasoningDelta: args.onReasoningDelta,
@@ -128,7 +146,7 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     content: state.content,
     ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
     ...(tool_calls.length > 0 ? { tool_calls } : {}),
-    ...(state.usage ? { usage: state.usage } : {}),
+    ...(state.usage ? { usage: state.usage, stream_complete: true } : {}),
     ...(state.finishReason ? { finish_reason: state.finishReason } : {}),
   };
 }
@@ -184,14 +202,12 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
   }
 
   if (!res.ok) {
-    const raw = await res.text().catch(() => "");
-    let data: unknown = raw;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      // keep raw text
-    }
-    throw new Error(`local provider failed: HTTP ${res.status} ${JSON.stringify(data)}`);
+    throw providerHttpFailure({
+      label: "local provider",
+      status: res.status,
+      raw: await res.text().catch(() => ""),
+      messages: args.messages,
+    });
   }
 
   const contentType = res.headers.get("content-type") ?? "";
@@ -210,6 +226,7 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
       ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
       ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
       ...(streamed.usage ? { usage: streamed.usage } : {}),
+      ...(streamed.stream_complete ? { stream_complete: true } : {}),
       ...(streamed.finish_reason ? { finish_reason: streamed.finish_reason } : {}),
       trace: args.messages,
     };

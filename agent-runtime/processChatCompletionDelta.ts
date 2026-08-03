@@ -14,7 +14,7 @@
 import { flushThinkParser, processThinkChunk, type ThinkParseState } from "./thinkTagParser";
 import {
   accumulateToolCallDelta,
-  type AccumulatedToolCall,
+  type ToolCallAccumulator,
 } from "./toolCallAccumulator";
 
 /** In-band stream failure carried by an SSE frame instead of an HTTP status. */
@@ -32,7 +32,7 @@ export type ChatCompletionStreamState = {
    * 由读流函数在收尾时抛出，见 `throwIfChatCompletionStreamFailed`。
    */
   streamError?: ChatCompletionStreamError;
-  accumulatedToolCalls: Record<number, AccumulatedToolCall>;
+  accumulatedToolCalls: ToolCallAccumulator;
   thinkState: ThinkParseState;
   onTextDelta?: (chunk: string) => void;
   onReasoningDelta?: (chunk: string) => void;

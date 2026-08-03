@@ -18,6 +18,10 @@
  * 文本重复指示。
  */
 
+import { resolveCliColorEnabled } from "../client/terminalStyles";
+import { t } from "./i18n";
+import { themeText } from "./theme";
+
 export const ACTIVITY_FRAMES = ["·", "~", "≈", "∿", "≈", "~"];
 export const ACTIVITY_FRAME_INTERVAL_MS = 150;
 /** 无可见输出超过此时长（且 turn 仍活跃）时，补一行 working fallback。 */
@@ -27,6 +31,17 @@ export type ActivityIndicatorView = {
   frame: string;
   label: string;
   elapsedSec: number;
+};
+
+export type AgentRunStatusSnapshot = {
+  runId: string;
+  agentName?: string;
+  status: string; // "running", "completed", "killed", "failed", etc.
+  polls?: number;
+  lastPollMs?: number;
+  logTail?: string;
+  logLines?: string[];
+  errorMessage?: string;
 };
 
 export type ActivityIndicatorDeps = {
@@ -48,8 +63,16 @@ export type ActivityIndicatorDeps = {
 export type ActivityIndicator = {
   /** 外部活动上报：非空 = 具体标签；null = 标签清空（文本/工具输出正在流动）。 */
   report(label: string | null): void;
+  /** 更新后台子 Agent 运行状态快照。 */
+  updateAgentRun(snapshot: AgentRunStatusSnapshot): void;
+  /** 清除后台子 Agent 运行状态快照。 */
+  clearAgentRun(): void;
+  /** 获取当前 Agent Run 快照。 */
+  getAgentRun(): AgentRunStatusSnapshot | null;
   /** 当前应渲染的活动行数据；explicit 优先，其次 fallback，都没有返回 null。 */
   getView(): ActivityIndicatorView | null;
+  /** 获取全套活动 Panel 渲染行（含基础活动行及贴在输入区上方的 Agent Run 状态面板）。 */
+  getActivityLines(colorEnabled?: boolean): string[] | null;
   /** Esc 即时反馈：把活动行切到「停止中」文案，frame 冻结不再动。 */
   markStopping(): void;
   /** 是否已处于停止中状态（第二次 Esc 判定用）。 */
@@ -172,6 +195,47 @@ export function createActivityIndicator(
     return null;
   };
 
+  let agentRunSnapshot: AgentRunStatusSnapshot | null = null;
+
+  const updateAgentRun = (snapshot: AgentRunStatusSnapshot) => {
+    agentRunSnapshot = snapshot;
+    deps.onRepaint();
+  };
+
+  const clearAgentRun = () => {
+    agentRunSnapshot = null;
+    deps.onRepaint();
+  };
+
+  const getAgentRun = () => agentRunSnapshot;
+
+  const getActivityLines = (colorEnabled = resolveCliColorEnabled()): string[] | null => {
+    const lines: string[] = [];
+    const baseView = getView();
+    if (baseView) {
+      const elapsed = Math.max(0, baseView.elapsedSec);
+      const elapsedStr = `${elapsed}s`;
+      const stopHint = t("stopHint");
+      if (!colorEnabled) {
+        lines.push(`${baseView.frame} ${baseView.label} (${elapsedStr}) · ${stopHint}`);
+      } else {
+        lines.push(
+          themeText(baseView.frame, "accent") +
+            " " +
+            themeText(baseView.label, "muted") +
+            themeText(` (${elapsedStr})`, "chrome") +
+            themeText(` · ${stopHint}`, "chrome")
+        );
+      }
+    }
+
+    if (agentRunSnapshot) {
+      lines.push(...formatAgentRunPanelLines(agentRunSnapshot, colorEnabled));
+    }
+
+    return lines.length > 0 ? lines : null;
+  };
+
   const stop = () => {
     if (timer !== null) {
       clearIntervalFn(timer);
@@ -183,7 +247,78 @@ export function createActivityIndicator(
     fallbackStartedAt = 0;
     lastActivityAt = 0;
     stopping = false;
+    agentRunSnapshot = null;
   };
 
-  return { report, getView, markStopping, isStopping, stop };
+  return {
+    report,
+    updateAgentRun,
+    clearAgentRun,
+    getAgentRun,
+    getView,
+    getActivityLines,
+    markStopping,
+    isStopping,
+    stop,
+  };
+}
+
+export function formatAgentRunPanelLines(
+  snapshot: AgentRunStatusSnapshot,
+  colorEnabled: boolean
+): string[] {
+  const lines: string[] = [];
+  const name = snapshot.agentName || "sub-agent";
+  const runId = snapshot.runId ? ` (${snapshot.runId.slice(0, 8)})` : "";
+  const status = snapshot.status || "running";
+
+  let statusSymbol = "⌛";
+  let statusColor: "warning" | "success" | "danger" | "muted" = "warning";
+  if (status === "completed" || status === "finished" || status === "success") {
+    statusSymbol = "✓";
+    statusColor = "success";
+  } else if (status === "killed" || status === "cancelled" || status === "failed" || status === "stopped") {
+    statusSymbol = "🔴";
+    statusColor = "danger";
+  }
+
+  const pollPart = snapshot.polls !== undefined ? ` (polls: ${snapshot.polls})` : "";
+  const errPart = snapshot.errorMessage ? ` · ${snapshot.errorMessage}` : "";
+
+  if (!colorEnabled) {
+    lines.push(`🤖 Sub-Agent: ${name}${runId} · ${statusSymbol} ${status}${pollPart}${errPart}`);
+  } else {
+    const botIcon = themeText("🤖", "accent", true);
+    const labelText = themeText(" Sub-Agent: ", "muted", true);
+    const nameText = themeText(`${name}${runId}`, "chrome", true);
+    const statusText = themeText(` · ${statusSymbol} ${status}`, statusColor, true);
+    const pollsText = pollPart ? themeText(pollPart, "chrome") : "";
+    const errorText = errPart ? themeText(errPart, "danger") : "";
+    lines.push(`${botIcon}${labelText}${nameText}${statusText}${pollsText}${errorText}`);
+  }
+
+  let logLine: string | undefined;
+  if (snapshot.logTail) {
+    const trimmed = snapshot.logTail.trim();
+    if (trimmed) {
+      const parts = trimmed.split(/\r?\n/);
+      logLine = parts[parts.length - 1];
+    }
+  } else if (snapshot.logLines && snapshot.logLines.length > 0) {
+    logLine = snapshot.logLines[snapshot.logLines.length - 1];
+  }
+
+  if (logLine && logLine.trim()) {
+    const cleanLog = logLine.trim();
+    if (!colorEnabled) {
+      lines.push(`   └ Log: ${cleanLog}`);
+    } else {
+      const branchChar = themeText("   └ ", "muted");
+      const logTag = themeText("Log: ", "muted");
+      const logContent = themeText(cleanLog, "chrome");
+      lines.push(`${branchChar}${logTag}${logContent}`);
+    }
+  }
+
+  return lines;
 }

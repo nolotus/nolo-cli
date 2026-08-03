@@ -222,6 +222,11 @@ export function resolveEmptyAssistantOutcome(args: {
   hasVisibleOutput: boolean;
   repairUsed: boolean;
   finishReason?: string;
+  /**
+   * 流收到了收尾元数据帧。有这个证据时它压过「缺 finish_reason」的推断——
+   * 见 AgentRuntimeResult.stream_complete：确实存在从不发 finish_reason 的上游。
+   */
+  streamComplete?: boolean;
 }):
   | { kind: "ok" }
   | { kind: "repair" }
@@ -229,7 +234,9 @@ export function resolveEmptyAssistantOutcome(args: {
   if (args.hasToolCalls || args.hasVisibleOutput) return { kind: "ok" };
   if (args.finishReason === "length") return { kind: "fallback", reason: "length_truncated" };
   if (!args.repairUsed) return { kind: "repair" };
-  if (!args.finishReason) return { kind: "fallback", reason: "stream_truncated" };
+  if (!args.finishReason && !args.streamComplete) {
+    return { kind: "fallback", reason: "stream_truncated" };
+  }
   return { kind: "fallback", reason: "empty_completion" };
 }
 
@@ -1409,6 +1416,7 @@ export async function runLocalAgentTurn(
           hasVisibleOutput: hasAssistantVisibleOutput(result.content),
           repairUsed: emptyAssistantRepairUsed,
           finishReason: result.finish_reason,
+          streamComplete: result.stream_complete,
         });
         if (outcome.kind === "repair") {
           emptyAssistantRepairPending = true;

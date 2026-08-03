@@ -1,4 +1,8 @@
 import { isFireworksKimiModel } from "../../ai/llm/kimi";
+import {
+  requiresBareImageUrl,
+  toBareImageUrlMessages,
+} from "../../core/chat/bareImageUrlShape";
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 
 type NormalizeChatCompletionsBodyArgs = {
@@ -39,6 +43,12 @@ export const normalizeChatCompletionsBodyForProvider = ({
       nextBody.max_completion_tokens = nextBody.max_tokens;
       delete nextBody.max_tokens;
     }
+  }
+
+  // 载荷形状类的 quirk 住在 core/chat（agent-runtime 走不到本模块，两条出口
+  // 必须共用同一份判定）；本文件只留 provider→字段增删这类 body 级 quirk。
+  if (Array.isArray(nextBody.messages) && requiresBareImageUrl({ provider, model })) {
+    nextBody.messages = toBareImageUrlMessages(nextBody.messages);
   }
 
   return nextBody;

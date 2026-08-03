@@ -7,6 +7,21 @@
  * `function.arguments` arrives as a sequence of string slices concatenated
  * in order. Multiple concurrent calls are disambiguated by `index`.
  *
+ * Not every upstream honours that. OpenCode Go (`https://opencode.ai/zen/go/v1`)
+ * streams every parallel call as `index: 0` and only distinguishes them by a
+ * fresh `function.name` + `id` pair:
+ *
+ *   {index:0, id:"fc_a", function:{name:"get_weather", arguments:""}}
+ *   {index:0,           function:{arguments:"{\"city\":\"Beijing\"}"}}
+ *   {index:0, id:"fc_b", function:{name:"get_weather", arguments:""}}
+ *   {index:0,           function:{arguments:"{\"city\":\"Shanghai\"}"}}
+ *
+ * Slotting those by `index` alone collapses both calls into one — names
+ * concatenate into garbage like `get_weatherget_weather` and arguments into
+ * `{...}{...}`. So a new `id` always opens a new slot, and the wire index is
+ * remembered per slot so that the id-less argument fragments that follow land
+ * on the newest call for that index rather than on the one it displaced.
+ *
  * Both `openAiCompatibleProvider` and `platformChatProvider` stream the same
  * chat.completions delta shape, so they share this one implementation to
  * prevent drift (the two copies had already diverged on `function.name`
@@ -22,19 +37,59 @@ export type AccumulatedToolCall = {
   };
 };
 
+/**
+ * Opaque accumulator state. Slots carry the wire index they arrived under,
+ * which `finalize` strips — callers only ever see finished tool calls, so the
+ * bookkeeping cannot leak into a request body.
+ */
+export type ToolCallAccumulator = {
+  slots: Array<AccumulatedToolCall & { wireIndex: number }>;
+};
+
+export function createToolCallAccumulator(): ToolCallAccumulator {
+  return { slots: [] };
+}
+
+/**
+ * Pick the slot a delta belongs to, appending one when the delta starts a new
+ * call. A delta carrying an unseen `id` always starts a new call; an id-less
+ * fragment continues the newest slot opened under the same wire index.
+ */
+function resolveSlot(
+  accumulator: ToolCallAccumulator,
+  deltaId: string,
+  wireIndex: number | undefined,
+): number {
+  const { slots } = accumulator;
+
+  if (deltaId) {
+    const existing = slots.findIndex((slot) => slot.id === deltaId);
+    if (existing !== -1) return existing;
+  } else if (wireIndex !== undefined) {
+    const sameIndex = slots.findLastIndex((slot) => slot.wireIndex === wireIndex);
+    if (sameIndex !== -1) return sameIndex;
+  } else if (slots.length > 0) {
+    return slots.length - 1;
+  }
+
+  slots.push({
+    id: deltaId,
+    type: "function",
+    function: { name: "", arguments: "" },
+    wireIndex: wireIndex ?? slots.length,
+  });
+  return slots.length - 1;
+}
+
 export function accumulateToolCallDelta(
-  accumulated: Record<number, AccumulatedToolCall>,
+  accumulator: ToolCallAccumulator,
   deltas: Array<Record<string, unknown>>,
 ) {
   for (const delta of deltas) {
-    const index = typeof delta.index === "number" ? delta.index : 0;
-    const current =
-      accumulated[index] ?? {
-        id: "",
-        type: "function" as const,
-        function: { name: "", arguments: "" },
-      };
-    if (typeof delta.id === "string" && delta.id) current.id = delta.id;
+    const deltaId = typeof delta.id === "string" && delta.id ? delta.id : "";
+    const wireIndex = typeof delta.index === "number" ? delta.index : undefined;
+    const current = accumulator.slots[resolveSlot(accumulator, deltaId, wireIndex)]!;
+
     const fn = delta.function;
     if (fn && typeof fn === "object") {
       const functionDelta = fn as { name?: string; arguments?: string };
@@ -45,14 +100,13 @@ export function accumulateToolCallDelta(
         current.function.arguments += functionDelta.arguments;
       }
     }
-    accumulated[index] = current;
   }
 }
 
 export function finalizeAccumulatedToolCalls(
-  accumulated: Record<number, AccumulatedToolCall>,
+  accumulator: ToolCallAccumulator,
 ): AccumulatedToolCall[] {
-  return Object.keys(accumulated)
-    .map((key) => accumulated[Number(key)])
-    .filter((call) => call?.function?.name);
+  return accumulator.slots
+    .filter((slot) => slot.function.name)
+    .map(({ id, type, function: fn }) => ({ id, type, function: fn }));
 }

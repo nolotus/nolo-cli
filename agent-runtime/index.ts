@@ -20,8 +20,12 @@ export {
   processThinkChunk,
 } from "./thinkTagParser";
 export type { ThinkParseState } from "./thinkTagParser";
-export { accumulateToolCallDelta, finalizeAccumulatedToolCalls } from "./toolCallAccumulator";
-export type { AccumulatedToolCall } from "./toolCallAccumulator";
+export {
+  accumulateToolCallDelta,
+  createToolCallAccumulator,
+  finalizeAccumulatedToolCalls,
+} from "./toolCallAccumulator";
+export type { AccumulatedToolCall, ToolCallAccumulator } from "./toolCallAccumulator";
 export { applyChatCompletionDelta, flushChatCompletionStream } from "./processChatCompletionDelta";
 export type { ChatCompletionStreamState } from "./processChatCompletionDelta";
 export { runLocalAgentTurn } from "./localLoop";

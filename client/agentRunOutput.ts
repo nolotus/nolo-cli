@@ -219,3 +219,35 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
     },
   };
 }
+
+function extractAgentRunStatusSnapshot(
+  event: LocalAgentToolEvent
+): import("../tui/activityIndicator").AgentRunStatusSnapshot | null {
+  if (event.type !== "tool-result") return null;
+  const content = typeof event.content === "string" ? event.content.trim() : "";
+  if (!content.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const runId = typeof parsed.runId === "string" ? parsed.runId : "";
+    const status = typeof parsed.status === "string" ? parsed.status : "running";
+    const agentName =
+      typeof parsed.agentName === "string"
+        ? parsed.agentName
+        : typeof parsed.name === "string"
+        ? parsed.name
+        : undefined;
+    const logTail = typeof parsed.logTail === "string" ? parsed.logTail : undefined;
+    const logLines = Array.isArray(parsed.logLines) ? (parsed.logLines as string[]) : undefined;
+    const errorMessage = typeof parsed.errorMessage === "string" ? parsed.errorMessage : undefined;
+    return {
+      runId,
+      agentName,
+      status,
+      logTail,
+      logLines,
+      errorMessage,
+    };
+  } catch {
+    return null;
+  }
+}

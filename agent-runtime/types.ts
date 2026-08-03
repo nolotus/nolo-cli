@@ -109,6 +109,16 @@ export interface AgentRuntimeResult {
    */
   finish_reason?: string;
   /**
+   * 流是否收到了收尾元数据帧（usage）。
+   *
+   * 空轮诊断此前只能靠「没有 finish_reason 就当流被切断」，但确实存在从不发
+   * finish_reason 的上游——OpenCode Go 的 gpt-5.6-luna 全程 null，也不发
+   * `[DONE]`，只在最后给一个 usage 帧。对这类 provider，缺 finish_reason 是常态，
+   * 不是故障，误报成「上游响应流被中断」会把排查方向带偏。
+   * 收到收尾帧即证明流走完了，此时空轮应判为 empty_completion。
+   */
+  stream_complete?: boolean;
+  /**
    * Canonical 有序 block 输出序列（text/thinking/toolCall 交错）。
    * provider 有此序列时通过 output 返回，localLoop 按 block 消费。
    * OpenAI 兼容 provider 不设此字段（content + tool_calls 扁平模型足够）。

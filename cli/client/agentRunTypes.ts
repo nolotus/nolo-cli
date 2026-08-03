@@ -222,6 +222,8 @@ export type RunAgentTurnOptions = {
    * 传入时 Spinner 不再向 output 写帧，避免两个 live 指示重复。
    */
   activityReporter?: (label: string | null) => void;
+  /** 后台子 Agent 运行状态快照更新接收者（TUI 用来在 composer 上方展示 docked 子 Agent 运行面板）。 */
+  onAgentRunStatus?: (snapshot: import("../tui/activityIndicator").AgentRunStatusSnapshot | null) => void;
 };
 
 export type RunAgentTurnResult = {

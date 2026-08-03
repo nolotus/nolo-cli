@@ -1196,8 +1196,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(requestUserChoice ? { requestUserChoice } : {}),
           abortSignal: activeTurnAbort.signal,
           pastedTextStore: pasteStore,
-          explicitAgentSwitch,
           activityReporter,
+          onAgentRunStatus: (snapshot) => {
+            if (snapshot) {
+              activityIndicator.updateAgentRun(snapshot);
+            } else {
+              activityIndicator.clearAgentRun();
+            }
+          },
         }
       );
       // 强制收尾保护：第二次 Esc 已把 activeTurnAbort 置 null、busyLock 解除、

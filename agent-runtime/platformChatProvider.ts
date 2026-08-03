@@ -11,6 +11,7 @@ import {
   extractToolCallsFromResponseOutput,
   toResponsesTools,
 } from "../integrations/openai/responsesHelpers";
+import { providerHttpFailure } from "../core/chat/providerFailureMessage";
 import { normalizeServerOrigin } from "../core/serverOrigin";
 import { asNonEmptyStringArray } from "../core/stringArray";
 import {
@@ -38,8 +39,8 @@ import {
 } from "./processChatCompletionDelta";
 import { readSseFrames } from "./sseFrames";
 import {
+  createToolCallAccumulator,
   finalizeAccumulatedToolCalls,
-  type AccumulatedToolCall,
 } from "./toolCallAccumulator";
 import { resolvePlatformChatCompletionsEndpoint } from "./platformProviderEndpoints";
 
@@ -276,6 +277,7 @@ export function parsePlatformChatCompletionResponse(args: {
       model: args.providerConfig.model,
       provider: args.providerConfig.provider,
       ...(tool_calls.length > 0 ? { tool_calls } : {}),
+      stream_complete: true,
       usage: args.data?.usage,
       trace: args.trace,
     };
@@ -294,6 +296,8 @@ export function parsePlatformChatCompletionResponse(args: {
       : typeof choiceMessage?.reasoning_content === "string" && choiceMessage.reasoning_content
         ? { reasoning_content: choiceMessage.reasoning_content }
         : {}),
+    // 非流式：完整的 200 JSON body 即证明调用走完，见 AgentRuntimeResult。
+    stream_complete: true,
     usage: args.data?.usage,
     trace: args.trace,
   };
@@ -383,7 +387,7 @@ export async function readPlatformChatSseCompletion(args: {
     onReasoningDelta: args.onReasoningDelta,
     completedResponsesPayload: undefined as any,
     streamError: undefined as ChatCompletionStreamError | undefined,
-    accumulatedToolCalls: {} as Record<number, AccumulatedToolCall>,
+    accumulatedToolCalls: createToolCallAccumulator(),
     thinkState: createThinkParserState(),
   };
 
@@ -406,7 +410,7 @@ export async function readPlatformChatSseCompletion(args: {
       content: finalContent || state.content,
       ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
       ...(tool_calls.length > 0 ? { tool_calls } : {}),
-      ...(state.usage ? { usage: state.usage } : {}),
+      ...(state.usage ? { usage: state.usage, stream_complete: true } : {}),
     };
   }
 
@@ -415,7 +419,7 @@ export async function readPlatformChatSseCompletion(args: {
     content: state.content,
     ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
     ...(tool_calls.length > 0 ? { tool_calls } : {}),
-    ...(state.usage ? { usage: state.usage } : {}),
+    ...(state.usage ? { usage: state.usage, stream_complete: true } : {}),
   };
 }
 
@@ -487,15 +491,12 @@ export async function executePlatformChatCompletion(args: {
         providerConfig: fallbackProviderConfig,
       });
     }
-    let data: unknown = raw;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      // keep raw text
-    }
-    throw new Error(
-      `desktop platform provider failed: HTTP ${res.status} ${JSON.stringify(data)}`,
-    );
+    throw providerHttpFailure({
+      label: "desktop platform provider",
+      status: res.status,
+      raw,
+      messages: args.messages,
+    });
   }
 
   const contentType = res.headers.get("content-type") ?? "";
@@ -518,6 +519,7 @@ export async function executePlatformChatCompletion(args: {
       ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
       ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
       ...(streamed.usage ? { usage: streamed.usage } : {}),
+      ...(streamed.stream_complete ? { stream_complete: true } : {}),
       trace: args.messages,
     };
   }

@@ -38,12 +38,25 @@ export type AccumulatedToolCall = {
 };
 
 /**
- * Opaque accumulator state. Slots carry the wire index they arrived under,
- * which `finalize` strips — callers only ever see finished tool calls, so the
- * bookkeeping cannot leak into a request body.
+ * A slot mid-accumulation. `arguments` is still open because a few upstreams
+ * hand over the finished object instead of streaming a JSON string; `finalize`
+ * serialises it back to the string the wire expects. `wireIndex` is the index
+ * the slot first arrived under, which `finalize` strips — callers only ever
+ * see finished tool calls, so the bookkeeping cannot leak into a request body.
  */
+export type ToolCallSlot = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string | object;
+  };
+  wireIndex: number;
+};
+
+/** Opaque accumulator state; build one with {@link createToolCallAccumulator}. */
 export type ToolCallAccumulator = {
-  slots: Array<AccumulatedToolCall & { wireIndex: number }>;
+  slots: ToolCallSlot[];
 };
 
 export function createToolCallAccumulator(): ToolCallAccumulator {
@@ -92,12 +105,18 @@ export function accumulateToolCallDelta(
 
     const fn = delta.function;
     if (fn && typeof fn === "object") {
-      const functionDelta = fn as { name?: string; arguments?: string };
+      const functionDelta = fn as { name?: string; arguments?: string | object };
       if (typeof functionDelta.name === "string" && functionDelta.name) {
         current.function.name += functionDelta.name;
       }
-      if (typeof functionDelta.arguments === "string" && functionDelta.arguments) {
-        current.function.arguments += functionDelta.arguments;
+      const argumentsDelta = functionDelta.arguments;
+      if (typeof argumentsDelta === "string" && argumentsDelta) {
+        const soFar =
+          typeof current.function.arguments === "string" ? current.function.arguments : "";
+        current.function.arguments = soFar + argumentsDelta;
+      } else if (argumentsDelta && typeof argumentsDelta === "object") {
+        // Whole-object arguments are a final value, not a fragment: last wins.
+        current.function.arguments = argumentsDelta;
       }
     }
   }
@@ -108,5 +127,13 @@ export function finalizeAccumulatedToolCalls(
 ): AccumulatedToolCall[] {
   return accumulator.slots
     .filter((slot) => slot.function.name)
-    .map(({ id, type, function: fn }) => ({ id, type, function: fn }));
+    .map(({ id, type, function: fn }) => ({
+      id,
+      type,
+      function: {
+        name: fn.name,
+        arguments:
+          typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
+      },
+    }));
 }

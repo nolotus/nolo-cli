@@ -1,11 +1,31 @@
 /**
- * 处理流式工具调用数据块，将其累积到数组中。
- * 关键点：
- * - 支持按 index 拼接，也支持同一 id、无 index 的分片追加（OpenAI 风格常见）
- * - 字符串分片追加；对象分片直接覆盖（最后一段为准）
- * - 不再过滤特殊标记，保持原样透传
+ * Web-side adapter over the one tool-call accumulator.
+ *
+ * The slotting rules live in `agent-runtime/toolCallAccumulator` — which id
+ * opens a new call, which fragment continues which slot. This file used to
+ * carry a second copy of them, and the copies drifted: it kept the `index`-only
+ * slotting that collapses OpenCode Go's parallel calls (every one of them
+ * arrives as `index: 0`) long after the runtime side was fixed.
+ *
+ * What stays here is the shape the streaming UI wants, not a second algorithm:
+ *
+ * - array in / array out, so `applyDelta` can drop the result straight into
+ *   its state snapshot and re-render the calls as they arrive;
+ * - no filtering of unnamed slots. `finalizeAccumulatedToolCalls` drops them
+ *   because a call with no name cannot be executed, but mid-stream a slot that
+ *   has an id and no name yet is simply a call still arriving;
+ * - the slot's wire index rides along in the existing optional `index` field,
+ *   because the accumulator needs it back on the next delta to tell parallel
+ *   calls apart. Callers map to `{ id, type, function }` explicitly before
+ *   sending, so it never reaches the wire.
+ *
+ * Each call returns fresh entries rather than mutating the snapshot it was
+ * given, which the old in-place version did not guarantee.
  */
-
+import {
+  accumulateToolCallDelta,
+  type ToolCallSlot,
+} from "../../agent-runtime/toolCallAccumulator";
 
 export interface ToolCallChunk {
   index?: number;
@@ -29,98 +49,25 @@ export interface AccumulatedToolCall {
 
 export function accumulateToolCallChunks(
   currentAccumulatedCalls: AccumulatedToolCall[],
-  toolCallChunks: ToolCallChunk[]
+  toolCallChunks: ToolCallChunk[],
 ): AccumulatedToolCall[] {
-  const out = [...currentAccumulatedCalls];
+  const accumulator = {
+    slots: currentAccumulatedCalls.map(
+      (call, position) =>
+        ({
+          ...call,
+          // The accumulator appends into function.arguments, so the nested
+          // object has to be copied too or the caller's snapshot moves.
+          function: { ...call.function },
+          wireIndex: call.index ?? position,
+        }) as ToolCallSlot,
+    ),
+  };
 
-  for (const chunk of toolCallChunks) {
-    const { index, id, type, function: fn } = chunk;
+  accumulateToolCallDelta(accumulator, toolCallChunks as Array<Record<string, unknown>>);
 
-    // 分块流（带 index）
-    if (index !== undefined) {
-      // 确保数组长度足够覆盖 index
-      while (out.length <= index) {
-        // 先占位，后续填充。初始化所有必需字段以防空指针。
-        out.push({
-          id: "",
-          type: "function",
-          function: { name: "", arguments: "" },
-        });
-      }
-
-      const cur = out[index];
-
-      // 初始化或更新基础字段
-      if (id && !cur.id) cur.id = id;
-      if (type && !cur.type) cur.type = type;
-      if (!cur.function) cur.function = { name: "", arguments: "" };
-
-      if (fn) {
-        if (fn.name) cur.function.name += fn.name;
-
-        if (fn.arguments) {
-          if (typeof fn.arguments === "string") {
-            // 字符串增量：追加
-            const currentArgs =
-              typeof cur.function.arguments === "string"
-                ? cur.function.arguments
-                : "";
-            cur.function.arguments = currentArgs + fn.arguments;
-          } else {
-            // 对象全量：覆盖（非标流直接给 final object）
-            cur.function.arguments = fn.arguments;
-          }
-        }
-      }
-      continue;
-    }
-
-    // 无 index，但有 fn 的分片（同 id 的后续片段会被追加）
-    // 这种模式下通常 id 在第一个 chunk 给定，后续 chunk 可能没有 id
-    if (fn?.name || fn?.arguments) {
-      let targetIndex = -1;
-
-      // 尝试通过 ID 查找现有调用
-      if (id) {
-        targetIndex = out.findIndex((c) => c.id === id);
-      } else if (out.length > 0) {
-        // 如果没有 ID，默认追加到最后一个（假设顺序性）
-        targetIndex = out.length - 1;
-      }
-
-      if (targetIndex >= 0) {
-        const target = out[targetIndex];
-        if (fn.name) target.function.name += fn.name; // 追加
-
-        if (fn.arguments) {
-          if (typeof fn.arguments === "string") {
-            const currentArgs = typeof target.function.arguments === "string" ? target.function.arguments : "";
-            target.function.arguments = currentArgs + fn.arguments;
-          } else {
-            target.function.arguments = fn.arguments;
-          }
-        }
-      } else if (id) {
-        // 是新的调用
-        const newCall: AccumulatedToolCall = {
-          id,
-          type: type || "function",
-          function: {
-            name: fn.name || "",
-            arguments: fn.arguments || (!fn.arguments && typeof fn.arguments === 'object' ? {} : "") // Initial empty value based on type? Or just default string
-          },
-        };
-        // For arguments, if it's object, use it. If undefined, use "".
-        if (fn.arguments) {
-          newCall.function.arguments = fn.arguments;
-        } else {
-          newCall.function.arguments = "";
-        }
-
-        out.push(newCall);
-      }
-    }
-  }
-
-  return out;
+  return accumulator.slots.map(({ wireIndex, ...call }) => ({
+    ...call,
+    index: wireIndex,
+  })) as AccumulatedToolCall[];
 }

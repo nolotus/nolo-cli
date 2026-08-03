@@ -53,13 +53,15 @@ export function parseSkillFrontmatter(filePath: string): { name?: string; descri
           ? undefined
           : String(rawDesc);
     // name is a single-segment identifier; keep the 200-char guard as a safety
-    // net for malformed frontmatter. description is NOT truncated here — budget
-    // control happens at the discoverSkills level so authors can front-load
-    // triggers and let the budget-based shortener preserve them.
+    // net for malformed frontmatter. description is capped at 200 chars per
+    // skill (the discovery list is a menu — each entry should be short; authors
+    // should front-load activation triggers so the cap preserves them). A
+    // separate total-budget control in discoverSkills guards against skill-count
+    // growth; the two layers are independent.
     const sanitizeName = (s: string | undefined) =>
       s?.trim().replace(/^["']|["']$/g, "").replace(/[\n\r]+/g, " ").slice(0, 200);
     const sanitizeDesc = (s: string | undefined) =>
-      s?.trim().replace(/^["']|["']$/g, "").replace(/[\n\r]+/g, " ");
+      s?.trim().replace(/^["']|["']$/g, "").replace(/[\n\r]+/g, " ").slice(0, 200);
     return { name: sanitizeName(name), description: sanitizeDesc(description) };
   } catch { return {}; }
 }

@@ -10,6 +10,7 @@ type ImageFetchResult = {
 type InlineOptions = {
   shouldInline: boolean;
   fetchImage?: (url: string) => Promise<ImageFetchResult>;
+  isAllowedImageUrl?: (url: string) => boolean;
 };
 
 const FILE_CONTENT_PATH = "/api/v1/db/file/content/";
@@ -65,16 +66,19 @@ const defaultFetchImage = async (url: string): Promise<ImageFetchResult> => {
 const cloneImagePartWithDataUrl = async (
   part: any,
   fetchImage: (url: string) => Promise<ImageFetchResult>,
+  isAllowedImageUrl?: (url: string) => boolean,
 ) => {
   const url = part?.image_url?.url;
-  if (typeof url !== "string" || !isInlineCandidate(url)) return part;
+  if (
+    typeof url !== "string" ||
+    !isInlineCandidate(url) ||
+    (isAllowedImageUrl && !isAllowedImageUrl(url))
+  ) {
+    return part;
+  }
 
   const result = await fetchImage(url);
-  if (!result.ok || !result.bytes) {
-    throw new Error(
-      `Failed to inline custom provider image URL ${url}: ${result.error ?? "unknown error"}`,
-    );
-  }
+  if (!result.ok || !result.bytes) return part;
 
   const mimeType = result.mimeType || "application/octet-stream";
   return {
@@ -108,7 +112,11 @@ export const inlineImageUrlsForCustomProvider = async <T>(
     const content = await Promise.all(
       message.content.map(async (part: any) => {
         if (part?.type !== "image_url") return part;
-        return cloneImagePartWithDataUrl(part, fetchImage);
+        return cloneImagePartWithDataUrl(
+          part,
+          fetchImage,
+          options.isAllowedImageUrl,
+        );
       }),
     );
     let messageChanged = false;

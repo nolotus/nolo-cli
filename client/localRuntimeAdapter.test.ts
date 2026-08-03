@@ -4446,11 +4446,15 @@ describe("CLI local runtime adapter OAuth per-request wiring (real credential st
   function createOAuthAdapter(opts: {
     agentRecord: Record<string, unknown>;
     fetchImpl: (url: unknown, init?: { headers?: unknown }) => Promise<Response>;
+    authToken?: string;
   }) {
     const dbKey = String(opts.agentRecord.dbKey);
     const store = new Map<string, unknown>([[dbKey, opts.agentRecord]]);
     return createAdapter({
-      env: { NOLO_LOCAL_USER_ID: "user-1" },
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        ...(opts.authToken ? { AUTH_TOKEN: opts.authToken } : {}),
+      },
       db: {
         get: async (key: string) => {
           if (!store.has(key)) throw new Error(`not found: ${key}`);
@@ -4513,6 +4517,64 @@ describe("CLI local runtime adapter OAuth per-request wiring (real credential st
     // 实际发出的 bearer 是 resolver 当次返回值，不是固化的快照。
     expect(requests[0].auth).toBe("Bearer token-fresh-B");
     expect(requests[0].auth).not.toBe("Bearer token-snapshot-A");
+  });
+
+  test("inlines local image URLs before direct OpenAI-compatible requests", async () => {
+    writeFakeOAuthCredential("token-image-A");
+    const requests: Array<{ body: any; auth: string | null }> = [];
+    const fileRequests: Array<{ auth: string | null }> = [];
+    const adapter = createOAuthAdapter({
+      agentRecord: OAUTH_AGENT_RECORD,
+      authToken: "token-image-A",
+      fetchImpl: async (url, init) => {
+        if (String(url).includes("/api/v1/db/file/content/")) {
+          fileRequests.push({
+            auth: new Headers(init?.headers as HeadersInit).get("Authorization"),
+          });
+          return new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: { "content-type": "image/png" },
+          });
+        }
+        if (isChatCompletion(url)) {
+          requests.push({
+            body: JSON.parse(String(init?.body)),
+            auth: new Headers(init?.headers as HeadersInit).get("Authorization"),
+          });
+        }
+        return Response.json({ choices: [{ message: { content: "image ok" } }] });
+      },
+    });
+
+    const agentConfig = await adapter.loadAgentConfig("oauth");
+    const provider = await adapter.resolveProvider(agentConfig);
+    const result = await provider.complete(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "describe this" },
+            {
+              type: "image_url",
+              image_url: {
+                url: "https://us.nolo.chat/api/v1/db/file/content/file-1",
+              },
+            },
+          ],
+        },
+      ],
+      {},
+    );
+
+    expect(result.content).toBe("image ok");
+    expect(fileRequests).toHaveLength(1);
+    expect(fileRequests[0].auth).toBe("Bearer token-image-A");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].auth).toBe("Bearer token-image-A");
+    expect(requests[0].body.messages[0].content[1]).toEqual({
+      type: "image_url",
+      image_url: { url: "data:image/png;base64,AQID" },
+    });
   });
 
   test("force-refreshes once and retries once on 401, sending the refreshed bearer", async () => {

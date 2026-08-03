@@ -33,6 +33,7 @@ import type { CliKvDb, HybridRecordStore } from "./hybridRecordStore";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
 import { createTokenKey, dialogMessageRange } from "../../database/keys";
 import { prepareTokenUsageData } from "../../ai/token/prepareTokenUsageData";
+import { inlineImageUrlsForCustomProvider } from "../../ai/chat/inlineImageUrlsForCustomProvider";
 import {
   LOCAL_CODEX_AGENT_ID,
   LOCAL_CODEX_AGENT_KEY,
@@ -1968,6 +1969,38 @@ export function createCliLocalRuntimeAdapter(
         model: providerConfig.model,
         complete: async (messages, options) => {
           const stream = Boolean(options?.onTextDelta);
+          const inlinedMessages = (
+            await inlineImageUrlsForCustomProvider(
+              { messages },
+              {
+                shouldInline: true,
+                isAllowedImageUrl: (url) => {
+                  try {
+                    return new URL(url).origin === new URL(serverUrl).origin;
+                  } catch {
+                    return false;
+                  }
+                },
+                fetchImage: async (url) => {
+                  const response = await fetchImpl(url, {
+                    headers: authToken
+                      ? { Authorization: `Bearer ${authToken}` }
+                      : undefined,
+                  });
+                  if (!response.ok) {
+                    return { ok: false, error: `HTTP ${response.status}` };
+                  }
+                  return {
+                    ok: true,
+                    mimeType:
+                      response.headers.get("content-type") ??
+                      "application/octet-stream",
+                    bytes: new Uint8Array(await response.arrayBuffer()),
+                  };
+                },
+              },
+            ) as { messages: typeof messages }
+          ).messages;
           logLocalRuntimeDiagnostic("provider.request.start", {
             agentKey: agentConfig.key,
             transport: "direct-openai-compatible",
@@ -1981,7 +2014,7 @@ export function createCliLocalRuntimeAdapter(
           });
           const result = await executeOpenAiCompatibleChatCompletion({
             providerConfig,
-            messages,
+            messages: inlinedMessages,
             tools,
             fetchImpl: (url: string | URL | Request, init?: RequestInit) =>
               fetchWithTransientRetry(fetchImpl, url, init, {

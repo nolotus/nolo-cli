@@ -924,7 +924,7 @@ describe("toolOutput", () => {
         toolName: "loadSkill",
         argumentsPreview: "ghost",
         content:
-          'Skill "ghost" not found in this workspace\'s skill directories (.agents/skills/<name>/SKILL.md, docs/skills/<name>.md).\n\nAvailable skills: nolo-plan',
+          'Skill "ghost" not found in this workspace\'s skill directory (.agents/skills/<name>/SKILL.md).\n\nAvailable skills: nolo-plan',
       }),
       "compact",
       false

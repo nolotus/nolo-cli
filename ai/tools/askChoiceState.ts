@@ -88,7 +88,8 @@ export type AskChoiceAction =
   | { type: "NEXT_TAB" }
   | { type: "PREV_TAB" }
   | { type: "SUBMIT" }
-  | { type: "CANCEL" };
+  | { type: "CANCEL" }
+  | { type: "HYDRATE_QUESTIONS"; questions: AskChoiceQuestion[] };
 
 // ── Normalize legacy args → questions[] ────────────────────────────
 
@@ -179,6 +180,39 @@ export function askChoiceReducer(
   state: AskChoiceUiState,
   action: AskChoiceAction,
 ): AskChoiceUiState {
+  // HYDRATE_QUESTIONS reconciles questionStates when the questions array grows
+  // after mount (useReducer lazy init only runs once). Only allowed in active
+  // phase: once submitted/cancelled, the result is frozen and appending empty
+  // states would (a) let buildAskChoiceResult emit empty answers for the new
+  // questions and (b) risk indexing undefined. Late-arriving data after submit
+  // is harmless to drop because the user already answered the questions that
+  // existed at submit time.
+  if (action.type === "HYDRATE_QUESTIONS") {
+    if (state.phase !== "active") return state;
+    const newQuestions = action.questions;
+    if (newQuestions.length <= state.questionStates.length) {
+      // Only update the questions ref if it actually grew; otherwise no-op
+      // to avoid needless re-renders.
+      if (newQuestions.length === state.questions.length) return state;
+      return { ...state, questions: newQuestions };
+    }
+    const appended = newQuestions
+      .slice(state.questionStates.length)
+      .map(() => ({
+        cursorIndex: 0,
+        selectedIds: [],
+        pickedId: null,
+        otherText: "",
+        otherFocused: false,
+      }));
+    return {
+      ...state,
+      questions: newQuestions,
+      questionStates: [...state.questionStates, ...appended],
+      activeIndex: Math.min(state.activeIndex, newQuestions.length - 1),
+    };
+  }
+
   if (state.phase !== "active") return state;
 
   switch (action.type) {

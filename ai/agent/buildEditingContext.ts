@@ -376,6 +376,39 @@ export const buildEditingContextSummary = (
         ].join("\n");
     }
 
+    if (targetKind === "local_preview") {
+        const metadata = runtimeOptions?.editingTarget?.metadata;
+        const selectedNode =
+            metadata && typeof metadata === "object" && metadata.selectedNode &&
+            typeof metadata.selectedNode === "object"
+                ? (metadata.selectedNode as Record<string, unknown>)
+                : null;
+        if (!selectedNode) return null;
+
+        const readString = (key: string): string =>
+            typeof selectedNode[key] === "string" ? (selectedNode[key] as string) : "";
+        const tagName = readString("tagName") || "元素";
+        const cssPath = readString("cssPath");
+        const noloLoc = readString("noloLoc");
+        const textSnippet = readString("textSnippet");
+        const outerHTMLSnippet = readString("outerHTMLSnippet");
+
+        return [
+            "当前编辑目标：本地工作区里正在预览的网页（Local Preview）。",
+            `用户在预览中选中了一个元素：<${tagName}>，CSS 路径：${cssPath}${noloLoc ? `，源码位置：${noloLoc}` : ""}。`,
+            `选中元素的 HTML 片段（可能截断）：${outerHTMLSnippet}${textSnippet ? `；可见文本：${textSnippet}` : ""}。`,
+            "",
+            "【给 AI 的操作指南 / 非用户原话】",
+            "1. 本轮修改必须以这个元素为中心；先在本地工作区源码中定位到生成这段 HTML 的代码，再动手。",
+            noloLoc
+                ? "2. 已给出源码位置，直接读该文件的对应行范围确认，不要全局搜索。"
+                : "2. 没有源码位置时，用 CSS 路径里的类名、可见文本或 HTML 片段搜索工作区定位，不要凭猜测改动。",
+            "3. 修改收敛在该元素及其直接样式来源（命中的组件/类/design token）；保持未命中的文件不变。",
+            "4. 如果定位结果落在 node_modules 或来自接口数据，先告诉用户实际情况，再提出可行的改法，不要硬改。",
+            "5. 如果按 CSS 路径和 HTML 片段找不到对应位置，先向用户说明并请其重新选择。",
+        ].join("\n");
+    }
+
     if (targetKind === "image" || targetKind === "file") {
         const editingTarget = runtimeOptions?.editingTarget;
         const metadata = editingTarget?.metadata;

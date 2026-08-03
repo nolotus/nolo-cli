@@ -24,7 +24,7 @@ export type TuiState = {
   /**
    * Skill refs attached to the workspace via /skill attach.
    * Each entry is a dbKey (page-xxx) or a bare skill name resolved
-   * against .agents/skills/<name>/SKILL.md or docs/skills/<name>.md.
+   * against .agents/skills/<name>/SKILL.md.
    * Passed to buildSkillContextBlocks on every chat turn so the agent
    * sees the skill content in system context blocks.
    * /new clears these, same semantics as attachedDocs.

@@ -41,6 +41,20 @@ function stripEffortSuffix(model: string): string {
   return model;
 }
 
+/**
+ * 去掉模型 id 末尾的 `-preview` 后缀，用于把存量「预览版」agent 记录归一化到
+ * 已正式上线的同名模型。例如 qwen3.8-max-preview → qwen3.8-max，使能力检测
+ * 仍能从 catalog 精确命中，而不是回退到存的 false（导致 CLI 误切 Kimi、chat 拦图）。
+ * 与 stripEffortSuffix 同模式；无 -preview 后缀时原样返回。
+ */
+function stripPreviewSuffix(model: string): string {
+  const suffix = "-preview";
+  if (model.endsWith(suffix) && model.length > suffix.length) {
+    return model.slice(0, -suffix.length);
+  }
+  return model;
+}
+
 const lookupKnownModelVision = (
   provider: string | null,
   model: string,
@@ -48,8 +62,10 @@ const lookupKnownModelVision = (
   if (!model) return undefined;
 
   const candidates = [model];
-  const stripped = stripEffortSuffix(model);
-  if (stripped !== model) candidates.push(stripped);
+  const strippedEffort = stripEffortSuffix(model);
+  if (strippedEffort !== model) candidates.push(strippedEffort);
+  const strippedPreview = stripPreviewSuffix(model);
+  if (strippedPreview !== model) candidates.push(strippedPreview);
 
   for (const candidate of candidates) {
     if (provider) {

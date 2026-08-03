@@ -450,7 +450,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // Skill content blocks
   extraContextBlocks.push(...buildSkillContextBlocks(skillReferences));
 
-  // Skill discovery: scan conventional skill dirs (.agents/skills, docs/skills)
+  // Skill discovery: scan conventional skill dir (.agents/skills)
   // for SKILL.md files and inject an index layer so the model knows what skills
   // are available and can readFile them on-demand. Without this, skills like
   // nolo-commit/nolo-cli are invisible to CLI agents even though their SKILL.md

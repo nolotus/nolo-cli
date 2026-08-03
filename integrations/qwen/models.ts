@@ -17,6 +17,21 @@ import type { Model } from "../../ai/llm/types";
 export const qwenModels: Model[] = [
   // ── Qwen3 旗舰 ──
   {
+    name: "qwen3.8-max",
+    displayName: "Qwen3.8 Max",
+    hasVision: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
+    jsonOutput: true,
+    fnCall: true,
+    supportsTool: true,
+    supportsReasoningEffort: true,
+    // 官方价：输入 ¥12/M、输出 ¥36/M；缓存命中 ¥1.5/M、显式缓存创建 ¥15/M、显式缓存命中 ¥1/M。
+    price: { input: 12, output: 36 },
+    provider: "qwen",
+    description: "2.4万亿参数 MoE 旗舰，1M 上下文（输入 991K / 输出 131K / 思维链 262K），原生视觉理解贯穿规划-执行-验证，自主编程可交付完整项目。",
+  },
+  {
     name: "qwen3-max",
     displayName: "Qwen3 Max",
     hasVision: true,
@@ -197,18 +212,18 @@ export const qwenModels: Model[] = [
 export const qwenTokenPlanModels: Model[] = [
   // ── 千问 ──
   {
-    name: "qwen3.8-max-preview",
-    displayName: "Qwen3.8 Max Preview",
+    name: "qwen3.8-max",
+    displayName: "Qwen3.8 Max",
     hasVision: true,
     contextWindow: 1_000_000,
-    maxOutputTokens: 32_768,
+    maxOutputTokens: 131_072,
     jsonOutput: true,
     fnCall: true,
     supportsTool: true,
     supportsReasoningEffort: true,
     price: { input: 0, output: 0 },
     provider: "qwen",
-    description: "推理模型、视觉理解、文本生成（预览版）。",
+    description: "2.4万亿参数 MoE 旗舰，推理、视觉理解、文本生成；1M 上下文、131K 输出、262K 思维链。",
   },
   {
     name: "qwen3.7-max",

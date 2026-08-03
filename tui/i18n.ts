@@ -606,8 +606,8 @@ const STRINGS = {
     zh: "已挂载技能：{0}\n用法：/skill attach <ref> | /skill detach <ref> | /skill clear",
   },
   skillNoneHint: {
-    en: "No skills attached. Use /skill attach <skill-ref> to attach a skill.\nSkill refs can be a dbKey (page-xxx), a skill name (searched in .agents/skills/ then docs/skills/), or a direct path.",
-    zh: "还没有挂载技能。用 /skill attach <skill-ref> 挂载技能。\n技能引用可以是 dbKey（page-xxx）、技能名（会在 .agents/skills/ 与 docs/skills/ 中查找）或直接路径。",
+    en: "No skills attached. Use /skill attach <skill-ref> to attach a skill.\nSkill refs can be a dbKey (page-xxx), a skill name (searched in .agents/skills/), or a direct path.",
+    zh: "还没有挂载技能。用 /skill attach <skill-ref> 挂载技能。\n技能引用可以是 dbKey（page-xxx）、技能名（会在 .agents/skills/ 中查找）或直接路径。",
   },
   customizeHint: {
     en: "Tell nolo what to change, for example: /customize make my default agent more concise.",

@@ -459,8 +459,8 @@ async function runAgentChat(
       effectiveAgentName = "Kimi K2.6";
     }
   }
-  // Resolve attached skill references (dbKey, .agents/skills/<name>/SKILL.md,
-  // or docs/skills/<name>.md) and inject as system context blocks — same
+  // Resolve attached skill references (dbKey, .agents/skills/<name>/SKILL.md)
+  // and inject as system context blocks — same
   // mechanism as `nolo agent run --skill <ref>`.
   let effectiveMessage = message;
   let skillAllowedTools: string[] | undefined;
@@ -953,7 +953,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       if (fixedInput.active && !fixedInput.isPaused()) {
         output.write("\x1b[?2026h\x1b[?25l");
         try {
-          fixedInput.repaint(buffer);
+          fixedInput.repaint(buffer, cursorPos);
         } finally {
           output.write("\x1b[?25h\x1b[?2026l");
         }
@@ -983,7 +983,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // repainting while paused). Repaint so it re-docks at the new bottom.
         flushPendingRender();
         renderHistoryToOutput();
-        fixedInput.repaint(buffer);
+        fixedInput.repaint(buffer, cursorPos);
       },
       getInputLines: () => fixedInput.getInputLines(),
       isPaused: () => fixedInput.isPaused(),
@@ -1025,7 +1025,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     output.write("\x1b[?2026h\x1b[?25l");
     try {
       renderHistory(output, history, fixedInput.getInputLines());
-      if (fixedInput.active) fixedInput.repaint(buffer);
+      if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
     } finally {
       output.write("\x1b[?25h\x1b[?2026l");
     }
@@ -1098,7 +1098,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       fixedInput.resumeFromDialog();
       flushPendingRender();
       renderHistoryToOutput();
-      fixedInput.repaint(buffer);
+      fixedInput.repaint(buffer, cursorPos);
     }
     return true;
   };
@@ -1139,7 +1139,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     appendToCurrentTurn(history, message);
     finalizeCurrentTurn(history);
     renderHistoryToOutput();
-    if (fixedInput.active) fixedInput.repaint(buffer);
+    if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
 
     startTurn(history, "assistant");
     const agentOutput = isInteractiveInput(input)
@@ -1240,7 +1240,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         finalizeCurrentTurn(history);
         flushPendingRender();
         renderHistoryToOutput();
-        if (fixedInput.active) fixedInput.repaint(buffer);
+        if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
       }
       if (wasAborted) {
         if (runResult.pendingToolName) {
@@ -1321,7 +1321,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     appendToCurrentTurn(history, text);
     finalizeCurrentTurn(history);
     renderHistoryToOutput();
-    if (fixedInput.active) fixedInput.repaint(buffer);
+    if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
   };
 
   const runSubmittedLine = async (
@@ -1346,7 +1346,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       appendToCurrentTurn(history, line.trim());
       finalizeCurrentTurn(history);
       renderHistoryToOutput();
-      if (fixedInput.active) fixedInput.repaint(buffer);
+      if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
     }
 
     if (result.output) {
@@ -1507,7 +1507,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       // The freshly switched buffer is blank — repaint or the user stares at
       // an empty screen until the next event.
       renderHistoryToOutput();
-      fixedInput.repaint(buffer);
+      fixedInput.repaint(buffer, cursorPos);
     }
 
     if (result.action?.type === "copy-view") {
@@ -1705,7 +1705,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           `${t("turnFailed")}${err instanceof Error && err.message ? `\n${err.message}` : ""}`,
         );
       }
-      if (fixedInput.active) fixedInput.repaint(buffer);
+      if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
     }
 
     return false;
@@ -1726,7 +1726,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // which stayed "" forever — so during a loop the composer kept snapping
     // back to the placeholder and hid what the user was typing (the submit
     // path still read the inner buffer, so input "worked" but was invisible).
-    let cursorPos = 0;
     fixedInput = createFixedInput(output, {
       getStatusLine: () => {
         let base = renderStatusLine(state);
@@ -1894,7 +1893,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           emitCommandOutput(t("forceStopped"));
           flushPendingRender();
           renderHistoryToOutput();
-          if (fixedInput.active) fixedInput.repaint(buffer);
+          if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
           return;
         }
         // 第一次 Esc = 协作停止 + 即时反馈。

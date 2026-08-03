@@ -7,8 +7,8 @@
  * deepseek / google / openai / deepinfra / openrouter / fireworks / nolo /
  * cloudflare / gmi / zai / qwen / moonshot 全部 provider 的模型，含 DashScope
  * 按量表与 Qwen Token Plan 订阅表）。这里按 `name` 与 `displayName` 双键建索引，
- * 因此无论传入的是模型 id（如 "qwen3.8-max-preview"）还是显示名
- * （如 "Qwen3.8 Max Preview"）都能精确命中数据表里的 contextWindow。
+ * 因此无论传入的是模型 id（如 "qwen3.8-max"）还是显示名
+ * （如 "Qwen3.8 Max"）都能精确命中数据表里的 contextWindow。
  *
  * 早先本函数只查 `ALL_MODELS`，而 ALL_MODELS 不含 qwen / moonshot / anthropic，
  * 导致这些模型的显示名/id 全部落到兜底默认值（256k），状态栏 context 显示失真。
@@ -93,7 +93,7 @@ function fuzzyContextWindow(normalizedName: string): number | undefined {
 
 /**
  * 根据模型名称获取 Context Window 大小
- * @param modelName 模型名称或显示名（如 "qwen3.8-max-preview" / "Qwen3.8 Max Preview"）
+ * @param modelName 模型名称或显示名（如 "qwen3.8-max" / "Qwen3.8 Max"）
  * @returns Context Window 大小（tokens）
  */
 export const getModelContextWindow = (modelName: string): number => {

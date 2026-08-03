@@ -436,6 +436,56 @@ describe("createFixedInput", () => {
     }).not.toThrow();
     expect(input.getInputLines()).toBeGreaterThan(0);
   });
+
+  test("repaint with mid-buffer cursorPos positions cursor at cursorPos column, not buffer.length", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status",
+    });
+    const buffer = "hello world";
+    const cursorPos = 5;
+    input.repaint(buffer, cursorPos);
+
+    const promptWidth = displayWidth(t("promptLabel"));
+    const cups = [...tty.stdout().matchAll(/\x1b\[(\d+);(\d+)H/g)];
+    const last = cups[cups.length - 1]!;
+    const col = parseInt(last[2]!, 10);
+    // CUP is 1-based: promptWidth + cursorPos + 1, not buffer.length end.
+    expect(col).toBe(promptWidth + cursorPos + 1);
+    expect(col).not.toBe(promptWidth + buffer.length + 1);
+  });
+
+  test("repaint without cursorPos falls back to buffer.length (regression guard for the fallback)", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status",
+    });
+    const buffer = "hello world";
+    input.repaint(buffer);
+
+    const promptWidth = displayWidth(t("promptLabel"));
+    const cups = [...tty.stdout().matchAll(/\x1b\[(\d+);(\d+)H/g)];
+    const last = cups[cups.length - 1]!;
+    const col = parseInt(last[2]!, 10);
+    expect(col).toBe(promptWidth + buffer.length + 1);
+  });
+
+  test("repaint with cursorPos=0 positions cursor at start, not buffer.length", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status",
+    });
+    const buffer = "hello world";
+    input.repaint(buffer, 0);
+
+    const promptWidth = displayWidth(t("promptLabel"));
+    const cups = [...tty.stdout().matchAll(/\x1b\[(\d+);(\d+)H/g)];
+    const last = cups[cups.length - 1]!;
+    const col = parseInt(last[2]!, 10);
+    // cursorPos=0 must land at prompt end / input start, not snap to buffer end.
+    expect(col).toBe(promptWidth + 1);
+    expect(col).not.toBe(promptWidth + buffer.length + 1);
+  });
 });
 
 describe("stripAnsi", () => {

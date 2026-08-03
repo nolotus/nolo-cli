@@ -34,7 +34,7 @@ const moonshotAllModels: Model[] = [...moonshotModels, ...kimiCodeModels];
 
 /**
  * Qwen provider 统一模型表：DashScope 按量模型 + Token Plan 订阅模型。
- * 两者模型范围/计费不同（Token Plan 含 qwen3.8-max-preview、GLM、DeepSeek、万相等，
+ * 两者模型范围/计费不同（Token Plan 含 qwen3.8-max、GLM、DeepSeek、万相等，
  * price 留 0 由 Credits 抵扣），但同属 qwen provider，合并进 MODEL_MAP 以便
  * getModelConfig / 能力检测 / getProviderByModelName 覆盖 Token Plan 模型 ID。
  * 与 moonshot 合并同理：agent 创建下拉用 registry 的 modelOptions（区分订阅/按量），

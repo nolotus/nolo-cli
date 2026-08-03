@@ -118,7 +118,7 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
   add("readSkillDoc", "Read one skill doc in the Nolo workspace.", {
     doc: stringToolParam("Skill doc/page key."),
   }, ["doc"]);
-  add("loadSkill", "Load a Skill by name from the workspace skill directories (.agents/skills/<name>/SKILL.md, then docs/skills/<name>.md) and return its full SKILL.md content inline so you can follow its instructions. Use this instead of readFile when you want to activate a skill. On an unknown name the tool returns a plain text list of available skill names rather than failing.", {
+  add("loadSkill", "Load a Skill by name from the workspace skill directory (.agents/skills/<name>/SKILL.md) and return its full SKILL.md content inline so you can follow its instructions. Use this instead of readFile when you want to activate a skill. On an unknown name the tool returns a plain text list of available skill names rather than failing.", {
     name: stringToolParam("Skill name (the name advertised in the skill-discovery layer)."),
   }, ["name"]);
   add("listTables", "List tables in the current user scope or an optional space scope.", {
@@ -678,7 +678,7 @@ export function buildNoloWorkspaceCliToolExecutors(args: {
 /**
  * Build the local executor for the `loadSkill` tool. Resolves `<name>` against
  * the same skill scan sources as discovery (`.agents/skills/<name>/SKILL.md`
- * → `docs/skills/<name>.md`) via `resolveSkillByName`, reads the file inline,
+ * → `.agents/skills/<name>/SKILL.md`) via `resolveSkillByName`, reads the file inline,
  * and returns the contract content:
  *   `Skill "<name>" loaded inline. Follow its instructions.\n\n<SKILL.md 全文>`
  *
@@ -736,7 +736,7 @@ async function formatUnknownSkillMessage(cwd: string, requestedName: string): Pr
   try {
     available = discoverSkills(cwd).map((s) => s.name);
   } catch { /* best-effort, mirror buildSkillDiscoveryContextBlock */ }
-  const header = `Skill "${requestedName}" not found in this workspace's skill directories (.agents/skills/<name>/SKILL.md, docs/skills/<name>.md).`;
+  const header = `Skill "${requestedName}" not found in this workspace's skill directory (.agents/skills/<name>/SKILL.md).`;
   if (available.length === 0) return `${header}\n\nNo skills were discovered in this workspace.`;
   return `${header}\n\nAvailable skills: ${available.join(", ")}`;
 }

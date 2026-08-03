@@ -43,20 +43,16 @@ export function workflowRefToCandidatePath(cwd: string, ref: string) {
  * - `.agents/skills/` is the SKILL.md standard directory layout
  *   (`<name>/SKILL.md`), the public open standard adopted by Cursor,
  *   Claude Code, Codex, Goose, Roo Code and others.
- * - `docs/skills/` is the bun-nolo flat layout (`<name>.md`), kept as
- *   legacy fallback.
  */
 const SKILL_SEARCH_DIRS = [
   ".agents/skills",
-  "docs/skills",
 ] as const;
 
 /**
  * Resolve a skill ref to a file path. Search order:
  * 1. Direct path (when ref contains `/`, `\`, or ends with `.md`)
  * 2. `.agents/skills/<name>/SKILL.md` (public standard)
- * 3. `docs/skills/<name>.md` (legacy flat layout, fallback)
- * Returns the first existing path, or the legacy flat path as last resort
+ * Returns the first existing path, or a default candidate as last resort
  * (so the caller gets a meaningful "not found" message).
  */
 export function skillRefToCandidatePath(cwd: string, ref: string) {
@@ -68,18 +64,12 @@ export function skillRefToCandidatePath(cwd: string, ref: string) {
   }
   const fileName = normalized.replace(/[^a-zA-Z0-9一-鿿]+/g, "-").replace(/^-+|-+$/g, "");
   for (const dir of SKILL_SEARCH_DIRS) {
-    if (dir === "docs/skills") {
-      // Legacy flat layout: docs/skills/<name>.md
-      const flatPath = resolve(cwd, dir, `${fileName}.md`);
-      if (existsSync(flatPath)) return flatPath;
-    } else {
-      // SKILL.md standard: <dir>/<name>/SKILL.md
-      const skillMdPath = resolve(cwd, dir, fileName, "SKILL.md");
-      if (existsSync(skillMdPath)) return skillMdPath;
-    }
+    // SKILL.md standard: <dir>/<name>/SKILL.md
+    const skillMdPath = resolve(cwd, dir, fileName, "SKILL.md");
+    if (existsSync(skillMdPath)) return skillMdPath;
   }
-  // Last resort: legacy flat path (may not exist — caller gets "not found")
-  return resolve(cwd, "docs", "skills", `${fileName}.md`);
+  // Last resort: default candidate (may not exist — caller gets "not found")
+  return resolve(cwd, ".agents", "skills", fileName, "SKILL.md");
 }
 
 export async function resolveWorkflowReference(

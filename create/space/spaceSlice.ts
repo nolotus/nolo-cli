@@ -288,6 +288,16 @@ export const selectSpaceLoading = createSelector(
   (space) => space.loading
 );
 
+/**
+ * 空间列表是否已经拿到过（哪怕是空列表）。
+ * selectAllMemberSpaces 会把 null 折叠成 []，分不清「还没加载」和「确实没有」，
+ * 需要区分这两种状态的界面用这个。
+ */
+export const selectMemberSpacesLoaded = createSelector(
+  selectSpaceState,
+  (space) => space.memberSpaces !== null
+);
+
 export const selectMembershipStatus = createSelector(
   selectSpaceState,
   (space) => space.membershipStatus ?? "idle"

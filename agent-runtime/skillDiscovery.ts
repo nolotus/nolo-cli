@@ -13,11 +13,9 @@ import { join } from "node:path";
 import { load as loadYaml } from "js-yaml";
 import { buildSkillDiscoveryLayer, type DiscoveredSkill } from "./turnContext";
 
-// Discovery only scans `.agents/skills` (the mirror superset maintained by
-// scripts/multi-cli-sync/sync.sh). `docs/skills` is the source-of-truth but is
-// mirrored into `.agents/skills`, so scanning both produced duplicate entries
-// for every mirrored skill. `docs/skills` remains a resolveSkillByName
-// fallback (below), just not a discovery source.
+// Discovery only scans `.agents/skills` — the single skill source-of-truth.
+// Each skill lives at `.agents/skills/<name>/SKILL.md`; `resolveSkillByName`
+// (below) resolves by directory stem or frontmatter name within this dir.
 const SKILL_SCAN_DIRS = [".agents/skills"] as const;
 const MAX_DISCOVERED_SKILLS = 50;
 // Total character budget for all skill descriptions in the discovery list.
@@ -104,25 +102,21 @@ export function discoverSkills(cwd: string): DiscoveredSkill[] {
 
 /**
  * Resolve a single skill by name to its absolute SKILL.md path, reusing the
- * same scan sources and resolution order as `discoverSkills`
- * (`.agents/skills/<name>/SKILL.md` → `docs/skills/<name>.md`). This does not
- * re-run the full scan — it probes the two candidate paths directly, so it
- * stays O(1) and never duplicates the discovery logic.
+ * same scan source as `discoverSkills` (`.agents/skills/<name>/SKILL.md`).
+ * This does not re-run the full scan — it probes the candidate path directly
+ * and optionally scans siblings for a frontmatter-name match, so it stays
+ * O(1) in the common case and never duplicates the discovery logic.
  *
  * Returns the resolved absolute path, or null when no candidate exists. The
  * caller decides what to do with a miss (the `loadSkill` tool returns an
  * available-skills list rather than throwing).
  *
- * Name matching mirrors `discoverSkills`'s fallback: a discovered
- * `.agents/skills/<dir>/SKILL.md` is identified by its directory entry, and a
- * `docs/skills/<file>.md` by the file stem. Frontmatter `name:` is not
- * consulted here — discovery's source-of-truth for the on-disk path is the
- * directory/file name, and `loadSkill` must accept the same names discovery
- * advertises (it advertises frontmatter `name` when present, with the
- * directory/file stem as fallback). To stay consistent with advertised names
+ * Name matching mirrors `discoverSkills`'s advertising: a discovered
+ * `.agents/skills/<dir>/SKILL.md` is identified by its directory entry, with
+ * frontmatter `name:` as an alias. To stay consistent with advertised names
  * without re-reading frontmatter on every lookup, we match on the directory
- * / file stem and also accept a frontmatter-name match by reading the file
- * only when the stem doesn't match (so the common path stays cheap).
+ * stem and also accept a frontmatter-name match by reading the file only
+ * when the stem doesn't match (so the common path stays cheap).
  */
 export function resolveSkillByName(cwd: string, name: string): string | null {
   const trimmed = name.trim();
@@ -154,22 +148,6 @@ export function resolveSkillByName(cwd: string, name: string): string | null {
         } catch { /* skip unreadable/bad file, keep scanning */ }
       }
     } catch { /* best-effort, mirror discoverSkills' swallow */ }
-  }
-  // docs/skills/<name>.md — match by file stem or frontmatter name.
-  const docsFlat = join(cwd, "docs", "skills", `${trimmed}.md`);
-  if (existsSync(docsFlat)) return docsFlat;
-  const docsDir = join(cwd, "docs", "skills");
-  if (existsSync(docsDir) && statSync(docsDir).isDirectory()) {
-    try {
-      for (const entry of readdirSync(docsDir)) {
-        if (!entry.endsWith(".md")) continue;
-        const candidate = join(docsDir, entry);
-        try {
-          const { name: fmName } = parseSkillFrontmatter(candidate);
-          if (fmName && fmName === trimmed) return candidate;
-        } catch { /* skip unreadable/bad file, keep scanning */ }
-      }
-    } catch { /* best-effort */ }
   }
   return null;
 }

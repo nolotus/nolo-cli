@@ -154,6 +154,180 @@ function hasInlineExecutedToolCalls(result: { output?: unknown } | null | undefi
   return Array.isArray(output) && output.some((b) => b?.type === "toolCall" && b?.result != null);
 }
 
+/**
+ * 共享处理器：把服务器端 /api/agent/run SSE 的工具事件
+ * (assistant_tool_calls / tool_result) 投影成前端 tool message 并 dispatch。
+ *
+ * 用于 machine-bound 分支与远端代理分支——这两条分支消费的是服务器端 loop
+ * 发出的事件（见 packages/core/agentRunStreamEvents.ts 与
+ * packages/server/handlers/agentRun/loop.ts），而非桌面 local runtime 的
+ * LocalAgentToolEvent。在引入本 helper 之前，两条分支只处理 text/done/error，
+ * 导致 ui_ask_choice 等工具调用结果从不渲染成 tool 卡片。
+ *
+ * 对照桌面分支 (event.type === "tool") 的 activeToolMessages 模式：
+ * - assistant_tool_calls：按 tool_calls 数组为每个 call 建一条 tool message
+ *   (role:tool, content:"", isStreaming:true, toolName, toolCallId)，存入 Map
+ *   并 dispatch messageStreaming；
+ * - tool_result：用 toolCallId 从 Map 取出对应消息，更新 content
+ *   (projectDesktopToolUiContent 投影)、isStreaming:false，再 dispatch。
+ *
+ * 返回一个带状态闭包的 onToolPayload 函数，供 consumeAgentRunStream 的
+ * onPayload 内部调用。
+ */
+function createRemoteToolEventHandlers(opts: {
+    dialogId: string;
+    dispatch: (action: any) => any;
+    messageMetadata: Record<string, unknown>;
+}) {
+    const { dialogId, dispatch, messageMetadata } = opts;
+    const activeToolMessages = new Map<string, any>();
+
+    const handleToolPayload = (payload: any) => {
+        if (!payload || typeof payload !== "object") return;
+
+        if (payload.type === "assistant_tool_calls") {
+            const toolCalls = Array.isArray(payload.tool_calls)
+                ? payload.tool_calls
+                : [];
+            for (const tc of toolCalls) {
+                const callId = tc?.id;
+                const toolName = tc?.function?.name;
+                if (!callId || !toolName) continue;
+                const { key: toolDbKey, messageId: toolMsgId } =
+                    createDialogMessageKeyAndId(dialogId);
+                const argsStr =
+                    typeof tc.function?.arguments === "string"
+                        ? tc.function.arguments
+                        : "";
+                const toolMsg = {
+                    id: toolMsgId,
+                    dialogId,
+                    dbKey: toolDbKey,
+                    role: "tool" as const,
+                    content: "",
+                    isStreaming: true,
+                    toolName,
+                    toolCallId: callId,
+                    toolPayload: {
+                        toolName,
+                        status: "running" as const,
+                        input: safeParseToolArgs(argsStr),
+                        rawToolCall: tc,
+                        summary: "",
+                    },
+                    ...messageMetadata,
+                };
+                activeToolMessages.set(callId, toolMsg);
+                dispatch(messageStreaming(toolMsg));
+            }
+            return;
+        }
+
+        if (payload.type === "tool_result") {
+            const callId = payload.toolCallId;
+            if (!callId) return;
+            const existing = activeToolMessages.get(callId);
+            const toolName =
+                asOptionalTrimmedString(payload.toolName) ||
+                asOptionalTrimmedString(existing?.toolName) ||
+                "tool";
+            const mergedMeta = isRecord(payload.metadata)
+                ? payload.metadata
+                : undefined;
+            const isToolError = !!mergedMeta?.error;
+            const projectedContent = projectDesktopToolUiContent({
+                toolName,
+                content: payload.content,
+                metadata: mergedMeta ?? undefined,
+            });
+            const resultStatus: "succeeded" | "failed" = isToolError ? "failed" : "succeeded";
+            if (existing) {
+                const updatedMsg = {
+                    ...existing,
+                    isStreaming: false,
+                    content: projectedContent,
+                    toolName,
+                    toolPayload: {
+                        ...(existing.toolPayload ?? {}),
+                        toolName,
+                        status: resultStatus,
+                    },
+                };
+                activeToolMessages.set(callId, updatedMsg);
+                dispatch(messageStreaming(updatedMsg));
+            } else {
+                // 没有 assistant_tool_calls 先到（理论上不应发生），兜底建一条
+                const { key: toolDbKey, messageId: toolMsgId } =
+                    createDialogMessageKeyAndId(dialogId);
+                const toolMsg = {
+                    id: toolMsgId,
+                    dialogId,
+                    dbKey: toolDbKey,
+                    role: "tool" as const,
+                    content: projectedContent,
+                    isStreaming: false,
+                    toolName,
+                    toolCallId: callId,
+                    toolPayload: {
+                        toolName,
+                        status: resultStatus,
+                        input: {},
+                        summary: "",
+                    },
+                    ...messageMetadata,
+                };
+                activeToolMessages.set(callId, toolMsg);
+                dispatch(messageStreaming(toolMsg));
+            }
+        }
+    };
+
+    return { handleToolPayload, activeToolMessages };
+}
+
+/**
+ * 把 remoteToolHandlers 维护的 tool 消息持久化（best-effort），并清理空内容行。
+ * 与桌面分支 streamEnded/abort/error 三条路径同构：只有非空 content 的 tool 行
+ * 才写库，空行从 store 移除避免留下占位卡片。
+ */
+async function persistRemoteToolMessagesAndCleanup(
+    dispatch: (action: any) => any,
+    activeToolMessages: Map<string, any>,
+) {
+    const durableTools: any[] = [];
+    for (const toolMsg of activeToolMessages.values()) {
+        const content = (toolMsg as any)?.content;
+        const hasContent =
+            typeof content === "string"
+                ? content.trim().length > 0
+                : Array.isArray(content) && content.length > 0;
+        if (!hasContent) {
+            dispatch(removeTransientMessage((toolMsg as any).id));
+            continue;
+        }
+        const stopped = { ...toolMsg, isStreaming: false };
+        dispatch(messageStreaming(stopped));
+        durableTools.push(stopped);
+    }
+    await persistToolMessages(dispatch, durableTools, {
+        isStreaming: false,
+        soft: true,
+    });
+    // 清空 Map：允许 finally 兜底重复调用成为空操作（幂等），
+    // 避免异常路径下重复 dispatch/persist 已处理的 tool 行。
+    activeToolMessages.clear();
+}
+
+/** 解析 tool arguments JSON 字符串，失败时返回原始字符串。 */
+function safeParseToolArgs(argsStr: string): any {
+    if (!argsStr) return {};
+    try {
+        return JSON.parse(argsStr);
+    } catch {
+        return { raw: argsStr };
+    }
+}
+
 
 /** streamAgentChatTurn 参数（聊天轮次专用） */
 export interface StreamAgentChatTurnArgs {
@@ -352,6 +526,13 @@ export const streamAgentChatTurnHandler = async (
                     userId: selectIdentityUserId(getState() as RootState),
                 });
 
+                // 服务器端 SSE 工具事件 → 前端 tool 卡片（与桌面 local runtime 分支同构）
+                const remoteToolHandlers = createRemoteToolEventHandlers({
+                    dialogId,
+                    dispatch,
+                    messageMetadata: cliMessageMetadata,
+                });
+
                 dispatch(messageStreaming({
                     id: messageId,
                     dialogId,
@@ -367,6 +548,11 @@ export const streamAgentChatTurnHandler = async (
                     } else {
                         dispatch(removeTransientMessage(messageId));
                     }
+                    // best-effort 清理 tool 行：保留已完成的，移除空占位，避免僵尸 streaming 状态
+                    await persistRemoteToolMessagesAndCleanup(
+                        dispatch,
+                        remoteToolHandlers.activeToolMessages,
+                    ).catch(() => {});
                     setLoopStopReason("error");
                     remoteTransientMessageFinalized = true;
                     return rejectWithValue(message);
@@ -413,8 +599,19 @@ export const streamAgentChatTurnHandler = async (
                 const parseSSE = createSSEParser();
                 const abortMachineStream = async () => {
                     if (w) w.__LOOP_STOP_REASON__ = "aborted";
-                    if (accumulated.length <= 0) return;
+                    if (accumulated.length <= 0) {
+                        // 没有文本也要清理可能已建的 tool 行
+                        await persistRemoteToolMessagesAndCleanup(
+                            dispatch,
+                            remoteToolHandlers.activeToolMessages,
+                        ).catch(() => {});
+                        return;
+                    }
                     await persistMessageWithFixedId(dispatch, buildMachineAssistantMessage());
+                    await persistRemoteToolMessagesAndCleanup(
+                        dispatch,
+                        remoteToolHandlers.activeToolMessages,
+                    ).catch(() => {});
                 };
 
                 try {
@@ -431,6 +628,8 @@ export const streamAgentChatTurnHandler = async (
                             if (payload.type === "error") {
                                 return { reject: payload.message || "电脑端 Agent 执行失败" };
                             }
+                            // 工具事件投影成 tool 卡片（assistant_tool_calls / tool_result）
+                            remoteToolHandlers.handleToolPayload(payload);
                             if (payload.type === "text" && typeof payload.content === "string") {
                                 accumulated += payload.content;
                                 dispatch(messageStreaming({
@@ -464,6 +663,10 @@ export const streamAgentChatTurnHandler = async (
                                 id: messageId,
                                 error: "电脑端 Agent 流式响应被中断,未收到完成信号",
                             }));
+                            await persistRemoteToolMessagesAndCleanup(
+                                dispatch,
+                                remoteToolHandlers.activeToolMessages,
+                            ).catch(() => {});
                             remoteTransientMessageFinalized = true;
                             setLoopStopReason("error");
                             return rejectWithValue(
@@ -471,6 +674,10 @@ export const streamAgentChatTurnHandler = async (
                             );
                         }
                         await persistMessageWithFixedId(dispatch, buildMachineAssistantMessage());
+                        await persistRemoteToolMessagesAndCleanup(
+                            dispatch,
+                            remoteToolHandlers.activeToolMessages,
+                        );
                         remoteTransientMessageFinalized = true;
                     }
                 } finally {
@@ -478,6 +685,15 @@ export const streamAgentChatTurnHandler = async (
                         await reader.cancel();
                     } catch {
                         // ignore
+                    }
+                    // 兜底：consumeAgentRunStream 抛非 abort/reject 异常时，确保
+                    // 已 dispatch 的 tool 卡片不留下僵尸 isStreaming:true 状态。
+                    // 正常路径已 clear，此处幂等空操作。
+                    if (remoteToolHandlers.activeToolMessages.size > 0) {
+                        await persistRemoteToolMessagesAndCleanup(
+                            dispatch,
+                            remoteToolHandlers.activeToolMessages,
+                        ).catch(() => {});
                     }
                 }
 
@@ -1385,6 +1601,13 @@ export const streamAgentChatTurnHandler = async (
                     userId: selectIdentityUserId(getState() as RootState),
                 });
 
+                // 服务器端 SSE 工具事件 → 前端 tool 卡片（与桌面 local runtime 分支同构）
+                const remoteToolHandlers = createRemoteToolEventHandlers({
+                    dialogId,
+                    dispatch,
+                    messageMetadata: remoteMessageMetadata,
+                });
+
                 loopKey = `loop:${dialogId}`;
                 dispatch(addActiveController({ messageId: loopKey, controller: loopController, dialogKey }));
                 dispatch(messageStreaming({
@@ -1402,6 +1625,11 @@ export const streamAgentChatTurnHandler = async (
                     } else {
                         dispatch(removeTransientMessage(messageId));
                     }
+                    // best-effort 清理 tool 行：保留已完成的，移除空占位，避免僵尸 streaming 状态
+                    await persistRemoteToolMessagesAndCleanup(
+                        dispatch,
+                        remoteToolHandlers.activeToolMessages,
+                    ).catch(() => {});
                     setLoopStopReason("error");
                     remoteTransientMessageFinalized = true;
                     return rejectWithValue(message);
@@ -1462,8 +1690,18 @@ export const streamAgentChatTurnHandler = async (
                 const decoder = new TextDecoder();
                 const parseSSE = createSSEParser();
                 const abortRemoteStream = async () => {
-                    if (accumulated.length <= 0) return;
+                    if (accumulated.length <= 0) {
+                        await persistRemoteToolMessagesAndCleanup(
+                            dispatch,
+                            remoteToolHandlers.activeToolMessages,
+                        ).catch(() => {});
+                        return;
+                    }
                     await persistMessageWithFixedId(dispatch, buildRemoteAssistantMessage());
+                    await persistRemoteToolMessagesAndCleanup(
+                        dispatch,
+                        remoteToolHandlers.activeToolMessages,
+                    ).catch(() => {});
                 };
 
                 try {
@@ -1492,6 +1730,8 @@ export const streamAgentChatTurnHandler = async (
                                     payload.agentKey,
                                 );
                             }
+                            // 工具事件投影成 tool 卡片（assistant_tool_calls / tool_result）
+                            remoteToolHandlers.handleToolPayload(payload);
                             if (payload.type === "text" && typeof payload.content === "string") {
                                 accumulated += payload.content;
                                 dispatch(messageStreaming({
@@ -1525,6 +1765,10 @@ export const streamAgentChatTurnHandler = async (
                                 id: messageId,
                                 error: "远端 Agent 流式响应被中断,未收到完成信号",
                             }));
+                            await persistRemoteToolMessagesAndCleanup(
+                                dispatch,
+                                remoteToolHandlers.activeToolMessages,
+                            ).catch(() => {});
                             remoteTransientMessageFinalized = true;
                             setLoopStopReason("error");
                             return rejectWithValue(
@@ -1532,6 +1776,10 @@ export const streamAgentChatTurnHandler = async (
                             );
                         }
                         await persistMessageWithFixedId(dispatch, buildRemoteAssistantMessage());
+                        await persistRemoteToolMessagesAndCleanup(
+                            dispatch,
+                            remoteToolHandlers.activeToolMessages,
+                        );
                         remoteTransientMessageFinalized = true;
                     }
                 } finally {
@@ -1539,6 +1787,15 @@ export const streamAgentChatTurnHandler = async (
                         await reader.cancel();
                     } catch {
                         // ignore
+                    }
+                    // 兜底：consumeAgentRunStream 抛非 abort/reject 异常时，确保
+                    // 已 dispatch 的 tool 卡片不留下僵尸 isStreaming:true 状态。
+                    // 正常路径已 clear，此处幂等空操作。
+                    if (remoteToolHandlers.activeToolMessages.size > 0) {
+                        await persistRemoteToolMessagesAndCleanup(
+                            dispatch,
+                            remoteToolHandlers.activeToolMessages,
+                        ).catch(() => {});
                     }
                 }
 

@@ -258,6 +258,11 @@ export async function runAskChoiceDialog(args: {
         : args.bottomRow ?? 0,
     );
   let lastBottomRow = 0;
+  // Whether we have already scrolled the transcript up once to make room for
+  // the panel. On the first anchored paint we Scroll Up `lineCount` lines so
+  // the existing messages move into scrollback (still reachable by scrolling
+  // up) instead of being overwritten by the panel's absolute-row paint.
+  let scrolledHeadroom = false;
   // Unanchored Other-focus paint leaves the real cursor mid-frame for IME.
   // Next paint / exit clear must restore to "one line below previous frame"
   // before the classic `\x1b[1A\x1b[2K` clear loop, or the UI drifts upward.
@@ -276,6 +281,34 @@ export async function runAskChoiceDialog(args: {
 
     if (bottomAnchored && canPosition) {
       const anchorRow = resolveBottomRow();
+      // First paint: scroll the whole screen up by `lineCount` lines so the
+      // panel occupies freshly blanked rows at the bottom instead of painting
+      // over existing messages. `CSI n S` (Scroll Up) scrolls the entire
+      // scroll region (full screen by default) up by n lines regardless of
+      // cursor position: the top n lines enter scrollback (still reachable by
+      // scrolling up) and n blank lines appear at the bottom. The panel then
+      // paints into those blank rows via the existing CUP loop, so messages
+      // are pushed up rather than overwritten.
+      //
+      // Limitation: we only scroll once (on the first paint). If the panel
+      // later grows taller (longer tab, Other text wraps), the extra top rows
+      // are still cleared via `\x1b[2K` in the CUP loop and would overwrite
+      // whatever sits there. That pre-dates this fix; resolving it would need
+      // per-delta scrolling on height changes.
+      if (!scrolledHeadroom) {
+        const ttyRows =
+          typeof output === "object" &&
+          output !== null &&
+          "rows" in output &&
+          typeof (output as { rows?: unknown }).rows === "number"
+            ? (output as { rows: number }).rows
+            : 24;
+        const scrollN = Math.min(lineCount, Math.max(0, ttyRows - 1));
+        if (scrollN > 0) {
+          output.write(`\x1b[${scrollN}S`);
+        }
+        scrolledHeadroom = true;
+      }
       clearAnchoredLines(
         output,
         lastBottomRow > 0 ? lastBottomRow : anchorRow,

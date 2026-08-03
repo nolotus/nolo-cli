@@ -169,6 +169,17 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
       spinner.show(activeLabel);
       options.activityReporter?.(activeLabel);
     }
+
+    if (
+      event.type === "tool-result" &&
+      options.onAgentRunStatus &&
+      (event.toolName === "startAgentRun" || event.toolName === "controlAgentRun")
+    ) {
+      const snapshot = extractAgentRunStatusSnapshot(event);
+      if (snapshot) {
+        options.onAgentRunStatus(snapshot);
+      }
+    }
   };
 
   return {

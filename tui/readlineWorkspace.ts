@@ -1196,6 +1196,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(requestUserChoice ? { requestUserChoice } : {}),
           abortSignal: activeTurnAbort.signal,
           pastedTextStore: pasteStore,
+          explicitAgentSwitch,
           activityReporter,
           onAgentRunStatus: (snapshot) => {
             if (snapshot) {
@@ -1752,23 +1753,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
         return base;
       },
-      getActivityLine: () => {
-        const view = activityIndicator.getView();
-        if (view === null) return null;
-        const colorEnabled = resolveCliColorEnabled();
-        const elapsed = formatElapsedSeconds(view.elapsedSec);
-        const stopHint = t("stopHint");
-        if (!colorEnabled) {
-          return `${view.frame} ${view.label} (${elapsed}) · ${stopHint}`;
-        }
-        return (
-          themeText(view.frame, "accent") +
-          " " +
-          themeText(view.label, "muted") +
-          themeText(` (${elapsed})`, "chrome") +
-          themeText(` · ${stopHint}`, "chrome")
-        );
-      },
+      getActivityLines: () =>
+        activityIndicator.getActivityLines(resolveCliColorEnabled()),
       getQueueLines: () => {
         if (!chatQueueBinding || chatQueueBinding.queueLength() === 0) return [];
         const colorEnabled = resolveCliColorEnabled();

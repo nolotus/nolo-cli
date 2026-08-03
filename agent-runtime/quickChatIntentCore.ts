@@ -43,10 +43,12 @@ export interface QuickChatIntentResult {
    */
   confidence?: number;
   /**
-   * 本轮消息命中了哪些对象操作技能（"table"=建表/表格数据处理，"doc"=文档写改，"code"=代码开发规范）。
+   * 本轮消息命中了哪些对象操作技能
+   * ("table"=建表/表格数据处理，"doc"=文档写改，"code"=代码开发规范，
+   *  "pagebuilder"=生成可交互可视化页面/报告/看板/教程/对比页/计划页)。
    * 调用方可据此给对话挂载对应内置 skill 引用；未命中时为 undefined。
    */
-  skills?: Array<"table" | "doc" | "code">;
+  skills?: Array<"table" | "doc" | "code" | "pagebuilder">;
 }
 
 /**
@@ -125,10 +127,11 @@ ${agentList}
 - 用户要新建/整理/录入/批量处理表格数据（建表、加行、改列、按条件整理数据）→ skills 含 "table"
 - 用户要写/润色/改写/续写/排版一篇文档或文章 → skills 含 "doc"
 - 用户要写/改/实现/修 bug/refactor/补测试/审查并修改代码 → skills 含 "code"（仅问通用知识、纯闲聊、只查看 git/仓库状态而不修改代码时不挂 "code"）
+- 用户想要一个可交互的可视化页面/报告/看板/主页/教程/对比页/计划页（如"做个日报""做一个个人主页""做个销售看板""做个方案对比页""做个学习计划页"）→ skills 含 "pagebuilder"
 - 普通问答/纯闲聊/建应用 → skills 为 []
 
 只输出 JSON，不要输出其他内容：
-{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "needsWorkspace": <true 或 false>, "skills": <字符串数组，元素只能是 "table" | "doc" | "code"，未命中给 []>}`;
+{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "needsWorkspace": <true 或 false>, "skills": <字符串数组，元素只能是 "table" | "doc" | "code" | "pagebuilder"，未命中给 []>}`;
 }
 
 /**
@@ -143,7 +146,7 @@ export function parseQuickChatIntentResult(
   agentKey: string;
   needsWorkspace: boolean;
   confidence?: number;
-  skills?: Array<"table" | "doc" | "code">;
+  skills?: Array<"table" | "doc" | "code" | "pagebuilder">;
 } | null {
   try {
     const parsed = JSON.parse(content.trim()) as unknown;
@@ -162,13 +165,13 @@ export function parseQuickChatIntentResult(
       rawConfidence <= 1
         ? rawConfidence
         : undefined;
-    // 解析 skills：只保留 "table"/"doc"/"code"，非法值与重复值过滤掉；空数组视为未命中。
+    // 解析 skills：只保留合法枚举值，非法值与重复值过滤掉；空数组视为未命中。
     const rawSkills = (parsed as { skills?: unknown }).skills;
-    let skills: Array<"table" | "doc" | "code"> | undefined;
+    let skills: Array<"table" | "doc" | "code" | "pagebuilder"> | undefined;
     if (Array.isArray(rawSkills)) {
       const filtered = [...new Set(rawSkills)].filter(
-        (s): s is "table" | "doc" | "code" =>
-          s === "table" || s === "doc" || s === "code",
+        (s): s is "table" | "doc" | "code" | "pagebuilder" =>
+          s === "table" || s === "doc" || s === "code" || s === "pagebuilder",
       );
       if (filtered.length > 0) skills = filtered;
     }

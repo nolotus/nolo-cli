@@ -13,8 +13,23 @@ import { join } from "node:path";
 import { load as loadYaml } from "js-yaml";
 import { buildSkillDiscoveryLayer, type DiscoveredSkill } from "./turnContext";
 
-const SKILL_SCAN_DIRS = [".agents/skills", "docs/skills"] as const;
+// Discovery only scans `.agents/skills` (the mirror superset maintained by
+// scripts/multi-cli-sync/sync.sh). `docs/skills` is the source-of-truth but is
+// mirrored into `.agents/skills`, so scanning both produced duplicate entries
+// for every mirrored skill. `docs/skills` remains a resolveSkillByName
+// fallback (below), just not a discovery source.
+const SKILL_SCAN_DIRS = [".agents/skills"] as const;
 const MAX_DISCOVERED_SKILLS = 50;
+// Total character budget for all skill descriptions in the discovery list.
+// Modeled on Codex's "skills list ≤ 2% of context" approach: when the sum of
+// descriptions exceeds this budget, each description is shortened proportionally
+// (keeping the front — where authors should front-load activation triggers and
+// key use cases, per the Agent Skills authoring guide) rather than hard-cut at
+// a fixed per-skill limit. Current 12 skills total ~2k chars, well under budget.
+const MAX_DISCOVERY_DESC_BUDGET = 4000;
+// Floor per-skill description length when budget pressure requires shortening.
+// Ensures every skill still gets a meaningful one-line summary.
+const MIN_DESC_LENGTH = 80;
 
 export function parseSkillFrontmatter(filePath: string): { name?: string; description?: string } {
   try {
@@ -37,9 +52,15 @@ export function parseSkillFrontmatter(filePath: string): { name?: string; descri
         : rawDesc == null
           ? undefined
           : String(rawDesc);
-    const sanitize = (s: string | undefined) =>
+    // name is a single-segment identifier; keep the 200-char guard as a safety
+    // net for malformed frontmatter. description is NOT truncated here — budget
+    // control happens at the discoverSkills level so authors can front-load
+    // triggers and let the budget-based shortener preserve them.
+    const sanitizeName = (s: string | undefined) =>
       s?.trim().replace(/^["']|["']$/g, "").replace(/[\n\r]+/g, " ").slice(0, 200);
-    return { name: sanitize(name), description: sanitize(description) };
+    const sanitizeDesc = (s: string | undefined) =>
+      s?.trim().replace(/^["']|["']$/g, "").replace(/[\n\r]+/g, " ");
+    return { name: sanitizeName(name), description: sanitizeDesc(description) };
   } catch { return {}; }
 }
 
@@ -58,13 +79,23 @@ export function discoverSkills(cwd: string): DiscoveredSkill[] {
           skills.push({ name: name ?? entry, description: description ?? "", relativePath: join(dir, entry, "SKILL.md") });
           continue;
         }
-        if (dir === "docs/skills" && entry.endsWith(".md")) {
-          const flatPath = join(absDir, entry);
-          const { name, description } = parseSkillFrontmatter(flatPath);
-          skills.push({ name: name ?? entry.replace(/\.md$/, ""), description: description ?? "", relativePath: join(dir, entry) });
-        }
       }
     } catch { }
+  }
+  // Budget control (Codex-style): if total description length exceeds the
+  // budget, shorten each description proportionally — keeping the front (where
+  // authors should front-load activation triggers) and never below the floor.
+  // Only kicks in when skill count grows large; current 12 skills (~2k) are
+  // well under the 4000-char budget, so no shortening happens today.
+  const totalDescLen = skills.reduce((sum, s) => sum + s.description.length, 0);
+  if (totalDescLen > MAX_DISCOVERY_DESC_BUDGET && skills.length > 0) {
+    const scale = MAX_DISCOVERY_DESC_BUDGET / totalDescLen;
+    for (const s of skills) {
+      const targetLen = Math.max(MIN_DESC_LENGTH, Math.floor(s.description.length * scale));
+      if (s.description.length > targetLen) {
+        s.description = s.description.slice(0, targetLen).trimEnd();
+      }
+    }
   }
   return skills;
 }

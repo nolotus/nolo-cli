@@ -170,29 +170,6 @@ const TIME_LABELS = [
   "晚子时(23:00~24:00)",
 ] as const;
 
-/**
- * 地支顺序 → 宫位网格位置映射
- * 传统紫微斗数盘面：
- *   巳 午 未 申   (top row, left→right)
- *   辰          酉   (second row, outer only)
- *   卯          戌   (third row, outer only)
- *   寅 丑 子 亥  (bottom row, left→right)
- */
-const BRANCH_TO_GRID: Record<string, [number, number]> = {
-  巳: [0, 0],
-  午: [0, 1],
-  未: [0, 2],
-  申: [0, 3],
-  酉: [1, 3],
-  戌: [2, 3],
-  亥: [3, 3],
-  子: [3, 2],
-  丑: [3, 1],
-  寅: [3, 0],
-  卯: [2, 0],
-  辰: [1, 0],
-};
-
 const BRIGHTNESS_SYMBOL: Record<string, string> = {
   旺: "旺▲",
   庙: "庙○",
@@ -671,7 +648,7 @@ export const ziweiChartFunctionSchema = {
 export async function ziweiChartFunc(
   args: ZiweiChartToolArgs
 ): Promise<{ rawData: ZiweiChartToolResult; displayData: string; gridText: string }> {
-  const result = runZiweiChart(args);
+  const result = await runZiweiChart(args);
   return {
     rawData: result,
     displayData: result.displayData,

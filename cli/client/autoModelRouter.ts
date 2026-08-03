@@ -88,7 +88,7 @@ export interface CliAutoRouteResult {
   /** 协议透传（与 web 分类器一致）：本轮是否需要工作区工具；CLI 下游暂未消费。 */
   needsWorkspace?: boolean;
   /** 协议透传：命中的对象操作技能；CLI 下游暂未消费。 */
-  skills?: Array<"table" | "doc" | "code">;
+  skills?: Array<"table" | "doc" | "code" | "pagebuilder">;
 }
 
 export interface ClassifyCliAutoRouteOptions {

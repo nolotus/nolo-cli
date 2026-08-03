@@ -1401,6 +1401,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           dialogKey: compactResult.dialogKey,
           dialogLabel: compactResult.dialogId,
         };
+        output.write(
+          `${t(
+            compactResult.summaryGenerated ? "compactDone" : "compactDoneNoSummary",
+            result.action.dialogId,
+            compactResult.dialogId,
+          )}\n`,
+        );
       } catch (error: any) {
         output.write(
           `[nolo] Compact failed: ${toErrorMessage(error)}\n`

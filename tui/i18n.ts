@@ -556,6 +556,14 @@ const STRINGS = {
     en: "Current dialog: new (nothing to compact yet)",
     zh: "当前对话还是新的（还没有可压缩的内容）",
   },
+  compactDone: {
+    en: "Compacted dialog {0} → {1}.",
+    zh: "已压缩对话 {0} → {1}。",
+  },
+  compactDoneNoSummary: {
+    en: "Forked dialog {0} → {1} (no summary needed).",
+    zh: "已分叉对话 {0} → {1}（无需压缩）。",
+  },
   agentCurrent: { en: "Current agent: {0} ({1})", zh: "当前 agent：{0}（{1}）" },
   agentUnknown: {
     en: "I don't know agent \"{0}\" yet.\nUse /switch, /switch list, /switch minimax-m3, or a full agent key.",

@@ -167,6 +167,7 @@ export default {
       uploadFailed: "Upload failed",
       deleteMessageTitle: "Delete Message",
       delConfirm: "Delete this tool output?",
+      delConfirmMessage: "Delete this message?",
       bash: {
         blockedTitle: "Dangerous Command Blocked",
         blockedDesc: "This command was detected as high-risk and was not executed. If necessary, please confirm the risk and continue.",
@@ -523,6 +524,7 @@ export default {
       answerContent: "回答",
       deleteMessageTitle: "删除消息",
       delConfirm: "删除此工具输出？",
+      delConfirmMessage: "删除此消息？",
       bash: {
         blockedTitle: "危险命令已被拦截",
         blockedDesc: "该命令被检测为高危操作，默认未执行。如确有必要，请确认风险后继续。",
@@ -870,6 +872,7 @@ export default {
       answerContent: "回答",
       deleteMessageTitle: "刪除訊息",
       delConfirm: "刪除此工具輸出？",
+      delConfirmMessage: "刪除此訊息？",
       bash: {
         blockedTitle: "危險命令已被攔截",
         blockedDesc: "該命令被檢測為高危操作，預設未執行。如確有必要，請確認風險後繼續。",
@@ -1168,6 +1171,7 @@ export default {
       uploadFailed: "アップロード失敗",
       deleteMessageTitle: "メッセージを削除",
       delConfirm: "この工具の出力を削除しますか？",
+      delConfirmMessage: "このメッセージを削除しますか？",
       bash: {
         blockedTitle: "危険なコマンドをブロックしました",
         blockedDesc: "このコマンドは高リスクとして検出され、実行されませんでした。必要に応じてリスクを確認し、続行してください。",

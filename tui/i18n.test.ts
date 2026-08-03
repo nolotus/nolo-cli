@@ -122,6 +122,8 @@ describe("i18n", () => {
     "stopNoLabel",
     "stopLabelsDone",
     "compactNothing",
+    "compactDone",
+    "compactDoneNoSummary",
     "agentCurrent",
     "agentUnknown",
     "themeCurrent",

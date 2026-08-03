@@ -73,13 +73,13 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       muted: { hex: "6E7781", ansiFallback: "\x1b[90m" },
     },
     dark: {
-      accent: { hex: "58A6FF", ansiFallback: "\x1b[34m" }, // GitHub sky blue
-      chrome: { hex: "6E7681", ansiFallback: "\x1b[90m" },
-      success: { hex: "3FB950", ansiFallback: "\x1b[32m" },
-      warning: { hex: "D29922", ansiFallback: "\x1b[33m" },
-      info: { hex: "58A6FF", ansiFallback: "\x1b[36m" },
-      danger: { hex: "FF7B72", ansiFallback: "\x1b[31m" },
-      muted: { hex: "B1BAC4", ansiFallback: "\x1b[90m" },
+      accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // Catppuccin Mocha Blue
+      chrome: { hex: "6C7086", ansiFallback: "\x1b[90m" },
+      success: { hex: "A6E3A1", ansiFallback: "\x1b[32m" },
+      warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
+      info: { hex: "89B4FA", ansiFallback: "\x1b[36m" },
+      danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
+      muted: { hex: "A6ADC8", ansiFallback: "\x1b[90m" },
     },
   },
   wave: {
@@ -286,7 +286,7 @@ function hexToSgr(hex: string): string {
  */
 const SURFACE_HEX: Record<string, Record<TuiBrightness, string>> = {
   trail: { light: "E4E8EC", dark: "313244" },
-  catppuccin: { light: "E8ECF0", dark: "161B22" },
+  catppuccin: { light: "E8ECF0", dark: "181825" },
   wave: { light: "E5E1D6", dark: "2A2A37" },
   iris: { light: "E9E8F2", dark: "2A2740" },
   rose: { light: "F2EAE4", dark: "26233A" },

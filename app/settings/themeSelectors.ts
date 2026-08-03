@@ -297,7 +297,7 @@ export const selectTheme = createSelector(
       surface: c.backgroundSecondary,
       surfaceElevated: c.backgroundTertiary,
       surfaceCanvas: c.background,
-      surfaceSidebar: isDark ? c.backgroundSecondary : c.background,
+      surfaceSidebar: c.background,
       surfacePanel: c.backgroundSecondary,
       surfaceCard: c.messageBackground,
       surfaceRaised: isDark ? c.backgroundTertiary : c.backgroundSecondary,

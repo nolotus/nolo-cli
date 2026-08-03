@@ -19,7 +19,7 @@ describe("tui theme", () => {
   });
   test("truecolor terminals get the exact catppuccin primary (default theme)", () => {
     expect(themeColorSequence("accent", { COLORTERM: "truecolor" })).toBe(
-      "\x1b[38;2;88;166;255m", // catppuccin dark accent (default) — GitHub sky blue #58A6FF
+      "\x1b[38;2;137;180;250m", // catppuccin dark accent (default) — Mocha blue #89B4FA
     );
   });
 
@@ -58,9 +58,9 @@ describe("tui theme", () => {
     expect(newAvg).toBeLessThanOrEqual(oldAvg);
   });
 
-  test("dark theme accent uses GitHub sky blue", () => {
+  test("dark theme accent uses Catppuccin Mocha blue", () => {
     expect(themeColorSequence("accent", { COLORTERM: "truecolor", NOLO_TUI_THEME: "dark" })).toBe(
-      "\x1b[38;2;88;166;255m",
+      "\x1b[38;2;137;180;250m",
     );
   });
 

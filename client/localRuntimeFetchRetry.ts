@@ -12,7 +12,10 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { CliFetchImpl } from "../cliFetch";
 import { toErrorMessage } from "../core/errorMessage";
-import { CORE_DRAIN_REASON } from "../core/drainReason";
+import {
+  createDrainExhaustedResponse,
+  isCoreDrainingBody,
+} from "../core/drainReason";
 import { isLoopbackHostname } from "../core/localOrigins";
 import {
   normalizeNonNegativeMs,
@@ -199,8 +202,8 @@ export type FetchWithTransientRetryOptions = {
 async function isCoreDrainingResponse(response: Response): Promise<boolean> {
   if (response.status !== 503) return false;
   try {
-    const body = await response.clone().json() as { reason?: unknown };
-    return body?.reason === CORE_DRAIN_REASON;
+    const body = await response.clone().json();
+    return isCoreDrainingBody(body);
   } catch {
     return false;
   }
@@ -244,6 +247,10 @@ export async function fetchWithTransientRetry(
           const delayMs = await resolveRetryAfterMs(response, attempt);
           await (options.sleep ?? defaultSleep)(delayMs);
           continue;
+        }
+        // retry 预算耗尽：core_draining 换成用户可读提示，不暴露 raw JSON。
+        if (coreDraining) {
+          return createDrainExhaustedResponse(response);
         }
       }
       return response;

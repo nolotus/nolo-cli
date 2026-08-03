@@ -18,7 +18,7 @@ import { resolveRetryAfterMs } from "../../app/utils/retryAfter";
 import { selectIdentityToken } from "identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { waitForAbortableDelay } from "../../core/abortableDelay";
-import { CORE_DRAIN_REASON } from "../../core/drainReason";
+import { CORE_DRAIN_REASON, DRAIN_EXHAUSTED_USER_MESSAGE } from "../../core/drainReason";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import { normalizeServerOrigin } from "../../core/serverOrigin";
 import { createSSEParser } from "../chat/parseMultilineSSE";
@@ -282,6 +282,10 @@ export const runAgentBackground = createAsyncThunk<
             continue;
         }
 
+        // retry 耗尽：core_draining 换成用户可读提示，不暴露 raw JSON。
+        if (isCoreDraining) {
+            throw new Error(DRAIN_EXHAUSTED_USER_MESSAGE);
+        }
         throw new Error(`启动后台任务失败 (${runRes.status}): ${errText}`);
     }
 

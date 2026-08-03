@@ -1,6 +1,9 @@
 import { isAbortError } from "../../core/abortError";
 import { waitForAbortableDelay } from "../../core/abortableDelay";
-import { CORE_DRAIN_REASON } from "../../core/drainReason";
+import {
+  createDrainExhaustedResponse,
+  isCoreDrainingBody,
+} from "../../core/drainReason";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import {
   normalizeNonNegativeMs,
@@ -76,7 +79,7 @@ export const performServerProxyFetchWithRetry = async ({
           ? await readRetryableResponseBody(response)
           : null;
       const isCoreDraining =
-        response.status === 503 && responseBody?.reason === CORE_DRAIN_REASON;
+        response.status === 503 && isCoreDrainingBody(responseBody);
       const maxStatusRetries = isCoreDraining
         ? MAX_SERVER_DRAIN_STATUS_RETRIES
         : MAX_STATUS_RETRIES;
@@ -94,6 +97,11 @@ export const performServerProxyFetchWithRetry = async ({
         );
         await waitForServerProxyRetry(retryAfterMs, signal);
         continue;
+      }
+      // retry 预算耗尽：core_draining 换成用户可读提示，不暴露 raw JSON。
+      if (isCoreDraining) {
+        console.warn(`${logPrefix} core_draining 重试耗尽，返回友好提示`);
+        return createDrainExhaustedResponse(response);
       }
       return response;
     } catch (error: any) {

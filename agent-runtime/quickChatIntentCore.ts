@@ -27,6 +27,20 @@ export interface TierAgentOption {
   description: string;
 }
 
+/**
+ * quick-chat 分类器可命中的内置对象技能种类。
+ * 新增 skill 时只需改这一处，各调用方的类型自动跟随。
+ */
+export type QuickChatSkillKind = "table" | "doc" | "code" | "pagebuilder";
+
+/** QuickChatSkillKind 的全部合法值，供 parse 过滤复用。 */
+const VALID_QUICK_CHAT_SKILLS: ReadonlySet<string> = new Set<QuickChatSkillKind>([
+  "table",
+  "doc",
+  "code",
+  "pagebuilder",
+]);
+
 export interface QuickChatIntentResult {
   agentKey: string;
   /** LLM 分类是否成功；false 表示走了 fallback */
@@ -48,7 +62,7 @@ export interface QuickChatIntentResult {
    *  "pagebuilder"=生成可交互可视化页面/报告/看板/教程/对比页/计划页)。
    * 调用方可据此给对话挂载对应内置 skill 引用；未命中时为 undefined。
    */
-  skills?: Array<"table" | "doc" | "code" | "pagebuilder">;
+  skills?: QuickChatSkillKind[];
 }
 
 /**
@@ -131,7 +145,7 @@ ${agentList}
 - 普通问答/纯闲聊/建应用 → skills 为 []
 
 只输出 JSON，不要输出其他内容：
-{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "needsWorkspace": <true 或 false>, "skills": <字符串数组，元素只能是 "table" | "doc" | "code" | "pagebuilder"，未命中给 []>}`;
+{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "needsWorkspace": <true 或 false>, "skills": <字符串数组，元素只能是 ${[...VALID_QUICK_CHAT_SKILLS].map((s) => `"${s}"`).join(" | ")}，未命中给 []>}`;
 }
 
 /**
@@ -146,7 +160,7 @@ export function parseQuickChatIntentResult(
   agentKey: string;
   needsWorkspace: boolean;
   confidence?: number;
-  skills?: Array<"table" | "doc" | "code" | "pagebuilder">;
+  skills?: QuickChatSkillKind[];
 } | null {
   try {
     const parsed = JSON.parse(content.trim()) as unknown;
@@ -167,11 +181,11 @@ export function parseQuickChatIntentResult(
         : undefined;
     // 解析 skills：只保留合法枚举值，非法值与重复值过滤掉；空数组视为未命中。
     const rawSkills = (parsed as { skills?: unknown }).skills;
-    let skills: Array<"table" | "doc" | "code" | "pagebuilder"> | undefined;
+    let skills: QuickChatSkillKind[] | undefined;
     if (Array.isArray(rawSkills)) {
       const filtered = [...new Set(rawSkills)].filter(
-        (s): s is "table" | "doc" | "code" | "pagebuilder" =>
-          s === "table" || s === "doc" || s === "code" || s === "pagebuilder",
+        (s): s is QuickChatSkillKind =>
+          typeof s === "string" && VALID_QUICK_CHAT_SKILLS.has(s),
       );
       if (filtered.length > 0) skills = filtered;
     }

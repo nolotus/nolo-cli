@@ -77,6 +77,12 @@ import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
 import { createChatQueueTuiBinding, type ChatQueueTuiBinding } from "./chatQueueTuiBinding";
 
+// Ctrl+S (0x13): flush all queued follow-ups as one merged message. Named so
+// the raw byte is greppable by intent ("Ctrl+S" / "flush") rather than only by
+// hex. Node's setRawMode(true) disables IXON flow control, so this byte
+// reaches the `data` listener on all supported platforms.
+const CTRL_S = "\x13";
+
 // ANSI / 显示宽度 / 换行纯函数已抽到 ./tuiAnsi。
 // Turn 历史 / 滚动渲染已抽到 ./tuiHistory（依赖 ./tuiScrollbar）。
 // 此处 re-export 保持对外 API 兼容（sessionRender.ts 及若干测试仍从本文件
@@ -1317,6 +1323,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     return chatQueueBinding;
   };
 
+  // Abort the in-flight turn so the queue head drains immediately. Shared by
+  // the empty-Enter-while-busy preempt and the Ctrl+S flush shortcut so the
+  // "arm preempt, then abort" two-step lives in exactly one place.
+  const preemptAndAbortForDrain = (binding: ChatQueueTuiBinding): void => {
+    if (binding.preemptForDrain() && activeTurnAbort) {
+      activeTurnAbort.abort();
+    }
+  };
+
   const emitCommandOutput = (text: string) => {
     if (!text) return;
     if (!isInteractiveInput(input)) {
@@ -1846,6 +1861,55 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       // docked composer (draft buffer) but ignore submit so a second turn
       // cannot race the in-flight one. The draft is preserved and shown
       // once the turn finishes via fixedInput.exitOutputMode(buffer).
+      // Ctrl+S flushes every queued follow-up as one merged message. The raw
+      // byte is always swallowed here (even with an empty queue) so it never
+      // falls through to applyTuiInputKey and gets typed into the draft as a
+      // literal control char (review finding: empty-queue Ctrl+S leaked into
+      // the composer buffer).
+      //   - busy: snapshot+clear the queue, re-enqueue the merged text as the
+      //     sole head, preempt the in-flight turn so the drain cascade sends
+      //     it immediately. The draft is kept (the turn owns the screen).
+      //   - idle: the composer draft is folded into the merge too (it is
+      //     unsent content just like the queue), then the empty-Enter manual
+      //     drain path sends the merged text as a fresh turn. Folding the
+      //     draft here — instead of recursing with a possibly-non-empty
+      //     buffer — avoids the trap where a stray draft would be submitted
+      //     by the synthetic Enter while the merge stayed stranded in the
+      //     queue.
+      if (sequence === CTRL_S) {
+        if (!chatQueueBinding || chatQueueBinding.queueLength() === 0) {
+          // Nothing to flush: swallow the key so \x13 is never typed into the
+          // draft as a literal control character.
+          return;
+        }
+        const flushCount = chatQueueBinding.queueLength();
+        const merged = chatQueueBinding.snapshotAndClearQueue();
+        if (!merged) return;
+        // Idle: fold the composer draft into the merge so "Ctrl+S = send
+        // everything pending right now" holds even when the user is mid-type.
+        // Busy keeps the draft (the turn owns the screen; the draft is
+        // preserved and editable once the turn ends).
+        const draftIncluded = !busy && buffer.trim() !== "";
+        const fullText = draftIncluded ? `${buffer}\n${merged}` : merged;
+        chatQueueBinding.enqueue(fullText);
+        // Use a busy-aware message so the busy path does not contradict the
+        // subsequent "Stopped this reply." line (review finding: two
+        // contradictory toasts). The idle path is plain "flushed N as one".
+        const totalCount = flushCount + (draftIncluded ? 1 : 0);
+        emitCommandOutput(
+          t(busy ? "flushQueuedBusyHint" : "flushQueuedIdleHint", String(totalCount)),
+        );
+        if (busy) {
+          preemptAndAbortForDrain(chatQueueBinding);
+          return;
+        }
+        // Idle: clear the now-merged draft, then reuse the empty-Enter
+        // manual-drain path below to send it as a fresh turn.
+        buffer = "";
+        cursorPos = 0;
+        if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
+        return handleInputToken("\r");
+      }
       const busyLock = busy;
       const scrollAction = parseScrollAction(sequence);
       if (scrollAction) {
@@ -2056,11 +2120,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             // clean end and drains rather than clearing the queue), then
             // abort the current turn. The turn's own finally will call
             // notifyTurnEnd, which drives the drain cascade.
-            if (binding.preemptForDrain()) {
-              if (activeTurnAbort) {
-                activeTurnAbort.abort();
-              }
-            }
+            preemptAndAbortForDrain(binding);
           }
           // arm-fresh-dialog / compact-blocked / noop / multi-image-blocked
           // are all intentionally no-ops while busy: the draft is preserved

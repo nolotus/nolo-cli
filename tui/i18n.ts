@@ -123,6 +123,14 @@ const STRINGS = {
     en: "queued",
     zh: "排队",
   },
+  flushQueuedIdleHint: {
+    en: "Flushed {0} queued messages as one.",
+    zh: "已把 {0} 条排队消息合并发送。",
+  },
+  flushQueuedBusyHint: {
+    en: "Stopped this reply and flushed {0} queued messages as one.",
+    zh: "已停止当前回复，并把 {0} 条排队消息合并发送。",
+  },
   turnStopped: {
     en: "Stopped this reply.",
     zh: "已停止本次回复。",

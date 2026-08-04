@@ -263,6 +263,33 @@ describe("createChatQueueTuiBinding", () => {
     binding.dispose();
   });
 
+  it("snapshotAndClearQueue merges all queued items with newlines and clears the queue", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    expect(binding.snapshotAndClearQueue()).toBeNull();
+    binding.enqueue("first");
+    binding.enqueue("second");
+    binding.enqueue("third");
+    const merged = binding.snapshotAndClearQueue();
+    expect(merged).toBe("first\nsecond\nthird");
+    expect(binding.queueLength()).toBe(0);
+    // A second snapshot is null — the queue was cleared, not just peeked.
+    expect(binding.snapshotAndClearQueue()).toBeNull();
+    binding.dispose();
+  });
+
+  it("snapshotAndClearQueue merges all queued items with newlines and clears the queue", () => {
+    const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
+    expect(binding.snapshotAndClearQueue()).toBeNull();
+    binding.enqueue("first");
+    binding.enqueue("second");
+    binding.enqueue("third");
+    const merged = binding.snapshotAndClearQueue();
+    expect(merged).toBe("first\nsecond\nthird");
+    expect(binding.queueLength()).toBe(0);
+    // A second snapshot is null — the queue was cleared, not just peeked.
+    expect(binding.snapshotAndClearQueue()).toBeNull();
+    binding.dispose();
+  });
   it("an armed preempt makes the next aborted turn-end drain the head instead of clearing the queue", async () => {
     const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);

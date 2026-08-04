@@ -70,6 +70,14 @@ export type ChatQueueTuiBinding = {
    * does not run. Returns false when not running.
    */
   preemptForStop(): boolean;
+  /**
+   * Snapshot the entire queue as a single merged text (items joined by "\n"),
+   * then clear the queue. Used by the Ctrl+S "flush all" shortcut: the queued
+   * follow-ups are collapsed into one message and sent immediately instead of
+   * waiting for the in-flight turn to finish and drain them one by one.
+   * Returns null when the queue is empty.
+   */
+  snapshotAndClearQueue(): string | null;
   /** Clear the queue (e.g. on /new). */
   clear(): void;
   /** Current UI status snapshot. */
@@ -129,21 +137,35 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
     // turn-end (cascade runs the head); "stop" mode reinterprets as a failed
     // non-aborted turn-end (queue kept, cascade does not drain — the core
     // treats ok:false/non-aborted as "keep queue, stop draining").
-    const preempt = preemptArmed;
-    preemptArmed = null;
-    const effectiveOutcome =
-      preempt !== null && outcome.aborted
-        ? preempt === "drain"
-          ? { ok: true, aborted: false }
-          : { ok: false, aborted: false }
-        : outcome;
+    // Consumed by both the outer (direct-turn) turn-end and the drain
+    // cascade below: Ctrl+S can arm preempt while a cascade turn is
+    // mid-flight, and that abort must be reinterpreted too, otherwise the
+    // bare `turn-end { aborted }` inside the cascade would clear the queue
+    // and drop the just-merged message.
+    // Returns the reinterpreted outcome plus the mode that was consumed (so
+    // the caller can apply the stop-mode drain-error reset).
+    const consumePreempt = (
+      raw: { ok: boolean; aborted: boolean },
+    ): { outcome: { ok: boolean; aborted: boolean }; mode: PreemptMode | null } => {
+      const mode = preemptArmed;
+      preemptArmed = null;
+      if (mode === null || !raw.aborted) return { outcome: raw, mode: null };
+      return {
+        outcome:
+          mode === "drain"
+            ? { ok: true, aborted: false }
+            : { ok: false, aborted: false },
+        mode,
+      };
+    };
+    const { outcome: effectiveOutcome, mode: consumedMode } = consumePreempt(outcome);
     runtime.send({ type: "turn-end", ...effectiveOutcome });
     // "stop" mode reinterprets abort as ok:false so the queue is kept and the
     // cascade does not drain — but ok:false also sets lastDrainError, which
     // would surface a spurious "previous turn failed" error for a deliberate
     // Esc. Clear it: an empty drain-error message is falsy, so the status
     // projection treats it as "no error".
-    if (preempt === "stop" && outcome.aborted) {
+    if (consumedMode === "stop") {
       runtime.send({ type: "drain-error", message: "" });
     }
 
@@ -174,10 +196,17 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
         } catch {
           turnOutcome = { ok: false, aborted: false };
         }
-        runtime.send({ type: "turn-end", ...turnOutcome });
-        lastOk = turnOutcome.ok && !turnOutcome.aborted;
+        // A Ctrl+S flush can arm preempt while this cascade turn is
+        // mid-flight; consume it so the abort is reinterpreted (drain/stop)
+        // instead of hitting the bare turn-end below and clearing the queue.
+        const { outcome: cascadeOutcome, mode: cascadeMode } = consumePreempt(turnOutcome);
+        runtime.send({ type: "turn-end", ...cascadeOutcome });
+        if (cascadeMode === "stop") {
+          runtime.send({ type: "drain-error", message: "" });
+        }
+        lastOk = cascadeOutcome.ok && !cascadeOutcome.aborted;
         // If the turn was aborted, the core already cleared the queue; stop.
-        if (turnOutcome.aborted) break;
+        if (cascadeOutcome.aborted) break;
         if (!lastOk) break;
       } else {
         break;
@@ -218,6 +247,14 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
     return true;
   };
 
+  const snapshotAndClearQueue = (): string | null => {
+    const status = runtime.getState();
+    if (status.queue.length === 0) return null;
+    const merged = status.queue.join("\n");
+    runtime.send({ type: "clear" });
+    return merged;
+  };
+
   const clear = () => {
     runtime.send({ type: "clear" });
   };
@@ -238,6 +275,7 @@ export function createChatQueueTuiBinding(runTurn: RunDrainedTurn): ChatQueueTui
     drainHeadForManualTurn,
     preemptForDrain,
     preemptForStop,
+    snapshotAndClearQueue,
     clear,
     getStatus,
     queueLength,

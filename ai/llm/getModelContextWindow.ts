@@ -82,6 +82,13 @@ function fuzzyContextWindow(normalizedName: string): number | undefined {
   if (normalizedName.includes("glm-5.2") || normalizedName.includes("glm5.2")) return GLM_5_2_CONTEXT_WINDOW;
   if (normalizedName.includes("deepseek")) return 1_000_000;
   if (normalizedName.includes("gpt-5") || normalizedName.includes("gpt-4.1")) return 1_047_576;
+  // Cursor OAuth 模型（providerRegistry cursor-oauth preset，id 以 Cursor GetUsableModels 为准）。
+  // Grok 4.5 / Claude 4.6 / Gemini 3.1 Pro 在 Cursor 内均为 1M 级上下文；claude-4.6-* 必须先于
+  // 下方通用 "claude" → 200k 规则，否则会落 200k。Composer 2.5 未公布固定窗口，不在此显式返回
+  // （保持默认 256k）。gpt-5.3-codex / gpt-5.4-medium 已命中上方 gpt-5 规则，无需重复。
+  if (normalizedName.startsWith("cursor-grok-4.5")) return 1_000_000;
+  if (normalizedName.includes("claude-4.6")) return 1_000_000;
+  if (normalizedName.includes("gemini-3.1")) return 1_000_000;
   // 256k 档
   if (normalizedName.includes("qwen3.6") || normalizedName.includes("qwen3p6")) return QWEN_3_6_CONTEXT_WINDOW;
   if (normalizedName.includes("qwen3.7") || normalizedName.includes("qwen3p7")) return 262_144;

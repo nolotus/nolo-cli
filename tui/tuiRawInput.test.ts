@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createFixedInput } from "./tuiRawInput";
+import { createFixedInput, createRawInputDecoder } from "./tuiRawInput";
 import { t } from "./i18n";
 
 const TERM_ROWS = 24;
@@ -246,5 +246,55 @@ describe("createFixedInput alternate screen", () => {
     leaveAltScreen(output); // 信号 handler 再调一次：也应被挡住
     leaveAltScreen(output); // exit handler 再调一次：也应被挡住
     expect(chunks.filter((c) => c === "\x1b[?1049l").length).toBe(1);
+  });
+});
+
+describe("createRawInputDecoder SGR mouse wheel", () => {
+  test("分块到达且间隔超过 escTimeoutMs 的滚轮序列不被拆成裸 ESC / 字符", async () => {
+    // 回归：SSH/网络下 SGR mouse 序列（\x1b[<65;10;20M）可能分块到达，且
+    // 块间隔超过 esc timeout。旧行为在 timeout 后强制 flush，把半截序列拆成
+    // 裸 \x1b（触发 agent 停止）+ `[<65;10;20` 字符（写进 composer）。
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 15,
+    });
+    decode("\x1b[<65;10;20");
+    expect(tokens).toEqual([]);
+    // 超过 esc timeout：不得强制 emit，也不得把尾部当普通字符泄漏。
+    await Bun.sleep(60);
+    expect(tokens).toEqual([]);
+    // 迟到的剩余字节补齐后，整体作为一个完整 CSI token 发出。
+    decode("M");
+    expect(tokens).toEqual(["\x1b[<65;10;20M"]);
+  });
+
+  test("flush() 丢弃未补齐的 SGR mouse 前缀，不泄漏进 composer", async () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 15,
+    });
+    decode("\x1b[<65;10;20");
+    await Bun.sleep(30);
+    decode.flush();
+    expect(tokens).toEqual([]);
+  });
+
+  test("flush() 后裸 ESC 仍按原行为发出", () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token));
+    decode("\x1b");
+    decode.flush();
+    expect(tokens).toEqual(["\x1b"]);
+  });
+
+  test("裸 ESC 仍是 ESC 键：timeout 后正常 emit（防过度修复）", async () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 10,
+    });
+    decode("\x1b");
+    expect(tokens).toEqual([]);
+    await Bun.sleep(25);
+    expect(tokens).toEqual(["\x1b"]);
   });
 });

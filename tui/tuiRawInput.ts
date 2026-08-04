@@ -18,6 +18,7 @@ import {
   shouldCollapsePaste,
 } from "../core/collapsedPaste";
 import { displayWidth, fitAnsiLine, wrapTextToLines } from "./tuiAnsi";
+import { consumeSgrMouseSequence } from "./tuiScrollbar";
 import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
 import { themeColorSequence, themeText } from "./theme";
 import { t } from "./i18n";
@@ -657,6 +658,12 @@ export function createRawInputDecoder(
     if (!tail) return;
     if (forceCompleteOpenPaste) {
       // Stream/explicit end: never stall on a partial CSI — emit raw.
+      // Except a partial SGR mouse report (\x1b[<… without trailing M/m):
+      // it is not a keypress, and emitting it raw would surface as a lone
+      // \x1b (cooperative stop) plus `[<65;…` typed into the composer. Drop
+      // it — the report either completes in a later chunk or is lost (one
+      // scroll step, harmless).
+      if (consumeSgrMouseSequence(tail) === undefined) return;
       emitCodePoints(tail);
       return;
     }
@@ -693,6 +700,13 @@ export function createRawInputDecoder(
       if (pendingBuffer.startsWith(PASTE_START)) return;
       if (pendingBuffer.length > 0) {
         // Incomplete CSI only — short timeout, then force emit.
+        // SGR mouse reports (\x1b[<btn;col;rowM) are never a bare Esc key:
+        // slow SSH/network can split one across chunks with gaps longer than
+        // the esc timeout. Arming the timer here would force-emit the
+        // partial report as a lone \x1b (cooperative stop) plus `[<65;…`
+        // typed into the composer. Wait for the remaining bytes instead —
+        // the next chunk completes the report, or flush() drops it.
+        if (consumeSgrMouseSequence(pendingBuffer) === undefined) return;
         timer = setTimeout(() => flushEscPending(true), timeoutMs);
       }
       return;

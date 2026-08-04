@@ -26,10 +26,14 @@ export const SGR_MOUSE_REGEX = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
  * it (click → ignore) so a stray click into the terminal doesn't get
  * misparsed as a key and accidentally cancel the dialog.
  */
-export function isSgrWheelEvent(sequence: string): boolean {
+function parseSgrMouseButton(sequence: string): number | null {
   const mouse = SGR_MOUSE_REGEX.exec(sequence);
-  if (!mouse) return false;
-  const button = Number(mouse[1]);
+  return mouse ? Number(mouse[1]) : null;
+}
+
+export function isSgrWheelEvent(sequence: string): boolean {
+  const button = parseSgrMouseButton(sequence);
+  if (button === null) return false;
   if ((button & 64) === 0) return false; // not a wheel event
   if ((button & 2) !== 0) return false; // horizontal wheel
   return true;
@@ -54,12 +58,20 @@ export function consumeSgrMouseSequence(
     // CSI logic decide. Return null to signal "not a mouse sequence".
     return null;
   }
-  // The report ends with M (press/wheel) or m (release).
-  const endIndex = buffer.search(/[Mm]/);
-  if (endIndex === -1) return undefined; // incomplete, wait for more bytes
-  const candidate = buffer.slice(0, endIndex + 1);
-  if (SGR_MOUSE_REGEX.test(candidate)) return candidate;
-  return null;
+  // Validate the body incrementally so an unrelated M/m later in the buffer
+  // cannot terminate a malformed mouse report prematurely.
+  const body = buffer.slice(3);
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (character === "M" || character === "m") {
+      if (index !== body.length - 1) return null;
+      return SGR_MOUSE_REGEX.test(buffer) ? buffer : null;
+    }
+    if ((character < "0" || character > "9") && character !== ";") {
+      return null;
+    }
+  }
+  return undefined;
 }
 
 export function parseScrollAction(sequence: string): ScrollAction | null {

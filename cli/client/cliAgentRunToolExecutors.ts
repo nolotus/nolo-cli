@@ -185,6 +185,15 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
           startedAt: reconciled.startedAt,
           endedAt: reconciled.endedAt ?? null,
           exitCode: reconciled.exitCode ?? null,
+          // Expose dialogId so the caller can read the agent's actual output
+          // via `nolo dialog read <dialogId>`. The dialog is the authoritative
+          // result store; the run log is the child process stdout/stderr,
+          // whose contents vary by provider (some stream tokens to stdout,
+          // some only emit startup + stderr). Because status does not carry
+          // logTail by default, a "done" run with an empty logTail is
+          // indistinguishable from a hung run without this field. Surfacing
+          // dialogId gives the caller a reliable way to fetch the result.
+          ...(reconciled.dialogId ? { dialogId: reconciled.dialogId } : {}),
           ...(logTail !== undefined ? { logTail } : {}),
           ...(logLines ? { logLines } : {}),
         }),

@@ -171,6 +171,34 @@ describe("cli controlAgentRun executor", () => {
     expect(data.logTail).toBeUndefined();
   });
 
+  it("status exposes dialogId for a completed run so the caller can read the agent output", async () => {
+    // Regression: a "done" run with an empty logTail was indistinguishable
+    // from a hung run because the LLM output lives in the dialog, not the
+    // log. status must surface dialogId so the caller can `nolo dialog read`.
+    const deps = buildDeps({ kill: () => {} });
+    seedRun(deps, "run-1", { status: "done", dialogId: "dialog-abc", exitCode: 0 });
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "status", runId: "run-1" }),
+    });
+    const data = JSON.parse(result.content);
+    expect(data.found).toBe(true);
+    expect(data.status).toBe("done");
+    expect(data.dialogId).toBe("dialog-abc");
+  });
+
+  it("status omits dialogId when the run has no dialog yet", async () => {
+    const deps = buildDeps({ kill: () => {} });
+    seedRun(deps, "run-1", { status: "running" });
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "status", runId: "run-1" }),
+    });
+    const data = JSON.parse(result.content);
+    expect(data.found).toBe(true);
+    expect(data.dialogId).toBeUndefined();
+  });
+
   it("status for unknown run returns found:false", async () => {
     const deps = buildDeps();
     const executor = createCliControlAgentRunExecutor(deps);

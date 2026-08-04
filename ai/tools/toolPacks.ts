@@ -10,9 +10,10 @@ export const TOOL_PACKS = {
   // L1 - 核心：交互 + 自我更新，所有 Agent 必有。
   // rememberMemory 已移至「长期记忆」能力包（defaultEnabled:true），用户可单关。
   CORE: ["ui_ask_choice", "read", "searchDialogMessages", "createDoc", "updateDoc", "search_workspace", "search_all_spaces", "updateSelf", "queryModelUsage", "queryUserGrowthReport", "createAgentAutomation", "notifyUser"],
-  // L2 - 联网搜索：配置了 web-capable tools 的 Agent 默认加，纯 QA bot 不加
-  LIGHT_WEB: ["exa_search", "read_x_post", "read_xhs_profile"],
-  // L3 - 深度浏览器：全套复杂网页交互
+  // L2 - 联网搜索：与 CAPABILITY_PACKS「web-search」对齐。
+  // 社交读工具属于「social-reader」包，不得因 exa_search 被旁路注入。
+  LIGHT_WEB: ["exa_search", "fetchWebpage"],
+  // L3 - 深度浏览器：全套复杂网页交互（与「full-browser」包对齐）
   FULL_BROWSER: [
     "browser_openSession",
     "browser_closeSession",
@@ -411,26 +412,29 @@ export function applyDisabledTools(
 }
 
 /**
- * Tools that imply web-access capability (triggers LIGHT_WEB auto-inject).
- * Shared by CLI and desktop runtimes.
+ * Tools that imply web-search capability (triggers LIGHT_WEB companion inject).
+ * Social-reader tools are intentionally NOT included — they live in their own
+ * capability pack and must not be pulled in by exa_search alone.
  */
-const WEB_CAPABLE_TOOL_NAMES = new Set<string>([
+const WEB_SEARCH_TOOL_NAMES = new Set<string>([
   "fetchWebpage",
   "exa_search",
   "firecrawl_scrape",
   "firecrawl_search",
-  "read_x_post",
-  "read_xhs_profile",
 ]);
 
-function isWebCapableTool(name: string): boolean {
-  return WEB_CAPABLE_TOOL_NAMES.has(name) || name.startsWith("browser_");
+function isWebSearchTool(name: string): boolean {
+  return WEB_SEARCH_TOOL_NAMES.has(name);
+}
+
+function isBrowserTool(name: string): boolean {
+  return name.startsWith("browser_");
 }
 
 /**
- * If an agent has explicitly declared any web-capable tool, auto-inject the
- * full LIGHT_WEB pack. Shared by CLI (localRuntimeAdapter) and desktop
- * (desktopAgentRuntimeToolBuilders) runtimes to avoid duplicated logic.
+ * If an agent has explicitly declared any web-search tool, auto-inject the
+ * LIGHT_WEB companions (web-search pack only — never social-reader).
+ * Shared by CLI (localRuntimeAdapter) and desktop runtimes.
  */
 export function addDefaultLightWebToolsForConfiguredAgents(
   toolNames: string[],
@@ -446,31 +450,27 @@ export function addDefaultLightWebToolsForConfiguredAgents(
     : agentConfig?.toolNames;
   if (!Array.isArray(explicitToolNames) || explicitToolNames.length === 0)
     return toolNames;
-  const webCapable = explicitToolNames.some(isWebCapableTool);
-  if (!webCapable) return toolNames;
+  const webSearch = explicitToolNames.some(isWebSearchTool);
+  if (!webSearch) return toolNames;
   return [...new Set([...toolNames, ...TOOL_PACKS.LIGHT_WEB])];
 }
 
 /**
  * Shared server/web runtime default web tool pack injection:
- * - LIGHT_WEB auto-added when there are any declared tools (unless skipWeb).
- * - FULL_BROWSER auto-added when any browser_* tool is declared.
+ * - LIGHT_WEB (web-search pack tools) when a web-search tool is present.
+ * - FULL_BROWSER when any browser_* tool is declared (same pack companions).
+ * Never injects social-reader tools unless they were already declared/enabled.
  * Used by runtimePreparation (server) and streamAgentChatTurnUtils (web).
- * Only handles LIGHT_WEB + FULL_BROWSER; other tool merging stays at call sites.
  */
 export function applyDefaultWebToolPacks(args: {
   toolNames: string[];
   skipWeb?: boolean;
 }): string[] {
   const enhanced = new Set(args.toolNames);
-  // LIGHT_WEB auto-inject only when a web-capable tool is present (not merely
-  // when toolNames is non-empty). Previously any non-empty tool list triggered
-  // LIGHT_WEB, which incorrectly injected read_x_post/read_xhs_profile for
-  // agents whose only tool was e.g. rememberMemory.
-  if (!args.skipWeb && args.toolNames.some(isWebCapableTool)) {
+  if (!args.skipWeb && args.toolNames.some(isWebSearchTool)) {
     TOOL_PACKS.LIGHT_WEB.forEach((t) => enhanced.add(t));
   }
-  if (args.toolNames.some((t) => t.startsWith("browser_"))) {
+  if (args.toolNames.some(isBrowserTool)) {
     TOOL_PACKS.FULL_BROWSER.forEach((t) => enhanced.add(t));
   }
   return [...enhanced];

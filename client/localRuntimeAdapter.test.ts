@@ -3699,7 +3699,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toContain("read_x_post");
   });
 
-  test("adds read_x_post to local web-capable agent tool surface", async () => {
+  test("adds LIGHT_WEB companions without social-reader for local web-search agents", async () => {
     const requests: Array<{ body: any }> = [];
     const adapter = createAdapter({
       env: {
@@ -3728,10 +3728,14 @@ describe("CLI local runtime adapter", () => {
     await runLocalAgentTurn({
       adapter,
       agentRef: "web-reader",
-      input: "读取 X 帖子",
+      input: "搜索网页",
     });
 
-    expect(toolNamesFromRequest(requests[0])).toContain("read_x_post");
+    const names = toolNamesFromRequest(requests[0]);
+    expect(names).toContain("exa_search");
+    expect(names).toContain("fetchWebpage");
+    expect(names).not.toContain("read_x_post");
+    expect(names).not.toContain("read_xhs_profile");
   });
 
   test("does not expose read_xhs_profile when the agent does not declare it", async () => {

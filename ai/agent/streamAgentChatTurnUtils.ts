@@ -794,8 +794,9 @@ export const mergeAgentToolsWithRuntime = (
     // 不补 web-search 和其他 DEFAULT_ENABLED_PACKS——避免改变空配置 agent 的 web
     // 能力边界。历史上 enabledPacks:[] 的 agent 不通过 expandEnabledPacks 获得
     // web-search（空数组返回空），web 能力靠 applyDefaultWebToolPacks 的 LIGHT_WEB
-    // 自动注入。该注入条件已从 length>0 收紧为 some(isWebCapableTool)——只配
-    // read/createDoc 的 agent 不再被误注入 web 工具，这是有意的修正。
+    // 自动注入。该注入只补 web-search 包工具（exa_search/fetchWebpage），
+    // 不会旁路注入 social-reader（read_x_post/read_xhs_profile）。
+    // 历史上 length>0 曾误伤；现已收紧为 some(web-search tool)。
     const agentEnabledPacks = (agentConfig as any)?.enabledPacks;
     const isInlineArtifact = isInlineVisualArtifactAgent(agentConfig);
     const effectiveEnabledPacks = resolveEffectiveEnabledPacks({

@@ -415,6 +415,21 @@ export const fetchUserSpaceMembershipsAction = async (
 
     if (membership.sourceServer || membership.requiresRemoteSpaceVerification) {
       if (localSpaceData && isTombstoneRecord(localSpaceData)) return null;
+      // Memberships returned by the remote RPC (sourceServer set) are already
+      // server-verified (methods.ts getUserSpaceMemberships calls
+      // hasActiveSpaceMembership per record before returning). Re-validating
+      // each client-side via fetchRemoteSpace is redundant N remote round-trips
+      // that dominate cold-load latency. Trust the server result directly;
+      // only locally-flagged requiresRemoteSpaceVerification records (local
+      // index present but remote index mismatch — legacy data) still pay the
+      // remote verification cost.
+      if (membership.sourceServer && !membership.requiresRemoteSpaceVerification) {
+        const { sourceServer: _ss, ...verifiedMembership } = membership;
+        return {
+          ...verifiedMembership,
+          spaceId: normalizedSpaceId,
+        };
+      }
       try {
         const remoteSpaceServers = Array.from(
           new Set(
@@ -497,15 +512,48 @@ export const fetchUserSpaceMembershipsAction = async (
     ].map((membership) => normalizeSpaceId(membership.spaceId))
   );
   // Content recovery is account-only; never for guest/local actor.
-  const recoveredMemberships =
-    hasRemoteAuthority && hasSuccessfulRemoteFetch && !isLocalActor
-      ? await recoverMembershipsFromContentSpaces({
-        servers,
-        token,
-        userId,
-        knownSpaceIds,
-      })
-      : [];
+  // Backgrounded: recover is a consistency backfill (find spaces with content
+  // but missing membership index) and historically blocked first-paint for
+  // multiple seconds while fetching each candidate's space record. It now
+  // fires after the thunk resolves, dispatching appendRecoveredMemberships
+  // to merge results into the already-visible list without blocking boot.
+  if (hasRemoteAuthority && hasSuccessfulRemoteFetch && !isLocalActor) {
+    // Fire-and-forget; errors are swallowed inside recoverMembershipsFromContentSpaces.
+    void recoverMembershipsFromContentSpaces({
+      servers,
+      token,
+      userId,
+      knownSpaceIds,
+    }).then((rawRecovered) => {
+      // Actor guard: if the active account changed while recover was in
+      // flight (logout / account switch dispatches resetSpace), the recovered
+      // memberships belong to the old actor and must NOT pollute the new
+      // account's list. resetSpace clears memberSpaces but cannot cancel an
+      // already-running promise, so we gate the dispatch here.
+      const activeUserId =
+        thunkAPI.getState()?.auth?.currentUser?.userId ?? null;
+      if (activeUserId !== userId) return;
+      if (rawRecovered.length === 0) return;
+      // Strip internal-only fields before dispatch, mirroring the thunk's
+      // mergeMap cleaning (sourceServer / requiresRemoteSpaceVerification /
+      // deviceLocal are transport metadata, not part of the visible state).
+      const cleaned = rawRecovered.map((membership) => {
+        const {
+          sourceServer: _ss,
+          requiresRemoteSpaceVerification: _rv,
+          deviceLocal: _dl,
+          ...visible
+        } = membership;
+        return { ...visible, spaceId: normalizeSpaceId(membership.spaceId) };
+      });
+      thunkAPI.dispatch?.({
+        type: "space/appendRecoveredMemberships",
+        payload: cleaned,
+      });
+    }).catch(() => {
+      // Recover is best-effort; never surface as user-facing error.
+    });
+  }
 
   // Merge into one list. On spaceId collision prefer active-account membership
   // over device-local: process device-local first, then account/recovered last.
@@ -523,7 +571,7 @@ export const fetchUserSpaceMembershipsAction = async (
     return next;
   };
 
-  [...activeMemberships, ...recoveredMemberships].forEach((membership) => {
+  [...activeMemberships].forEach((membership) => {
     const normalizedSpaceId = normalizeSpaceId(membership.spaceId);
     const {
       sourceServer: _sourceServer,

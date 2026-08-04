@@ -151,6 +151,31 @@ const spaceSlice = createSliceWithThunks({
       }
     ),
 
+    /** 后台内容空间恢复完成后，把补漏的 membership 追加到列表。
+     * recoverMembershipsFromContentSpaces 查"本地有内容但缺 membership 索引"的 space，
+     * 是一致性兜底，不阻塞首屏。thunk 先返回 verify 后的列表，recover 完成后 dispatch 此 action。
+     * 注意：thunk 端已做 actor 校验（账户切换后旧 recover 不 dispatch），且已剥离
+     * sourceServer/requiresRemoteSpaceVerification/deviceLocal 等传输字段。 */
+    appendRecoveredMemberships: create.reducer<SpaceMemberWithSpaceInfo[]>(
+      (state, action) => {
+        if (!action.payload || action.payload.length === 0) return;
+        if (state.memberSpaces === null) {
+          state.memberSpaces = dedupeMemberSpacesById(action.payload);
+          return;
+        }
+        // Union existing + recovered through dedupeMemberSpacesById to keep a
+        // single merge semantic (by getMembershipUpdatedAt / newest-wins), same
+        // as the thunk's mergeMap path — avoids a divergent first-wins policy.
+        // Re-sort by joinedAt desc to match the thunk's finalMemberships order.
+        // Use toTimestampMs: joinedAt may be an ISO string (e.g. "2026-05-06T...")
+        // and bare subtraction yields NaN, silently breaking sort order.
+        state.memberSpaces = dedupeMemberSpacesById([
+          ...state.memberSpaces,
+          ...action.payload,
+        ]).sort((a, b) => toTimestampMs(b.joinedAt) - toTimestampMs(a.joinedAt));
+      }
+    ),
+
     /** 进入某个对话后清除其未读提示。
      * 当前阶段只做"网页端切换不停止"的第一层体验：
      * - 侧边栏能看到后台对话 done/failed 后有未读点
@@ -231,6 +256,7 @@ export const {
   setViewMode,
   toggleFavoritesCollapse,
   hydrateMemberSpacesFromLocal,
+  appendRecoveredMemberships,
 } = spaceSlice.actions as any;
 
 const selectSpaceState = (state: any): SpaceState => state.space;

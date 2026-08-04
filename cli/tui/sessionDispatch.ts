@@ -386,6 +386,20 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
     case "/exit":
     case "/quit":
       return { nextState: state, output: t("bye"), action: { type: "exit" } };
+    case "/clear":
+      if (argText || !state.dialogId) {
+        return {
+          nextState: state,
+          output: state.dialogId
+            ? t("clearUsage")
+            : t("clearNoDialog"),
+        };
+      }
+      return {
+        nextState: state,
+        output: t("clearingDialog"),
+        action: { type: "clear", dialogId: state.dialogId },
+      };
     case "/new":
       return {
         nextState: {

@@ -112,6 +112,7 @@ export type TuiAction =
     }
   | {
       type: "clear";
+      dialogId?: string;
     }
   | {
       type: "exit";

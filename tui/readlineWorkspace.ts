@@ -18,7 +18,7 @@ import {
   CLI_IMAGE_AGENT_KEY,
   resolveCliAutoFallbackTier,
 } from "../client/autoModelRouter";
-import { readDbRecord } from "../agentRecordHelpers";
+import { deleteDbRecord, readDbRecord } from "../agentRecordHelpers";
 import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../ai/llm/agentCapabilities";
 import { resolveAgentContextWindow } from "../client/tokenUsage";
 import { estimateDefaultCliContextTokens } from "../client/estimateCliContext";
@@ -129,6 +129,7 @@ import {
   applyOutputChunkToCurrentTurn,
   applyScrollAction,
   appendToCurrentTurn,
+  buildCopyViewLines,
   createHistoryOutputStream,
   createTurnHistory,
   finalizeCurrentTurn,
@@ -137,7 +138,11 @@ import {
   type TurnHistory,
   MAX_TUI_HISTORY_TURNS,
 } from "./tuiHistory";
-import { parseScrollAction, type ScrollAction } from "./tuiScrollbar";
+import {
+  parseScrollAction,
+  type ScrollAction,
+  WHEEL_SCROLL_LINES,
+} from "./tuiScrollbar";
 export {
   type FixedInputController,
   createNoopFixedInput,
@@ -351,6 +356,7 @@ type WorkspaceOptions = {
   spawnRunner?: typeof spawnProcess;
   /** Injected summary LLM caller for /compact compression. Wired by localRuntimeAdapter. */
   summaryLlmCaller?: (content: string) => Promise<string | null>;
+  fetchImpl?: typeof fetch;
 };
 
 
@@ -865,6 +871,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   prefetchAgentCatalog({ env: options.env ?? process.env });
   const input = options.input ?? defaultInput;
   const output = options.output ?? defaultOutput;
+  const fetchImpl = options.fetchImpl ?? fetch;
   const spawnRunner = options.spawnRunner ?? spawnProcess;
   const selfUpdater: SelfUpdater =
     options.selfUpdater ?? ((target) => runSelfUpdate({ output: target }));
@@ -976,6 +983,8 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // cached route, so "switch agent after a 429" actually takes effect.
   let explicitAgentSwitch = false;
   let copyViewExitResolver: (() => void) | null = null;
+  let copyViewRender: (() => void) | null = null;
+  let copyViewScrollTop = 0;
   const history = createTurnHistory();
   // `fixedInput` is reassigned once the interactive composer is installed, so
   // the host delegates through the binding rather than capturing the noop.
@@ -1084,22 +1093,41 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     return text || null;
   };
   const openCopyView = async () => {
-    const text = readLatestAssistantReply();
-    if (!text) return false;
+    const lines = buildCopyViewLines(history);
+    if (lines.length === 0) return false;
     if (!isInteractiveInput(input)) {
-      output.write(`${text}\n`);
+      output.write(`${lines.join("\n")}\n`);
       return true;
     }
 
+    const tty = output as { rows?: number; columns?: number };
+    const renderCopyView = () => {
+      const rows = Math.max(1, tty.rows ?? 24);
+      const columns = Math.max(1, tty.columns ?? 80);
+      const copyLines = buildCopyViewLines(history);
+      const visibleHeight = Math.max(1, rows - 3);
+      const maxScrollTop = Math.max(0, copyLines.length - visibleHeight);
+      copyViewScrollTop = Math.max(0, Math.min(copyViewScrollTop, maxScrollTop));
+      let frame = "\x1b[2J\x1b[H";
+      frame += `${t("copyViewTitle")}\n`;
+      for (let index = 0; index < visibleHeight; index++) {
+        frame += `${fitAnsiLine(copyLines[copyViewScrollTop + index] ?? "", columns)}\n`;
+      }
+      frame += `${t("copyViewHint")}\n`;
+      output.write(frame);
+    };
+
     fixedInput.pause();
+    copyViewScrollTop = 0;
+    copyViewRender = renderCopyView;
     try {
-      output.write("\x1b[2J\x1b[H");
-      output.write(`${t("copyViewTitle")}\n\n${text}\n\n${t("copyViewHint")}\n`);
+      renderCopyView();
       await new Promise<void>((resolve) => {
         copyViewExitResolver = resolve;
       });
     } finally {
       copyViewExitResolver = null;
+      copyViewRender = null;
       output.write("\x1b[2J\x1b[H");
       fixedInput.resumeFromDialog();
       flushPendingRender();
@@ -1389,6 +1417,25 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     if (result.action?.type === "exit") return true;
 
     if (result.action?.type === "clear") {
+      if (result.action.dialogId) {
+        const authToken =
+          options.env?.AUTH_TOKEN ?? options.env?.AUTH ?? options.env?.BENCHMARK_AUTH_TOKEN ?? "";
+        try {
+          await deleteDbRecord({
+            // The messages delete endpoint expects the bare dialogId; dialogKey
+            // is the persisted dialog record key and has a different prefix.
+            dbKey: result.action.dialogId,
+            deleteOptions: { type: "messages" },
+            authToken,
+            fetchImpl,
+            serverUrl: state.serverUrl,
+          });
+          emitCommandOutput(t("clearedDialog"));
+        } catch (error) {
+          emitCommandOutput(`[nolo] Clear failed: ${toErrorMessage(error)}\n`);
+          return false;
+        }
+      }
       clearCollapsedPasteStore(pasteStore);
       history.turns.length = 0;
       history.currentRole = null;
@@ -1798,7 +1845,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       fixedInput.repaint(draft, cursorPos);
     };
     const onResize = () => {
-      if (done || copyViewExitResolver) return;
+      if (done) return;
+      if (copyViewExitResolver) {
+        // copy view owns the screen; re-render its frame against the new
+        // rows/cols so a terminal resize does not leave a garbled frame.
+        copyViewRender?.();
+        return;
+      }
       // Re-measure rows/cols, rebuild scroll region + full-width rules, repaint.
       // Keep the user's current draft visible even during an agent turn so
       // typing is not lost on terminal resize.
@@ -1836,12 +1889,42 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const handleInputToken = async (sequence: string) => {
       if (done) return;
       if (copyViewExitResolver) {
-        if (
-          sequence === "\x1b" ||
-          sequence === "\r" ||
-          sequence === "\n" ||
-          sequence === "\u0003"
-        ) {
+        const tty = output as { rows?: number };
+        const visibleHeight = Math.max(1, (tty.rows ?? 24) - 3);
+        const lines = buildCopyViewLines(history);
+        const maxScrollTop = Math.max(0, lines.length - visibleHeight);
+        const scrollAction = parseScrollAction(sequence);
+        if (scrollAction) {
+          switch (scrollAction) {
+            case "page-up":
+              copyViewScrollTop = Math.max(0, copyViewScrollTop - visibleHeight);
+              break;
+            case "page-down":
+              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + visibleHeight);
+              break;
+            case "half-page-up":
+              copyViewScrollTop = Math.max(0, copyViewScrollTop - Math.max(1, Math.floor(visibleHeight / 2)));
+              break;
+            case "wheel-up":
+              copyViewScrollTop = Math.max(0, copyViewScrollTop - WHEEL_SCROLL_LINES);
+              break;
+            case "half-page-down":
+              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + Math.max(1, Math.floor(visibleHeight / 2)));
+              break;
+            case "wheel-down":
+              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + WHEEL_SCROLL_LINES);
+              break;
+            case "top":
+              copyViewScrollTop = 0;
+              break;
+            case "bottom":
+              copyViewScrollTop = maxScrollTop;
+              break;
+          }
+          copyViewRender?.();
+          return;
+        }
+        if (sequence === "\x1b" || sequence === "\r" || sequence === "\n" || sequence === "\u0003") {
           const exitCopyView = copyViewExitResolver;
           copyViewExitResolver = null;
           exitCopyView();

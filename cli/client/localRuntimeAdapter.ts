@@ -31,7 +31,7 @@ import type {
 } from "../../agent-runtime/localLoop";
 import type { CliKvDb, HybridRecordStore } from "./hybridRecordStore";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
-import { createTokenKey, dialogMessageRange } from "../../database/keys";
+import { createTokenKey, createUserKey, dialogMessageRange } from "../../database/keys";
 import { prepareTokenUsageData } from "../../ai/token/prepareTokenUsageData";
 import { inlineImageUrlsForCustomProvider } from "../../ai/chat/inlineImageUrlsForCustomProvider";
 import {
@@ -261,6 +261,7 @@ import {
   FORCED_TOOLS,
   applyDisabledTools,
   expandEnabledPacks,
+  applySystemBuiltinSkillFilter,
   appendEnabledPackPromptPatches,
   addDefaultLightWebToolsForConfiguredAgents,
 } from "../../ai/tools/toolPacks";
@@ -344,8 +345,16 @@ function buildPreparedAgentCacheKey(args: {
   userId: string;
   agentRef: string;
   cwd: string;
+  systemBuiltinSkills?: Record<string, boolean> | null;
 }) {
-  return `${args.userId}\0${args.agentRef}\0${args.cwd}`;
+  const systemBuiltinSkillsKey = args.systemBuiltinSkills
+    ? JSON.stringify(
+        Object.keys(args.systemBuiltinSkills)
+          .sort()
+          .map((key) => [key, args.systemBuiltinSkills?.[key]]),
+      )
+    : "default";
+  return `${args.userId}\0${args.agentRef}\0${args.cwd}\0${systemBuiltinSkillsKey}`;
 }
 
 export function clearCliLocalRuntimePreparedAgentCache() {
@@ -599,10 +608,10 @@ function withRuntimeEnabledPacksAndPrompt(
 export function resolveCliRequestedToolNames(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
+  systemBuiltinSkills?: Record<string, boolean> | null,
 ): string[] {
   const declaredOnly = shouldUseDeclaredOnlyLocalWorkspaceTools(env);
-  return applyDisabledTools(
-    addDefaultLightWebToolsForConfiguredAgents(
+  const expanded = addDefaultLightWebToolsForConfiguredAgents(
       addDefaultCliCoreTools(
         canonicalizeToolNames(
           expandEnabledPacks(
@@ -620,7 +629,11 @@ export function resolveCliRequestedToolNames(
         env,
       ),
       agentConfig,
-    ),
+    );
+  // 系统内置 Skill 全局开关：过滤掉被用户关闭的内置 skill 包工具。
+  const filtered = applySystemBuiltinSkillFilter(expanded, systemBuiltinSkills);
+  return applyDisabledTools(
+    filtered,
     (agentConfig as any)?.disabledTools,
   );
 }
@@ -1301,10 +1314,29 @@ export function createCliLocalRuntimeAdapter(
       "local-tools",
     ],
     loadAgentConfig: async (agentRef) => {
+      // Read the global skill settings before checking the prepared-runtime cache.
+      // Otherwise a setting change would keep reusing the old tool surface.
+      let systemBuiltinSkills: Record<string, boolean> | null = null;
+      const sharedStore = await getOrCreateSharedStore(deps);
+      if (userId) {
+        try {
+          const settingsRecord = await sharedStore.read(
+            createUserKey.settings(userId),
+            { remote: false },
+          );
+          systemBuiltinSkills =
+            settingsRecord && typeof settingsRecord === "object"
+              ? (settingsRecord as any).systemBuiltinSkills ?? null
+              : null;
+        } catch {
+          // Local settings are best-effort; a read failure keeps skills enabled.
+        }
+      }
       const cacheKey = buildPreparedAgentCacheKey({
         userId,
         agentRef,
         cwd: normalizeRuntimeCacheCwd(workspaceRoot),
+        systemBuiltinSkills,
       });
       // Paste executors close over the current TUI store. A prepared runtime
       // cache hit would otherwise reuse an executor bound to an older paste
@@ -1337,8 +1369,11 @@ export function createCliLocalRuntimeAdapter(
       const agentConfig = baseAgentConfig
         ? withRuntimeEnabledPacksAndPrompt(baseAgentConfig)
         : baseAgentConfig;
+      // 读取用户全局设置中的「系统内置 Skill」开关映射，传给工具展开管道，
+      // 让 CLI 端与 Web/桌面端行为一致：用户关闭「联网搜索」后，CLI agent
+      // 也不再注入 web-search 包工具。best-effort，读失败视为默认全开。
       const requestedToolNames = agentConfig
-        ? resolveCliRequestedToolNames(agentConfig, deps.env)
+        ? resolveCliRequestedToolNames(agentConfig, deps.env, systemBuiltinSkills)
         : [];
       activeAgentToolNames = buildLocalPolicyToolNames({
         agentKey: agentConfig?.key,

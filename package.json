@@ -564,6 +564,7 @@
     "ai/llm/modelAbility.ts",
     "ai/llm/imagePricing.ts",
     "ai/agent/liveAudioModel.ts",
+    "ai/tools/agentCapabilities.ts",
     "ai/tools/index.ts",
     "ai/tools/toolSchemaCompatibility.ts",
     "ai/tools/createWorkflowTool.ts",

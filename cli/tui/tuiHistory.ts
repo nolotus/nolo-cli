@@ -160,6 +160,24 @@ function renderTurnBlock(
   return lines;
 }
 
+export function buildCopyViewLines(history: TurnHistory): string[] {
+  const turns = [...history.turns];
+  if (history.currentRole !== null) {
+    turns.push({ role: history.currentRole, content: history.currentContent });
+  }
+  const lines: string[] = [];
+  for (const [index, turn] of turns.entries()) {
+    if (index > 0) lines.push("");
+    // Normalize line endings: CRLF (\r\n) and lone CR (\r, legacy Mac) both
+    // collapse to LF so split("\n") yields clean logical lines. Without this,
+    // a stray \r in copied content would either vanish or render as a row
+    // rewind, corrupting both the copy-view display and the copied text.
+    const normalized = stripAnsi(turn.content).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    lines.push(...normalized.split("\n"));
+  }
+  return lines;
+}
+
 export function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
   const colorEnabled = resolveCliColorEnabled();
   // Visual rhythm: every turn is separated by a blank line, user turns carry an

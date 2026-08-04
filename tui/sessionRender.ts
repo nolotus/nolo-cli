@@ -371,6 +371,7 @@ export function renderContextPanel(
     next("/doc attach <doc>  ", `  ${t("contextNextDoc")}`),
     next("/skill attach <ref>", `  ${t("contextNextSkill")}`),
     next("/new               ", `  ${t("contextNextNew")}`),
+    next("/clear             ", `  ${t("contextNextClear")}`),
   ].join("\n");
 }
 

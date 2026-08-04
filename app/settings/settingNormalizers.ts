@@ -150,3 +150,27 @@ export const omitKeys = <T extends Record<string, unknown>>(
   });
   return next;
 };
+
+const isRecordLike = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Normalize a `systemBuiltinSkills` settings value into a boolean map.
+ *
+ * Accepts a partial record; missing keys are filled from `defaults` (so a
+ * newly added built-in skill is on by default even for users who already
+ * have a persisted partial map). Non-boolean values are coerced to boolean
+ * via `Boolean()` so malformed stored records don't crash hydration. Returns
+ * a fresh object.
+ */
+export const normalizeSystemBuiltinSkills = (
+  value: unknown,
+  defaults: Record<string, boolean>,
+): Record<string, boolean> => {
+  const base = isRecordLike(value) ? value : {};
+  const result: Record<string, boolean> = { ...defaults };
+  for (const key of Object.keys(base)) {
+    result[key] = Boolean(base[key]);
+  }
+  return result;
+};

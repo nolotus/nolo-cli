@@ -470,6 +470,39 @@ describe("toolOutput", () => {
     });
   });
 
+  test("createSseToolEventAdapter preserves provider tool ids for unusual parallel calls", () => {
+    const events: LocalAgentToolEvent[] = [];
+    const adapter = createSseToolEventAdapter((evt) => events.push(evt));
+
+    adapter.onToolStart({
+      calls: [
+        { toolCallId: "fc_weather_beijing", toolName: "get_weather" },
+        { toolCallId: "fc_weather_shanghai", toolName: "get_weather" },
+      ],
+    });
+
+    expect(events.map((event) => event.toolCallId)).toEqual([
+      "fc_weather_beijing",
+      "fc_weather_shanghai",
+    ]);
+
+    const secondResult = adapter.onToolResult({
+      toolCallId: "fc_weather_shanghai",
+      toolName: "get_weather",
+      content: "Shanghai: 31C",
+    });
+    const firstResult = adapter.onToolResult({
+      toolCallId: "fc_weather_beijing",
+      toolName: "get_weather",
+      content: "Beijing: 29C",
+    });
+
+    expect(secondResult.toolCallId).toBe("fc_weather_shanghai");
+    expect(firstResult.toolCallId).toBe("fc_weather_beijing");
+    expect(secondResult.toolName).toBe("get_weather");
+    expect(firstResult.toolName).toBe("get_weather");
+  });
+
   test("formatEditDetailBlock plain text output (colorEnabled=false) contains no escape codes", () => {
     const line = formatToolEventForCli(
       toolEvent({

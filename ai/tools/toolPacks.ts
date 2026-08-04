@@ -1,3 +1,8 @@
+import {
+  SYSTEM_AGENT_CAPABILITIES,
+  SYSTEM_AGENT_CAPABILITY_IDS,
+} from "./agentCapabilities";
+
 /**
  * 能力分级定义 (Capability Tiers)
  */
@@ -48,15 +53,11 @@ export type CapabilityPack = {
   promptPatch?: string;
 };
 
+const SYSTEM_AGENT_CAPABILITY_PACKS: CapabilityPack[] =
+  SYSTEM_AGENT_CAPABILITIES.map((capability) => ({ ...capability }));
+
 export const CAPABILITY_PACKS: CapabilityPack[] = [
-  {
-    id: "web-search",
-    label: "联网搜索",
-    description: "让 agent 能搜索互联网、抓取网页内容，获取最新信息。",
-    tools: ["exa_search", "fetchWebpage"],
-    defaultEnabled: true,
-    icon: "🌐",
-  },
+  ...SYSTEM_AGENT_CAPABILITY_PACKS,
   {
     id: "long-term-memory",
     label: "长期记忆",
@@ -215,6 +216,47 @@ export const PACK_MANAGED_TOOLS = new Set<string>(
 export const DEFAULT_ENABLED_PACKS = CAPABILITY_PACKS.filter(
   (pack) => pack.defaultEnabled,
 ).map((pack) => pack.id);
+
+/**
+ * Pack ids that are "system built-in skills" — capabilities Nolo ships with
+ * that every agent gets by default, but which the user can globally disable
+ * from the settings page (vs per-agent `enabledPacks` which are per-agent
+ * toggles). The global on/off state lives in `SettingState.systemBuiltinSkills`.
+ *
+ * Only packs listed here are subject to the global filter. Add a new global
+ * capability to `agentCapabilities.ts`; this list is derived automatically.
+ */
+export const SYSTEM_BUILTIN_SKILL_PACK_IDS = SYSTEM_AGENT_CAPABILITY_IDS;
+
+/**
+ * Filter tool names according to the global `systemBuiltinSkills` setting.
+ *
+ * For each system built-in skill pack that is explicitly disabled in the map,
+ * its tools are removed from the list. Missing keys are treated as enabled
+ * (matching `normalizeSystemBuiltinSkills` which fills missing keys from
+ * defaults). This is the single shared filter point called by all three
+ * runtimes (Web / CLI / Desktop) after `expandEnabledPacks`, so behavior is
+ * uniform across hosts.
+ *
+ * Pure function; safe to call with null/undefined map (no-op).
+ */
+export function applySystemBuiltinSkillFilter(
+  toolNames: string[],
+  systemBuiltinSkills: Record<string, boolean> | null | undefined,
+): string[] {
+  if (!systemBuiltinSkills) return toolNames;
+  const disabledToolSet = new Set<string>();
+  for (const packId of SYSTEM_BUILTIN_SKILL_PACK_IDS) {
+    const enabled = systemBuiltinSkills[packId];
+    // Explicit false => disabled; undefined/null/true => enabled.
+    if (enabled === false) {
+      const pack = CAPABILITY_PACK_BY_ID[packId];
+      if (pack) pack.tools.forEach((t) => disabledToolSet.add(t));
+    }
+  }
+  if (disabledToolSet.size === 0) return toolNames;
+  return toolNames.filter((t) => !disabledToolSet.has(t));
+}
 
 /**
  * Expand enabledPacks into tool names. Merged with any explicit tools the

@@ -56,7 +56,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -868,11 +868,21 @@ export const mergeAgentToolsWithRuntime = (
         }
     }
 
+    // 系统内置 Skill 全局开关：用户在设置页关闭「联网搜索」等内置 skill 后，
+    // 从工具面过滤掉对应 pack 的工具。三端统一走 applySystemBuiltinSkillFilter。
+    // Web 端直接从 Redux state 读 systemBuiltinSkills（已 hydrate 归一化）；
+    // 缺失 key 视为开启（默认全开）。
+    const systemBuiltinSkills = (state as any)?.settings?.systemBuiltinSkills;
+    const filteredTools = applySystemBuiltinSkillFilter(
+        Array.from(enhancedTools),
+        systemBuiltinSkills,
+    );
+
     return {
         ...agentConfig,
         tools: applyDisabledTools(
             prioritizeToolNames(
-                Array.from(enhancedTools),
+                filteredTools,
                 recommendedSkillTools,
             ),
             (agentConfig as any)?.disabledTools,

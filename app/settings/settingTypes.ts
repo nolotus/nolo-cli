@@ -95,6 +95,14 @@ export interface SettingState {
   diagnosticModeEnabled: boolean;
   deleteShortcut: string;
 
+  /**
+   * 系统内置 Skill 全局开关映射。key 是内置 skill 的 pack id（与
+   * `CAPABILITY_PACKS` 中的 id 对齐），value 为是否启用。默认
+   * `{ "web-search": true }`——即「联网搜索」默认开启，用户可在设置页关闭。
+   * 关闭后三端运行时（Web/CLI/桌面）统一从工具面过滤掉该 skill 包的工具。
+   */
+  systemBuiltinSkills: Record<string, boolean>;
+
   // 用户-服务 authority 映射(仅在 hydrateStoredSettings 时填入;不入设置 record)
   userAuthorityRegistry?: Record<string, string>;
 

@@ -121,6 +121,7 @@ export {
   selectEditorFontSize,
   selectEditorAutoSave,
   selectEditorAutoSaveInterval,
+  selectSystemBuiltinSkills,
 } from "./fieldSelectors";
 
 // 复合 selectors

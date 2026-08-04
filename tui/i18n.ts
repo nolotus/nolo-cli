@@ -83,6 +83,26 @@ const STRINGS = {
     en: "Started a fresh dialog.",
     zh: "已开始新对话。",
   },
+  clearingDialog: {
+    en: "Clearing current dialog messages...",
+    zh: "正在清除当前对话消息…",
+  },
+  clearedDialog: {
+    en: "Cleared current dialog messages.",
+    zh: "已清除当前对话消息。",
+  },
+  clearNoDialog: {
+    en: "No current dialog messages to clear.",
+    zh: "当前没有可清除的对话消息。",
+  },
+  clearUsage: {
+    en: "Usage: /clear",
+    zh: "用法：/clear",
+  },
+  contextNextClear: {
+    en: "clear current dialog messages",
+    zh: "清除当前对话消息",
+  },
   bye: {
     en: "Bye.",
     zh: "再见。",
@@ -188,12 +208,12 @@ const STRINGS = {
     zh: "用法：/copy 或 /copy view",
   },
   copyViewTitle: {
-    en: "Copy view — latest AI reply",
-    zh: "复制视图 — 最新 AI 回复",
+    en: "Copy view — conversation history",
+    zh: "复制视图 — 对话历史",
   },
   copyViewHint: {
-    en: "Drag to select; edge scrolling uses native terminal scrollback. Press Esc or Enter to return.",
-    zh: "直接拖选，拖到边缘可用终端原生回滚跨屏选择。按 Esc 或 Enter 返回。",
+    en: "Drag to select. Use PageUp/PageDown, Home/End, or the mouse wheel to scroll. Press Esc or Enter to return.",
+    zh: "直接拖选。可用 PageUp/PageDown、Home/End 或鼠标滚轮滚动。按 Esc 或 Enter 返回。",
   },
   historyNoToken: {
     en: "History requires an auth token. Run `nolo login` or set AUTH_TOKEN.",

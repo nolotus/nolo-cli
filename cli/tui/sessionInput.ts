@@ -330,6 +330,7 @@ function isForwardDeleteSequence(seq: string, key: TuiKeyInfo): boolean {
 export const SLASH_COMMANDS = [
   "/help",
   "/new",
+  "/clear",
   "/compact",
   "/theme",
   "/density",

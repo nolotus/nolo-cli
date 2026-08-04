@@ -27,9 +27,11 @@ import {
   normalizeDefaultAgentIdSetting,
   normalizePolicyLevelSetting,
   normalizeTonePresetSetting,
+  normalizeSystemBuiltinSkills,
   omitKeys,
 } from "./settingNormalizers";
 import { SYSTEM_DEFAULT_AGENT_ID, type SettingState } from "./settingTypes";
+import { DEFAULT_SYSTEM_BUILTIN_SKILLS } from "./settingInitialState";
 
 /**
  * Run every field-level normalizer that may apply to a `setSettings` payload.
@@ -104,6 +106,16 @@ export const normalizeSettingChanges = (
       ...normalizedChanges,
       autoApproveSelfUpdateFields: normalizeAgentUpdateFieldList(
         normalizedChanges.autoApproveSelfUpdateFields,
+      ),
+    };
+  }
+
+  if (hasOwn(normalizedChanges, "systemBuiltinSkills")) {
+    normalizedChanges = {
+      ...normalizedChanges,
+      systemBuiltinSkills: normalizeSystemBuiltinSkills(
+        normalizedChanges.systemBuiltinSkills,
+        DEFAULT_SYSTEM_BUILTIN_SKILLS,
       ),
     };
   }

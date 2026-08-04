@@ -1255,14 +1255,24 @@ export function createSseToolEventAdapter(
   };
 
   return {
-    onToolStart(payload: { calls?: string[] } | string[]): LocalAgentToolEvent[] {
+    onToolStart(
+      payload:
+        | { calls?: Array<string | { toolCallId: string; toolName: string }> }
+        | Array<string | { toolCallId: string; toolName: string }>,
+    ): LocalAgentToolEvent[] {
       const calls = Array.isArray(payload) ? payload : payload?.calls ?? [];
       pendingCalls = [];
       const events: LocalAgentToolEvent[] = [];
-      for (const name of calls) {
+      for (const call of calls) {
         callIndex++;
-        const toolCallId = `sse-call-${callIndex}`;
-        const toolName = name || "tool";
+        const toolCallId =
+          typeof call === "string" && call.trim()
+            ? `sse-call-${callIndex}`
+            : typeof call === "object" && call.toolCallId
+              ? call.toolCallId
+              : `sse-call-${callIndex}`;
+        const toolName =
+          typeof call === "string" ? call || "tool" : call?.toolName || "tool";
         pendingCalls.push({ toolCallId, toolName });
         const event: LocalAgentToolEvent = {
           type: "tool-call",

@@ -1,5 +1,6 @@
 import { describe, expect, test, afterEach, beforeEach } from "bun:test";
 import {
+  buildCopyViewLines,
   buildHistoryLines,
   createTurnHistory,
   finalizeCurrentTurn,
@@ -438,5 +439,90 @@ describe("buildHistoryLines — per-turn memoization", () => {
       );
       expect(cozyMulti.filter((l) => l === "").length).toBe(0);
     });
+  });
+});
+
+describe("buildCopyViewLines — copy view line construction", () => {
+  const makeHistory = (turns: Turn[]) => ({ ...createTurnHistory(), turns });
+
+  test("strips ANSI escape sequences from content", () => {
+    const turns: Turn[] = [
+      { role: "assistant", content: "\x1b[1mbold\x1b[0m and \x1b[38;2;88;166;255mcolored\x1b[0m" },
+    ];
+    const lines = buildCopyViewLines(makeHistory(turns));
+    expect(lines.join("")).not.toContain("\x1b[");
+    expect(lines[0]).toBe("bold and colored");
+  });
+
+  test("normalizes CRLF (\\r\\n) to a single LF — no stray \\r, no extra blank rows", () => {
+    const turns: Turn[] = [
+      { role: "assistant", content: "line1\r\nline2\r\nline3" },
+    ];
+    const lines = buildCopyViewLines(makeHistory(turns));
+    // CRLF must collapse cleanly: 3 logical lines, no \r residue.
+    expect(lines).toEqual(["line1", "line2", "line3"]);
+    expect(lines.every((l) => !l.includes("\r"))).toBe(true);
+  });
+
+  test("normalizes lone CR (legacy Mac) to LF", () => {
+    const turns: Turn[] = [
+      { role: "assistant", content: "aaa\rbbb\rccc" },
+    ];
+    const lines = buildCopyViewLines(makeHistory(turns));
+    expect(lines).toEqual(["aaa", "bbb", "ccc"]);
+    expect(lines.every((l) => !l.includes("\r"))).toBe(true);
+  });
+
+  test("mixes CRLF and lone CR without producing \r in output", () => {
+    const turns: Turn[] = [
+      { role: "assistant", content: "a\r\nb\rc\r\nd" },
+    ];
+    const lines = buildCopyViewLines(makeHistory(turns));
+    expect(lines).toEqual(["a", "b", "c", "d"]);
+    expect(lines.join("")).not.toContain("\r");
+  });
+
+  test("inserts exactly one blank separator between turns", () => {
+    const turns: Turn[] = [
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1\na2" },
+      { role: "user", content: "u2" },
+    ];
+    const lines = buildCopyViewLines(makeHistory(turns));
+    // u1 | "" | a1 | a2 | "" | u2
+    expect(lines).toEqual(["u1", "", "a1", "a2", "", "u2"]);
+  });
+
+  test("scroll boundary: content shorter than a small viewport yields maxScrollTop 0", () => {
+    // Reproduce the renderCopyView maxScrollTop formula against the built
+    // lines to lock the scroll-clamp boundary for short content.
+    const turns: Turn[] = [{ role: "assistant", content: "only\none\ntwo" }];
+    const lines = buildCopyViewLines(makeHistory(turns));
+    const visibleHeight = 10;
+    const maxScrollTop = Math.max(0, lines.length - visibleHeight);
+    expect(lines.length).toBeLessThanOrEqual(visibleHeight);
+    expect(maxScrollTop).toBe(0);
+  });
+
+  test("scroll boundary: content taller than viewport yields a positive maxScrollTop", () => {
+    const turns: Turn[] = [
+      { role: "assistant", content: Array.from({ length: 30 }, (_, i) => `l${i}`).join("\n") },
+    ];
+    const lines = buildCopyViewLines(makeHistory(turns));
+    const visibleHeight = 5;
+    const maxScrollTop = Math.max(0, lines.length - visibleHeight);
+    expect(lines.length).toBe(30);
+    expect(maxScrollTop).toBe(25);
+    // Clamp invariants the render loop relies on:
+    const clampedTop = Math.max(0, Math.min(maxScrollTop + 100, maxScrollTop));
+    expect(clampedTop).toBe(maxScrollTop);
+  });
+
+  test("includes the in-progress current turn content", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, "streaming\r\npartial");
+    const lines = buildCopyViewLines(history);
+    expect(lines).toEqual(["streaming", "partial"]);
   });
 });

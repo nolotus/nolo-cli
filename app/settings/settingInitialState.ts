@@ -5,6 +5,7 @@
 // 在 paint 前用过期默认值覆盖正确主题。
 
 import { DEFAULT_USER_PREFERENCE_PROFILE } from "../../ai/policy/types";
+import { DEFAULT_SYSTEM_AGENT_CAPABILITIES } from "../../ai/tools/agentCapabilities";
 import { DEFAULT_AUTO_APPROVED_SELF_UPDATE_FIELDS } from "../../ai/policy/selfUpdateFields";
 import { SERVERS } from "../../database/config";
 import { isProduction } from "../utils/env";
@@ -90,4 +91,14 @@ export const initialState: SettingState = {
     /Mac|iPod|iPhone|iPad/.test(window.navigator.platform)
       ? "meta+backspace"
       : "ctrl+backspace",
+  // 系统内置 Skill 默认全开；用户可在设置页单关。目前只有 web-search。
+  systemBuiltinSkills: { ...DEFAULT_SYSTEM_AGENT_CAPABILITIES },
 };
+
+/**
+ * Default enabled state for each system built-in skill. Used as the fallback
+ * when hydrating a partial/persisted `systemBuiltinSkills` map, so newly
+ * added built-in skills are on by default for existing users. Must stay in
+ * sync with `initialState.systemBuiltinSkills`.
+ */
+export const DEFAULT_SYSTEM_BUILTIN_SKILLS = DEFAULT_SYSTEM_AGENT_CAPABILITIES;

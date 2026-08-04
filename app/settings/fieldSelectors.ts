@@ -24,7 +24,9 @@ import {
   normalizeTonePresetSetting,
   resolveDefaultAgentIdSetting,
   selectResolvedDefaultAgentId,
+  normalizeSystemBuiltinSkills,
 } from "./settingNormalizers";
+import { DEFAULT_SYSTEM_BUILTIN_SKILLS } from "./settingInitialState";
 import type { SettingState } from "./settingTypes";
 
 // --- 通用 / 主题字段 ---
@@ -189,3 +191,18 @@ export const selectEditorAutoSave = (state: RootState): boolean =>
 
 export const selectEditorAutoSaveInterval = (state: RootState): number =>
   state.settings.editorAutoSaveInterval;
+
+// --- 系统内置 Skill ---
+
+/**
+ * Select the resolved `systemBuiltinSkills` map (missing keys filled from
+ * defaults). Memoized so unrelated Redux updates keep a stable reference.
+ */
+export const selectSystemBuiltinSkills = createSelector(
+  [(state: RootState) => state.settings.systemBuiltinSkills],
+  (systemBuiltinSkills): Record<string, boolean> =>
+    normalizeSystemBuiltinSkills(
+      systemBuiltinSkills,
+      DEFAULT_SYSTEM_BUILTIN_SKILLS,
+    ),
+);

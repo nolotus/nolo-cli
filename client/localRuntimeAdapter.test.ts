@@ -160,17 +160,23 @@ describe("CLI local runtime adapter", () => {
       db: {
         get: async (key) => {
           storeReads += 1;
-          if (key !== "agent-user-1-test") throw new Error(`not found: ${key}`);
-          return {
-            dbKey: "agent-user-1-test",
-            id: "test",
-            name: "Cached Agent",
-            prompt: "cached",
-            provider: "custom",
-            model: "MiniMax-M3",
-            customProviderUrl: "https://api.minimaxi.com/v1",
-            tools: ["readFile"],
-          };
+          if (key === "agent-user-1-test") {
+            return {
+              dbKey: "agent-user-1-test",
+              id: "test",
+              name: "Cached Agent",
+              prompt: "cached",
+              provider: "custom",
+              model: "MiniMax-M3",
+              customProviderUrl: "https://api.minimaxi.com/v1",
+              tools: ["readFile"],
+            };
+          }
+          // systemBuiltinSkills 设置 record 读取：返回空 record（默认全开），
+          // 让 loadAgentConfig 的 best-effort settings 读取不 throw。首次调用
+          // 会多读一次 settings key，第二次走缓存命中分支不再读。
+          if (key === "user-1-settings") return {};
+          throw new Error(`not found: ${key}`);
         },
         put: async () => {},
         batch: async () => {},
@@ -182,7 +188,9 @@ describe("CLI local runtime adapter", () => {
     await adapter.loadAgentConfig("agent-user-1-test");
     await adapter.loadAgentConfig("agent-user-1-test");
 
-    expect(storeReads).toBe(1);
+    // 每次调用都读取 settings 以检测全局 Skill 开关变化；agent config
+    // 本身仍只读取一次，第二次复用 prepared runtime。
+    expect(storeReads).toBe(3);
   });
 
   test("loads stored local CLI agent records before falling back to built-ins", async () => {
@@ -4808,5 +4816,64 @@ describe("CLI local policy tool names 派生自 schema", () => {
       toolName: "startAgentRun",
     });
     expect(decision.allowed).toBe(true);
+  });
+});
+
+describe("resolveCliRequestedToolNames — systemBuiltinSkills 全局开关", () => {
+  test("不传 systemBuiltinSkills（默认开启）保留 web-search 工具", () => {
+    const agentConfig = {
+      key: "agent-web",
+      tools: [],
+      enabledPacks: ["web-search"],
+    } as any;
+    const requested = resolveCliRequestedToolNames(agentConfig, {} as any);
+    expect(requested).toContain("exa_search");
+    expect(requested).toContain("fetchWebpage");
+  });
+
+  test("传 { 'web-search': false } 后过滤掉 exa_search 与 fetchWebpage，保留其他工具", () => {
+    const agentConfig = {
+      key: "agent-web-off",
+      tools: [],
+      enabledPacks: ["web-search", "long-term-memory"],
+    } as any;
+    const requested = resolveCliRequestedToolNames(
+      agentConfig,
+      {} as any,
+      { "web-search": false },
+    );
+    expect(requested).not.toContain("exa_search");
+    expect(requested).not.toContain("fetchWebpage");
+    // long-term-memory 不受影响。
+    expect(requested).toContain("rememberMemory");
+  });
+
+  test("传 { 'web-search': true } 时保留 web-search 工具", () => {
+    const agentConfig = {
+      key: "agent-web-on",
+      tools: [],
+      enabledPacks: ["web-search"],
+    } as any;
+    const requested = resolveCliRequestedToolNames(
+      agentConfig,
+      {} as any,
+      { "web-search": true },
+    );
+    expect(requested).toContain("exa_search");
+    expect(requested).toContain("fetchWebpage");
+  });
+
+  test("传 null 等价于默认开启（不过滤）", () => {
+    const agentConfig = {
+      key: "agent-web-null",
+      tools: [],
+      enabledPacks: ["web-search"],
+    } as any;
+    const requested = resolveCliRequestedToolNames(
+      agentConfig,
+      {} as any,
+      null,
+    );
+    expect(requested).toContain("exa_search");
   });
 });

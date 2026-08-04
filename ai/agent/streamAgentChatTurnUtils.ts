@@ -56,7 +56,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, resolveEffectiveEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -777,38 +777,31 @@ export const mergeAgentToolsWithRuntime = (
         ? ((agentConfig as any).tools as string[])
         : [];
     // Expand capability packs into tool names, merged with explicit tools.
-    // 非 inline-artifact agent 且 enabledPacks 为空时，fallback 补 long-term-memory
-    // + agent-orchestration + skills 包——保证历史 agent（enabledPacks: []）仍默认获得
-    // 长期记忆、多 agent 编排（startAgentRun/controlAgentRun/listAgents）与技能加载
-    // （loadSkill/readSkillDoc）能力，与「默认全挂、可单关」定位一致。inline-artifact
-    // agent 不 fallback，保持「纯产物生成、无交互工具」语义。
-    // 注意：不 fallback web-search 和其他 DEFAULT_ENABLED_PACKS——避免改变空配置
-    // agent 的 web 能力边界。历史上 enabledPacks:[] 的 agent 不通过 expandEnabledPacks
-    // 获得 web-search（空数组返回空），web 能力靠 applyDefaultWebToolPacks 的
-    // LIGHT_WEB 自动注入。该注入条件已从 length>0 收紧为 some(isWebCapableTool)——
-    // 只配 read/createDoc 的 agent 不再被误注入 web 工具，这是有意的修正。
+    // Web 端能力包解析：共享 resolveEffectiveEnabledPacks，本端只声明差异。
+    //
+    // ALWAYS_ON_PACK_IDS（long-term-memory / agent-orchestration / skills）由共享层
+    // 幂等补齐，无论 enabledPacks 是否配置过——「默认全挂、可单关」，要单关走
+    // disabledTools。这三个包此前在三端各自硬编码，于是各飘各的：CLI 漏了
+    // long-term-memory（TUI agent 就是不记事，「记住 X」只能退回 shell 跑 CLI），
+    // web 的非空分支漏了 skills（勾过任意包的 agent 拿不到 loadSkill）。共享常量后
+    // 新增 host-wide 默认包只需改 toolPacks 一处。
+    //
+    // inline-artifact agent 走 declaredOnly：一个包都不补，保持「纯产物生成、
+    // 无交互工具」语义。注意这个守卫必须覆盖空/非空两种输入——历史上只挂在
+    // 「空 enabledPacks」那侧，导致勾过任意包的 inline-artifact agent 照样被塞进
+    // 强制包；共享层按 declaredOnly 统一短路，结构上不再可能漏一侧。
+    //
+    // 不补 web-search 和其他 DEFAULT_ENABLED_PACKS——避免改变空配置 agent 的 web
+    // 能力边界。历史上 enabledPacks:[] 的 agent 不通过 expandEnabledPacks 获得
+    // web-search（空数组返回空），web 能力靠 applyDefaultWebToolPacks 的 LIGHT_WEB
+    // 自动注入。该注入条件已从 length>0 收紧为 some(isWebCapableTool)——只配
+    // read/createDoc 的 agent 不再被误注入 web 工具，这是有意的修正。
     const agentEnabledPacks = (agentConfig as any)?.enabledPacks;
     const isInlineArtifact = isInlineVisualArtifactAgent(agentConfig);
-    // long-term-memory 与 agent-orchestration 同级强制追加：这两个包的定位都是
-    // 「默认全挂、可单关」，但此前只有 agent-orchestration 被补。结果是任何
-    // 勾选过至少一个能力包的 agent（哪怕只勾了「联网搜索」）都会静默丢掉
-    // rememberMemory——用户看到的现象是「这个 agent 就是不记事」，而设置页里
-    // 长期记忆开关明明是默认开的。要单关仍然走 disabledTools。
-    // inline-artifact agent 一个都不补：它的定位是纯产物生成，交互工具会破坏语义。
-    // 这个守卫必须覆盖两个分支——只挂在「空 enabledPacks」那侧的话，勾过任意包的
-    // inline-artifact agent 照样会被塞进强制包（agent-orchestration 此前就是这样漏的）。
-    const alwaysOnPacks = isInlineArtifact
-      ? []
-      : ["long-term-memory", "agent-orchestration"];
-    const effectiveEnabledPacks =
-      Array.isArray(agentEnabledPacks) && agentEnabledPacks.length > 0
-        ? [
-            ...agentEnabledPacks,
-            ...alwaysOnPacks.filter((pack) => !agentEnabledPacks.includes(pack)),
-          ]
-        : isInlineArtifact
-          ? (agentEnabledPacks ?? [])
-          : ["long-term-memory", "agent-orchestration", "skills"];
+    const effectiveEnabledPacks = resolveEffectiveEnabledPacks({
+      enabledPacks: Array.isArray(agentEnabledPacks) ? agentEnabledPacks : [],
+      declaredOnly: isInlineArtifact,
+    });
     const expandedPackTools = expandEnabledPacks(
         effectiveEnabledPacks,
         rawBaseTools,

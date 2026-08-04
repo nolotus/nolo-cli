@@ -43,8 +43,10 @@ export type AuthProviderCommandDeps = OAuthFlowDeps & {
   resolveServerSyncConfig?: () => ServerSyncConfig | null;
 };
 
-const SYNC_HELP_LINE = `  --sync-to-server  After local save, push the credential to your nolo server.
-  --sync-only       Push ~/.nolo/credentials/<provider>.json to the server without re-login.`;
+const SYNC_HELP_LINE = `  --sync-to-server     After local save, push the credential to your nolo server
+                       (default when NOLO_SERVER + AUTH_TOKEN / profile are set).
+  --no-sync-to-server  Skip server sync even when server config is available.
+  --sync-only          Push ~/.nolo/credentials/<provider>.json to the server without re-login.`;
 
 const CHATGPT_HELP_TEXT = `Authorize nolo-cli to call the OpenAI Codex / ChatGPT Plus API on your behalf.
 
@@ -279,7 +281,7 @@ async function syncCredentialToServer(
   const syncConfig = (deps.resolveServerSyncConfig ?? resolveServerSyncConfig)();
   if (!syncConfig) {
     output.log(
-      `[nolo] Warning: --sync-to-server requires NOLO_SERVER and AUTH_TOKEN env vars, or a configured profile. Skipping server sync.`
+      `[nolo] Warning: server sync requires NOLO_SERVER and AUTH_TOKEN env vars, or a configured profile. Skipping server sync.`
     );
     return;
   }
@@ -347,7 +349,18 @@ export async function runAuthProviderCommand(
   const useBrowser = args.includes("--browser");
   const noBrowser = args.includes("--no-browser") || deps.noBrowserByDefault;
   const syncOnly = args.includes("--sync-only");
-  const syncToServer = args.includes("--sync-to-server") || syncOnly;
+  const syncConfigAvailable = !!(
+    deps.resolveServerSyncConfig ?? resolveServerSyncConfig
+  )();
+  const autoSyncDisabled =
+    args.includes("--no-sync-to-server") ||
+    process.env.NOLO_OAUTH_AUTO_SYNC === "0";
+  // Default: sync when server config is present. Opt out with --no-sync-to-server
+  // or NOLO_OAUTH_AUTO_SYNC=0. --sync-to-server / --sync-only still force sync.
+  const syncToServer =
+    syncOnly ||
+    args.includes("--sync-to-server") ||
+    (syncConfigAvailable && !autoSyncDisabled);
   const generateToken = args.includes("--generate-token");
   const writeToEnvRaw = parseFlagWithOptionalValue(args, "--write-to-env");
   const writeToEnvPath =

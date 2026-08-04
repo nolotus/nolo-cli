@@ -7,6 +7,7 @@ import { getCredentialPath, writeOAuthCredential } from "../agent-runtime/oauthT
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
 import { resolveCliEffectiveEnabledPacks } from "./localRuntimeAdapter";
+import { expandEnabledPacks, applyDisabledTools } from "../ai/tools/toolPacks";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
 import {
   clearCliLocalRuntimePreparedAgentCache,
@@ -112,6 +113,9 @@ describe("CLI local runtime adapter", () => {
   const DEFAULT_PRIVATE_LOCAL_TOOL_NAMES = [
     "ui_ask_choice",
     ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
+    // long-term-memory 是 always-on 能力包：CLI 每个未 ablation 的 agent 都能看到
+    // rememberMemory，TUI 的「记住 X」才会走 tool call 而非 shell 兜底。
+    "rememberMemory",
     "exa_search",
     "fetchWebpage",
     ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
@@ -1469,6 +1473,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toEqual([
       "ui_ask_choice",
       ...LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES,
+      "rememberMemory",
       "exa_search",
       "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
@@ -2352,6 +2357,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toEqual([
       "ui_ask_choice",
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
+      "rememberMemory",
       "exa_search",
       "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
@@ -2413,6 +2419,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toEqual([
       "ui_ask_choice",
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
+      "rememberMemory",
       "exa_search",
       "fetchWebpage",
       // CLI 空配置默认补 agent-orchestration 能力包：listAgents 候选发现 +
@@ -4372,18 +4379,38 @@ describe("CLI local runtime adapter remote sync fetch timeout", () => {
 });
 
 describe("resolveCliEffectiveEnabledPacks", () => {
-  test("enabledPacks 为空时默认补 code + agent-orchestration + skills 包", () => {
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [] })).toEqual(["code", "agent-orchestration", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: null })).toEqual(["code", "agent-orchestration", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: undefined })).toEqual(["code", "agent-orchestration", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({})).toEqual(["code", "agent-orchestration", "skills"]);
+  test("enabledPacks 为空时默认补 code + 全部 always-on 包", () => {
+    const expected = ["code", "long-term-memory", "agent-orchestration", "skills"];
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [] })).toEqual(expected);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: null })).toEqual(expected);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: undefined })).toEqual(expected);
+    expect(resolveCliEffectiveEnabledPacks({})).toEqual(expected);
   });
 
-  test("enabledPacks 非空时幂等补齐编排包与技能包", () => {
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"] })).toEqual(["web-search", "agent-orchestration", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "web-search"] })).toEqual(["code", "web-search", "agent-orchestration", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "agent-orchestration"] })).toEqual(["code", "agent-orchestration", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "agent-orchestration", "skills"] })).toEqual(["code", "agent-orchestration", "skills"]);
+  test("enabledPacks 非空时幂等补齐 always-on 包（含长期记忆）", () => {
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"] })).toEqual(["web-search", "long-term-memory", "agent-orchestration", "skills"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "web-search"] })).toEqual(["code", "web-search", "long-term-memory", "agent-orchestration", "skills"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "agent-orchestration"] })).toEqual(["code", "agent-orchestration", "long-term-memory", "skills"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "long-term-memory", "agent-orchestration", "skills"] })).toEqual(["code", "long-term-memory", "agent-orchestration", "skills"]);
+  });
+
+  // 回归护栏：TUI 里说「记住 X」必须走真 tool call。此前 CLI 的 always-on 列表漏了
+  // long-term-memory，rememberMemory 永远不进 schema，模型只能退回 shell 跑
+  // `nolo memory remember`。断言的是「工具可见」这个用户可感知的结果，而非包名列表——
+  // 后者换个实现方式就绿了，前者不会。
+  test("rememberMemory 对任何未 ablation 的 CLI agent 都可见", () => {
+    for (const enabledPacks of [[], ["code"], ["web-search"], ["code", "long-term-memory"]]) {
+      expect(
+        expandEnabledPacks(resolveCliEffectiveEnabledPacks({ enabledPacks }), []),
+      ).toContain("rememberMemory");
+    }
+    // 单关通道仍然有效：disabledTools 能摘掉它。
+    expect(
+      applyDisabledTools(
+        expandEnabledPacks(resolveCliEffectiveEnabledPacks({ enabledPacks: [] }), []),
+        ["rememberMemory"],
+      ),
+    ).not.toContain("rememberMemory");
   });
 
   test("declared-only 模式下不补 code 包（用户显式要 ablation）", () => {

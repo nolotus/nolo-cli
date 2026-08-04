@@ -247,6 +247,10 @@ import {
   whisperV3Schema,
   whisperV3Func,
 } from "./whisperTool";
+import {
+  transcribeVideoSchema,
+  transcribeVideoFunc,
+} from "./transcribeVideoTool";
 
 
 
@@ -1890,6 +1894,18 @@ const baseToolDefinitions: ToolDefinition[] = [
       category: "音频与媒体",
     },
     behavior: "data",
+  },
+  {
+    id: "transcribeVideo",
+    schema: transcribeVideoSchema,
+    executor: transcribeVideoFunc,
+    description: {
+      name: "transcribeVideo",
+      description: "将视频链接转写为带标点文本与 SRT 字幕。支持 B 站分 P/合集（缺省处理全部，绝不静默丢分 P）、YouTube 等；抖音需在桌面端浏览器使用。",
+      category: "媒体处理",
+    },
+    behavior: "data",
+    uiGroup: "general",
   },
 
   // --- Cloudflare Browser Rendering ---

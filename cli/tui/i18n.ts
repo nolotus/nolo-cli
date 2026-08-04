@@ -757,7 +757,7 @@ const TOOL_LABELS: Record<string, { en: string; zh: string }> = {
   // ("Fetch" / "抓取网页"), not a longer "Fetch page" phrase.
   fetchWebpage: { en: "Fetch", zh: "抓取网页" },
   readPage: { en: "Read page", zh: "读取网页" },
-  exaSearch: { en: "Web search", zh: "联网搜索" },
+  exa_search: { en: "Web search", zh: "联网搜索" },
   // Skill loading
   loadSkill: { en: "Used Skill", zh: "使用技能" },
 };

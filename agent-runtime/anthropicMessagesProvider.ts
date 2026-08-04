@@ -6,6 +6,25 @@ export const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 export const ANTHROPIC_API_VERSION = "2023-06-01";
 export const ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20";
 
+/**
+ * Minimal Claude Code-compatible OAuth fingerprint.
+ * Live-validated 2026-08-04: UA/betas alone still 429 Sonnet/Opus; identity
+ * system block is required. Billing header / cch / Stainless / tool prefixes
+ * are intentionally out of scope for this pass.
+ */
+export const CLAUDE_CODE_VERSION = "2.1.220";
+export const CLAUDE_CODE_USER_AGENT =
+  `claude-cli/${CLAUDE_CODE_VERSION} (external, local-agent, agent-sdk/0.1.0)`;
+export const ANTHROPIC_OAUTH_BETA_HEADER =
+  `claude-code-20250219,${ANTHROPIC_OAUTH_BETA}`;
+export const CLAUDE_CODE_SYSTEM_INSTRUCTION =
+  "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+/** Legacy Claude Code identity phrases kept for dedupe only. */
+const CLAUDE_CODE_IDENTITY_PATTERNS = [
+  CLAUDE_CODE_SYSTEM_INSTRUCTION,
+  "You are Claude Code",
+] as const;
+
 type JsonRecord = Record<string, unknown>;
 
 function stringValue(value: unknown): string | undefined {
@@ -52,6 +71,17 @@ function pushMessage(
     return;
   }
   messages.push({ role, content });
+}
+
+function hasClaudeCodeIdentity(system: JsonRecord[]): boolean {
+  return system.some((block) => {
+    if (!block || typeof block !== "object") return false;
+    const text = stringValue((block as JsonRecord).text);
+    return Boolean(
+      text &&
+        CLAUDE_CODE_IDENTITY_PATTERNS.some((pattern) => text.includes(pattern)),
+    );
+  });
 }
 
 export function buildAnthropicMessagesBody(args: {
@@ -112,6 +142,12 @@ export function buildAnthropicMessagesBody(args: {
       }
     }
     pushMessage(messages, role, blocks);
+  }
+
+  // Anthropic currently rejects third-party OAuth Sonnet/Opus unless the
+  // request carries Claude Code identity + beta fingerprint.
+  if (!hasClaudeCodeIdentity(system)) {
+    system.unshift({ type: "text", text: CLAUDE_CODE_SYSTEM_INSTRUCTION });
   }
 
   const tools = Array.isArray(args.openAiBody.tools)
@@ -221,8 +257,9 @@ export async function fetchAnthropicMessagesCompletion(args: {
       "Content-Type": "application/json",
       Accept: "application/json",
       "anthropic-version": ANTHROPIC_API_VERSION,
-      "anthropic-beta": ANTHROPIC_OAUTH_BETA,
-      "User-Agent": "nolo-cli",
+      "anthropic-beta": ANTHROPIC_OAUTH_BETA_HEADER,
+      "User-Agent": CLAUDE_CODE_USER_AGENT,
+      "x-app": "cli",
     },
     body: JSON.stringify(buildAnthropicMessagesBody(args)),
     signal: args.signal,

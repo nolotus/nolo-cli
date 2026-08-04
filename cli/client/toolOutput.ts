@@ -702,6 +702,16 @@ function isFetchToolName(name?: string): boolean {
   return name === "fetchWebpage" || name === "fetch_webpage";
 }
 
+/**
+ * Web-search-class tools: exa_search. Renders as a • Web search (N) tree,
+ * independent from the local Search tree. Accepts both camelCase and snake_case
+ * aliases to stay consistent with fetchWebpage / fetch_webpage handling.
+ */
+function isWebSearchToolName(name?: string): boolean {
+  if (!name) return false;
+  return name === "exa_search" || name === "exaSearch";
+}
+
 function isRunResultFoldable(event: LocalAgentToolEvent): boolean {
   return Boolean(event.metadata?.actionGate) === false;
 }
@@ -790,6 +800,36 @@ export function formatRunTreeBlockForCli(
       const connector = themeText(`  ${l.connector}`, "chrome", true);
       const commandText = themeText(l.commandText, "muted", true);
       return `${connector}${commandText}`;
+    })
+    .join("\n");
+
+  return `${headerLine}${treeLines}\n`;
+}
+
+export function formatWebSearchTreeBlockForCli(
+  items: Array<{ query: string }>,
+  colorEnabled: boolean
+): string {
+  if (items.length === 0) return "";
+  const { count, lines } = formatSearchTreeLines(items);
+  const titleText = toolLabel("exa_search");
+
+  if (!colorEnabled) {
+    const headerLine = `• ${titleText} (${count})\n`;
+    const treeLines = lines.map((l) => `  ${l.connector}${l.queryText}`).join("\n");
+    return `${headerLine}${treeLines}\n`;
+  }
+
+  const bullet = themeText("•", "chrome", true);
+  const title = styleCliText(titleText, "bold", true);
+  const countText = themeText(`(${count})`, "muted", true);
+  const headerLine = `${bullet} ${title} ${countText}\n`;
+
+  const treeLines = lines
+    .map((l) => {
+      const connector = themeText(`  ${l.connector}`, "chrome", true);
+      const queryText = themeText(l.queryText, "muted", true);
+      return `${connector}${queryText}`;
     })
     .join("\n");
 
@@ -996,6 +1036,7 @@ export function createToolEventFormatter(
   let searchBuffer: LocalAgentToolEvent[] = [];
   let runBuffer: LocalAgentToolEvent[] = [];
   let fetchBuffer: LocalAgentToolEvent[] = [];
+  let webSearchBuffer: LocalAgentToolEvent[] = [];
   /** Consecutive controlAgentRun(status) polls for one runId — updated in place. */
   let statusFold: {
     runId: string;
@@ -1099,6 +1140,22 @@ export function createToolEventFormatter(
       for (const evt of fetchBuffer) pending.delete(evt.toolCallId);
       fetchBuffer = [];
       out += formatFetchTreeBlockForCli(items, colorEnabled);
+    }
+
+    if (webSearchBuffer.length > 0) {
+      const items = webSearchBuffer.map((evt) => {
+        const call = pending.get(evt.toolCallId);
+        const rawQuery =
+          (typeof evt.metadata?.query === "string" ? evt.metadata.query : undefined) ||
+          (typeof evt.metadata?.pattern === "string" ? evt.metadata.pattern : undefined) ||
+          evt.argumentsPreview ||
+          call?.argumentsPreview ||
+          "";
+        return { query: rawQuery };
+      });
+      for (const evt of webSearchBuffer) pending.delete(evt.toolCallId);
+      webSearchBuffer = [];
+      out += formatWebSearchTreeBlockForCli(items, colorEnabled);
     }
 
     return out;
@@ -1221,6 +1278,20 @@ export function createToolEventFormatter(
       }
       if (event.type === "tool-result") {
         fetchBuffer.push(event);
+        return "";
+      }
+    }
+
+    if (isWebSearchToolName(event.toolName)) {
+      if (event.type === "tool-call") {
+        pending.set(event.toolCallId, {
+          toolName: event.toolName,
+          argumentsPreview: event.argumentsPreview,
+        });
+        return "";
+      }
+      if (event.type === "tool-result") {
+        webSearchBuffer.push(event);
         return "";
       }
     }

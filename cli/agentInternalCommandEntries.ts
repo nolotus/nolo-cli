@@ -89,6 +89,18 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
       const { runAgentDeleteCommand } = await import("./agentDeleteCommand");
       return runAgentDeleteCommand(args, deps);
     }),
+    createEnvCommand(["agent", "grant"], "Grant another user access to this agent's owner credentials", async (args, deps) => {
+      const { runAgentGrantCommand } = await import("./agentGrantCommands");
+      return runAgentGrantCommand(args, deps);
+    }),
+    createEnvCommand(["agent", "grants"], "List active credential grants for an agent", async (args, deps) => {
+      const { runAgentGrantsListCommand } = await import("./agentGrantCommands");
+      return runAgentGrantsListCommand(args, deps);
+    }),
+    createEnvCommand(["agent", "revoke-grant"], "Revoke a credential grant for an agent", async (args, deps) => {
+      const { runAgentRevokeGrantCommand } = await import("./agentGrantCommands");
+      return runAgentRevokeGrantCommand(args, deps);
+    }),
     createEnvCommand(["agent", "bind-current"], "Bind an agent to this machine", async (args, deps) => {
       const { runAgentBindCurrentCommand } = await import("./agentMachineCommands");
       return runAgentBindCurrentCommand(args, deps);

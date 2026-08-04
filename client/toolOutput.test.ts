@@ -856,6 +856,57 @@ describe("toolOutput", () => {
     expect(writeLine).toContain("Write");
   });
 
+  test("compact mode folds consecutive exa_search events into a Web search tree", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "e1", toolName: "exa_search", argumentsPreview: "bun-nolo TUI web search tree" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "e1", toolName: "exa_search", argumentsPreview: "bun-nolo TUI web search tree" }));
+    format(toolEvent({ type: "tool-call", toolCallId: "e2", toolName: "exa_search", argumentsPreview: "exa search query length limits" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "e2", toolName: "exa_search", argumentsPreview: "exa search query length limits" }));
+    const out = format.flush ? format.flush() : "";
+    expect(stripAnsi(out)).toBe(
+      "• Web search (2)\n" +
+      "  ├── bun-nolo TUI web search tree\n" +
+      "  └── exa search query length limits\n"
+    );
+  });
+
+  test("compact mode flushes Web search tree before a non-websearch tool", () => {
+    const format = createToolEventFormatter("compact", false);
+    format(toolEvent({ type: "tool-call", toolCallId: "e1", toolName: "exa_search", argumentsPreview: "open source bun runtime" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "e1", toolName: "exa_search", argumentsPreview: "open source bun runtime" }));
+    // A non-websearch result interrupts the web search streak — flush the tree first.
+    const writeLine = format(toolEvent({
+      type: "tool-result",
+      toolCallId: "x1",
+      toolName: "writeFile",
+      argumentsPreview: "out.txt",
+    }));
+    expect(writeLine).toContain("• Web search (1)");
+    expect(writeLine).toContain("open source bun runtime");
+    // The writeFile itself renders on the generic compact line after the flush.
+    expect(writeLine).toContain("Write");
+  });
+
+  test("compact mode does NOT fold exa_search tool-error into the Web search tree", () => {
+    const format = createToolEventFormatter("compact", false);
+    // A prior successful web search should be buffered.
+    format(toolEvent({ type: "tool-call", toolCallId: "e1", toolName: "exa_search", argumentsPreview: "nolo-plan skill system" }));
+    format(toolEvent({ type: "tool-result", toolCallId: "e1", toolName: "exa_search", argumentsPreview: "nolo-plan skill system" }));
+    // tool-error is not buffered — falls through to the generic compact line,
+    // flushing the prior Web search tree first.
+    const errLine = format(toolEvent({
+      type: "tool-error",
+      toolCallId: "e2",
+      toolName: "exa_search",
+      argumentsPreview: "nolo-plan unknown topic",
+      message: "rate limit exceeded",
+    }));
+    expect(errLine).toContain("• Web search (1)");
+    expect(errLine).toContain("nolo-plan skill system");
+    // The error itself renders on the generic trace line with the ✗ marker.
+    expect(errLine).toContain("✗");
+  });
+
   test("compact mode does NOT fold fetchWebpage tool-error into the Fetch tree", () => {
     const format = createToolEventFormatter("compact", false);
     // A prior fetch should be buffered.

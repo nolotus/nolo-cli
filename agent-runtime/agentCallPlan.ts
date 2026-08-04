@@ -71,7 +71,8 @@ export type ClientWire = "chat.completions" | "responses" | "cli";
  * Two proxy behaviors exist, so `server-proxy` does NOT uniformly mean
  * chat.completions:
  * - TRANSLATING routes — the Nolo proxy has a dedicated translator that adapts
- *   the body: antigravity (gemini-cca) and Codex (responses + oauth:chatgpt).
+ *   the body: antigravity (gemini-cca), Codex (responses + oauth:chatgpt),
+ *   Claude (anthropic-messages), and Cursor (cursor-connect).
  *   Here the client speaks `chat.completions` and the translator converts.
  * - PASS-THROUGH routes — direct calls AND the generic proxy path, which
  *   forwards the body UNCHANGED to the upstream URL. Here the client must
@@ -108,6 +109,7 @@ export const CODEX_REQUIRED_HEADERS = [
   "chatgpt-account-id",
   "OpenAI-Beta",
   "originator",
+  "version",
 ];
 
 /**
@@ -198,13 +200,13 @@ export function resolveAgentCallPlan(
   // ── Cursor (OAuth → ConnectRPC over HTTP/2, agent.v1.AgentService/Run) ──
   // Cursor uses a bespoke ConnectRPC + protobuf wire, not OpenAI-compatible
   // chat.completions. The client speaks chat.completions (nolo's internal
-  // message shape) and the cursor provider translates to the protobuf
-  // AgentRunRequest. Transport is direct (HTTP/2 to api2.cursor.sh) since
-  // the server proxy has no ConnectRPC translator.
+  // message shape) and the server chat-proxy / agent-run translator converts
+  // to the protobuf AgentRunRequest. Transport is server-proxy so the OAuth
+  // token never enters the browser (same as other subscription OAuth refs).
   if (apiKeyRef === "cursor") {
     return {
       authMethod: { kind: "oauth", ref: "cursor" },
-      transport: "direct",
+      transport: "server-proxy",
       upstreamWire: "cursor-connect",
       endpoint: CURSOR_AGENT_URL,
       requiredHeaders: [

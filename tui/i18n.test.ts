@@ -270,6 +270,7 @@ describe("i18n", () => {
     expect(toolLabel("execShell")).toBe("Run");
     expect(toolLabel("fetchWebpage")).toBe("Fetch");
     expect(toolLabel("fetchWebpage")).toBe("Fetch");
+    expect(toolLabel("exa_search")).toBe("Web search");
     expect(agentRunCardLabels().runStatus).toBe("Run status");
     expect(agentRunCardLabels().runs(3)).toBe("Runs (3)");
 
@@ -279,6 +280,7 @@ describe("i18n", () => {
     expect(toolLabel("execShell")).toBe("执行");
     expect(toolLabel("fetchWebpage")).toBe("抓取网页");
     expect(toolLabel("fetchWebpage")).toBe("抓取网页");
+    expect(toolLabel("exa_search")).toBe("联网搜索");
     expect(agentRunCardLabels().runStatus).toBe("运行状态");
     expect(agentRunCardLabels().logTail).toBe("日志尾部：");
     expect(agentRunCardLabels().runs(3)).toBe("运行 (3)");

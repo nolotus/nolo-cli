@@ -83,6 +83,36 @@ const logQuickChatPerfStage = (
     });
 };
 
+/**
+ * 按对话意图动态拉取浏览上下文能力包，拼接成隐式前缀。
+ * 仅桌面端浏览器窗口开着且消息涉及浏览内容时才附带。
+ * 能力包架构：url-tracker 默认，text-extractor/video-meta 按意图挂载。
+ */
+const resolveBrowseContextPrefix = async (message: string): Promise<string> => {
+    try {
+        if (typeof process === "undefined" || process.env?.NOLO_DESKTOP !== "1") return "";
+        if (typeof fetch !== "function" || typeof AbortSignal?.timeout !== "function") return "";
+        const response = await fetch("/api/desktop/browse-context", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message }),
+            signal: AbortSignal.timeout(2000),
+        });
+        if (!response.ok) return "";
+        const payload = (await response.json()) as {
+            context: { url: string; title: string; textSnippet?: string } | null;
+            capabilities: string[];
+        };
+        if (!payload.context || !payload.context.url) return "";
+        const ctx = payload.context;
+        const parts = [`[当前浏览上下文]`, `URL: ${ctx.url}`, `标题: ${ctx.title}`];
+        if (ctx.textSnippet) parts.push(`摘要: ${ctx.textSnippet.slice(0, 2000)}`);
+        return parts.join("\n");
+    } catch {
+        return "";
+    }
+};
+
 const finalizeQuickChatStreamStartupFailure = async (
     dispatch: any,
     dialogConfig: DialogConfig,
@@ -162,11 +192,21 @@ export const handleSendMessageAction = async (
             return;
         }
 
+        // 步骤 2.5: 按对话意图动态挂载浏览上下文能力包（仅桌面端浏览器窗口开着时）
+        const userInputText = typeof args.userInput === "string" ? args.userInput : "";
+        const browseContextPrefix =
+            typeof process !== "undefined" && process.env?.NOLO_DESKTOP === "1"
+                ? await resolveBrowseContextPrefix(userInputText)
+                : "";
+        const effectiveUserInput = browseContextPrefix
+            ? `${browseContextPrefix}\n\n${userInputText}`
+            : args.userInput;
+
         // 步骤 3: 触发 Agent 的回合
         const streamResult = await dispatch(
             streamAgentChatTurn({
                 agentKey: agentKeyToUse,
-                userInput: args.userInput,
+                userInput: effectiveUserInput,
                 dialogKey: dialogConfig.dbKey,
                 parentMessageId: undefined,
                 runtimeOptions: effectiveRuntimeOptions,

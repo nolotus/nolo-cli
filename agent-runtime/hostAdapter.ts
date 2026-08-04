@@ -48,6 +48,16 @@ export type AgentRuntimeAgentConfig = {
    * survivors silently gets the old broken behavior back rather than an error.
    * The fallback exists because most hosts genuinely expose everything they
    * declare; if that stops being true, make this required instead.
+   *
+   * That has now stopped being true: the desktop host narrows its tool surface
+   * (narrowDesktopNoloToolsForTurn, tier-agent branches, systemBuiltinSkills
+   * filter, disabledTools) but never sets this field, so its guidance is built
+   * from the declared list. Making the field required is not enough on its own
+   * to fix it — desktop does that narrowing inside `resolveProvider`, which
+   * localLoop calls *after* it has already built the guidance blocks
+   * (localLoop.ts: loadAgentConfig → guidance → resolveProvider). Closing the
+   * gap means hoisting the narrowing into `loadAgentConfig` first; only then
+   * can this field be made required without desktop having nothing to report.
    */
   exposedToolNames?: string[];
   runtimeBinding?: Record<string, unknown>;

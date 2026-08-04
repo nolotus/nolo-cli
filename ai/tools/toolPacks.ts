@@ -195,6 +195,23 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
 
 这个应用可以帮你 [一句话功能描述]。想要修改或添加功能，直接告诉我就行！"`,
   },
+  {
+    id: "video-transcription",
+    label: "视频转写",
+    description:
+      "贴视频链接即可转写为带标点文本与 SRT。支持 B 站分 P（默认全部处理）、YouTube 等；抖音请在桌面端浏览器使用。",
+    tools: ["transcribeVideo"],
+    defaultEnabled: false,
+    icon: "🎬",
+    promptPatch: `# 视频转写能力包
+
+## 用法
+- 用户贴上视频链接时，直接调用 \`transcribeVideo({ url })\`，不要先问要不要转写。
+- B 站分 P / 合集：缺省处理全部；若用户指定「只要第 3、4 集」则传 \`p: [3, 4]\`。
+- 返回里的 \`processedParts\` / \`availableParts\` 必须向用户说清楚，避免静默丢分 P。
+- 抖音若报「该平台需要登录态，请在桌面端浏览器中使用」，提示用户改走桌面端浏览能力，不要尝试传 cookie。
+`,
+  },
 ];
 
 /** Map of pack id → pack, for quick lookup. */
@@ -216,6 +233,60 @@ export const PACK_MANAGED_TOOLS = new Set<string>(
 export const DEFAULT_ENABLED_PACKS = CAPABILITY_PACKS.filter(
   (pack) => pack.defaultEnabled,
 ).map((pack) => pack.id);
+
+/**
+ * Packs every non-ablated agent gets on **every** host, whether or not it has
+ * ever configured `enabledPacks`. These are the "默认全挂、可单关" capabilities:
+ * turning one off is done through `disabledTools`, never by omitting it here.
+ *
+ * This constant exists because each host used to hardcode its own always-on
+ * list, and they drifted: the CLI/TUI list omitted `long-term-memory`, so a TUI
+ * agent silently had no `rememberMemory` tool and "记住 X" fell back to shelling
+ * out to the CLI; web's non-empty branch omitted `skills` for the same reason.
+ * Add a host-wide default here and all three runtimes pick it up at once.
+ */
+export const ALWAYS_ON_PACK_IDS = [
+  "long-term-memory",
+  "agent-orchestration",
+  "skills",
+] as const;
+
+/**
+ * Resolve an agent's declared `enabledPacks` into the effective pack list for
+ * one host. Single implementation shared by Web / CLI / Desktop — hosts differ
+ * only in the two option lists, never in the merge semantics.
+ *
+ * - `declaredOnly`: return the declared list untouched, skipping every implicit
+ *   addition. Used for ablation runs (CLI `NOLO_*` declared-only mode) and for
+ *   inline-artifact agents, whose "纯产物生成、无交互工具" semantics any injected
+ *   pack would break.
+ * - `emptyFallbackPacks`: added **only** when the agent has never configured
+ *   packs. For opt-out-able host defaults — the CLI's `code` pack is here
+ *   because an agent whose packs are `["web-search"]` has deliberately
+ *   unchecked `code`, and must not have it forced back on.
+ * - `hostPacks`: added idempotently whenever the host can actually back them,
+ *   regardless of what the agent declared. Desktop's workspace-gated `code`
+ *   is the only current user.
+ *
+ * Pure; order is stable (declared → host → always-on) for test readability.
+ */
+export function resolveEffectiveEnabledPacks(args: {
+  enabledPacks?: string[] | null;
+  declaredOnly?: boolean;
+  emptyFallbackPacks?: string[];
+  hostPacks?: string[];
+}): string[] {
+  const base = args.enabledPacks ?? [];
+  if (args.declaredOnly === true) return [...base];
+  return [
+    ...new Set([
+      ...base,
+      ...(base.length === 0 ? (args.emptyFallbackPacks ?? []) : []),
+      ...(args.hostPacks ?? []),
+      ...ALWAYS_ON_PACK_IDS,
+    ]),
+  ];
+}
 
 /**
  * Pack ids that are "system built-in skills" — capabilities Nolo ships with

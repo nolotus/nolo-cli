@@ -261,6 +261,7 @@ import {
   FORCED_TOOLS,
   applyDisabledTools,
   expandEnabledPacks,
+  resolveEffectiveEnabledPacks,
   applySystemBuiltinSkillFilter,
   appendEnabledPackPromptPatches,
   addDefaultLightWebToolsForConfiguredAgents,
@@ -536,14 +537,15 @@ function addDefaultCliCoreTools(
 }
 
 /**
- * CLI 端默认开 code + agent-orchestration + skills 能力包：enabledPacks 为空时
- * 补 ["code", "agent-orchestration", "skills"]，保持「CLI agent 默认能改代码、
- * 默认具备多 agent 编排（含 listAgents 发现）与技能加载」的体感，但走显式能力包而非隐式兜底
- * （DEFAULT_LOCAL_CODING_TOOL_NAMES 已删除）。
+ * CLI 端能力包解析：共享 resolveEffectiveEnabledPacks，本端只声明差异。
  *
- * 与桌面端 resolveDesktopEffectiveEnabledPacks 区别：桌面端只在绑文件夹时补；
- * CLI 端因为没有 workspace 授权概念，对 enabledPacks 为空的 agent 一律补——
- * 除非 declaredOnly=true（用户显式要 ablation，不补任何包）。
+ * - ALWAYS_ON_PACK_IDS（long-term-memory / agent-orchestration / skills）由共享层
+ *   幂等补齐，三端一致；关闭通道走 disabledTools。
+ * - code 走 emptyFallbackPacks 而非 hostPacks：enabledPacks 为空时补，保持
+ *   「CLI agent 默认能改代码」的体感（DEFAULT_LOCAL_CODING_TOOL_NAMES 已删除）；
+ *   但配置过包的 agent 若没勾 code，就是显式不要，不能强塞回去。
+ *   与桌面端区别：桌面端 code 由 workspace 授权门控，CLI 无此概念。
+ * - declaredOnly=true（用户显式要 ablation）时共享层原样返回，不补任何包。
  *
  * 纯函数，单独可测。
  */
@@ -551,21 +553,11 @@ export function resolveCliEffectiveEnabledPacks(args: {
   enabledPacks?: string[] | null;
   declaredOnly?: boolean;
 }): string[] {
-  if (args.declaredOnly === true) {
-    return args.enabledPacks ?? [];
-  }
-  const base = args.enabledPacks ?? [];
-  if (base.length === 0) {
-    return ["code", "agent-orchestration", "skills"];
-  }
-  // 非空也幂等补齐编排包与技能包：所有 CLI agent 默认具备多 agent 编排（含
-  // listAgents 发现）与技能加载（loadSkill/readSkillDoc），关闭通道走 disabledTools。
-  const withOrchestration = base.includes("agent-orchestration")
-    ? base
-    : [...base, "agent-orchestration"];
-  return withOrchestration.includes("skills")
-    ? withOrchestration
-    : [...withOrchestration, "skills"];
+  return resolveEffectiveEnabledPacks({
+    enabledPacks: args.enabledPacks,
+    declaredOnly: args.declaredOnly,
+    emptyFallbackPacks: ["code"],
+  });
 }
 
 /**

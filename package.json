@@ -417,6 +417,7 @@
     "agent-runtime/oauthProviders.ts",
     "agent-runtime/runtimeToolPolicy.ts",
     "agent-runtime/hostAdapter.ts",
+    "agent-runtime/oauthRefreshRateLimit.ts",
     "agent-runtime/agentConfigOptions.ts",
     "agent-runtime/credentialBroker.ts",
     "agent-runtime/cursor/agent_pb.ts",

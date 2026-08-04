@@ -161,7 +161,6 @@ type MessageScopePayload = { dialogId?: string; dialogKey?: string; all?: boolea
 /** Thin adapter: fills `messages` from Redux so existing call sites stay stable. */
 export const captureUnderstandingFromCompletedUiTurn = async (input: {
   state: any;
-  db?: any;
   agentKey?: string | null;
   dialogId: string;
   dialogKey?: string;
@@ -858,7 +857,7 @@ export const messageSlice = createSliceWithThunks({
      * 一条流式回复结束
      */
     messageStreamEnd: create.asyncThunk(
-      async (payload: MessageStreamEndPayload, { dispatch, getState, extra }: any) => {
+      async (payload: MessageStreamEndPayload, { dispatch, getState }: any) => {
         const {
           finalContentBuffer,
           totalUsage,
@@ -1049,16 +1048,24 @@ export const messageSlice = createSliceWithThunks({
           }
         }
 
-        await captureUnderstandingFromCompletedUiTurn({
+        // Fire-and-forget: capture is now a server round-trip, and a
+        // best-effort memory write must not add latency to turn completion.
+        // Mirrors the summary update above.
+        // `state` is a synchronous snapshot taken here, not read later inside
+        // the promise, so a message the user sends while this is in flight
+        // cannot shift which turn gets captured. Keep it that way — passing a
+        // getter instead would reintroduce that race.
+        captureUnderstandingFromCompletedUiTurn({
           state: getState() as any,
-          db: extra?.db,
           agentKey: agentConfig?.dbKey,
           dialogId,
           dialogKey,
           spaceId: payload.spaceId,
           assistantText: textContent,
           toolCalls,
-        });
+        }).catch((err: unknown) =>
+          console.error("Understanding memory capture failed:", err)
+        );
 
         return {
           id: messageId,

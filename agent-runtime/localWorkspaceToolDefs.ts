@@ -127,31 +127,26 @@ function buildReadWorkspaceDescription(variant?: ReadFileDescriptionVariant) {
     return "Read a UTF-8 text file inside the workspace.";
   }
   if (variant === "workflow") {
-    return "Read a UTF-8 text file inside the workspace after listFiles, globFiles, or searchFiles has narrowed the target. Use line ranges from searchFiles matches and tailLines for logs or generated output. Read the whole file only when the task truly needs all content or exact edit context.";
+    return 'Read a UTF-8 text file inside the workspace after listFiles, globFiles, or searchFiles has narrowed the target. Use lines with a range from searchFiles matches, or lines: "-50" for logs and generated output. Read the whole file only when the task truly needs all content or exact edit context.';
   }
   if (variant === "antiShell") {
     return "Read a UTF-8 text file inside the workspace. Do not use execShell with cat/sed/head/tail for normal text reads when readFile can return the needed file or line range. Use searchFiles first for content search, then readFile only the relevant lines when possible.";
   }
-  return "Read a UTF-8 text file inside the workspace. Read before editing when you need exact text for editFile. For discovery or classification tasks, avoid batch-reading every candidate; report candidate paths first, or read only one to three representative files with maxLines or focused line ranges. Use line ranges for large code, docs, data, configs, and logs after searchFiles returns line numbers. Read the whole file only when the task truly needs all content or exact edit context.";
+  return 'Read a UTF-8 text file inside the workspace. Read before editing when you need exact text for editFile. For discovery or classification tasks, avoid batch-reading every candidate; report candidate paths first, or read only one to three representative files with a small lines count. Use lines ranges for large code, docs, data, configs, and logs after searchFiles returns line numbers. Read the whole file only when the task truly needs all content or exact edit context.';
 }
 
 function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
   const path = buildWorkspacePathProperty();
-  const startLine = {
-    type: "integer",
-    description: "1-based first line to return. Use with endLine or maxLines after searchFiles gives a line number.",
-  };
-  const endLine = {
-    type: "integer",
-    description: "1-based last line to return, inclusive.",
-  };
-  const maxLines = {
-    type: "integer",
-    description: "Maximum number of lines to return starting at startLine, or from the start of the file when startLine is omitted. Use for lightweight previews of candidate configs, docs, data, and logs instead of reading many whole files. When the user gives a read/preview budget, each readFile preview consumes one budget slot.",
-  };
-  const tailLines = {
-    type: "integer",
-    description: "Return only the last N lines, useful for logs and generated text.",
+  // One argument for one concept. startLine/endLine/maxLines/tailLines were
+  // four orthogonal integers describing a single line range, so most of their
+  // combinations were invalid and had to be caught by runtime rules the model
+  // could not see (tailLines excluding the others, endLine >= startLine).
+  // A slice string has no invalid combinations — only invalid syntax, which
+  // one example in this description prevents.
+  const lines = {
+    type: "string",
+    description:
+      'Which lines to return: "40-120" for a range (1-based, inclusive), "120-" from a line to the end, "-50" for the last N lines (logs, generated output), "50" for the first N. Omit to read the whole file. Use a range after searchFiles gives a line number, and a small count to preview candidates instead of reading many whole files. When the user gives a read/preview budget, each readFile preview consumes one budget slot.',
   };
   if (variant === "minimal") {
     return {
@@ -160,27 +155,13 @@ function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
       required: ["path"],
     };
   }
-  if (variant === "rich") {
-    return {
-      type: "object",
-      properties: {
-        path,
-        startLine,
-        endLine,
-        maxLines,
-        tailLines,
-      },
-      required: ["path"],
-    };
-  }
+  // `rich` and the default now agree: the schema declares exactly what the
+  // executor accepts. The legacy integer arguments stay readable at runtime
+  // for in-flight callers, but are deliberately undeclared so no model picks
+  // them up from the schema — see LEGACY_SLICE_ARG_NAMES in localWorkspaceTools.
   return {
     type: "object",
-    properties: {
-      path,
-      startLine,
-      endLine,
-      maxLines,
-    },
+    properties: { path, lines },
     required: ["path"],
   };
 }

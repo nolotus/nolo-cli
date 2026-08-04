@@ -2505,14 +2505,8 @@ describe("CLI local runtime adapter", () => {
       "maxResults",
       "entryType",
     ]);
-    expect(readFile.description).toContain("Use line ranges");
-    expect(publicSchemaKeys(readFile)).toEqual([
-      "path",
-      "startLine",
-      "endLine",
-      "maxLines",
-      "tailLines",
-    ]);
+    expect(readFile.description).toContain("Use lines ranges");
+    expect(publicSchemaKeys(readFile)).toEqual(["path", "lines"]);
     expect(globFiles.description).toContain("any file discovery task");
     expect(publicSchemaKeys(globFiles)).toEqual([
       "pattern",
@@ -2730,15 +2724,9 @@ describe("CLI local runtime adapter", () => {
     });
 
     const readFile = requests[0]?.body.tools.find((tool: any) => tool.function.name === "readFile")?.function;
-    expect(readFile.description).toContain("Use line ranges");
-    expect(readFile.parameters.properties.maxLines.description).toContain("each readFile preview consumes one budget slot");
-    expect(publicSchemaKeys(readFile)).toEqual([
-      "path",
-      "startLine",
-      "endLine",
-      "maxLines",
-      "tailLines",
-    ]);
+    expect(readFile.description).toContain("Use lines ranges");
+    expect(readFile.parameters.properties.lines.description).toContain("each readFile preview consumes one budget slot");
+    expect(publicSchemaKeys(readFile)).toEqual(["path", "lines"]);
   });
 
   test("can vary searchFiles schema through local runtime env", async () => {
@@ -4690,6 +4678,28 @@ describe("CLI local policy tool names 派生自 schema", () => {
       fetchImpl: (async () => new Response("{}")) as any,
     });
   }
+
+  /**
+   * 回归：rememberMemory 由 long-term-memory 能力包（defaultEnabled）声明，但 CLI
+   * 的 schema 构造器一度没有对应分支，于是工具名被静默丢弃——TUI 能召回记忆却
+   * 一条也写不进去，而 system prompt 还在告诉模型「你可以调用 rememberMemory」。
+   */
+  test("声明 rememberMemory 时 schema 暴露且 executor 已接线", () => {
+    const env = {};
+    const policyNames = buildLocalPolicyToolNames({
+      agentKey: "agent-test",
+      toolNames: ["rememberMemory"],
+      env: env as any,
+    });
+    expect(policyNames).toContain("rememberMemory");
+    expect(buildExecutors().rememberMemory).toBeFunction();
+    const decision = resolveLocalToolPolicy({
+      env: env as any,
+      agentToolNames: policyNames,
+      toolName: "rememberMemory",
+    });
+    expect(decision.allowed).toBe(true);
+  });
 
   test("默认 agent 名单含 startAgentRun/controlAgentRun 且 policy 放行", () => {
     const agentConfig = { key: "agent-test", tools: [] } as any;

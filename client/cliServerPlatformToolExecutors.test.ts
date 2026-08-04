@@ -200,3 +200,69 @@ describe("fetchWebpage routing in buildServerPlatformToolExecutors", () => {
     expect(cleanHtmlForAI("<script>x</script><p>y</p>")).toBe("y");
   });
 });
+
+describe("rememberMemory bridge", () => {
+  it("posts to /api/memory/remember with the agent subject and inferred source", async () => {
+    const { fetchImpl, calls } = buildFetchRecorder({
+      bridge: () =>
+        new Response(JSON.stringify({ success: true, savedItems: [] }), {
+          status: 200,
+        }),
+    });
+    const executors = buildServerPlatformToolExecutors({
+      env: ENV,
+      fetchImpl,
+      agentKey: "agent-42",
+    });
+
+    const result = await executors.rememberMemory({
+      arguments: JSON.stringify({
+        content: "这个用户在复杂问题里更喜欢先看结论",
+      }),
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://nolo.test/api/memory/remember");
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body.content).toBe("这个用户在复杂问题里更喜欢先看结论");
+    expect(body.agentKey).toBe("agent-42");
+    // An agent deciding on its own to remember is a guess, not a directive.
+    expect(body.source).toBe("agent-inferred");
+    expect(body.scope).toBe("auto");
+    expect(body.kind).toBe("episodic");
+    expect(result.metadata?.memoryWrite).toBe(true);
+  });
+
+  it("passes through explicit scope and kind", async () => {
+    const { fetchImpl, calls } = buildFetchRecorder({
+      bridge: () => new Response(JSON.stringify({ success: true }), { status: 200 }),
+    });
+    const executors = buildServerPlatformToolExecutors({ env: ENV, fetchImpl });
+
+    await executors.rememberMemory({
+      arguments: JSON.stringify({
+        content: "部署前先跑 typecheck:green",
+        scope: "space",
+        kind: "procedural",
+      }),
+    });
+
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body.scope).toBe("space");
+    expect(body.kind).toBe("procedural");
+    // No agentKey configured → omitted entirely rather than sent as null.
+    expect("agentKey" in body).toBe(false);
+  });
+
+  it("rejects empty content without calling the server", async () => {
+    const { fetchImpl, calls } = buildFetchRecorder({});
+    const executors = buildServerPlatformToolExecutors({ env: ENV, fetchImpl });
+
+    const result = await executors.rememberMemory({
+      arguments: JSON.stringify({ content: "   " }),
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(JSON.parse(result.content).error).toContain("content");
+  });
+});

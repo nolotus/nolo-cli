@@ -284,6 +284,10 @@ import {
   readXPostFunc,
   readXPostFunctionSchema,
 } from "../../ai/tools/readXPostTool";
+// Schema-only import: the executor lives in cliServerPlatformToolExecutors
+// (bridges to /api/memory/remember). Importing rememberMemoryTool itself would
+// pull Redux into the CLI bundle.
+import { rememberMemoryFunctionSchema } from "../../ai/tools/rememberMemoryToolSchema";
 import { ulid } from "ulid";
 
 type LocalCliExecutor = (
@@ -705,6 +709,14 @@ function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
     ),
   );
   return [
+    ...(toolNameSet.has("rememberMemory")
+      ? [
+          {
+            type: "function",
+            function: rememberMemoryFunctionSchema,
+          },
+        ]
+      : []),
     ...(toolNameSet.has("read_xhs_profile")
       ? [
           {
@@ -1354,17 +1366,25 @@ export function createCliLocalRuntimeAdapter(
         ...(deps.pastedTextStore
           ? { pastedTextStore: deps.pastedTextStore }
           : {}),
+        agentKey: agentConfig?.key,
         ...runtimeToolExecutionLimits,
       });
-      if (agentConfig && !deps.pastedTextStore) {
+      // Report the post-filter tool list so runtime guidance describes what the
+      // model can actually call. The CLI drops declared names it has no
+      // executor for (read/createDoc/...), and prompt blocks keyed off the
+      // declared list would advertise tools that never reach the schema.
+      const exposedAgentConfig = agentConfig
+        ? { ...agentConfig, exposedToolNames: activeAgentToolNames }
+        : agentConfig;
+      if (exposedAgentConfig && !deps.pastedTextStore) {
         preparedAgentRuntimeCache.set(cacheKey, {
-          agentConfig,
+          agentConfig: exposedAgentConfig,
           activeAgentToolNames,
           runtimeToolExecutionLimits,
           localToolExecutors,
         });
       }
-      return agentConfig;
+      return exposedAgentConfig;
     },
     loadDialogHistory: async (dialogId) =>
       readDialogMessages({

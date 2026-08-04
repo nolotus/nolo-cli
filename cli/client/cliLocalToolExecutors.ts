@@ -131,6 +131,8 @@ export function buildLocalToolExecutors(args: {
   pastedTextStore?: CollapsedPasteStore;
   /** CLI entrypoint path (for re-launching workspace tools). */
   cliEntrypoint?: string;
+  /** Current agent key; scopes rememberMemory writes to this agent's subject. */
+  agentKey?: string | null;
 }) {
   return {
     ...createLocalWorkspaceToolExecutors({
@@ -144,6 +146,7 @@ export function buildLocalToolExecutors(args: {
     ...buildServerPlatformToolExecutors({
       env: args.env,
       fetchImpl: args.fetchImpl,
+      agentKey: args.agentKey,
     }),
     ...buildCliWorkspaceToolExecutors({
       env: args.env,

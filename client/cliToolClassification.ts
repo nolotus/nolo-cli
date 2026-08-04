@@ -31,6 +31,22 @@ export const LOCAL_SERVER_WEB_TOOL_NAME_SET = new Set<string>(
   LOCAL_SERVER_WEB_TOOL_NAMES,
 );
 
+/**
+ * Long-term memory tools the CLI local runtime proxies to the nolo server.
+ *
+ * Memory lives server-side (that is where /api/memory/query reads from), so a
+ * local write would land in a store nothing ever recalls from. Bridging is the
+ * only correct wiring — the read and write sides must share one store.
+ *
+ * Before this existed, `rememberMemory` was declared by the long-term-memory
+ * capability pack but silently dropped from the CLI tool schema, so the TUI
+ * could recall memories yet never write one.
+ */
+export const LOCAL_SERVER_MEMORY_TOOL_NAMES = ["rememberMemory"] as const;
+export const LOCAL_SERVER_MEMORY_TOOL_NAME_SET = new Set<string>(
+  LOCAL_SERVER_MEMORY_TOOL_NAMES,
+);
+
 /** Tools whose schema is injected from the nolo tool registry (not workspace). */
 export const REGISTRY_INJECTED_TOOL_NAMES = new Set<string>([
   "callAgent",

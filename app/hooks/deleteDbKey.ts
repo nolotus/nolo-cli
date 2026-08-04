@@ -11,7 +11,7 @@ import {
 } from "../../database/keys";
 import { deleteDialog } from "../../chat/dialog/dialogSlice";
 import { deleteTable } from "../../render/table/tableSlice";
-import { deleteContentFromSpace } from "../../create/space/spaceSlice";
+import { deleteContentFromSpace, selectAllMemberSpaces } from "../../create/space/spaceSlice";
 import { read, remove, selectById } from "../../database/dbSlice";
 import { removeFavoriteLocally } from "../favorite/favoriteStore";
 import { resolveDeletedFavoriteProjectionRemoval } from "../favorite/deletedFavoriteProjection";
@@ -280,12 +280,6 @@ export const deleteDbKey =
                     typeof spaceId === "string" && spaceId.trim().length > 0
                         ? spaceId
                         : inputSpaceId ?? null;
-                console.log("[deleteDbKey] START", {
-                    contentKey,
-                    preferredServerOrigin,
-                    effectiveSpaceId,
-                    rawInput: typeof input === "string" ? input : JSON.stringify(input),
-                });
                 // 1. 始终先执行实体的直接删除（写 tombstone + 尝试服务器删除）
                 // 无论 space 操作结果如何，实体都必须被标记为已删除，
                 // 否则 deleteContentFromSpace 成功但跳过实体删除时，
@@ -306,19 +300,29 @@ export const deleteDbKey =
                 // - space.contents 的本地 patch 也要在导航前落稳
                 // 但不要求等待远端强一致。
                 // Space unlink alone must never delete per-Agent broker secrets.
-                if (effectiveSpaceId) {
-                    await (dispatch as any)(
-                        (deleteContentFromSpace as any)({
-                            contentKey,
-                            spaceId: effectiveSpaceId,
-                            ...(preferredServerOrigin
-                                ? { sourceServerOrigin: preferredServerOrigin }
-                                : {}),
-                        })
-                    ).unwrap().catch((err: unknown) => {
-                        console.warn("[deleteDbKey] space cleanup failed (entity already tombstoned):", err);
-                    });
-                }
+                const spaceIds = isAppKey(contentKey)
+                    ? new Set([
+                        effectiveSpaceId,
+                        ...selectAllMemberSpaces(getState() as RootState).map((space) => space.spaceId),
+                    ])
+                    : new Set([effectiveSpaceId]);
+                await Promise.all(
+                    [...spaceIds]
+                        .filter((spaceId): spaceId is string => Boolean(spaceId))
+                        .map((spaceId) =>
+                            (dispatch as any)(
+                                (deleteContentFromSpace as any)({
+                                    contentKey,
+                                    spaceId,
+                                    ...(preferredServerOrigin
+                                        ? { sourceServerOrigin: preferredServerOrigin }
+                                        : {}),
+                                }),
+                            ).unwrap().catch((err: unknown) => {
+                                console.warn("[deleteDbKey] space cleanup failed (entity already tombstoned):", err);
+                            }),
+                        ),
+                );
 
                 const favoriteProjectionRemoval =
                     resolveDeletedFavoriteProjectionRemoval(contentKey);

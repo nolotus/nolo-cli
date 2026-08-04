@@ -31,6 +31,25 @@ export type AgentRuntimeAgentConfig = {
   reasoning_effort?: string;
   /** Explicit tool names from agent record / form config. */
   toolNames?: string[];
+  /**
+   * Tool names actually exposed to the model this run, after the host drops
+   * names it has no executor for.
+   *
+   * `toolNames` is what the agent *declares*; hosts implement different
+   * subsets (the CLI has no `read`/`createDoc` executor, for instance). Prompt
+   * guidance must key off this list, not the declared one — otherwise the
+   * system prompt describes tools the model cannot see, which is exactly how
+   * `rememberMemory` came to be advertised in the TUI while being absent from
+   * the schema. Hosts that expose everything they declare may leave it unset.
+   *
+   * Caveat worth knowing before you rely on it: consumers fall back to
+   * `toolNames` when this is absent, and `toolNames` is the list that caused
+   * the original bug. A host that filters its tools but forgets to report the
+   * survivors silently gets the old broken behavior back rather than an error.
+   * The fallback exists because most hosts genuinely expose everything they
+   * declare; if that stops being true, make this required instead.
+   */
+  exposedToolNames?: string[];
   runtimeBinding?: Record<string, unknown>;
   runtimeToolPolicy?: AgentRuntimeToolPolicy;
   delegation?: Record<string, unknown>;

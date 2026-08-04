@@ -130,6 +130,7 @@ type WorkspaceFileArgs = {
   endLine?: unknown;
   maxLines?: unknown;
   tailLines?: unknown;
+  lines?: unknown;
   query?: unknown;
   pattern?: unknown;
   glob?: unknown;
@@ -524,36 +525,237 @@ function readExpectedReplacementCount(args: WorkspaceFileArgs) {
   return value;
 }
 
-function readPositiveIntegerArg(args: {
-  value: unknown;
-  name: string;
-  max?: number;
-}) {
-  if (args.value === undefined) return undefined;
-  const value = Number(args.value);
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`${args.name} must be a positive integer.`);
-  }
-  return args.max ? Math.min(value, args.max) : value;
+/**
+ * Lines returned when the caller asked for a slice but every slice argument
+ * had to be dropped. Falling back to the whole file would turn one bad
+ * argument into a context blowup on large files.
+ */
+const READ_FILE_SLICE_FALLBACK_LINES = 200;
+
+/**
+ * Superseded by the single `lines` argument, undeclared in the readFile schema
+ * but still honoured at runtime.
+ *
+ * This is deliberately the inverse of the tailLines mistake: that argument was
+ * parsed and range-checked while undeclared, so a model guessing it got a
+ * value error implying the argument existed. These four are accepted only so
+ * in-flight callers keep working, and every use answers with a deprecation
+ * warning pointing at `lines`. Delete this list — and the branch that reads
+ * it — once callers have moved.
+ */
+const LEGACY_SLICE_ARG_NAMES = ["startLine", "endLine", "maxLines", "tailLines"] as const;
+
+/**
+ * `null` means "not provided", not "provided an invalid value".
+ *
+ * Models emitting JSON arguments routinely fill unused optional fields with
+ * null. Treating that as a rejected value both spams warnings and shrinks the
+ * response — `{ path, startLine: null, tailLines: null }` would silently fall
+ * back to a truncated read of a file the caller asked for in full.
+ */
+function isAbsentArg(value: unknown) {
+  return value === undefined || value === null;
 }
 
-function readFileSliceArgs(args: WorkspaceFileArgs) {
-  const startLine = readPositiveIntegerArg({ value: args.startLine, name: "startLine" });
-  const endLine = readPositiveIntegerArg({ value: args.endLine, name: "endLine" });
-  const maxLines = readPositiveIntegerArg({ value: args.maxLines, name: "maxLines", max: 2000 });
-  const tailLines = readPositiveIntegerArg({ value: args.tailLines, name: "tailLines", max: 2000 });
-  if (tailLines !== undefined && (startLine !== undefined || endLine !== undefined)) {
-    throw new Error("tailLines cannot be combined with startLine or endLine.");
+function describeRejectedArgValue(value: unknown) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
   }
-  if (endLine !== undefined && startLine !== undefined && endLine < startLine) {
-    throw new Error("endLine must be greater than or equal to startLine.");
+  if (Array.isArray(value)) return "an array";
+  return `a value of type ${typeof value}`;
+}
+
+/**
+ * Pure: returns the accepted value or the reason it was rejected, never both,
+ * and never throws. Callers decide what to do with the rejection.
+ */
+function readIntegerArg(args: {
+  value: unknown;
+  name: string;
+  min?: number;
+  max?: number;
+}): { value?: number; warning?: string } {
+  if (isAbsentArg(args.value)) return {};
+  const min = args.min ?? 1;
+  const value = Number(args.value);
+  if (!Number.isInteger(value) || value < min) {
+    const expected = min === 0 ? "a non-negative integer" : "a positive integer";
+    return {
+      warning: `Ignored ${args.name}: expected ${expected}, received ${describeRejectedArgValue(args.value)}.`,
+    };
   }
-  return {
-    startLine,
-    endLine,
-    maxLines,
-    tailLines,
+  return { value: args.max ? Math.min(value, args.max) : value };
+}
+
+/**
+ * Collect a rejected argument into the caller's warning list and fall back.
+ *
+ * Every workspace tool takes the same stance: one bad tuning argument
+ * (maxDepth, maxResults, contextLines, a readFile line range) does not
+ * invalidate the request, so drop it, say so, and answer with the default.
+ * Aborting the call left the model with nothing to act on and no way to tell
+ * which argument was at fault.
+ */
+function collectIntegerArg<Fallback extends number | undefined = undefined>(args: {
+  value: unknown;
+  name: string;
+  min?: number;
+  max?: number;
+  /** Value used when the argument is absent or rejected. */
+  fallback?: Fallback;
+  warnings: string[];
+}): number | Fallback {
+  const { value, warning } = readIntegerArg(args);
+  if (warning) {
+    args.warnings.push(
+      args.fallback === undefined ? warning : `${warning} Using ${args.fallback} instead.`,
+    );
+  }
+  // Cast: when `fallback` is a number the result is always a number, but the
+  // `??` chain alone does not carry that through the generic.
+  return (value ?? args.fallback) as number | Fallback;
+}
+
+type ReadFileSlice = {
+  startLine?: number;
+  endLine?: number;
+  maxLines?: number;
+  tailLines?: number;
+};
+
+const LINES_ARG_SYNTAX = '"40-120", "120-", "-50", or "50"';
+
+/** `"40-120"` / `"120-"` / `"-50"`; a bare `"50"` is handled by the caller. */
+const LINES_RANGE_FORMAT = /^(\d+)?\s*-\s*(\d+)?$/;
+
+/**
+ * Parse the `lines` argument into the internal slice shape.
+ *
+ * Returns undefined for unusable syntax — a range string has no partially
+ * valid forms, so unlike the legacy integers there is nothing to salvage.
+ */
+function parseLinesArg(value: unknown): { slice?: ReadFileSlice; warning?: string } {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) {
+    return {
+      warning: `Ignored lines: expected ${LINES_ARG_SYNTAX}, received ${describeRejectedArgValue(value)}.`,
+    };
+  }
+
+  const reject = {
+    warning: `Ignored lines: expected ${LINES_ARG_SYNTAX}, received ${JSON.stringify(text)}.`,
   };
+
+  if (/^\d+$/.test(text)) {
+    const count = Number(text);
+    return count > 0 ? { slice: { maxLines: Math.min(count, 2000) } } : reject;
+  }
+
+  const range = LINES_RANGE_FORMAT.exec(text);
+  if (!range) return reject;
+  const [, rawStart, rawEnd] = range;
+  if (rawStart === undefined && rawEnd === undefined) return reject;
+
+  // "-50": no start, so the number is a tail length rather than an end line.
+  if (rawStart === undefined) {
+    const tail = Number(rawEnd);
+    return tail > 0 ? { slice: { tailLines: Math.min(tail, 2000) } } : reject;
+  }
+
+  const startLine = Number(rawStart);
+  if (startLine < 1) return reject;
+  if (rawEnd === undefined) return { slice: { startLine } };
+
+  const endLine = Number(rawEnd);
+  if (endLine < startLine) {
+    return {
+      warning: `Ignored lines ${JSON.stringify(text)}: the end line must be greater than or equal to the start line.`,
+    };
+  }
+  return { slice: { startLine, endLine } };
+}
+
+/**
+ * Resolve which lines readFile should return, without throwing.
+ *
+ * A bad slice argument does not invalidate the request itself — the path is
+ * still valid and the file still exists — so dropping the argument and
+ * reporting it beats returning nothing. Throwing left the model with no
+ * content and no way to tell what was at fault, which produced repeated blind
+ * retries against the same file.
+ *
+ * Rejected input is dropped, never silently reinterpreted; each drop is
+ * surfaced in `warnings` so the caller can correct the next call.
+ */
+function readFileSliceArgs(args: WorkspaceFileArgs) {
+  const warnings: string[] = [];
+  const legacyUsed = LEGACY_SLICE_ARG_NAMES.filter((name) => !isAbsentArg(args[name]));
+  const withFallback = (slice: ReadFileSlice) => {
+    warnings.push(
+      `No usable line range remained; returned the first ${READ_FILE_SLICE_FALLBACK_LINES} lines instead of the whole file.`,
+    );
+    return { ...slice, maxLines: READ_FILE_SLICE_FALLBACK_LINES, warnings };
+  };
+
+  if (!isAbsentArg(args.lines)) {
+    if (legacyUsed.length > 0) {
+      warnings.push(`Ignored ${legacyUsed.join(", ")}: superseded by lines.`);
+    }
+    const { slice, warning } = parseLinesArg(args.lines);
+    if (warning) warnings.push(warning);
+    return slice ? { ...slice, warnings } : withFallback({});
+  }
+
+  if (legacyUsed.length === 0) return { warnings };
+
+  warnings.push(
+    `${legacyUsed.join(", ")} ${legacyUsed.length > 1 ? "are" : "is"} deprecated; use lines instead (${LINES_ARG_SYNTAX}).`,
+  );
+  // No `fallback`: a rejected legacy argument is simply absent. The whole-slice
+  // fallback is decided once, after every argument has been resolved.
+  const take = (name: (typeof LEGACY_SLICE_ARG_NAMES)[number], max?: number) =>
+    collectIntegerArg({ value: args[name], name, max, warnings });
+  const resolved: ReadFileSlice = {
+    startLine: take("startLine"),
+    endLine: take("endLine"),
+    maxLines: take("maxLines", 2000),
+    tailLines: take("tailLines", 2000),
+  };
+
+  if (
+    resolved.endLine !== undefined &&
+    resolved.startLine !== undefined &&
+    resolved.endLine < resolved.startLine
+  ) {
+    warnings.push(
+      `Ignored endLine (${resolved.endLine}): endLine must be greater than or equal to startLine (${resolved.startLine}).`,
+    );
+    resolved.endLine = undefined;
+  }
+  // Keep the explicit range and drop the tail: a range is the more specific
+  // request, and startLine usually comes from a real searchFiles hit.
+  if (
+    resolved.tailLines !== undefined &&
+    (resolved.startLine !== undefined || resolved.endLine !== undefined)
+  ) {
+    warnings.push(
+      `Ignored tailLines (${resolved.tailLines}): tailLines cannot be combined with startLine or endLine.`,
+    );
+    resolved.tailLines = undefined;
+  }
+
+  const nothingUsable = LEGACY_SLICE_ARG_NAMES.every((name) => resolved[name] === undefined);
+  return nothingUsable ? withFallback(resolved) : { ...resolved, warnings };
+}
+
+/**
+ * Trailing hint appended to any warning list. Carries only what the individual
+ * warnings cannot: how long the file actually is, and the argument syntax.
+ * The specific constraint that was violated is already in its own warning.
+ */
+function buildReadFileSliceHint(totalLines: number) {
+  return `File has ${totalLines} lines. Use lines: ${LINES_ARG_SYNTAX}, or omit it for the whole file.`;
 }
 
 function splitTextLines(content: string) {
@@ -693,39 +895,50 @@ function requireWorkspaceGlobPattern(args: WorkspaceFileArgs) {
   return pattern;
 }
 
-function readWorkspaceMaxResults(args: WorkspaceFileArgs, defaultValue?: number) {
-  if (args.maxResults === undefined) return defaultValue;
-  const value = Number(args.maxResults);
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error("maxResults must be a positive integer.");
-  }
-  return Math.min(value, 500);
+function readWorkspaceMaxResults(
+  args: WorkspaceFileArgs,
+  warnings: string[],
+  defaultValue?: number,
+) {
+  return collectIntegerArg({
+    value: args.maxResults,
+    name: "maxResults",
+    max: 500,
+    fallback: defaultValue,
+    warnings,
+  });
 }
 
-function readWorkspaceMaxDepth(args: WorkspaceFileArgs) {
-  if (args.maxDepth === undefined) return 1;
-  const value = Number(args.maxDepth);
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error("maxDepth must be a positive integer.");
-  }
-  return Math.min(value, 10);
+function readWorkspaceMaxDepth(args: WorkspaceFileArgs, warnings: string[]) {
+  return collectIntegerArg({
+    value: args.maxDepth,
+    name: "maxDepth",
+    max: 10,
+    fallback: 1,
+    warnings,
+  });
 }
 
-function readWorkspaceEntryType(args: WorkspaceFileArgs) {
-  if (args.entryType === undefined) return "all";
-  if (args.entryType === "all" || args.entryType === "files" || args.entryType === "directories") {
-    return args.entryType;
-  }
-  throw new Error("entryType must be one of all, files, or directories.");
+const WORKSPACE_ENTRY_TYPES = ["all", "files", "directories"] as const;
+
+function readWorkspaceEntryType(args: WorkspaceFileArgs, warnings: string[]) {
+  if (isAbsentArg(args.entryType)) return "all";
+  const entryType = WORKSPACE_ENTRY_TYPES.find((value) => value === args.entryType);
+  if (entryType) return entryType;
+  warnings.push(
+    `Ignored entryType: expected one of ${WORKSPACE_ENTRY_TYPES.join(", ")}, received ${describeRejectedArgValue(args.entryType)}. Using all instead.`,
+  );
+  return "all";
 }
 
-function readWorkspaceContextLines(args: WorkspaceFileArgs) {
-  if (args.contextLines === undefined) return undefined;
-  const value = Number(args.contextLines);
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error("contextLines must be a non-negative integer.");
-  }
-  return Math.min(value, 20);
+function readWorkspaceContextLines(args: WorkspaceFileArgs, warnings: string[]) {
+  return collectIntegerArg({
+    value: args.contextLines,
+    name: "contextLines",
+    min: 0,
+    max: 20,
+    warnings,
+  });
 }
 
 function readWorkspaceExcludeGlobs(args: WorkspaceFileArgs) {
@@ -1302,7 +1515,7 @@ async function readFileTool(args: {
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const requestedPath = requireWorkspaceToolPath(parsed);
-  const sliceArgs = readFileSliceArgs(parsed);
+  const { warnings, ...sliceArgs } = readFileSliceArgs(parsed);
   const absolutePath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
@@ -1331,6 +1544,9 @@ async function readFileTool(args: {
       truncated: sliced.truncated,
       ...(sliceArgs.maxLines ? { maxLines: sliceArgs.maxLines } : {}),
       ...(sliceArgs.tailLines ? { tailLines: sliceArgs.tailLines } : {}),
+      ...(warnings.length
+        ? { warnings: [...warnings, buildReadFileSliceHint(sliced.totalLines)] }
+        : {}),
       ...(activity ? { activity } : {}),
     },
   };
@@ -1514,10 +1730,11 @@ async function listFilesTool(args: {
   confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
+  const warnings: string[] = [];
   const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
-  const maxDepth = readWorkspaceMaxDepth(parsed);
-  const maxResults = readWorkspaceMaxResults(parsed);
-  const entryType = readWorkspaceEntryType(parsed);
+  const maxDepth = readWorkspaceMaxDepth(parsed, warnings);
+  const maxResults = readWorkspaceMaxResults(parsed, warnings);
+  const entryType = readWorkspaceEntryType(parsed, warnings);
   const dirPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
@@ -1544,6 +1761,7 @@ async function listFilesTool(args: {
       limitedByMaxDepth: listed.limitedByMaxDepth,
       visitedEntries: listed.visitedEntries,
       ...(maxResults ? { maxResults } : {}),
+      ...(warnings.length ? { warnings } : {}),
     },
   };
 }
@@ -1556,10 +1774,11 @@ async function searchFilesTool(args: {
   resolveGrepBinary?: () => string | null;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
+  const warnings: string[] = [];
   const query = requireWorkspaceSearchQuery(parsed);
   const exclude = readWorkspaceExcludeGlobs(parsed);
-  const maxResults = readWorkspaceMaxResults(parsed, DEFAULT_SEARCH_MAX_RESULTS);
-  const contextLines = readWorkspaceContextLines(parsed);
+  const maxResults = readWorkspaceMaxResults(parsed, warnings, DEFAULT_SEARCH_MAX_RESULTS);
+  const contextLines = readWorkspaceContextLines(parsed, warnings);
   const literal = parsed.literal === true;
   const caseSensitive = parsed.caseSensitive === false ? false : true;
   const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
@@ -1741,6 +1960,7 @@ async function searchFilesTool(args: {
       ...(maxResults ? { maxResults } : {}),
       exitCode: result.exitCode,
       searchEngine,
+      ...(warnings.length ? { warnings } : {}),
       ...(extractActivity(parsed) ? { activity: extractActivity(parsed) } : {}),
     },
   };
@@ -1910,9 +2130,10 @@ async function globFilesTool(args: {
   resolveRipgrepBinary?: () => string | null;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
+  const warnings: string[] = [];
   const pattern = requireWorkspaceGlobPattern(parsed);
   const exclude = readWorkspaceExcludeGlobs(parsed);
-  const maxResults = readWorkspaceMaxResults(parsed);
+  const maxResults = readWorkspaceMaxResults(parsed, warnings);
   const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
   const includeIgnored = parsed.includeIgnored === true;
   const searchPath = await resolveLocalWorkspaceToolPath({
@@ -2024,6 +2245,7 @@ async function globFilesTool(args: {
       ...(maxResults ? { maxResults } : {}),
       exitCode,
       searchEngine,
+      ...(warnings.length ? { warnings } : {}),
       ...(activity ? { activity } : {}),
     },
   };

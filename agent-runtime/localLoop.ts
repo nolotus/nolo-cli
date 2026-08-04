@@ -639,6 +639,7 @@ const TOOL_METADATA_KEYS = [
   "code",
   "error",
   "message",
+  "warnings",
   "pasteId",
   "source",
 ] as const;
@@ -1232,7 +1233,12 @@ export async function runLocalAgentTurn(
   // context-layer-contract / email-registration-workflow / web-research-tool-policy，
   // 仅保留非空块）与 current-time 块。guidance 块作为 session-scope（稳定前缀，
   // 利于 prefix cache），current-time 块作为 turn-scope（动态后缀）。
-  const agentTools = canonicalizeToolNames(agentConfig.toolNames ?? []);
+  // Guidance must describe the tools the model can actually call. Hosts that
+  // drop undeliverable names report the survivors via exposedToolNames; fall
+  // back to the declared list for hosts that expose everything they declare.
+  const agentTools = canonicalizeToolNames(
+    agentConfig.exposedToolNames ?? agentConfig.toolNames ?? []
+  );
   const guidanceBlocks = buildRuntimeGuidanceBlocks(agentTools);
   const guidanceScopes: ContextBlockScope[] =
     [

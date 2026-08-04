@@ -789,11 +789,23 @@ export const mergeAgentToolsWithRuntime = (
     // 只配 read/createDoc 的 agent 不再被误注入 web 工具，这是有意的修正。
     const agentEnabledPacks = (agentConfig as any)?.enabledPacks;
     const isInlineArtifact = isInlineVisualArtifactAgent(agentConfig);
+    // long-term-memory 与 agent-orchestration 同级强制追加：这两个包的定位都是
+    // 「默认全挂、可单关」，但此前只有 agent-orchestration 被补。结果是任何
+    // 勾选过至少一个能力包的 agent（哪怕只勾了「联网搜索」）都会静默丢掉
+    // rememberMemory——用户看到的现象是「这个 agent 就是不记事」，而设置页里
+    // 长期记忆开关明明是默认开的。要单关仍然走 disabledTools。
+    // inline-artifact agent 一个都不补：它的定位是纯产物生成，交互工具会破坏语义。
+    // 这个守卫必须覆盖两个分支——只挂在「空 enabledPacks」那侧的话，勾过任意包的
+    // inline-artifact agent 照样会被塞进强制包（agent-orchestration 此前就是这样漏的）。
+    const alwaysOnPacks = isInlineArtifact
+      ? []
+      : ["long-term-memory", "agent-orchestration"];
     const effectiveEnabledPacks =
       Array.isArray(agentEnabledPacks) && agentEnabledPacks.length > 0
-        ? agentEnabledPacks.includes("agent-orchestration")
-          ? agentEnabledPacks
-          : [...agentEnabledPacks, "agent-orchestration"]
+        ? [
+            ...agentEnabledPacks,
+            ...alwaysOnPacks.filter((pack) => !agentEnabledPacks.includes(pack)),
+          ]
         : isInlineArtifact
           ? (agentEnabledPacks ?? [])
           : ["long-term-memory", "agent-orchestration", "skills"];

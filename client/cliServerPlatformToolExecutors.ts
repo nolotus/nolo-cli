@@ -22,12 +22,23 @@ import {
   classifyFetchWebpageUrl,
   fetchWebpageLocally,
 } from "./fetchWebpageContent";
+import { fetchWithTransientRetry } from "./localRuntimeFetchRetry";
 
 export function buildServerPlatformToolExecutors(args: {
   env: EnvLike;
   fetchImpl: CliFetchImpl;
+  /**
+   * Current agent key, used to scope written memories to this agent's subject
+   * (mirrors the web tool's behavior). Absent for adapters built before an
+   * agent is resolved; the server then falls back to owner-level scoping.
+   */
+  agentKey?: string | null;
 }) {
-  const postServer = async (path: string, body: object) => {
+  const postServer = async (
+    path: string,
+    body: object,
+    opts?: { retryTransient?: boolean },
+  ) => {
     const serverUrl = resolveRuntimeServerUrl(args.env);
     const authToken = resolveRuntimeAuthToken(args.env);
     if (!serverUrl)
@@ -38,14 +49,22 @@ export function buildServerPlatformToolExecutors(args: {
       throw new Error(
         "server platform tools require AUTH_TOKEN or NOLO_MACHINE_API_KEY.",
       );
-    const response = await args.fetchImpl(`${serverUrl}${path}`, {
+    const url = `${serverUrl}${path}`;
+    const init = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify(body),
-    });
+    };
+    // Table and web tools surface their failure to the user, who can retry by
+    // asking again. A dropped memory write is silent — nobody learns it was
+    // lost — so it is the one bridge that retries. Only 429/503 are retried
+    // (the upstream saying "not accepted"), so this cannot double-write.
+    const response = opts?.retryTransient
+      ? await fetchWithTransientRetry(args.fetchImpl, url, init)
+      : await args.fetchImpl(url, init);
     const text = await response.text().catch(() => "");
     if (!response.ok) {
       throw new Error(
@@ -169,5 +188,37 @@ export function buildServerPlatformToolExecutors(args: {
     ]),
   );
 
-  return { ...tableExecutors, ...webExecutors };
+  // Long-term memory writes bridge to /api/memory/remember — the same store
+  // /api/memory/query recalls from. `source: agent-inferred` matches the web
+  // tool: an agent deciding on its own to remember is a guess, not a user
+  // directive, so it gets the lower base confidence.
+  const rememberMemory = async (call: any) => {
+    const parsed = parseNoloWorkspaceToolArguments(call.arguments);
+    const content =
+      typeof parsed.content === "string" ? parsed.content.trim() : "";
+    if (!content) {
+      return {
+        content: JSON.stringify({
+          error: "rememberMemory 需要非空 content。",
+        }),
+        metadata: { serverPlatformTool: true, memoryWrite: false },
+      };
+    }
+    const body: Record<string, unknown> = {
+      content,
+      scope: parsed.scope ?? "auto",
+      kind: parsed.kind ?? "episodic",
+      source: "agent-inferred",
+    };
+    if (args.agentKey) body.agentKey = args.agentKey;
+    const raw = await postServer("/api/memory/remember", body, {
+      retryTransient: true,
+    });
+    return {
+      content: raw,
+      metadata: { serverPlatformTool: true, memoryWrite: true },
+    };
+  };
+
+  return { ...tableExecutors, ...webExecutors, rememberMemory };
 }

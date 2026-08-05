@@ -890,6 +890,8 @@ export default {
       // === End Welcome Section ===
       quickChat: {
         greeting: "What are we working on today?",
+        workspace: "Workspace",
+        workspaceUnset: "Not set",
         placeholder: "I'm {{name}}. Want to chat? You can also switch AI or set up a partner in settings.",
         uploadImage: "Upload Image",
         failedToStart: "Failed to start",
@@ -2152,6 +2154,8 @@ export default {
       // === End Welcome Section ===
       quickChat: {
         greeting: "今天一起做什么？",
+        workspace: "工作区",
+        workspaceUnset: "未设置",
         placeholder: "我是 {{name}}。想跟我聊聊吗？也可以在设置里切换 AI 或配一个搭档",
         uploadImage: "上传图片",
         failedToStart: "启动失败",
@@ -3412,6 +3416,8 @@ export default {
       // === End Welcome Section ===
 quickChat: {
         greeting: "今天一起做什麼？",
+        workspace: "工作區",
+        workspaceUnset: "未設定",
         placeholder: "我是 {{name}}。想跟我聊聊吗？你也可以在设置里切换 AI 或定制你的专属 AI",
         uploadImage: "上傳圖片",
         failedToStart: "啟動失敗",

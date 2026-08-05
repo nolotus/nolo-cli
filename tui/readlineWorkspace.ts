@@ -1437,6 +1437,27 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         }
       }
       clearCollapsedPasteStore(pasteStore);
+      // Clear removes the persisted messages but keeps the dialog identity.
+      // Drop usage-derived context immediately so the composer reflects the
+      // empty dialog before the next turn starts.
+      state = {
+        ...state,
+        turnTokens: undefined,
+        estimatedContextTokens: estimateDefaultCliContextTokens({
+          cwd: state.cwd,
+          agentKey: state.agentKey,
+          agentName:
+            state.agentKey === DEFAULT_TUI_AGENT_KEY &&
+            (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0"
+              ? "DeepSeek V4 Flash"
+              : state.agentName,
+          model:
+            state.agentKey === DEFAULT_TUI_AGENT_KEY &&
+            (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0"
+              ? "deepseek-v4-flash"
+              : undefined,
+        }),
+      };
       history.turns.length = 0;
       history.currentRole = null;
       history.currentContent = "";
@@ -1796,6 +1817,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // back to the placeholder and hid what the user was typing (the submit
     // path still read the inner buffer, so input "worked" but was invisible).
     fixedInput = createFixedInput(output, {
+      getTitleLine: () => {
+        const title = state.dialogLabel?.trim();
+        return title
+          ? themeText(`💬 ${title}`, "accent", resolveCliColorEnabled())
+          : null;
+      },
       getStatusLine: () => {
         let base = renderStatusLine(state);
         // Show the queued-input count while a turn is running so the user can

@@ -158,6 +158,8 @@ type FixedInputConfig = {
   getActivityLine?: () => string | null;
   /** 可选多行活动面板（如子 Agent 执行状态与日志行）。优先于 getActivityLine。 */
   getActivityLines?: () => string[] | string | null;
+  /** Optional title line rendered between the rule and the status line. */
+  getTitleLine?: () => string | null;
   /**
    * Optional extra lines rendered above the composer (below the status line),
    * e.g. a preview of queued follow-up messages. Each entry is one line.
@@ -253,6 +255,10 @@ export function createFixedInput(
       : "─".repeat(cols);
     sections.push(rule);
 
+    const titleLine = config.getTitleLine?.();
+    if (titleLine) {
+      sections.push(fitAnsiLine(titleLine.replace(/\r?\n/g, " "), cols));
+    }
     sections.push(fitAnsiLine(config.getStatusLine(), cols));
 
     // Queued follow-up preview lines sit between the status line and the input
@@ -329,8 +335,9 @@ export function createFixedInput(
     const headerRows =
       (completions.length > 0 ? 1 : 0) +
       2 +
+      (titleLine ? 1 : 0) +
       activityLines.length +
-      queueLines.length; // completion? + top rule + status + activity lines + queued preview
+      queueLines.length; // completion? + top rule + title/status + activity lines + queued preview
     return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 

@@ -138,6 +138,7 @@ declare global {
   interface Window {
     __PRELOADED_STATE__?: RootState;
     __NOLO_DESKTOP__?: boolean;
+    __NOLO_DESKTOP_CWD__?: string;
     __appInitPerf?: {
       start(label: string): void;
       end(label: string): void;

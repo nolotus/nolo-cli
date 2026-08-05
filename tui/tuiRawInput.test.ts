@@ -19,6 +19,34 @@ function mockTty(rows = TERM_ROWS, columns = TERM_COLS) {
   return { output, chunks, stdout: () => chunks.join("") };
 }
 
+describe("createFixedInput composer title", () => {
+  test("renders the current dialog title above the status line", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getTitleLine: () => "💬 Project planning",
+      getStatusLine: () => "context: 10%",
+    });
+
+    input.repaint("");
+    const output = tty.stdout();
+    expect(output).toContain("💬 Project planning");
+    expect(output.indexOf("💬 Project planning")).toBeLessThan(output.indexOf("context: 10%"));
+    expect(input.getInputLines()).toBe(4);
+  });
+
+  test("does not reserve a title row when no title is available", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getTitleLine: () => null,
+      getStatusLine: () => "context: —",
+    });
+
+    input.repaint("");
+    expect(tty.stdout()).not.toContain("undefined");
+    expect(input.getInputLines()).toBe(3);
+  });
+});
+
 describe("createFixedInput onInputLinesChange", () => {
   test("composer 3→4 行（活动行出现）时 onInputLinesChange 被调用一次", () => {
     // 缺陷 A 核心：活动行首次出现让 composer 从 3 行变 4 行，repaintAt 据此

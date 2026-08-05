@@ -46,6 +46,25 @@ const noColor = (fn: () => void) => {
   }
 };
 
+/**
+ * Color + forced truecolor. Several history-rendering assertions lock exact
+ * `\x1b[38;2;R;G;Bm` sequences; without forcing truecolor those degrade to
+ * ANSI-16 fallbacks (`\x1b[34m` etc.) and the truecolor assertions break on
+ * any runner that doesn't already export COLORTERM/TERM_PROGRAM (CI, plain
+ * `bun test`). NOLO_TUI_TRUECOLOR=1 makes themeColorSequence deterministic
+ * regardless of host terminal. Wrap withColor so NOLO_CLI_COLOR is also set.
+ */
+const withTruecolor = (fn: () => void) => {
+  const prevTruecolor = process.env.NOLO_TUI_TRUECOLOR;
+  process.env.NOLO_TUI_TRUECOLOR = "1";
+  try {
+    withColor(fn);
+  } finally {
+    if (prevTruecolor === undefined) delete process.env.NOLO_TUI_TRUECOLOR;
+    else process.env.NOLO_TUI_TRUECOLOR = prevTruecolor;
+  }
+};
+
 const render = (turns: Turn[], width = 120): string =>
   buildHistoryLines(
     { ...createTurnHistory(), turns },
@@ -76,14 +95,23 @@ describe("buildHistoryLines — assistant markdown rendered through the full ren
     ].join("\n");
 
     let out = "";
-    withColor(() => {
+    let accentSeq = "";
+    let chromeSeq = "";
+    withTruecolor(() => {
       out = render([{ role: "assistant", content: md }]);
+      // Capture the sequences INSIDE the truecolor scope — the env is reset
+      // after withTruecolor returns, so assertions taken outside would get
+      // the ANSI-16 fallback and mismatch the truecolor output.
+      accentSeq = themeColorSequence("accent");
+      chromeSeq = themeColorSequence("chrome");
     });
 
-    // Unordered list markers get the accent color (not raw "- ").
-    expect(out).toContain("\x1b[38;2;88;166;255m•\x1b[0m item one");
-    // Ordered list markers are accent-colored too.
-    expect(out).toContain("\x1b[38;2;88;166;255m1.\x1b[0m first");
+    // Unordered list bullets get the accent color (not raw "- ").
+    expect(out).toContain(`${accentSeq}•\x1b[0m item one`);
+    // Ordered list markers are chrome (structural, not accent) — see
+    // assistantOutput.ts styleRichMarkdownLine: owner feedback 2026-08-02
+    // demoted them from accent so a column of digits doesn't read as noise.
+    expect(out).toContain(`${chromeSeq}1.\x1b[0m first`);
     // Table is converted to bullets — the raw separator must be gone.
     expect(out).not.toContain("| --- |");
     expect(out).toContain("苹果");
@@ -101,17 +129,18 @@ describe("buildHistoryLines — assistant markdown rendered through the full ren
     // status line must be downgraded to chrome + dim, both in the stream and
     // after the turn scrolls into history.
     let out = "";
-    withColor(() => {
+    let chromeSeq = "";
+    withTruecolor(() => {
       out = render([
         {
           role: "assistant",
           content: "进入 nolo-plan（4 项串行小改）。\nbody text",
         },
       ]);
+      chromeSeq = themeColorSequence("chrome");
     });
-    // chrome (truecolor catppuccin overlay0) + dim (\x1b[2m) on the
-    // status line.
-    expect(out).toContain("\x1b[38;2;110;118;129m");
+    // chrome (truecolor catppuccin dark) + dim (\x1b[2m) on the status line.
+    expect(out).toContain(chromeSeq);
     expect(out).toContain("\x1b[2m进入 nolo-plan");
     // The body line is NOT dimmed by this rule.
     expect(out).toContain("body text");
@@ -119,18 +148,22 @@ describe("buildHistoryLines — assistant markdown rendered through the full ren
 
   test("```diff fence keeps its color band in history redraw", () => {
     let out = "";
-    withColor(() => {
+    let successSeq = "";
+    let dangerSeq = "";
+    withTruecolor(() => {
       out = render([
         {
           role: "assistant",
           content: "```diff\n+added line\n-removed line\n```",
         },
       ]);
+      successSeq = themeColorSequence("success");
+      dangerSeq = themeColorSequence("danger");
     });
     // Added lines are green, removed lines are red (renderDiffLine via
-    // highlightCodeLine). Truecolor catppuccin success/danger.
-    expect(out).toContain("\x1b[38;2;63;185;80m+added line");
-    expect(out).toContain("\x1b[38;2;255;123;114m-removed line");
+    // highlightCodeLine). Truecolor catppuccin dark success/danger.
+    expect(out).toContain(`${successSeq}+added line`);
+    expect(out).toContain(`${dangerSeq}-removed line`);
   });
 
   test("user turns bypass markdown rendering — **bold** stays literal", () => {
@@ -226,16 +259,18 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
 
   test("first line uses accent ❯ and default body text", () => {
     let lines: string[] = [];
-    withColor(() => {
+    let accentSeq = "";
+    let mutedSeq = "";
+    withTruecolor(() => {
       lines = buildHistoryLines(
         { ...createTurnHistory(), turns: [{ role: "user", content: "hello world" }] },
         80
       ).filter(Boolean);
+      accentSeq = themeColorSequence("accent");
+      mutedSeq = themeColorSequence("muted");
     });
 
     expect(lines.length).toBe(1);
-    const accentSeq = themeColorSequence("accent");
-    const mutedSeq = themeColorSequence("muted");
     expect(lines[0]).toContain(`${accentSeq}❯\x1b[39m`);
     expect(lines[0]).toContain("hello world");
     expect(lines[0]).not.toContain(mutedSeq);
@@ -243,17 +278,20 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
 
   test("explicit multiline uses chrome │ prefix and default body text", () => {
     let lines: string[] = [];
-    withColor(() => {
+    let accentSeq = "";
+    let chromeSeq = "";
+    let mutedSeq = "";
+    withTruecolor(() => {
       lines = buildHistoryLines(
         { ...createTurnHistory(), turns: [{ role: "user", content: "first line\nsecond line" }] },
         80
       ).filter(Boolean);
+      accentSeq = themeColorSequence("accent");
+      chromeSeq = themeColorSequence("chrome");
+      mutedSeq = themeColorSequence("muted");
     });
 
     expect(lines.length).toBe(2);
-    const accentSeq = themeColorSequence("accent");
-    const chromeSeq = themeColorSequence("chrome");
-    const mutedSeq = themeColorSequence("muted");
 
     expect(lines[0]).toContain(`${accentSeq}❯\x1b[39m`);
     expect(lines[0]).toContain("first line");

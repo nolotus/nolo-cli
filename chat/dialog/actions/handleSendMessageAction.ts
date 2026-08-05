@@ -90,7 +90,11 @@ const logQuickChatPerfStage = (
  */
 const resolveBrowseContextPrefix = async (message: string): Promise<string> => {
     try {
-        if (typeof process === "undefined" || process.env?.NOLO_DESKTOP !== "1") return "";
+        // 渲染进程没有 process.env；用 location 判断是否桌面内嵌服务器（127.0.0.1:3233）
+        if (typeof window === "undefined" || typeof location === "undefined") return "";
+        if (typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || process.env?.BUN_TEST)) return "";
+        const host = location.hostname;
+        if (host !== "127.0.0.1" && host !== "localhost") return "";
         if (typeof fetch !== "function" || typeof AbortSignal?.timeout !== "function") return "";
         const response = await fetch("/api/desktop/browse-context", {
             method: "POST",
@@ -194,10 +198,13 @@ export const handleSendMessageAction = async (
 
         // 步骤 2.5: 按对话意图动态挂载浏览上下文能力包（仅桌面端浏览器窗口开着时）
         const userInputText = typeof args.userInput === "string" ? args.userInput : "";
-        const browseContextPrefix =
-            typeof process !== "undefined" && process.env?.NOLO_DESKTOP === "1"
-                ? await resolveBrowseContextPrefix(userInputText)
-                : "";
+        const isDesktopContext =
+            typeof window !== "undefined" &&
+            typeof location !== "undefined" &&
+            (location.hostname === "127.0.0.1" || location.hostname === "localhost");
+        const browseContextPrefix = isDesktopContext
+            ? await resolveBrowseContextPrefix(userInputText)
+            : "";
         const effectiveUserInput = browseContextPrefix
             ? `${browseContextPrefix}\n\n${userInputText}`
             : args.userInput;

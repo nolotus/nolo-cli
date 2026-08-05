@@ -1,6 +1,7 @@
 import { normalizeServerOrigin } from "../core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "../defaultServer";
 import { NOLO_CLUSTER_SERVERS } from "../database/config";
+import { resolvePlatformAuthToken } from "../agent-runtime/providerResolution";
 import {
   createHybridRecordStore,
   shouldCacheHybridRemoteRecord,
@@ -30,7 +31,9 @@ function resolveFallbackServers(env: EnvLike) {
 }
 
 function resolveAuthToken(env: EnvLike) {
-  return env.AUTH_TOKEN || env.AUTH || env.BENCHMARK_AUTH_TOKEN || "";
+  // Single source of truth: delegate to resolvePlatformAuthToken so the
+  // machine key (NOLO_MACHINE_API_KEY) counts as a valid bearer here too.
+  return resolvePlatformAuthToken(env);
 }
 
 export function shouldCacheRemoteRecord(remoteRecord: any, localRecord: any) {

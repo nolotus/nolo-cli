@@ -42,6 +42,29 @@ function resolveDialogTitle(args: {
   return lastUserText ? lastUserText.slice(0, 80) : "Local agent run";
 }
 
+/**
+ * Final dialog title for a write plan, by priority:
+ *   1. existing dialog title (keep — a titled dialog never gets retitled)
+ *   2. caller-supplied titleOverride (e.g. LLM-generated)
+ *   3. resolveDialogTitle fallback (last user message / "Local agent run")
+ * Named pickDialogTitle to avoid a name clash with the fallback-only
+ * resolveDialogTitle above.
+ */
+function pickDialogTitle(args: {
+  existingDialog?: DialogRecord | null;
+  titleOverride?: string;
+  messages: AgentRuntimeChatMessage[];
+}): string {
+  const existing = args.existingDialog?.title;
+  if (typeof existing === "string" && existing.trim()) return existing.trim();
+  const override = args.titleOverride?.trim();
+  if (override) return override;
+  return resolveDialogTitle({
+    existingDialog: args.existingDialog,
+    messages: args.messages,
+  });
+}
+
 function normalizeSubjectRef(ref: unknown): DialogSubjectRef | null {
   if (!ref || typeof ref !== "object") return null;
   const raw = ref as Record<string, unknown>;
@@ -158,7 +181,7 @@ export function buildAgentRuntimeDialogWritePlan(args: {
    * Existing dialogs with a non-empty title always keep their title regardless.
    */
   titleOverride?: string;
-}): { dialogId: string; ops: DialogWriteOp[] } {
+}): { dialogId: string; title: string; ops: DialogWriteOp[] } {
   const dialogId = args.input.continueDialogId || args.createId();
   const nowIso = new Date(args.now).toISOString();
   const dialogKey = `dialog-${args.userId}-${dialogId}`;
@@ -171,16 +194,11 @@ export function buildAgentRuntimeDialogWritePlan(args: {
     userId: args.userId,
     cybots: [args.input.agentKey],
     primaryAgentKey: args.input.agentKey,
-    title:
-      typeof args.existingDialog?.title === "string" &&
-      args.existingDialog.title.trim()
-        ? args.existingDialog.title.trim()
-        : args.titleOverride?.trim()
-          ? args.titleOverride.trim()
-          : resolveDialogTitle({
-              existingDialog: args.existingDialog,
-              messages: args.input.messages,
-            }),
+    title: pickDialogTitle({
+      existingDialog: args.existingDialog,
+      titleOverride: args.titleOverride,
+      messages: args.input.messages,
+    }),
     status: args.input.result.error === true ? "failed" : "done",
     triggerType: `${args.runtimeHost}-local`,
     executionMode: args.existingDialog?.executionMode ?? "foreground",
@@ -217,6 +235,7 @@ export function buildAgentRuntimeDialogWritePlan(args: {
   };
   return {
     dialogId,
+    title: dialogRecord.title,
     ops: [
       {
         type: "put",

@@ -304,6 +304,7 @@ function resolveAuthToken(args: string[], env: EnvLike): string {
     readOption(args, "--token") ||
     env.AUTH_TOKEN ||
     env.AUTH ||
+    env.NOLO_MACHINE_API_KEY ||
     ""
   );
 }

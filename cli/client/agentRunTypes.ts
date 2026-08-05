@@ -12,6 +12,7 @@ import type { CollapsedPasteStore } from "../../core/collapsedPaste";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import { asTrimmedString } from "../../core/trimmedString";
+import { resolvePlatformAuthToken } from "../../agent-runtime/providerResolution";
 import type { AgentRuntimeRequestedMode, AgentRuntimeHostAdapter, AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import type { LocalAgentActionGate, LocalAgentLoopEvent } from "../../agent-runtime/localLoop";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
@@ -50,7 +51,11 @@ export type DispatchPlan = {
 };
 
 export function resolveAuthToken(env: EnvLike) {
-  return env.AUTH_TOKEN || env.AUTH || env.BENCHMARK_AUTH_TOKEN || "";
+  // Single source of truth: delegate to resolvePlatformAuthToken so the
+  // machine key (NOLO_MACHINE_API_KEY) counts as a valid bearer here too.
+  // Previously this was a third copy that missed NOLO_MACHINE_API_KEY,
+  // dropping machine-authenticated CLI runs from the server/http paths.
+  return resolvePlatformAuthToken(env);
 }
 
 /**
@@ -229,6 +234,12 @@ export type RunAgentTurnOptions = {
 export type RunAgentTurnResult = {
   exitCode: number;
   dialogId?: string;
+  /**
+   * Dialog title persisted for this turn (LLM-generated when available, else
+   * the fallback used by buildAgentRuntimeDialogWritePlan). The TUI displays
+   * this instead of the raw dialogId so users see a summary, not a UUID.
+   */
+  title?: string;
   streamInterrupted?: boolean;
   /**
    * Cooperative stop (TUI Esc) while a tool was still running: the tool name

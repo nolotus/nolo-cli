@@ -116,7 +116,10 @@ export function resolveDeleteServerCandidates(
 }
 
 export function resolveAuthTokenFromEnv(env: EnvLike, extraEnvKeys: string[] = []) {
-  for (const key of ["AUTH_TOKEN", "AUTH", ...extraEnvKeys]) {
+  // Default env key list mirrors resolvePlatformAuthToken so a machine key
+  // (NOLO_MACHINE_API_KEY) counts as a valid bearer here too. Callers can
+  // still extend via extraEnvKeys for niche keys (e.g. BENCHMARK_AUTH_TOKEN).
+  for (const key of ["AUTH_TOKEN", "AUTH", "NOLO_MACHINE_API_KEY", ...extraEnvKeys]) {
     const value = env[key];
     if (typeof value === "string" && value.trim()) return value;
   }

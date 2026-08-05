@@ -11,6 +11,7 @@ import {
 } from "../client/localRuntimeAdapter";
 import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPrompts";
 import { buildSkillDiscoveryContextBlock } from "../../agent-runtime/skillDiscovery";
+import { resolvePlatformAuthToken } from "../../agent-runtime/providerResolution";
 import {
   classifyCliAutoRoute,
   CLI_AUTO_TIER_AGENT_KEYS,
@@ -409,8 +410,7 @@ async function runAgentChat(
     // 新对话第一轮（web 的「建对话前」）：仅在用户未显式选择 agent（保持默认平台 agent）时，
     // 调用 LLM 分类器在内置档（tier）之间路由。
     // 若用户已显式选择 agent（如通过 /agent 或 NOLO_AGENT），完全跳过 auto 路由。
-    const authToken =
-      env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
+    const authToken = resolvePlatformAuthToken(env);
     // The unauthenticated fallback is synchronous in practice. Avoid an
     // otherwise unnecessary promise yield before invoking the runner: raw TTY
     // input can arrive while the first turn is being prepared, and an Enter
@@ -451,8 +451,7 @@ async function runAgentChat(
       needsVisionSwitch = true;
     } else {
       // 用户选择的 agent：读 record 检查 vision 能力。
-      const authToken =
-        env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
+      const authToken = resolvePlatformAuthToken(env);
       const record = await readDbRecord({
         dbKey: visionProbeKey,
         authToken,
@@ -478,8 +477,7 @@ async function runAgentChat(
   let skillAllowedTools: string[] | undefined;
   let skillContextBlocks: string[] | undefined;
   if (state.attachedSkills.length > 0) {
-    const authToken =
-      env.AUTH_TOKEN ?? env.AUTH ?? env.BENCHMARK_AUTH_TOKEN ?? "";
+    const authToken = resolvePlatformAuthToken(env);
     const resolvedSkills = [];
     for (const ref of state.attachedSkills) {
       try {
@@ -1264,7 +1262,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               ? {
                   dialogId: runResult.dialogId,
                   dialogKey: nextDialogKey,
-                  dialogLabel: runResult.dialogId,
+                  dialogLabel: runResult.title || runResult.dialogId,
                 }
               : {}),
             ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
@@ -1306,7 +1304,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             ? {
                 dialogId: runResult.dialogId,
                 dialogKey: nextDialogKey,
-                dialogLabel: runResult.dialogId,
+                dialogLabel: runResult.title || runResult.dialogId,
               }
             : {}),
           ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
@@ -1418,8 +1416,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
     if (result.action?.type === "clear") {
       if (result.action.dialogId) {
-        const authToken =
-          options.env?.AUTH_TOKEN ?? options.env?.AUTH ?? options.env?.BENCHMARK_AUTH_TOKEN ?? "";
+        const authToken = resolvePlatformAuthToken(options.env ?? {});
         try {
           await deleteDbRecord({
             // The messages delete endpoint expects the bare dialogId; dialogKey
@@ -1476,8 +1473,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }
     if (result.action?.type === "compact") {
       const runner = options.compactRunner ?? compactDialog;
-      const authToken =
-        options.env?.AUTH_TOKEN ?? options.env?.AUTH ?? options.env?.BENCHMARK_AUTH_TOKEN ?? "";
+      const authToken = resolvePlatformAuthToken(options.env ?? {});
       try {
         const compactResult = await runner({
           serverUrl: state.serverUrl,
@@ -1663,7 +1659,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             ...state,
             dialogId: pickResult.dialog.id,
             dialogKey: pickResult.dialog.dbKey,
-            dialogLabel: pickResult.dialog.id,
+            dialogLabel: pickResult.dialog.title || pickResult.dialog.id,
             turnTokens: undefined,
           };
           clearCollapsedPasteStore(pasteStore);

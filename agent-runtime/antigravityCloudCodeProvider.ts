@@ -100,6 +100,27 @@ function convertOpenAiMessagesToCca(
   const contents: CcaContent[] = [];
   const systemTexts: string[] = [];
   const toolNamesById = new Map<string, string>();
+  // 记录尚未收到 functionResponse 的悬挂 functionCall 名字及对应 id
+  let pendingFunctionCalls: Array<{ name: string; id: string }> = [];
+
+  const pushOrMergeContent = (role: "user" | "model", parts: CcaPart[]) => {
+    if (parts.length === 0) return;
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) {
+      last.parts.push(...parts);
+    } else {
+      contents.push({ role, parts });
+    }
+  };
+
+  const flushPendingFunctionCalls = () => {
+    if (pendingFunctionCalls.length === 0) return;
+    const dummyResponses: CcaPart[] = pendingFunctionCalls.map(({ name }) => ({
+      functionResponse: { name, response: { output: "{}" } },
+    }));
+    pendingFunctionCalls = [];
+    pushOrMergeContent("user", dummyResponses);
+  };
 
   for (const raw of messages) {
     if (!raw || typeof raw !== "object" || !("role" in raw)) continue;
@@ -113,6 +134,9 @@ function convertOpenAiMessagesToCca(
     }
 
     if (role === "user") {
+      // 遇到新的 user 消息时，如果还有未应答的 functionCall，先自动补齐空 functionResponse
+      flushPendingFunctionCalls();
+
       const text = messageText(content as AgentRuntimeChatMessage["content"]);
       const imageParts = extractInlineDataParts(
         content as AgentRuntimeChatMessage["content"],
@@ -121,11 +145,14 @@ function convertOpenAiMessagesToCca(
       const parts: CcaPart[] = [];
       if (text) parts.push({ text });
       for (const img of imageParts) parts.push(img);
-      contents.push({ role: "user", parts });
+      pushOrMergeContent("user", parts);
       continue;
     }
 
     if (role === "assistant") {
+      // 遇到新的 assistant 消息时，先补齐之前挂起的 functionCall 响应（如果有）
+      flushPendingFunctionCalls();
+
       const parts: CcaPart[] = [];
       const text = messageText(content as AgentRuntimeChatMessage["content"]);
       if (text) parts.push({ text });
@@ -134,11 +161,14 @@ function convertOpenAiMessagesToCca(
         "tool_calls" in raw && Array.isArray((raw as { tool_calls: unknown }).tool_calls)
           ? ((raw as { tool_calls: AgentRuntimeToolCall[] }).tool_calls ?? [])
           : [];
+
       for (const call of toolCalls) {
         const name = call?.function?.name?.trim();
         if (!name) continue;
         const id = call.id?.trim() || `${name}_${toolNamesById.size}`;
         toolNamesById.set(id, name);
+        pendingFunctionCalls.push({ name, id });
+
         // 优先回放持久化下来的真实 thoughtSignature（gemini-3.5 强制校验）。
         // 没有真实签名时按 Gemini 文档形状处理：只有本轮第一个 functionCall
         // part 需要签名（哨兵兜底，防 gemini-3 400），后续 part 不带。
@@ -161,7 +191,7 @@ function convertOpenAiMessagesToCca(
         });
       }
       if (parts.length === 0) continue;
-      contents.push({ role: "model", parts });
+      pushOrMergeContent("model", parts);
       continue;
     }
 
@@ -170,14 +200,31 @@ function convertOpenAiMessagesToCca(
         "tool_call_id" in raw && typeof (raw as { tool_call_id: unknown }).tool_call_id === "string"
           ? (raw as { tool_call_id: string }).tool_call_id
           : "";
-      const name = toolNamesById.get(toolCallId) ?? "tool";
+      const rawName =
+        "name" in raw && typeof (raw as { name: unknown }).name === "string"
+          ? (raw as { name: string }).name.trim()
+          : "";
+      const name = toolNamesById.get(toolCallId) || rawName || pendingFunctionCalls[0]?.name || "tool";
+
+      // 移除已被此 tool 响应消解的 pending 记录
+      const pendingIndex = pendingFunctionCalls.findIndex(
+        (p) => (toolCallId ? p.id === toolCallId : p.name === name),
+      );
+      if (pendingIndex !== -1) {
+        pendingFunctionCalls.splice(pendingIndex, 1);
+      } else if (pendingFunctionCalls.length > 0) {
+        pendingFunctionCalls.shift();
+      }
+
       const output = messageText(content as AgentRuntimeChatMessage["content"]) || "{}";
-      contents.push({
-        role: "user",
-        parts: [{ functionResponse: { name, response: { output } } }],
-      });
+      pushOrMergeContent("user", [
+        { functionResponse: { name, response: { output } } },
+      ]);
     }
   }
+
+  // 结尾清理任何残余的 pending functionCall
+  flushPendingFunctionCalls();
 
   return { contents, systemTexts };
 }

@@ -3,6 +3,8 @@
 // Shared helpers for local runtime adapter + remote dialog sync.
 // 从 localRuntimeAdapter.ts 提取的公共依赖——避免循环 import。
 
+import { resolvePlatformAuthToken } from "../../agent-runtime/providerResolution";
+
 export type EnvLike = Record<string, string | undefined>;
 
 // Max wait for remote dialog-evidence sync fetches (POST write / GET read)
@@ -31,11 +33,15 @@ export function resolveRuntimeServerUrl(env: EnvLike) {
   ).replace(/\/+$/, "");
 }
 
+/**
+ * Resolve the effective auth token from env.
+ *
+ * Delegates to agent-runtime's `resolvePlatformAuthToken` so there is a single
+ * source of truth for "which env vars count as a valid bearer" — previously
+ * this was a second copy that drifted (it lacked BENCHMARK_AUTH_TOKEN).
+ * Kept here as a thin wrapper to preserve the existing call sites and the
+ * env?. tolerant access style.
+ */
 export function resolveRuntimeAuthToken(env: EnvLike) {
-  return (
-    env?.AUTH_TOKEN ||
-    env?.AUTH ||
-    env?.NOLO_MACHINE_API_KEY ||
-    ""
-  );
+  return resolvePlatformAuthToken(env ?? {});
 }

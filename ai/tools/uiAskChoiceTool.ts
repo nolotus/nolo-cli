@@ -4,6 +4,7 @@ export const uiAskChoiceFunctionSchema = {
     name: "ui_ask_choice",
     description: [
         "让用户在 2～5 个互斥选项之间做选择的通用“出选项”工具。适用场景：需求模糊时给方向候选、计划分支节点决策、出题/问卷、新会话功能导航。",
+        "调用前须先在普通回复文本里解释背景与权衡（先解释，再调用）。",
         "",
         "多问题 & 多选支持：",
         "- 当你需要一次问多个问题时，使用 questions 数组代替 question+choices。",
@@ -41,7 +42,7 @@ export const uiAskChoiceFunctionSchema = {
                         detail: {
                             type: "string",
                             description:
-                                "选项的补充描述，显示在 label 下方。可选。"
+                                "简短补充（建议一句话），长解释写进调用前的回复文本。"
                         },
                         userMessage: {
                             type: "string",
@@ -80,7 +81,7 @@ export const uiAskChoiceFunctionSchema = {
                                     label: { type: "string" },
                                     detail: {
                                         type: "string",
-                                        description: "补充描述。"
+                                        description: "简短补充（建议一句话），长解释写进调用前的回复文本。"
                                     },
                                     userMessage: { type: "string" }
                                 },

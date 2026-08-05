@@ -851,6 +851,7 @@ async function runLocalAgentTurnForCli(
     return {
       exitCode: 0,
       dialogId: result.dialogId,
+      title: result.title,
       turnTokens: buildTurnTokenUsage(result.usage, result.model),
     };
   } catch (error) {
@@ -907,6 +908,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
         return {
           exitCode: localResult.exitCode,
           ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
+          title: localResult.title,
           ...(localResult.turnTokens
             ? { turnTokens: localResult.turnTokens }
             : {}),
@@ -937,6 +939,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions) {
                 ...(retriedLocalResult.dialogId
                   ? { dialogId: retriedLocalResult.dialogId }
                   : {}),
+                title: retriedLocalResult.title,
                 ...(retriedLocalResult.turnTokens
                   ? { turnTokens: retriedLocalResult.turnTokens }
                   : {}),

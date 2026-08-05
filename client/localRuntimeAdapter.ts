@@ -527,13 +527,21 @@ const CLI_DEFAULT_TOOLS = ["exa_search", "fetchWebpage"] as const;
 function addDefaultCliCoreTools(
   toolNames: string[],
   env?: EnvLike,
+  options?: { hasUserChoice?: boolean },
 ): string[] {
   const declaredOnly = env && shouldUseDeclaredOnlyLocalWorkspaceTools(env);
-  // Forced tools are always present; default tools only in normal mode.
+  const forcedTools = options?.hasUserChoice
+    ? FORCED_TOOLS
+    : FORCED_TOOLS.filter((name) => name !== "ui_ask_choice");
+  // Forced tools are present according to interactivity; default tools only in normal mode.
   const injected = declaredOnly
-    ? [...FORCED_TOOLS]
-    : [...FORCED_TOOLS, ...CLI_DEFAULT_TOOLS];
-  return [...new Set([...toolNames, ...injected])];
+    ? [...forcedTools]
+    : [...forcedTools, ...CLI_DEFAULT_TOOLS];
+  const combined = [...toolNames, ...injected];
+  const filtered = options?.hasUserChoice
+    ? combined
+    : combined.filter((name) => name !== "ui_ask_choice");
+  return [...new Set(filtered)];
 }
 
 /**
@@ -601,6 +609,7 @@ export function resolveCliRequestedToolNames(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
   systemBuiltinSkills?: Record<string, boolean> | null,
+  options?: { hasUserChoice?: boolean },
 ): string[] {
   const declaredOnly = shouldUseDeclaredOnlyLocalWorkspaceTools(env);
   const expanded = addDefaultLightWebToolsForConfiguredAgents(
@@ -619,6 +628,7 @@ export function resolveCliRequestedToolNames(
           ),
         ),
         env,
+        options,
       ),
       agentConfig,
     );
@@ -635,10 +645,11 @@ function resolveProviderOpenAiToolBundle(
   env: EnvLike,
   buildTools: typeof buildOpenAiTools = buildOpenAiTools,
   additionalToolNames: string[] = [],
+  options?: { hasUserChoice?: boolean },
 ) {
   const requestedToolNames = [
     ...new Set([
-      ...resolveCliRequestedToolNames(agentConfig, env),
+      ...resolveCliRequestedToolNames(agentConfig, env, null, options),
       ...additionalToolNames,
     ]),
   ];
@@ -1098,8 +1109,14 @@ async function writeDialog(args: {
 
   // Login gate: only logged-in users get LLM-generated titles.
   // Unauthenticated runs fall back to the built-in resolveDialogTitle.
+  // A machine key (NOLO_MACHINE_API_KEY) is a valid server-proxy bearer for
+  // the builtin title LLM even though it is not a JWT, so it counts as logged
+  // in here — the title LLM runs server-side and does not need a local userId.
   const authToken = resolveRuntimeAuthToken(args.env);
-  const isLoggedIn = Boolean(authToken && parseUserIdFromAuthToken(authToken));
+  const isLoggedIn = Boolean(
+    authToken &&
+      (parseUserIdFromAuthToken(authToken) || args.env.NOLO_MACHINE_API_KEY?.trim()),
+  );
   const hasExistingTitle =
     typeof existingDialog?.title === "string" && existingDialog.title.trim();
 
@@ -1184,7 +1201,7 @@ async function writeDialog(args: {
       );
     }
   }
-  return { dialogId: plan.dialogId };
+  return { dialogId: plan.dialogId, title: plan.title };
 }
 
 function resolveCliDialogRecordKey(userId: string, dialogId: string): string {
@@ -1364,8 +1381,14 @@ export function createCliLocalRuntimeAdapter(
       // 读取用户全局设置中的「系统内置 Skill」开关映射，传给工具展开管道，
       // 让 CLI 端与 Web/桌面端行为一致：用户关闭「联网搜索」后，CLI agent
       // 也不再注入 web-search 包工具。best-effort，读失败视为默认全开。
+      const hasUserChoice = Boolean(deps.requestUserChoice);
       const requestedToolNames = agentConfig
-        ? resolveCliRequestedToolNames(agentConfig, deps.env, systemBuiltinSkills)
+        ? resolveCliRequestedToolNames(
+            agentConfig,
+            deps.env,
+            systemBuiltinSkills,
+            { hasUserChoice },
+          )
         : [];
       activeAgentToolNames = buildLocalPolicyToolNames({
         agentKey: agentConfig?.key,
@@ -1537,6 +1560,7 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
+          { hasUserChoice },
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1647,6 +1671,7 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
+          { hasUserChoice },
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1728,6 +1753,7 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
+          { hasUserChoice },
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1821,6 +1847,7 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
+          { hasUserChoice: Boolean(deps.requestUserChoice) },
         );
         return {
           model: providerConfig.model,
@@ -2011,6 +2038,7 @@ export function createCliLocalRuntimeAdapter(
         deps.env,
         buildProviderOpenAiTools,
         additionalToolNames,
+        { hasUserChoice: Boolean(deps.requestUserChoice) },
       );
       return {
         model: providerConfig.model,

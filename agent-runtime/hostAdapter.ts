@@ -142,7 +142,7 @@ export type AgentRuntimeHostAdapter = {
   capabilities: string[];
   loadAgentConfig(agentRef: string): Promise<AgentRuntimeAgentConfig | null>;
   loadDialogHistory(dialogId: string): Promise<AgentRuntimeChatMessage[]>;
-  saveTurn(input: AgentRuntimeSaveTurnInput): Promise<{ dialogId: string }>;
+  saveTurn(input: AgentRuntimeSaveTurnInput): Promise<{ dialogId: string; title?: string }>;
   resolveProvider(agentConfig: AgentRuntimeAgentConfig): Promise<AgentRuntimeProvider>;
   executeTool(
     call: AgentRuntimeToolCallInput,

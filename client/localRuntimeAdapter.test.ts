@@ -111,7 +111,6 @@ describe("CLI local runtime adapter", () => {
     "cliDoctor",
   ];
   const DEFAULT_PRIVATE_LOCAL_TOOL_NAMES = [
-    "ui_ask_choice",
     ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
     // long-term-memory 是 always-on 能力包：CLI 每个未 ablation 的 agent 都能看到
     // rememberMemory，TUI 的「记住 X」才会走 tool call 而非 shell 兜底。
@@ -1471,7 +1470,6 @@ describe("CLI local runtime adapter", () => {
       { role: "user", content: "make notifications cleaner" },
     ]);
     expect(toolNamesFromRequest(requests[0])).toEqual([
-      "ui_ask_choice",
       ...LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
       "exa_search",
@@ -2355,7 +2353,6 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(toolNamesFromRequest(requests[0])).toEqual([
-      "ui_ask_choice",
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
       "exa_search",
@@ -2417,7 +2414,6 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(toolNamesFromRequest(requests[0])).toEqual([
-      "ui_ask_choice",
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
       "exa_search",
@@ -2468,7 +2464,7 @@ describe("CLI local runtime adapter", () => {
       input: "inspect cwd",
     });
 
-    expect(toolNamesFromRequest(requests[0])).toEqual(["ui_ask_choice", "listFiles", "readFile", "execShell"]);
+    expect(toolNamesFromRequest(requests[0])).toEqual(["listFiles", "readFile", "execShell"]);
   });
 
   test("defaults local workspace tools to strategy descriptions and rich parameters", async () => {
@@ -4176,11 +4172,48 @@ describe("CLI local runtime adapter", () => {
     });
 
     const toolNames = toolNamesFromRequest(requests[0]);
-    // declared-only mode skips default tools (fetchWebpage/exa_search), but
-    // FORCED_TOOLS (ui_ask_choice) survive — the platform interaction floor
-    // cannot be turned off, even in ablation mode.
+    // declared-only mode skips default tools (fetchWebpage/exa_search), and
+    // without requestUserChoice (headless), ui_ask_choice is also excluded.
     expect(toolNames).not.toContain("fetchWebpage");
     expect(toolNames).not.toContain("exa_search");
+    expect(toolNames).not.toContain("ui_ask_choice");
+  });
+
+  test("FORCED_TOOLS (ui_ask_choice) is injected when requestUserChoice is provided", async () => {
+    const requests: Array<{ body: any }> = [];
+    const adapter = createAdapter({
+      env: {
+        OPENAI_API_KEY: "sk-local",
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+        NOLO_LOCAL_WORKSPACE_TOOLSET: "declared-only",
+      },
+      db: {
+        get: async () => ({
+          dbKey: "agent-local-choice-forced",
+          prompt: "Be helpful.",
+          model: "gpt-4.1-mini",
+          tools: ["readFile", "searchFiles"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({
+          choices: [{ message: { content: "done" } }],
+        });
+      },
+      requestUserChoice: async () => ({ kind: "selected", userMessage: "a", label: "a" }),
+    });
+
+    await runLocalAgentTurn({
+      adapter,
+      agentRef: "choice-forced",
+      input: "你好",
+    });
+
+    const toolNames = toolNamesFromRequest(requests[0]);
     expect(toolNames).toContain("ui_ask_choice");
   });
 
@@ -4793,7 +4826,7 @@ describe("CLI local policy tool names 派生自 schema", () => {
   test("executor 覆盖守卫：模型可见的每个工具名都能在本地 executor map 找到实现", () => {
     const agentConfig = { key: "agent-exec-cov", tools: [] } as any;
     const env = {};
-    const requested = resolveCliRequestedToolNames(agentConfig, env as any);
+    const requested = resolveCliRequestedToolNames(agentConfig, env as any, null, { hasUserChoice: true });
     const exposed = buildLocalPolicyToolNames({
       agentKey: agentConfig.key,
       toolNames: requested,
@@ -4906,5 +4939,29 @@ describe("resolveCliRequestedToolNames — systemBuiltinSkills 全局开关", ()
       null,
     );
     expect(requested).toContain("exa_search");
+  });
+});
+
+describe("resolveCliRequestedToolNames — hasUserChoice 交互通道门控", () => {
+  test("未提供 hasUserChoice 时默认不注入 ui_ask_choice", () => {
+    const agentConfig = { key: "agent-headless", tools: [] } as any;
+    const requested = resolveCliRequestedToolNames(agentConfig, {} as any);
+    expect(requested).not.toContain("ui_ask_choice");
+  });
+
+  test("hasUserChoice: false 时不注入 ui_ask_choice", () => {
+    const agentConfig = { key: "agent-headless", tools: [] } as any;
+    const requested = resolveCliRequestedToolNames(agentConfig, {} as any, null, {
+      hasUserChoice: false,
+    });
+    expect(requested).not.toContain("ui_ask_choice");
+  });
+
+  test("hasUserChoice: true 时包含 ui_ask_choice", () => {
+    const agentConfig = { key: "agent-interactive", tools: [] } as any;
+    const requested = resolveCliRequestedToolNames(agentConfig, {} as any, null, {
+      hasUserChoice: true,
+    });
+    expect(requested).toContain("ui_ask_choice");
   });
 });

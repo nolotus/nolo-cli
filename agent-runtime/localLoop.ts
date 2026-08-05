@@ -102,6 +102,8 @@ export type LocalAgentTurnInput = {
 
 export type LocalAgentTurnResult = AgentRuntimeResult & {
   dialogId: string;
+  /** Dialog title persisted by saveTurn (LLM-generated or fallback). */
+  title?: string;
   turnMessages?: AgentRuntimeChatMessage[];
 };
 
@@ -1652,6 +1654,7 @@ export async function runLocalAgentTurn(
     // 透出最后一轮 provider 调用的 finish_reason；多轮工具循环里只有最后一轮收尾状态有意义。
     ...(result.finish_reason ? { finish_reason: result.finish_reason } : {}),
     dialogId: saved.dialogId,
+    title: saved.title,
     turnMessages,
   };
 }

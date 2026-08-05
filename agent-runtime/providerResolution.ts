@@ -155,7 +155,18 @@ export function resolvePlatformServerUrl(env: EnvLike) {
 }
 
 export function resolvePlatformAuthToken(env: EnvLike) {
-  return env.AUTH_TOKEN || env.AUTH || env.BENCHMARK_AUTH_TOKEN || "";
+  // Single source of truth for "which env vars count as a valid server-proxy
+  // bearer". A machine key (NOLO_MACHINE_API_KEY) is a valid bearer for the
+  // builtin title/summary LLM even though it is not a JWT, so it counts here.
+  // CLI-side resolveRuntimeAuthToken delegates to this — do not duplicate the
+  // token list anywhere else.
+  return (
+    env.AUTH_TOKEN ||
+    env.AUTH ||
+    env.NOLO_MACHINE_API_KEY ||
+    env.BENCHMARK_AUTH_TOKEN ||
+    ""
+  );
 }
 
 export function canUsePlatformChatProvider(env: EnvLike) {

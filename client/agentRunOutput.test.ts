@@ -118,6 +118,28 @@ describe("createCliTurnOutput compact tool tree regression", () => {
     expect(visible).not.toMatch(/· .* \(\d+s\)/);
   });
 
+  test("controlAgentRun results do not update the composer dock panel", () => {
+    const output: string[] = [];
+    const statusUpdates: unknown[] = [];
+    const options = {
+      output: { write: (chunk: string) => output.push(chunk) },
+      agentName: "TestAgent",
+      env: { COLORTERM: "truecolor" },
+      onAgentRunStatus: (snapshot: unknown) => statusUpdates.push(snapshot),
+    } as unknown as RunAgentTurnOptions;
+    const turn = createCliTurnOutput({ options });
+
+    turn.handleToolEvent({
+      type: "tool-result",
+      toolName: "controlAgentRun",
+      toolCallId: "control-1",
+      round: 1,
+      content: JSON.stringify({ runId: "run-1", status: "running", logTail: "working" }),
+    } as LocalAgentToolEvent);
+
+    expect(statusUpdates).toEqual([]);
+  });
+
   test("no block of ≥2 consecutive blank lines in the tool region", () => {
     const visible = runEventSequence();
     const lines = visible.split("\n");

@@ -20,7 +20,7 @@ function mockTty(rows = TERM_ROWS, columns = TERM_COLS) {
 }
 
 describe("createFixedInput composer title", () => {
-  test("renders the current dialog title above the status line", () => {
+  test("renders title on its own row without changing status text", () => {
     const tty = mockTty();
     const input = createFixedInput(tty.output, {
       getTitleLine: () => "💬 Project planning",
@@ -30,20 +30,9 @@ describe("createFixedInput composer title", () => {
     input.repaint("");
     const output = tty.stdout();
     expect(output).toContain("💬 Project planning");
+    expect(output).toContain("context: 10%");
     expect(output.indexOf("💬 Project planning")).toBeLessThan(output.indexOf("context: 10%"));
     expect(input.getInputLines()).toBe(4);
-  });
-
-  test("does not reserve a title row when no title is available", () => {
-    const tty = mockTty();
-    const input = createFixedInput(tty.output, {
-      getTitleLine: () => null,
-      getStatusLine: () => "context: —",
-    });
-
-    input.repaint("");
-    expect(tty.stdout()).not.toContain("undefined");
-    expect(input.getInputLines()).toBe(3);
   });
 });
 

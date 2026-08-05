@@ -154,12 +154,12 @@ export function createNoopFixedInput(): FixedInputController {
 
 type FixedInputConfig = {
   getStatusLine: () => string;
+  /** Optional title line rendered above the status line. */
+  getTitleLine?: () => string | null;
   /** turn 进行中的活动行；无活动时返回 null。 */
   getActivityLine?: () => string | null;
   /** 可选多行活动面板（如子 Agent 执行状态与日志行）。优先于 getActivityLine。 */
   getActivityLines?: () => string[] | string | null;
-  /** Optional title line rendered between the rule and the status line. */
-  getTitleLine?: () => string | null;
   /**
    * Optional extra lines rendered above the composer (below the status line),
    * e.g. a preview of queued follow-up messages. Each entry is one line.
@@ -337,7 +337,7 @@ export function createFixedInput(
       2 +
       (titleLine ? 1 : 0) +
       activityLines.length +
-      queueLines.length; // completion? + top rule + title/status + activity lines + queued preview
+      queueLines.length; // completion? + top rule + status + activity lines + queued preview
     return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 

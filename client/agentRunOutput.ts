@@ -173,7 +173,7 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
     if (
       event.type === "tool-result" &&
       options.onAgentRunStatus &&
-      (event.toolName === "startAgentRun" || event.toolName === "controlAgentRun")
+      event.toolName === "startAgentRun"
     ) {
       const snapshot = extractAgentRunStatusSnapshot(event);
       if (snapshot) {

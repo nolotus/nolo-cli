@@ -93,6 +93,27 @@ describe("cli startAgentRun executor", () => {
     expect(spawnCall.args).not.toContain("--bg");
   });
 
+  it("uses the provided agentName in the run card and registry", async () => {
+    const deps = buildDeps();
+    const executor = createCliStartAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({
+        agentKey: "agent-pub-x",
+        agentName: "页面生成助手",
+        task: "做一个页面",
+      }),
+    });
+
+    expect(JSON.parse(result.content)).toEqual({
+      runId: "run-1",
+      status: "running",
+      agentName: "页面生成助手",
+    });
+    expect(result.metadata?.displayData).toContain("页面生成助手");
+    const record = JSON.parse(deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!);
+    expect(record.agentName).toBe("页面生成助手");
+  });
+
   it("attaches structured input as an extra section in the task snapshot", async () => {
     const deps = buildDeps();
     const executor = createCliStartAgentRunExecutor(deps);

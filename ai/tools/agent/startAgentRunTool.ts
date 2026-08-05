@@ -30,7 +30,7 @@ export const startAgentRunFunctionSchema = {
         properties: {
             agentKey: {
                 type: "string",
-                description: "要启动的 Agent 的可运行 dbKey（优先使用 readAgent 返回的 agentKey，格式如 agent-xxx）。",
+                description: "要启动的 Agent 的可运行 dbKey（优先使用 readAgent 返回的 agentKey，格式如 agent-xxx）。如果已通过 listAgents/readAgent 获取名称，请同时传 agentName。",
             },
             task: {
                 type: "string",
@@ -39,6 +39,10 @@ export const startAgentRunFunctionSchema = {
             input: {
                 description:
                     "可选。JSON 或字符串，作为本次子任务的附加输入（如抓取到的原始数据、上下文片段等）。",
+            },
+            agentName: {
+                type: "string",
+                description: "可选。由 listAgents/readAgent 得到的可读 Agent 名称，用于 TUI 运行卡片展示。",
             },
         },
         required: ["agentKey", "task"],
@@ -49,6 +53,7 @@ interface StartAgentRunArgs {
     agentKey: string;
     task: string;
     input?: any;
+    agentName?: string;
 }
 
 /**
@@ -64,7 +69,7 @@ export async function startAgentRunFunc(
     thunkApi: any,
     _context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string }
 ): Promise<{ rawData: any; displayData: string }> {
-    const { agentKey, task, input } = args;
+    const { agentKey, task, input, agentName } = args;
     const { dispatch } = thunkApi;
 
     if (!agentKey) {
@@ -93,15 +98,15 @@ export async function startAgentRunFunc(
 
         const runId = bgResult.dialogId;
         const status = bgResult.status ?? "pending";
-        const name = bgResult.agentName || bgResult.name || "agent";
+        const displayName = agentName?.trim() || bgResult.agentName || bgResult.name || "agent";
 
         return {
             rawData: {
                 runId,
                 status,
-                ...(bgResult.agentName ? { agentName: bgResult.agentName } : {}),
+                ...(displayName !== "agent" ? { agentName: displayName } : {}),
             },
-            displayData: formatStartRunCard(name, status),
+            displayData: formatStartRunCard(displayName, status),
         };
     } catch (e: any) {
         throw new Error(`startAgentRun 启动 Agent [${agentKey}] 失败: ${toErrorMessage(e)}`);

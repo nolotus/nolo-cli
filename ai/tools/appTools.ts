@@ -1814,3 +1814,126 @@ export async function appFileReplaceFunc(
       "下一步：先 appPreflight，再 appDeploy。",
   };
 }
+
+// ──────────────────────────────────────────────────────────
+// appVersionList — 列出应用的历史版本
+// 当 appFileList 返回 409 (workspace missing) 时，用此工具查看
+// 是否有可恢复的历史版本，而不是自己编占位代码部署。
+// ──────────────────────────────────────────────────────────
+export const appVersionListFunctionSchema = {
+  name: "appVersionList",
+  description:
+    "列出某个应用的历史版本快照。当 appFileList/appFileRead 返回 409（源码工作区缺失）时，" +
+    "用此工具查看是否有可恢复的历史版本，而不是自己编占位代码部署。",
+  parameters: {
+    type: "object",
+    properties: {
+      appId: {
+        type: "string",
+        description: "应用 ID。",
+      },
+    },
+    required: ["appId"],
+  },
+};
+
+export async function appVersionListFunc(
+  args: { appId: string },
+  thunkApi: any
+): Promise<{ rawData: any; displayData: string }> {
+  const { appId } = args;
+  if (!appId) throw new Error("必须提供 appId 参数");
+
+  const data = await callToolApi<{
+    success: boolean;
+    versions: Array<{
+      versionId: string;
+      createdAt: number;
+      label?: string;
+      pinned?: boolean;
+    }>;
+  }>(thunkApi, "/api/version/list", { type: "app", entityId: appId }, { withAuth: true });
+
+  if (!data.versions?.length) {
+    return {
+      rawData: data,
+      displayData: `📭 应用 ${appId} 没有历史版本快照。`,
+    };
+  }
+
+  const list = data.versions
+    .map((v, i) => {
+      const date = v.createdAt ? new Date(v.createdAt).toISOString().slice(0, 16) : "?";
+      const pin = v.pinned ? " 📌" : "";
+      const label = v.label ? ` "${v.label}"` : "";
+      return `${i + 1}. ${v.versionId}  ${date}${pin}${label}`;
+    })
+    .join("\n");
+
+  return {
+    rawData: data,
+    displayData:
+      `📋 应用 ${appId} 的历史版本 (${data.versions.length} 个):\n${list}\n\n` +
+      "用 appVersionRestore(appId, versionId) 可恢复到指定版本。建议先恢复最近的完整版本，再修改。",
+  };
+}
+
+// ──────────────────────────────────────────────────────────
+// appVersionRestore — 将应用恢复到指定的历史版本
+// ──────────────────────────────────────────────────────────
+export const appVersionRestoreFunctionSchema = {
+  name: "appVersionRestore",
+  description:
+    "将应用恢复到指定的历史版本。恢复后代码、源码文件、framework、renderMode、SSR 产物" +
+    "全部回到该版本的状态。适用于：源码工作区丢失、代码被误覆盖、需要回滚到旧版本。",
+  parameters: {
+    type: "object",
+    properties: {
+      appId: {
+        type: "string",
+        description: "应用 ID。",
+      },
+      versionId: {
+        type: "string",
+        description: "要恢复到的版本 ID。先用 appVersionList 获取版本列表，选择目标 versionId。",
+      },
+      restoreMode: {
+        type: "string",
+        enum: ["source_only", "full"],
+        description:
+          "source_only（默认）：只恢复代码/源码/framework，保留当前 name/visibility/customUrl。" +
+          "full：连 name/visibility/customUrl 一起恢复。通常用 source_only 即可。",
+      },
+    },
+    required: ["appId", "versionId"],
+  },
+};
+
+export async function appVersionRestoreFunc(
+  args: { appId: string; versionId: string; restoreMode?: "source_only" | "full" },
+  thunkApi: any
+): Promise<{ rawData: any; displayData: string }> {
+  const { appId, versionId, restoreMode } = args;
+  if (!appId) throw new Error("必须提供 appId");
+  if (!versionId) throw new Error("必须提供 versionId；请先调用 appVersionList 获取版本列表");
+
+  const data = await callToolApi<{
+    success: boolean;
+    message: string;
+    restoreMode: string;
+  }>(
+    thunkApi,
+    "/api/version/restore",
+    { type: "app", entityId: appId, versionId, restoreMode: restoreMode ?? "source_only" },
+    { withAuth: true, method: "POST" }
+  );
+
+  return {
+    rawData: data,
+    displayData:
+      `↩️ 已恢复应用 ${appId} 到版本 ${versionId}\n` +
+      `- ${data.message}\n` +
+      `- restoreMode: ${data.restoreMode}\n\n` +
+      "下一步：用 appFileList 确认源码工作区已恢复，然后用 appFileRead/appFileReplace 修改代码。",
+  };
+}

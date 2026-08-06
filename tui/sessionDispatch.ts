@@ -6,9 +6,6 @@ import {
   resolveAuthToken,
 } from "../cliEnvHelpers";
 import {
-  normalizeThinkingDisplayMode,
-} from "../client/thinkingOutput";
-import {
   normalizeToolDisplayMode,
 } from "../client/toolOutput";
 import {
@@ -90,10 +87,6 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
     modeLabel:
       asOptionalTrimmedString(env.NOLO_CLI_STATUS_MODE) ?? runtimeMode,
     gitStatus: undefined,
-    thinkingDisplay: normalizeThinkingDisplayMode(
-      env.NOLO_CLI_THINKING ?? env.NOLO_THINKING,
-      "hide"
-    ),
     toolDisplay: normalizeToolDisplayMode(env.NOLO_CLI_TOOLS ?? env.NOLO_TOOLS, "compact"),
     contextWindow: resolveAgentContextWindow({
       agentKey,
@@ -303,26 +296,6 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       return {
         nextState: { ...state, toolDisplay: nextMode },
         output: t("toolsSet", nextMode),
-      };
-    }
-    case "/thinking": {
-      if (!argText) {
-        return {
-          nextState: state,
-          output: t("thinkingCurrent", state.thinkingDisplay),
-        };
-      }
-      const normalizedArg = asTrimmedLowercaseString(argText);
-      if (!["hide", "marker", "show", "on", "off"].includes(normalizedArg)) {
-        return {
-          nextState: state,
-          output: t("thinkingUsage"),
-        };
-      }
-      const nextMode = normalizeThinkingDisplayMode(normalizedArg, state.thinkingDisplay);
-      return {
-        nextState: { ...state, thinkingDisplay: nextMode },
-        output: t("thinkingSet", nextMode),
       };
     }
     case "/tasks":

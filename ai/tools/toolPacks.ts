@@ -106,15 +106,6 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
     icon: "💻",
   },
   {
-    id: "agent-orchestration",
-    label: "多 agent 编排",
-    description:
-      "先按收藏、简介、能力和成本列出安全 agent 摘要，按需读取候选配置解析可运行 key，再后台启动其他 agent 执行子任务，并观察、查询、停止运行中的 agent run——适合并行派发、长任务跟踪、中途叫停等编排场景。",
-    tools: ["startAgentRun", "controlAgentRun", "listAgents"],
-    defaultEnabled: true,
-    icon: "🧩",
-  },
-  {
     id: "skills",
     label: "技能加载",
     description:
@@ -240,6 +231,10 @@ export const DEFAULT_ENABLED_PACKS = CAPABILITY_PACKS.filter(
  * ever configured `enabledPacks`. These are the "默认全挂、可单关" capabilities:
  * turning one off is done through `disabledTools`, never by omitting it here.
  *
+ * Note: `agent-orchestration` was moved to `SYSTEM_AGENT_CAPABILITIES` (global
+ * settings) so its on/off is user-controllable from the global settings page,
+ * consistent with `web-search`. It is no longer force-mounted here.
+ *
  * This constant exists because each host used to hardcode its own always-on
  * list, and they drifted: the CLI/TUI list omitted `long-term-memory`, so a TUI
  * agent silently had no `rememberMemory` tool and "记住 X" fell back to shelling
@@ -248,7 +243,6 @@ export const DEFAULT_ENABLED_PACKS = CAPABILITY_PACKS.filter(
  */
 export const ALWAYS_ON_PACK_IDS = [
   "long-term-memory",
-  "agent-orchestration",
   "skills",
 ] as const;
 
@@ -299,6 +293,38 @@ export function resolveEffectiveEnabledPacks(args: {
  * capability to `agentCapabilities.ts`; this list is derived automatically.
  */
 export const SYSTEM_BUILTIN_SKILL_PACK_IDS = SYSTEM_AGENT_CAPABILITY_IDS;
+
+/**
+ * System capability packs whose tools are default-mounted into every
+ * non-ablated agent's tool surface. Moving `agent-orchestration` out of
+ * ALWAYS_ON_PACK_IDS into SYSTEM_AGENT_CAPABILITIES (global settings toggle)
+ * removed its mount point; this list restores the default-on mount without
+ * re-hardcoding it per host. The global off-switch still wins: hosts call
+ * this BEFORE `applySystemBuiltinSkillFilter`, so a user's global "off"
+ * removes the tools again.
+ *
+ * `web-search` is deliberately NOT here: its tools stay opt-in via
+ * `enabledPacks` / LIGHT_WEB injection to preserve web capability boundaries
+ * (the global toggle only filters tools that are already present).
+ */
+const DEFAULT_MOUNT_SYSTEM_CAPABILITY_IDS = ["agent-orchestration"] as const;
+
+/** Tools of default-mounted system capability packs (dedup-free flat list). */
+export function getDefaultSystemCapabilityTools(): string[] {
+  const ids: readonly string[] = DEFAULT_MOUNT_SYSTEM_CAPABILITY_IDS;
+  return SYSTEM_AGENT_CAPABILITY_PACKS.filter((pack) => ids.includes(pack.id))
+    .flatMap((pack) => [...pack.tools]);
+}
+
+/**
+ * Idempotently add default-mounted system capability tools to a tool-name
+ * list. Call BEFORE `applySystemBuiltinSkillFilter`. Hosts with declared-only
+ * semantics (ablation runs, inline-artifact agents, tier agents) must skip
+ * this to preserve their "no injected capabilities" contract.
+ */
+export function addDefaultSystemCapabilityTools(toolNames: string[]): string[] {
+  return [...new Set([...toolNames, ...getDefaultSystemCapabilityTools()])];
+}
 
 /**
  * Filter tool names according to the global `systemBuiltinSkills` setting.

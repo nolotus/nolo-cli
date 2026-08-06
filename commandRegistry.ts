@@ -27,6 +27,7 @@ export const GROUP_ORDER = [
   "memory",
   "space",
   "table",
+  "app",
   "llama",
   "model-runtime",
   "dev",
@@ -82,6 +83,9 @@ export function renderHelpText() {
     '  nolo table query --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --columns \'["title","status","owner","priority","codeStatus"]\' --no-base-fields --output items',
     '  nolo table update-row --table meta-0e95801d90-01KWSK4Q4TESXQ06SW39JN2TTJ --row 01ROWID --changes \'{"status":"已完成"}\'',
     "  nolo llama status",
+    "  nolo app list --json",
+    '  nolo app get --name my-app',
+    '  nolo app deploy --name my-app --code-file ./worker.js',
   ];
 
   for (const group of GROUP_ORDER) {

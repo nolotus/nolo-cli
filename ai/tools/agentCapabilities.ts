@@ -23,6 +23,15 @@ export const SYSTEM_AGENT_CAPABILITIES = [
     defaultEnabled: true,
     icon: "🌐",
   },
+  {
+    id: "agent-orchestration",
+    label: "多 agent 编排",
+    description:
+      "先按收藏、简介、能力和成本列出安全 agent 摘要，按需读取候选配置解析可运行 key，再后台启动其他 agent 执行子任务，并观察、查询、停止运行中的 agent run——适合并行派发、长任务跟踪、中途叫停等编排场景。",
+    tools: ["startAgentRun", "controlAgentRun", "listAgents"],
+    defaultEnabled: true,
+    icon: "🧩",
+  },
 ] as const satisfies readonly SystemAgentCapability[];
 
 export const SYSTEM_AGENT_CAPABILITY_IDS = SYSTEM_AGENT_CAPABILITIES.map(

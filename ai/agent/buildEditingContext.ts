@@ -354,6 +354,7 @@ export const buildEditingContextSummary = (
             "",
             "【给 AI 的操作指南 / 非用户原话】",
             "1. 用户要求修改当前应用时，先调用 appRead 获取当前代码/文件，再基于现有实现修改。",
+            "1b. 如果 appFileList / appFileSearch / appFileRead 返回 409（APP_WORKSPACE_MISSING / 源码工作区缺失）或 400（UNSUPPORTED_APP_FRAMEWORK / 不是 Nolo React SSR），**立即停止修改，不要自己编占位代码或降级 framework 去 appDeploy**。先调用 appVersionList(appId) 查看历史版本，选一个最近的完整版本用 appVersionRestore(appId, versionId) 恢复，恢复后源码工作区会重建，再继续修改。如果没有历史版本，再向用户说明情况。绝不可以用 `fetch(appUrl)`、空代码、占位代码去 appDeploy——那会覆盖现有应用导致数据丢失。",
             "2. 如果 appRead 返回 workspaceRef/sourceFiles/sourceOmitted，不要整站重写；使用 App Builder 的受限 workspace 文件工具：appFileList=listFiles、appFileSearch=searchFiles、appFileRead=readFile、appFileReplace=editFile、appFileWrite=writeFile。先定位文件与命中行，大文件只读取必要行范围；文字、样式、token、局部逻辑等小改动必须优先用 appFileReplace 精确替换唯一片段，只有新建文件或确实需要整文件重写时才用 appFileWrite。",
             "3. 先识别当前应用是否已有 theme / tokens / design system；已有就优先改这层，没有再补一层最小共享 token，再基于 token 调整组件。",
             "4. 如果当前应用还是旧写法：视觉值散落在组件硬编码 style 里，而用户只是做字体/颜色/间距等视觉微调，默认先把命中的视觉值抽到最小 token 层，再完成本次修改；除非用户明确要求不要重构。",

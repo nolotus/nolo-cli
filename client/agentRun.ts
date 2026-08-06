@@ -617,7 +617,6 @@ async function runHttpAgentTurn(
 
   const content = formatAssistantResponseForCli(
     String(data?.content ?? data?.message ?? ""),
-    options,
   );
   if (content) {
     options.output.write(`\n${options.agentName} > ${content}\n`);

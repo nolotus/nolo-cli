@@ -1,3 +1,5 @@
+export const SYSTEM_USER_ID = "system";
+
 export const BUILTIN_NOLO_AGENT_KEY = "agent-pub-01NOLOAPPBLD000000019KCKT0";
 export const BUILTIN_APP_BUILDER_AGENT_KEY =
   "agent-pub-01APPBUILDER00000001YAII3I";
@@ -33,7 +35,7 @@ export const PUBLIC_KIMI_K27_CODING_AGENT_ID = "01KIMIK27CODEOL000000001";
 export const PUBLIC_KIMI_K27_CODING_AGENT_KEY =
   `agent-pub-${PUBLIC_KIMI_K27_CODING_AGENT_ID}`;
 
-export const PUBLIC_GLM_52_AGENT_ID = "01GLM52CHAT00000000001U721";
+export const PUBLIC_GLM_52_AGENT_ID = "01GLM52DIPB00000000I3E2MY";
 export const PUBLIC_GLM_52_AGENT_KEY = `agent-pub-${PUBLIC_GLM_52_AGENT_ID}`;
 /**
  * Public Kimi K2.6 image-capable agent used as the Quick Chat image tier

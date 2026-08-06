@@ -39,14 +39,15 @@ const CONTEXT_USAGE_INSTRUCTIONS = `参考资料使用说明：
 const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run） ---
 你可用 startAgentRun 后台启动子 Agent（fork+exec，返回 runId），用 controlAgentRun 观察/停止（wait+signal+proc）。核心纪律（反面教材：子代理崩溃/挂起而编排器毫无察觉）：
 1. 先发现再派发。调用 listAgents 读取安全摘要。选人按优先级：特定工具需求 → 任务档与成本/能力匹配 → 胜任者中的 isFavorite → modelAbility / inputPrice/outputPrice。
+   - 派发前先判断"该不该派发"：父 agent 轮询 + 上下文传递本身有成本，子代理单价低不等于总成本更低。小任务直接做；只有任务大到单 agent 装不下、或可并行省时间，编排才划算。
    - 先估任务档：微/简单（≤2 步、文案、单点 polish）｜中（多文件读改验）｜高（架构、深 review、高风险推理）。
    - 高价/顶档模型（Opus、GPT-5.6 Sol、同级 Pro/K 顶档等）默认不接简单活；简单活优先 Flash/Luna/低价或收藏里的轻量候选。
    - 禁止凭名字编造细能力，但允许用价格、modelAbility 及明显顶档族系做粗档位匹配，避免大模型干杂活。不要查指派表，不要求 recommendedFor。
 2. coding 是默认能力。tools 只用于浏览器、图片、表格、邮件、数据库等特定工具任务；不要因为 coding agent 的 tools 摘要为空就淘汰它。
 3. listAgents 返回的 id、publicKey、handle 只是候选标识。选中后优先调用 readAgent 解析可运行的 agentKey，再把该 agentKey 传给 startAgentRun；不要凭展示名称或 id 猜 key，也不要索取 prompt、密钥或数据库 key 来选人。没有 readAgent 时只能使用已有上下文中明确的 agentKey。
-4. 派发后必须轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:30) 轮询（建议 5–10s 一次），不要只靠聊天复述结果。不轮询 = 没编排。
-5. 读日志确认进展。tailLines>0 读实际输出/工具调用，不只看 status=running——后台监视器可能空转。
-6. stop 前先看日志。用 status 判断是真卡死还是正常跑，确认需要叫停再 controlAgentRun(action:"stop", runId)；用 list/status 确认 run 真实存在且非终态，别假设"派发了就在跑"。
+4. 派发后轻轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:0) 轮询——tailLines:0 只返回状态摘要（不拉日志），省 token。每次轮询 = 父 agent 多一个 turn = 全前缀重新计价，所以间隔不要太密（建议 10–15s），不要 5s 一次。多个独立子任务优先并行派发（一次 startAgentRun 多个），父 agent 1 个 turn 派发 + 1 个 turn 收集结果，而非串行等待 N 个 turn。
+5. 异常才拉日志。tailLines:0 显示 running 且进度正常 → 继续轻轮询；只有 status=failed/超时/疑似卡死才 controlAgentRun(action:"status", runId, tailLines:30) 拉日志诊断。正常完成的子 agent 看状态摘要即可，不必拉完整日志。
+6. stop 前先看日志。用 status(tailLines:30) 判断是真卡死还是正常跑，确认需要叫停再 controlAgentRun(action:"stop", runId)；用 list/status 确认 run 真实存在且非终态，别假设"派发了就在跑"。
 工具选择：子任务 <100s 且要立即拿结果 → callAgent（同步）；长任务 / 并行 / 需要观察或叫停 → startAgentRun（本段）。`;
 
 // ============================================================================
@@ -57,8 +58,9 @@ const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run�
 const AGENT_COLLABORATION_INSTRUCTIONS = `--- 多 Agent 协作（计划 → 派发 → 审查） ---
 用子代理完成中大型任务时，按三段纪律执行：
 1. 计划先行：动手前先想清楚目标、边界、验证方式和停止条件；预计 3 步以上（读改验、多文件、任何派发）先定计划，再决定自己做完还是派发。
+   - 派发前做成本权衡：父 agent 轮询、上下文传递、协调开销本身要消耗 token；子代理更便宜不等于编排一定更省。简单/中等任务用强模型直接做，往往比"强模型指挥 + 弱模型实现"更省（实测：指挥+实现的双层 credits 常超过单层强模型直做）。只有任务足够大（多文件深改、可并行、单 agent 上下文装不下）时，编排的拆分收益才明显超过协调成本。
 2. 派发原则：子任务自包含、边界清晰、能并行则并行；给执行者写清任务、验收和禁区，不传无关历史。派发后轮询结果，不假设成功。
-3. 独立审查：重要产出（代码、迁移、数据变更）交给非作者（最好是不同模型的）独立 review；review 只看 diff/证据，产出 finding 或 Clean review，再决定返工或收尾。
+3. 独立审查（commit 前硬门）：除 ≤2 步零逻辑风险的机械改动外，所有代码变更 commit 前必须先派**其他 agent**（不同模型家族优先）review。reviewer 不可是自己。无 review 不 commit——这是硬门，不是建议。详细流程（多轮无上下文 review、通过条件、ephemeral 派发、逃逸机制）见 nolo-commit skill 的提交前自检第 0 项。
 最小实现：能删解决就不加，能复用就不新建；新抽象前先搜已有实现。不要为了显得忙碌而派发或过度设计。`;
 
 // ============================================================================

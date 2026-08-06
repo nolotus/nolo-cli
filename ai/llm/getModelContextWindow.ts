@@ -32,6 +32,30 @@ export const DEFAULT_CONTEXT_WINDOW = 256_000;
 const QWEN_3_6_CONTEXT_WINDOW = 262_144;
 const GLM_5_2_CONTEXT_WINDOW = 1_000_000;
 
+const ANTIGRAVITY_EFFORT_SUFFIXES = [
+  "-extra-low",
+  "-low",
+  "-medium",
+  "-high",
+] as const;
+
+function stripEffortSuffix(model: string): string {
+  for (const suffix of ANTIGRAVITY_EFFORT_SUFFIXES) {
+    if (model.endsWith(suffix) && model.length > suffix.length) {
+      return model.slice(0, -suffix.length);
+    }
+  }
+  return model;
+}
+
+function stripPreviewSuffix(model: string): string {
+  const suffix = "-preview";
+  if (model.endsWith(suffix) && model.length > suffix.length) {
+    return model.slice(0, -suffix.length);
+  }
+  return model;
+}
+
 // 全量模型映射表（context window 解析用）：name + displayName 双键，值带 provider。
 let fullModelMap: Map<string, ModelWithProvider> | null = null;
 
@@ -89,6 +113,7 @@ function fuzzyContextWindow(normalizedName: string): number | undefined {
   if (normalizedName.startsWith("cursor-grok-4.5")) return 1_000_000;
   if (normalizedName.includes("claude-4.6")) return 1_000_000;
   if (normalizedName.includes("gemini-3.1")) return 1_000_000;
+  if (normalizedName.includes("gemini")) return 1_048_576;
   // 256k 档
   if (normalizedName.includes("qwen3.6") || normalizedName.includes("qwen3p6")) return QWEN_3_6_CONTEXT_WINDOW;
   if (normalizedName.includes("qwen3.7") || normalizedName.includes("qwen3p7")) return 262_144;
@@ -108,12 +133,30 @@ export const getModelContextWindow = (modelName: string): number => {
 
   const normalizedName = modelName.toLowerCase();
   const map = getFullModelMap();
-  const model = map.get(modelName) || map.get(normalizedName);
 
-  if (model?.contextWindow) {
-    return typeof model.contextWindow === "number"
-      ? model.contextWindow
-      : DEFAULT_CONTEXT_WINDOW;
+  const candidates = [modelName, normalizedName];
+  const strippedEffort = stripEffortSuffix(modelName);
+  if (strippedEffort !== modelName) {
+    candidates.push(strippedEffort, strippedEffort.toLowerCase());
+  }
+  const strippedPreview = stripPreviewSuffix(modelName);
+  if (strippedPreview !== modelName) {
+    candidates.push(strippedPreview, strippedPreview.toLowerCase());
+  }
+  if (strippedEffort !== modelName) {
+    const strippedBoth = stripPreviewSuffix(strippedEffort);
+    if (strippedBoth !== strippedEffort) {
+      candidates.push(strippedBoth, strippedBoth.toLowerCase());
+    }
+  }
+
+  for (const candidate of candidates) {
+    const model = map.get(candidate);
+    if (model?.contextWindow) {
+      return typeof model.contextWindow === "number"
+        ? model.contextWindow
+        : DEFAULT_CONTEXT_WINDOW;
+    }
   }
 
   return fuzzyContextWindow(normalizedName) ?? DEFAULT_CONTEXT_WINDOW;

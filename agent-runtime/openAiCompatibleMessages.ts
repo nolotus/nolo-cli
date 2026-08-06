@@ -24,6 +24,18 @@ export type OpenAiCompatibleRequestMessage = {
 };
 
 /**
+ * Options for shaping outbound messages.
+ *
+ * `stripReasoningContent` removes the `reasoning_content` field from assistant
+ * messages. Some providers (e.g. DeepSeek-V4-flash) reject a string
+ * `reasoning_content` on inbound history with a serde "expected a sequence"
+ * error, so the field must be dropped when replaying prior turns.
+ */
+export type PreserveAgentStateOptions = {
+  stripReasoningContent?: boolean;
+};
+
+/**
  * Copy only provider-visible agent state. Keeping this in one seam prevents
  * the Chat Completions, server loop, and provider adapters from disagreeing
  * about empty reasoning or tool-call identifiers.
@@ -31,10 +43,14 @@ export type OpenAiCompatibleRequestMessage = {
 export function preserveAgentStateFields<T extends Record<string, any>>(
   source: AgentStateMessageLike,
   target: T,
+  options?: PreserveAgentStateOptions,
 ): T {
   const mutableTarget = target as Record<string, any>;
   if (source.role === "assistant") {
-    if (typeof source.reasoning_content === "string") {
+    if (
+      !options?.stripReasoningContent &&
+      typeof source.reasoning_content === "string"
+    ) {
       mutableTarget.reasoning_content = source.reasoning_content;
     }
     if (Array.isArray(source.tool_calls)) {
@@ -96,11 +112,33 @@ export function findAgentStatePairingIssues(
 
 export function toOpenAiCompatibleMessages(
   messages: AgentRuntimeChatMessage[],
+  options?: PreserveAgentStateOptions,
 ): OpenAiCompatibleRequestMessage[] {
   return messages.map((message) =>
     preserveAgentStateFields(message, {
       role: message.role,
       content: message.content ?? "",
-    }),
+    }, options),
   );
+}
+
+/**
+ * Determine whether the outbound (history replay) request should omit
+ * `reasoning_content` from assistant messages.
+ *
+ * DeepSeek-V4-flash rejects a string `reasoning_content` on inbound history
+ * with a serde deserialization error ("expected a sequence"). The Responses
+ * API path does not send history as chat-completions messages, so this only
+ * matters for the chat-completions wire.
+ */
+export function shouldStripReasoningContentForOutbound(
+  provider?: string,
+  model?: string,
+): boolean {
+  const p = provider?.trim().toLowerCase();
+  const m = model?.trim().toLowerCase();
+  if (!p || !m) return false;
+  // DeepSeek-V4-flash rejects string reasoning_content on history replay.
+  if (p === "deepseek") return m === "deepseek-v4-flash";
+  return false;
 }

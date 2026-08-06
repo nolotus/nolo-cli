@@ -48,7 +48,8 @@ export const callAgentFunctionSchema = {
             task: {
                 type: "string",
                 description:
-                    "委托给该 Agent 的子任务描述（自然语言）。建议在此包含必要的上下文说明（例如当前表结构、题库说明等）。",
+                    "委托给该 Agent 的子任务描述（自然语言）。建议在此包含必要的上下文说明（例如当前表结构、题库说明等）。" +
+                    "在 task 里要求子 agent '最后用 1-3 句话总结结论 + 列出关键产出'，父 agent 用 resultMode:summary 时就只需读这段总结，不必消化完整输出。",
             },
             input: {
                 description:
@@ -62,6 +63,17 @@ export const callAgentFunctionSchema = {
                     "默认 false，即继续等待子任务完成并返回 content。",
                 default: false,
             },
+            resultMode: {
+                type: "string",
+                enum: ["summary", "full"],
+                description:
+                    "可选。控制返回给父 agent 的内容量，减少父 agent 上下文成本。" +
+                    "summary（默认）：只返回子 agent 输出的前 2000 字 + 末尾总结段，适合父 agent 只需结论而非完整过程。" +
+                    "full：返回子 agent 完整输出，适合需要完整 diff/日志做后续处理。" +
+                    "父 agent 每多一个 turn 处理子输出 = 全前缀重新计价，所以非必要时用 summary。" +
+                    "仅在 foreground 模式（background 未设或 false）生效；background 模式无 content 可截，此参数被忽略。",
+                default: "summary",
+            },
         },
         required: ["agentKey", "task"],
     },
@@ -72,6 +84,7 @@ interface CallAgentArgs {
     task: string;
     input?: any;
     background?: boolean;
+    resultMode?: "summary" | "full";
 }
 
 /**
@@ -85,7 +98,7 @@ export async function callAgentFunc(
     thunkApi: any,
     context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string; agentKey?: string; userInput?: string }
 ): Promise<{ rawData: any; displayData?: string }> {
-    const { agentKey, task, input, background } = args;
+    const { agentKey, task, input, background, resultMode } = args;
     const { dispatch } = thunkApi;
 
     if (!agentKey) {
@@ -119,12 +132,35 @@ export async function callAgentFunc(
             };
         }
 
+        const fullContent = bgResult.content ?? bgResult;
+        const wantSummary = resultMode !== "full";
+        const returnedContent = wantSummary
+            ? summarizeChildContent(typeof fullContent === "string" ? fullContent : JSON.stringify(fullContent))
+            : fullContent;
+
         return {
-            rawData: bgResult.content ?? bgResult,
-            displayData: `✅ callAgent 执行完成，dialogId: ${bgResult.dialogId}`,
+            rawData: returnedContent,
+            displayData: `✅ callAgent 执行完成，dialogId: ${bgResult.dialogId}${wantSummary ? "（summary）" : ""}`,
         };
     } catch (e: any) {
         const msg = toErrorMessage(e);
         throw new Error(`callAgent 调用 Agent [${agentKey}] 时出错: ${msg}`);
     }
+}
+
+/** Summary truncation thresholds for callAgent resultMode=summary. */
+const SUMMARY_HEAD_CHARS = 1500;
+const SUMMARY_TAIL_CHARS = 500;
+/** Minimum content length to trigger truncation (avoid cutting very short outputs). */
+const SUMMARY_MIN_LENGTH_THRESHOLD = SUMMARY_HEAD_CHARS + SUMMARY_TAIL_CHARS + 50;
+
+/**
+ * Trim a child agent's full output to a summary for the parent context:
+ * first {@link SUMMARY_HEAD_CHARS} chars + last {@link SUMMARY_TAIL_CHARS} chars,
+ * with a marker in between. Keeps the beginning (task framing) and the
+ * conclusion, eliding the verbose middle.
+ */
+function summarizeChildContent(text: string): string {
+    if (text.length <= SUMMARY_MIN_LENGTH_THRESHOLD) return text;
+    return `${text.slice(0, SUMMARY_HEAD_CHARS)}\n\n…（中间部分已省略，resultMode=full 可看完整输出）…\n\n${text.slice(-SUMMARY_TAIL_CHARS)}`;
 }

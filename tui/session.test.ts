@@ -1136,9 +1136,9 @@ describe("themed render surfaces", () => {
       .split("\n")
       .slice(1)
       .filter((row) => row !== "")
-      .slice(0, 10)
+      .slice(0, 9)
       .map(stripAnsi);
-    expect(rows).toHaveLength(10);
+    expect(rows).toHaveLength(9);
     const labelWidths = rows.map((row) => {
       const label = row.match(/^\S+\s+/)?.[0] ?? "";
       return displayWidth(label);
@@ -1186,9 +1186,9 @@ describe("Task D - i18n & help theme tests", () => {
         .split("\n")
         .slice(1)
         .filter((row) => row !== "")
-        .slice(0, 10)
+        .slice(0, 9)
         .map(stripAnsi);
-      expect(rows).toHaveLength(10);
+      expect(rows).toHaveLength(9);
       const labelWidths = rows.map((row) => {
         const label = row.match(/^\S+\s+/)?.[0] ?? "";
         return displayWidth(label);

@@ -179,6 +179,7 @@ import {
   buildWorkspaceToolDefinition,
   filterDeclaredWorkspaceToolNames,
 } from "./localWorkspaceToolDefs";
+import { isImmediateDetachShellCommand } from "./shellCommandPolicy";
 
 function readTrimmedString(value: unknown): string | undefined {
   return asOptionalTrimmedString(value);
@@ -192,9 +193,13 @@ function resolveExecShellTimeoutMs(override: number | undefined) {
   return asOptionalPositiveFiniteNumber(Number(raw));
 }
 
-export function resolveDetachMs(override: number | undefined): number | undefined {
-  const fromOverride = asOptionalPositiveFiniteNumber(override);
-  if (fromOverride !== undefined) return fromOverride;
+/** Always returns a concrete threshold: override >= 0 (0 = detach immediately,
+ * the smart-detach path) wins, otherwise env NOLO_EXEC_SHELL_DETACH_MS,
+ * otherwise the default. */
+export function resolveDetachMs(override: number | undefined): number {
+  if (typeof override === "number" && Number.isFinite(override) && override >= 0) {
+    return override;
+  }
   const raw = process.env[EXEC_SHELL_DETACH_ENV];
   if (raw === undefined) return DEFAULT_EXEC_SHELL_DETACH_MS;
   const parsed = asOptionalPositiveFiniteNumber(Number(raw));
@@ -479,20 +484,31 @@ function isPathInsideWorkspace(args: {
   return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.includes(`..${sep}`));
 }
 
-function requireWorkspaceToolPath(args: WorkspaceFileArgs) {
-  const requestedPath = readWorkspacePathAlias(args) ?? "";
-  if (!requestedPath) throw new Error("Workspace tool requires a non-empty path.");
-  return requestedPath;
+/**
+ * Alternate parameter names various provider models (cursor/grok, kimi, etc.)
+ * use in tool-call arguments instead of our canonical schema field names.
+ * Listed here as a single source so adding a new provider only touches one place.
+ */
+const PATH_FIELD_ALIASES = ["path", "file_path", "filePath", "filename", "file", "target_file", "targetFile", "file_to_read", "fileToRead"] as const;
+const OLD_TEXT_FIELD_ALIASES = ["oldText", "old_string", "oldString", "search", "search_string", "find", "match"] as const;
+const NEW_TEXT_FIELD_ALIASES = ["newText", "new_string", "newString", "replacement", "replace"] as const;
+const SEARCH_QUERY_FIELD_ALIASES = ["query", "search_query", "searchQuery", "q", "pattern", "search"] as const;
+
+/** Pick the first matching non-empty string value from args by trying a list of field names.
+ *  When preserveWhitespace is true, does NOT trim the value (preserves newlines in
+ *  oldText/newText). Empty strings ("") always fall through to the next alias. */
+function pickFirstAlias(args: WorkspaceFileArgs, aliases: readonly string[], preserveWhitespace = false): string | undefined {
+  for (const key of aliases) {
+    const val = (args as Record<string, unknown>)[key];
+    if (typeof val === "string" && val.length > 0) return preserveWhitespace ? val : val.trim();
+  }
+  return undefined;
 }
 
-function readWorkspacePathAlias(args: WorkspaceFileArgs) {
-  const path =
-    args.path ??
-    args.file_path ??
-    args.filePath ??
-    args.filename ??
-    args.file;
-  return asOptionalTrimmedString(path);
+function requireWorkspaceToolPath(args: WorkspaceFileArgs) {
+  const requestedPath = pickFirstAlias(args, PATH_FIELD_ALIASES) ?? "";
+  if (!requestedPath) throw new Error("Workspace tool requires a non-empty path.");
+  return requestedPath;
 }
 
 function requireWorkspaceFileContent(args: WorkspaceFileArgs) {
@@ -503,17 +519,21 @@ function requireWorkspaceFileContent(args: WorkspaceFileArgs) {
 }
 
 function requireWorkspaceOldText(args: WorkspaceFileArgs) {
-  if (typeof args.oldText !== "string" || !args.oldText) {
+  const oldText = pickFirstAlias(args, OLD_TEXT_FIELD_ALIASES, true);
+  if (!oldText || !oldText.trim()) {
     throw new Error("editFile requires non-empty oldText.");
   }
-  return args.oldText;
+  return oldText;
 }
 
 function requireWorkspaceNewText(args: WorkspaceFileArgs) {
-  if (typeof args.newText !== "string") {
-    throw new Error("editFile requires string newText.");
+  // newText: "" is a valid delete operation; don't use pickFirstAlias which
+  // skips empty strings. Check each alias for existence as a string.
+  for (const key of NEW_TEXT_FIELD_ALIASES) {
+    const val = (args as Record<string, unknown>)[key];
+    if (typeof val === "string") return val;
   }
-  return args.newText;
+  throw new Error("editFile requires string newText.");
 }
 
 function readExpectedReplacementCount(args: WorkspaceFileArgs) {
@@ -881,7 +901,7 @@ function clipEditSnippet(text: string): string {
 }
 
 function requireWorkspaceSearchQuery(args: WorkspaceFileArgs) {
-  const query = asTrimmedString(args.query);
+  const query = pickFirstAlias(args, SEARCH_QUERY_FIELD_ALIASES);
   if (!query) throw new Error("searchFiles requires a non-empty query.");
   return query;
 }
@@ -1260,12 +1280,14 @@ async function runWorkspaceCommand(args: {
   // detach path: if the command runs longer than detachMs it is promoted to
   // a background process (registered in processRegistry) and the turn
   // continues instead of hanging forever. Default 120s, env-overridable.
+  // execShell passes detachMs=0 for commands that obviously never exit
+  // (isImmediateDetachShellCommand) so they never block the conversation.
   const effectiveDetachMs = resolveDetachMs(args.detachMs);
-  const detachPromise = effectiveDetachMs
-    ? new Promise<typeof detachResult>((r) => {
-        detachTimer = setTimeout(() => r(detachResult), effectiveDetachMs);
-      })
-    : null;
+  // Note: 0 is a valid value meaning "detach immediately" — never use a
+  // truthiness check here.
+  const detachPromise = new Promise<typeof detachResult>((r) => {
+    detachTimer = setTimeout(() => r(detachResult), effectiveDetachMs);
+  });
 
   const racers: Promise<unknown>[] = [exitPromise];
   if (timeoutMs) {
@@ -1276,7 +1298,7 @@ async function runWorkspaceCommand(args: {
     );
   }
   if (abortPromise) racers.push(abortPromise);
-  if (detachPromise) racers.push(detachPromise);
+  racers.push(detachPromise);
 
   let raceWinner: unknown;
   try {
@@ -1315,29 +1337,46 @@ async function runWorkspaceCommand(args: {
   }
 
   if (didDetach) {
-    // Promote the still-running child to a background process: register it
-    // (so listProcesses / processRegistry can inspect it), detach host-signal
-    // forwarding (the child survives independently), and stop reading
+    // Promote the still-running child to a background process: register it so
+    // listProcesses / processRegistry can inspect it, and stop reading
     // stdout/stderr — those streams staying open is harmless once the child
-    // is no longer our responsibility.
-    detachSignalCleanup();
+    // is no longer our responsibility. Host-signal forwarding stays active
+    // (same lifecycle as launchProcess): a backgrounded command belongs to
+    // this host session and is cleaned up on SIGHUP/SIGTERM/SIGINT (terminal
+    // close) instead of orphaning; the forwarder is removed once the child
+    // settles.
+    // With detachMs=0 (smart detach) the detach timer can win the race before
+    // a spawn error surfaces; swallow that late rejection so it cannot become
+    // an unhandledRejection after we already returned.
+    exitPromise.catch(() => {});
     const pid = typeof proc.pid === "number" ? proc.pid : 0;
     const label = deriveLabel(args.command.join(" "));
     const pgid = pid;
     const registry = getProcessRegistry();
     registry.add({ pid, pgid, command: args.command.join(" "), label });
     proc.on("close", (code) => {
+      detachSignalCleanup();
       registry.markExited(pid, code ?? 1);
     });
+    const immediate = effectiveDetachMs === 0;
+    const reason = immediate
+      ? `command looks long-running; moved to background immediately (pid=${pid}, label=${label})`
+      : `command detached to background after ${effectiveDetachMs}ms (pid=${pid}, label=${label})`;
     return {
       stdout: "",
-      stderr: `command detached to background after ${effectiveDetachMs}ms (pid=${pid}, label=${label})\nUse listProcesses / processRegistry to inspect.`,
+      stderr: `${reason}\nUse listProcesses to inspect or stop it.`,
       exitCode: 0,
       timedOut: false,
       detached: true,
       pid,
       label,
-      content: JSON.stringify({ detached: true, pid, label, status: "running" }),
+      content: JSON.stringify({
+        detached: true,
+        pid,
+        label,
+        status: "running",
+        ...(immediate ? { reason: "long-running-command" } : {}),
+      }),
     };
   }
 
@@ -1731,7 +1770,7 @@ async function listFilesTool(args: {
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const warnings: string[] = [];
-  const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
+  const requestedPath = pickFirstAlias(parsed, PATH_FIELD_ALIASES) ?? ".";
   const maxDepth = readWorkspaceMaxDepth(parsed, warnings);
   const maxResults = readWorkspaceMaxResults(parsed, warnings);
   const entryType = readWorkspaceEntryType(parsed, warnings);
@@ -1781,7 +1820,7 @@ async function searchFilesTool(args: {
   const contextLines = readWorkspaceContextLines(parsed, warnings);
   const literal = parsed.literal === true;
   const caseSensitive = parsed.caseSensitive === false ? false : true;
-  const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
+  const requestedPath = pickFirstAlias(parsed, PATH_FIELD_ALIASES) ?? ".";
   const includeIgnored = parsed.includeIgnored === true;
   const searchPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
@@ -2134,7 +2173,7 @@ async function globFilesTool(args: {
   const pattern = requireWorkspaceGlobPattern(parsed);
   const exclude = readWorkspaceExcludeGlobs(parsed);
   const maxResults = readWorkspaceMaxResults(parsed, warnings);
-  const requestedPath = readWorkspacePathAlias(parsed) ?? ".";
+  const requestedPath = pickFirstAlias(parsed, PATH_FIELD_ALIASES) ?? ".";
   const includeIgnored = parsed.includeIgnored === true;
   const searchPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
@@ -2360,7 +2399,11 @@ async function execShellTool(args: {
     outputLimit: args.commandOutputLimit,
     commandPrefix: args.commandPrefix,
     abortSignal: args.abortSignal,
-    detachMs: args.detachMs,
+    // Commands that clearly never exit (long sleeps, tail -f, watch, dev
+    // servers, infinite loops) are promoted to background immediately so the
+    // turn — and the user's conversation — keeps going. Everything else keeps
+    // the caller/env detach grace window.
+    detachMs: isImmediateDetachShellCommand({ command }) ? 0 : args.detachMs,
   });
   const activity = extractActivity(parsed);
   return {

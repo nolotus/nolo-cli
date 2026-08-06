@@ -1,4 +1,5 @@
 import { getAgentInternalCommandEntries } from "./agentInternalCommandEntries";
+import { getAppInternalCommandEntries } from "./appInternalCommandEntries";
 import { getDialogInternalCommandEntries } from "./dialogInternalCommandEntries";
 import { getDocInternalCommandEntries } from "./docInternalCommandEntries";
 import type { CommandEntry } from "./cliCommandTypes";
@@ -16,6 +17,7 @@ export function getInternalCommandEntries(renderHelpText: () => string): Command
     ...getMemoryInternalCommandEntries(),
     ...getSpaceInternalCommandEntries(),
     ...getTableInternalCommandEntries(),
+    ...getAppInternalCommandEntries(),
     ...getWorkflowInternalCommandEntries(),
     ...getSystemInternalCommandEntries(renderHelpText),
   ];

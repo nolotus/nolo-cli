@@ -1,5 +1,6 @@
 // 文件路径: utils/imageUtils.ts
-import imageCompression from "browser-image-compression";
+// browser-image-compression 仅在上传图片时需要，不应进入首屏同步 bundle。
+// 在实际调用处动态 import（见 compressImageFile / compressImage）。
 
 /**
  * 前端图片压缩配置（只包含我们实际用到的字段）。
@@ -138,6 +139,18 @@ export async function compressImageFile(
     return imageFile;
   }
 
+  let imageCompression;
+  try {
+    ({ default: imageCompression } = await import("browser-image-compression"));
+  } catch (error) {
+    // 区分“库没加载进来”与“压缩炸了”：chunk 加载失败走这里，保持降级（返回原图）
+    console.error(
+      "[imageUtils] compressImageFile import failed:",
+      error
+    );
+    return imageFile;
+  }
+
   try {
     const compressedBlob = await imageCompression(imageFile, mergedOptions);
     const compressedFile = normalizeCompressedFile(imageFile, compressedBlob);
@@ -158,7 +171,10 @@ export async function compressImageFile(
 
     return compressedFile;
   } catch (error) {
-    console.error("[imageUtils] compressImageFile failed:", error);
+    console.error(
+      "[imageUtils] compressImageFile compress failed:",
+      error
+    );
     return imageFile;
   }
 }
@@ -188,6 +204,18 @@ export async function compressImage(
     return imageDataUrl;
   }
 
+  let imageCompression;
+  try {
+    ({ default: imageCompression } = await import("browser-image-compression"));
+  } catch (error) {
+    // 区分“库没加载进来”与“压缩炸了”：chunk 加载失败走这里，保持降级（返回原 dataURL）
+    console.error(
+      "[imageUtils] compressImage import failed:",
+      error
+    );
+    return imageDataUrl;
+  }
+
   try {
     const compressedFile = await compressImageFile(imageFile, options);
     if (compressedFile === imageFile) {
@@ -202,7 +230,10 @@ export async function compressImage(
 
     return compressedDataUrl;
   } catch (error) {
-    console.error("[imageUtils] compressImage failed:", error);
+    console.error(
+      "[imageUtils] compressImage compress failed:",
+      error
+    );
     return imageDataUrl;
   }
 }

@@ -1,6 +1,7 @@
 import { homedir as osHomedir } from "node:os";
 import { clipCompactText } from "../core/clipCompactText";
 import { compactWhitespace } from "../core/compactWhitespace";
+import { foldHomePath } from "../core/foldHomePath";
 
 /**
  * Path-aware clip: keeps the leading segment and the filename, eliding the
@@ -38,16 +39,15 @@ export function clipPathAware(value: string, max = 72): string {
 }
 
 /**
- * Replace absolute home directory path (e.g. /Users/nolotus or /home/user) with ~
+ * Replace absolute home directory path (e.g. /Users/nolotus or /home/user) with ~.
+ * Delegates the prefix logic to the shared `core/foldHomePath` so the CLI and
+ * the Desktop webview stay in sync; this wrapper only resolves the concrete
+ * home dir from the Node environment.
  */
 export function formatHomePath(path: string, customHomedir?: string): string {
   if (!path) return "";
   const home = customHomedir || (typeof process !== "undefined" ? process.env?.HOME : undefined) || (typeof osHomedir === "function" ? osHomedir() : "");
-  if (home && path.startsWith(home)) {
-    return `~${path.slice(home.length)}`;
-  }
-  // Generic fallback for Unix absolute paths like /Users/username/ or /home/username/
-  return path.replace(/^(\/Users\/[^\/]+\/|\/home\/[^\/]+\/)/, "~/");
+  return foldHomePath(path, home);
 }
 
 /**

@@ -19,6 +19,7 @@ import { selectIdentityToken } from "identity/selectors";
 import { isAbortError } from "../../core/abortError";
 import { waitForAbortableDelay } from "../../core/abortableDelay";
 import { CORE_DRAIN_REASON, DRAIN_EXHAUSTED_USER_MESSAGE } from "../../core/drainReason";
+import { isDeployWindowRetrySignal } from "../../core/deployWindowRetrySignal";
 import { isGatewayHttpStatus } from "../../core/gatewayHttpStatus";
 import { normalizeServerOrigin } from "../../core/serverOrigin";
 import { createSSEParser } from "../chat/parseMultilineSSE";
@@ -52,9 +53,18 @@ export interface RunAgentBackgroundArgs {
      * 让后台子对话（如 review）记录父子关系，供侧边栏折叠。
      */
     parentDialogId?: string;
+    /**
+     * Ephemeral run: do not persist the dialog or its turns. Used for
+     * one-shot reviews where leaving a dialog record is noise. The server
+     * handler skips createPendingDialog/finalizeDialog when this is true.
+     */
+    ephemeral?: boolean;
 }
 
 const MAX_SSE_RETRIES = 3;
+// 部署窗口（core_draining / 502/503/504 / 事件流意外关闭）走专属长预算，
+// 与 run start 及 TUI/Web chat 的 30 次预算对齐：1.5s/次 × 30 ≈ 45s > drain 窗口。
+const MAX_SSE_CORE_DRAINING_RETRIES = 30;
 const SSE_RETRY_DELAY_MS = 1500;
 // 普通可重试错误：只重试 1 次。
 // 结构化 `core_draining`（服务端明示的 deploy drain 窗口，最长 30s）走专属长预算，
@@ -62,7 +72,14 @@ const SSE_RETRY_DELAY_MS = 1500;
 const MAX_RUN_START_RETRIES = 1;
 const MAX_RUN_START_CORE_DRAINING_RETRIES = 30;
 
-type RetryableError = Error & { retryable?: boolean; retryAfterMs?: number };
+type RetryableError = Error & {
+    retryable?: boolean;
+    retryAfterMs?: number;
+    /** HTTP 响应状态（订阅握手失败时携带，用于部署窗口信号分类） */
+    status?: number;
+    /** 服务端 drain reason（如 core_draining） */
+    reason?: string;
+};
 
 function createRetryableError(message: string, retryAfterMs?: number): RetryableError {
     return Object.assign(new Error(message), {
@@ -74,7 +91,8 @@ function createRetryableError(message: string, retryAfterMs?: number): Retryable
 function createSubscriptionError(
     status: number,
     hasBody: boolean,
-    retryAfterMs?: number
+    retryAfterMs?: number,
+    reason?: string
 ): RetryableError {
     const message = !hasBody
         ? `事件流响应缺少 body (${status})`
@@ -84,7 +102,10 @@ function createSubscriptionError(
         return new Error(message);
     }
 
-    return createRetryableError(message, retryAfterMs);
+    const err = createRetryableError(message, retryAfterMs);
+    err.status = status;
+    if (reason) err.reason = reason;
+    return err;
 }
 
 async function waitForRetryDelay(retryAfterMs: number, signal: AbortSignal) {
@@ -136,10 +157,16 @@ async function listenToDialogEvents(
     }
 
     if (!eventsRes.ok || !eventsRes.body) {
+        // 读取 body 解析服务端结构化信息（reason / retryAfterMs），供上层裁决预算。
+        // 解析失败时故意降级为空字符串：retry 仍可基于 header/status 继续，
+        // 不因 body 读取异常而中断重试分类。
+        const errText = await eventsRes.text().catch(() => "");
+        const payload = parseRetryableJson(errText);
         throw createSubscriptionError(
             eventsRes.status,
             !!eventsRes.body,
-            resolveRetryAfterMs(eventsRes.headers, SSE_RETRY_DELAY_MS)
+            resolveRetryAfterMs(eventsRes.headers, SSE_RETRY_DELAY_MS, payload?.retryAfterMs),
+            payload?.reason
         );
     }
 
@@ -204,7 +231,7 @@ export const runAgentBackground = createAsyncThunk<
     RunAgentBackgroundArgs,
     { state: RootState }
 >("agent/runBackground", async (args, { getState, signal: thunkSignal }) => {
-    const { agentKey, userInput, serverBase, spaceId, parentDialogId, onStatusChange, onDone, onFailed } = args;
+    const { agentKey, userInput, serverBase, spaceId, parentDialogId, ephemeral, onStatusChange, onDone, onFailed } = args;
 
     const state = getState();
     const currentServer = normalizeServerOrigin(serverBase) || selectCurrentServer(state);
@@ -240,6 +267,7 @@ export const runAgentBackground = createAsyncThunk<
                 spaceId,
                 background: true,
                 ...(parentDialogId ? { parentDialogId } : {}),
+                ...(ephemeral ? { ephemeral: true } : {}),
                 runtimeContext: {
                     surface: "web",
                     host: "browser",
@@ -303,12 +331,16 @@ export const runAgentBackground = createAsyncThunk<
         return { dialogId, status: runResponse.status };
     }
 
-    // ── Step 2: 订阅 SSE 事件流（含断线重连，最多 3 次）────────────────────────
+    // ── Step 2: 订阅 SSE 事件流（含断线重连）───────────────────────────────────
+    // 预算按错误类型动态裁决：部署窗口信号（503 core_draining / 502/503/504 /
+    // 事件流意外关闭）提升到 30 次长预算（≈45s > drain 窗口，不会中途放弃，
+    // 与 run start 及 TUI/Web chat 对齐）；其余 retryable 错误保持默认 3 次。
     let lastError: Error | undefined;
+    let maxSseRetries = MAX_SSE_RETRIES;
 
     const eventServer = normalizeServerOrigin(routedServerBase) || currentServer;
 
-    for (let attempt = 0; attempt <= MAX_SSE_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= maxSseRetries; attempt++) {
         try {
             return await listenToDialogEvents(
                 dialogId, eventServer, authHeader, effectiveSignal,
@@ -316,7 +348,10 @@ export const runAgentBackground = createAsyncThunk<
             );
         } catch (e: any) {
             if (isAbortError(e)) throw e;          // 用户主动取消，不重试
-            if (!e?.retryable || attempt >= MAX_SSE_RETRIES) throw e; // 非可重试错误或超限
+            if (!e?.retryable || attempt >= maxSseRetries) throw e; // 非可重试错误或超限
+            if (isDeployWindowRetrySignal(e)) {
+                maxSseRetries = MAX_SSE_CORE_DRAINING_RETRIES;
+            }
             lastError = e;
             onStatusChange?.("reconnecting");
             await waitForRetryDelay(e?.retryAfterMs ?? SSE_RETRY_DELAY_MS, effectiveSignal);

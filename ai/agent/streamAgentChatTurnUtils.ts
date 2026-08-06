@@ -56,7 +56,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, resolveEffectiveEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, resolveEffectiveEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter, addDefaultSystemCapabilityTools } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -779,7 +779,7 @@ export const mergeAgentToolsWithRuntime = (
     // Expand capability packs into tool names, merged with explicit tools.
     // Web 端能力包解析：共享 resolveEffectiveEnabledPacks，本端只声明差异。
     //
-    // ALWAYS_ON_PACK_IDS（long-term-memory / agent-orchestration / skills）由共享层
+    // ALWAYS_ON_PACK_IDS（long-term-memory / skills）由共享层
     // 幂等补齐，无论 enabledPacks 是否配置过——「默认全挂、可单关」，要单关走
     // disabledTools。这三个包此前在三端各自硬编码，于是各飘各的：CLI 漏了
     // long-term-memory（TUI agent 就是不记事，「记住 X」只能退回 shell 跑 CLI），
@@ -867,8 +867,15 @@ export const mergeAgentToolsWithRuntime = (
     // Web 端直接从 Redux state 读 systemBuiltinSkills（已 hydrate 归一化）；
     // 缺失 key 视为开启（默认全开）。
     const systemBuiltinSkills = (state as any)?.settings?.systemBuiltinSkills;
+    // Default-on system capabilities (agent-orchestration) are mounted right
+    // before the global filter — same pipeline order as the CLI
+    // (resolveCliRequestedToolNames): mount first, then the user's global
+    // "off" removes them again.
+    const mountedTools = isInlineVisualArtifactAgent(agentConfig)
+        ? Array.from(enhancedTools)
+        : addDefaultSystemCapabilityTools(Array.from(enhancedTools));
     const filteredTools = applySystemBuiltinSkillFilter(
-        Array.from(enhancedTools),
+        mountedTools,
         systemBuiltinSkills,
     );
 

@@ -45,6 +45,18 @@ describe("CLI local runtime adapter source contract (credential broker)", () => 
     expect(source).toContain("credentialBroker,");
   });
 
+  // Regression: { hasUserChoice } shorthand is only valid inside prepareAgentConfig
+  // (where `const hasUserChoice` is in scope). resolveProvider's OAuth branches
+  // (antigravity/claude/cursor) previously used the shorthand, causing
+  // "hasUserChoice is not defined" ReferenceError. They must spell out
+  // Boolean(deps.requestUserChoice) like the platform/direct branches.
+  test("resolveProvider OAuth branches spell out hasUserChoice (no out-of-scope shorthand)", () => {
+    const bareShorthand = source.match(/\{ hasUserChoice \}/g) ?? [];
+    expect(bareShorthand.length).toBe(1);
+    const fullForm = source.match(/\{ hasUserChoice: Boolean\(deps\.requestUserChoice\) \}/g) ?? [];
+    expect(fullForm.length).toBeGreaterThanOrEqual(3);
+  });
+
   test("passes credentialBroker to platform and direct OpenAI-compatible resolvers", () => {
     expect(source).toContain("resolvePlatformChatProviderConfig({");
     expect(source).toContain("resolveCliOpenAiProviderConfig({");
@@ -4416,8 +4428,11 @@ describe("CLI local runtime adapter remote sync fetch timeout", () => {
 });
 
 describe("resolveCliEffectiveEnabledPacks", () => {
+  // agent-orchestration 不再出现在包级默认列表：它已迁入 SYSTEM_AGENT_CAPABILITIES
+  // （全局设置 systemBuiltinSkills，默认开），工具在工具面解析处由
+  // addDefaultSystemCapabilityTools 补齐，见 systemBuiltinSkills describe。
   test("enabledPacks 为空时默认补 code + 全部 always-on 包", () => {
-    const expected = ["code", "long-term-memory", "agent-orchestration", "skills"];
+    const expected = ["code", "long-term-memory", "skills"];
     expect(resolveCliEffectiveEnabledPacks({ enabledPacks: [] })).toEqual(expected);
     expect(resolveCliEffectiveEnabledPacks({ enabledPacks: null })).toEqual(expected);
     expect(resolveCliEffectiveEnabledPacks({ enabledPacks: undefined })).toEqual(expected);
@@ -4425,10 +4440,10 @@ describe("resolveCliEffectiveEnabledPacks", () => {
   });
 
   test("enabledPacks 非空时幂等补齐 always-on 包（含长期记忆）", () => {
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"] })).toEqual(["web-search", "long-term-memory", "agent-orchestration", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "web-search"] })).toEqual(["code", "web-search", "long-term-memory", "agent-orchestration", "skills"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["web-search"] })).toEqual(["web-search", "long-term-memory", "skills"]);
+    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "web-search"] })).toEqual(["code", "web-search", "long-term-memory", "skills"]);
+    // 显式声明 agent-orchestration 仍然有效（镜像包仍在 CAPABILITY_PACKS）。
     expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "agent-orchestration"] })).toEqual(["code", "agent-orchestration", "long-term-memory", "skills"]);
-    expect(resolveCliEffectiveEnabledPacks({ enabledPacks: ["code", "long-term-memory", "agent-orchestration", "skills"] })).toEqual(["code", "long-term-memory", "agent-orchestration", "skills"]);
   });
 
   // 回归护栏：TUI 里说「记住 X」必须走真 tool call。此前 CLI 的 always-on 列表漏了
@@ -4939,6 +4954,30 @@ describe("resolveCliRequestedToolNames — systemBuiltinSkills 全局开关", ()
       null,
     );
     expect(requested).toContain("exa_search");
+  });
+
+  // 回归护栏：agent-orchestration 迁入全局设置后，编排三件套必须默认挂进工具面
+  // （迁移曾只接过滤侧、断掉挂载侧，导致三端 agent 全部丢失 startAgentRun，
+  // 编排纪律提示词随之不再注入）。断言工具可见这一用户可感知结果。
+  test("默认挂载编排三件套（空配置 agent，不传 systemBuiltinSkills）", () => {
+    const agentConfig = { key: "agent-orch-default", tools: [] } as any;
+    const requested = resolveCliRequestedToolNames(agentConfig, {} as any);
+    expect(requested).toContain("startAgentRun");
+    expect(requested).toContain("controlAgentRun");
+    expect(requested).toContain("listAgents");
+  });
+
+  test("传 { 'agent-orchestration': false } 后过滤掉编排三件套", () => {
+    const agentConfig = { key: "agent-orch-off", tools: [] } as any;
+    const requested = resolveCliRequestedToolNames(
+      agentConfig,
+      {} as any,
+      { "agent-orchestration": false },
+    );
+    expect(requested).not.toContain("startAgentRun");
+    expect(requested).not.toContain("controlAgentRun");
+    // listAgents 也属于该能力包，一并被全局开关收走。
+    expect(requested).not.toContain("listAgents");
   });
 });
 

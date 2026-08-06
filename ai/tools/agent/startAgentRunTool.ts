@@ -44,6 +44,11 @@ export const startAgentRunFunctionSchema = {
                 type: "string",
                 description: "可选。由 listAgents/readAgent 得到的可读 Agent 名称，用于 TUI 运行卡片展示。",
             },
+            ephemeral: {
+                type: "boolean",
+                description:
+                    "可选。为 true 时本次 run 不持久化 dialog（不留记录）。用于一次性审查（review）等不需留痕的场景。默认 false。",
+            },
         },
         required: ["agentKey", "task"],
     },
@@ -54,6 +59,7 @@ interface StartAgentRunArgs {
     task: string;
     input?: any;
     agentName?: string;
+    ephemeral?: boolean;
 }
 
 /**
@@ -69,7 +75,7 @@ export async function startAgentRunFunc(
     thunkApi: any,
     _context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string }
 ): Promise<{ rawData: any; displayData: string }> {
-    const { agentKey, task, input, agentName } = args;
+    const { agentKey, task, input, agentName, ephemeral } = args;
     const { dispatch } = thunkApi;
 
     if (!agentKey) {
@@ -93,6 +99,7 @@ export async function startAgentRunFunc(
                 userInput: content,
                 waitForCompletion: false,
                 ...(parentDialogId ? { parentDialogId } : {}),
+                ...(ephemeral ? { ephemeral: true } : {}),
             })
         ).unwrap();
 

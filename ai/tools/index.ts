@@ -358,6 +358,10 @@ import {
   appFileReplaceFunc,
   appFileWriteFunctionSchema,
   appFileWriteFunc,
+  appVersionListFunctionSchema,
+  appVersionListFunc,
+  appVersionRestoreFunctionSchema,
+  appVersionRestoreFunc,
 } from "./appTools";
 import {
   cfSpeechToTextFunctionSchema,
@@ -2073,6 +2077,31 @@ const baseToolDefinitions: ToolDefinition[] = [
     description: {
       name: "appFileReplace",
       description: "精确替换 Nolo React SSR 应用源码工作区单个文件片段。",
+      category: "应用部署",
+    },
+    behavior: "data",
+    uiGroup: "general",
+  },
+  {
+    id: "appVersionList",
+    schema: appVersionListFunctionSchema,
+    executor: appVersionListFunc,
+    description: {
+      name: "appVersionList",
+      description:
+        "列出应用的历史版本快照。当 appFileList 返回 409（源码工作区缺失）时使用，查看是否有可恢复的历史版本。",
+      category: "应用部署",
+    },
+    behavior: "data",
+    uiGroup: "general",
+  },
+  {
+    id: "appVersionRestore",
+    schema: appVersionRestoreFunctionSchema,
+    executor: appVersionRestoreFunc,
+    description: {
+      name: "appVersionRestore",
+      description: "将应用恢复到指定的历史版本，代码/源码/framework/SSR 产物全部回滚。",
       category: "应用部署",
     },
     behavior: "data",

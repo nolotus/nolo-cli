@@ -12,6 +12,10 @@ import type { DialogConfig } from "../../../app/types";
 import { createDialogMessageKeyAndId } from "../../../database/keys";
 import { extractCustomId } from "../../../core/prefix";
 import { resolveHandleSendMessageContext } from "./handleSendMessageResolver";
+import {
+    buildSendErrorMessageMarkdown,
+    parseSendError,
+} from "./parseOAuthError";
 import { getActiveDialogKey } from "../dialogRuntimeStore";
 
 export interface HandleSendMessageArgs {
@@ -148,6 +152,50 @@ const finalizeQuickChatStreamStartupFailure = async (
 };
 
 /**
+ * 从 provider 错误文本里结构化解析出可读、可操作的消息（含验证链接），
+ * 而不是把原始 JSON dump 进对话。
+ */
+const buildActionableErrorText = (errorMessage: string): string => {
+    return buildSendErrorMessageMarkdown(parseSendError(errorMessage));
+};
+
+/**
+ * 发送失败时把错误写进对话流（作为一条 assistant 错误消息），
+ * 让用户可以直接在对话里看到并操作（例如点击验证链接），
+ * 而不是只弹一个瞬间消失的 toast。
+ */
+const finalizeSendFailureInDialog = async (
+    dispatch: any,
+    dialogConfig: DialogConfig,
+    agentKey: string,
+    errorMessage: string,
+) => {
+    const dialogKey = dialogConfig.dbKey;
+    const dialogId = dialogConfig.id ?? (dialogKey ? extractCustomId(dialogKey) : "");
+    const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
+
+    await dispatch(
+        messageStreamEnd({
+            finalContentBuffer: [
+                {
+                    type: "text",
+                    text: `[发送失败]\n\n${buildActionableErrorText(errorMessage)}`,
+                },
+            ],
+            totalUsage: null,
+            msgKey,
+            agentConfig: {
+                dbKey: agentKey,
+            },
+            dialogId,
+            dialogKey: dialogKey ?? "",
+            messageId,
+            reasoningBuffer: "",
+        })
+    ).unwrap?.();
+};
+
+/**
  * 发送用户消息（当前对话）：
  * - 支持 runtimeOptions：用于为当前轮次额外注入工具 / 编辑上下文
  * - 支持 targetAgentKey：本轮可显式指定要调用的 Agent（例如通过 @mention）
@@ -157,11 +205,14 @@ export const handleSendMessageAction = async (
     args: HandleSendMessageArgs,
     { dispatch, getState, rejectWithValue }: HandleSendMessageThunkApi
 ) => {
+    // 提升到 try 外声明，catch 分支需要读取（用于把失败写进对话流）。
+    let dialogConfig: DialogConfig | null = null;
+    let agentKeyToUse: string | undefined;
     try {
         logQuickChatPerfStage(args.quickChatPerfStartedAt, "handle-send-message-entered", {
             dialogKey: args.dialogKey ?? null,
         });
-        const dialogConfig = await ensureDialogConfig(dispatch, getState, args.dialogKey);
+        dialogConfig = await ensureDialogConfig(dispatch, getState, args.dialogKey);
         if (!dialogConfig) {
             throw new Error(
                 "handleSendMessage: Dialog configuration is missing."
@@ -184,12 +235,13 @@ export const handleSendMessageAction = async (
         });
 
         // 步骤 2: 计算本轮要实际调用的 agentKey
-        const { agentKeyToUse, effectiveRuntimeOptions } =
-            resolveHandleSendMessageContext({
-                dialogConfig,
-                targetAgentKey: args.targetAgentKey,
-                runtimeOptions: args.runtimeOptions,
-            });
+        const resolvedContext = resolveHandleSendMessageContext({
+            dialogConfig,
+            targetAgentKey: args.targetAgentKey,
+            runtimeOptions: args.runtimeOptions,
+        });
+        agentKeyToUse = resolvedContext.agentKeyToUse;
+        const effectiveRuntimeOptions = resolvedContext.effectiveRuntimeOptions;
 
         // 没有可用 Agent 时，只保存用户消息，不触发 Agent 回复
         if (!agentKeyToUse) {
@@ -248,6 +300,25 @@ export const handleSendMessageAction = async (
             : typeof error === "string"
             ? error
             : error?.message || error?.error || String(error);
+        // 把错误写进对话流，用户可以直接在对话里看到并操作（如点击验证链接），
+        // 而不是只弹一个瞬间消失的 toast。仅在已拿到 dialogConfig 与 agentKey
+        // 时才能写（没有 agentKey 说明连发送上下文都不完整，交给上层处理）。
+        try {
+            if (dialogConfig && agentKeyToUse) {
+                await finalizeSendFailureInDialog(
+                    dispatch,
+                    dialogConfig,
+                    agentKeyToUse,
+                    errorMessage,
+                );
+                return rejectWithValue({
+                    __errorInDialog: true,
+                    message: errorMessage,
+                });
+            }
+        } catch (writeError) {
+            console.error("handleSendMessage: failed to write error into dialog:", writeError);
+        }
         return rejectWithValue(errorMessage);
     }
 };

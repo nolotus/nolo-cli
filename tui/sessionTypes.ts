@@ -78,6 +78,9 @@ export type TuiAction =
       type: "self-update";
     }
   | {
+      type: "theme-refresh";
+    }
+  | {
       type: "shell-command";
       command: string;
     }

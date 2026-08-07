@@ -459,6 +459,26 @@ function readCsiSequence(input: string, start: number): string | null {
   return null;
 }
 
+/** OSC (DCS-equivalent) starts with ESC ] and ends at BEL (0x07) or ST (ESC \). */
+function parseOscEnd(input: string, start: number): number | null {
+  if (!input.startsWith("\x1b]", start)) return null;
+  const bodyStart = start + 2;
+  const bel = input.indexOf("\x07", bodyStart);
+  const st = input.indexOf("\x1b\\", bodyStart);
+  let end = -1;
+  if (bel !== -1) end = bel + 1;
+  if (st !== -1) {
+    const stEnd = st + 2;
+    if (end === -1 || stEnd < end) end = stEnd;
+  }
+  return end === -1 ? null : end;
+}
+
+/** An OSC reply that has not yet reached its BEL (0x07) or ST (ESC \\) terminator. */
+function isIncompleteOsc(input: string): boolean {
+  return input.startsWith("\x1b]") && parseOscEnd(input, 0) === null;
+}
+
 export function isIncompleteTail(input: string, start: number): boolean {
   if (start >= input.length) return false;
   const rem = input.slice(start);
@@ -477,6 +497,11 @@ export function isIncompleteTail(input: string, start: number): boolean {
       }
       return false;
     }
+    return true;
+  }
+  if (parseOscEnd(input, start) === null && input.startsWith("\x1b]", start)) {
+    // An OSC reply that hasn't reached its BEL / ST terminator yet — hold it
+    // until the next chunk arrives.
     return true;
   }
   if (rem.startsWith("\x1bO") && rem.length < 3) {
@@ -530,6 +555,13 @@ export function splitRawInputWithTail(
   for (let index = 0; index < input.length; ) {
     if (isIncompleteTail(input, index)) {
       return { tokens, tail: input.slice(index) };
+    }
+    const oscEnd = parseOscEnd(input, index);
+    if (oscEnd !== null) {
+      // Terminal OSC reply (e.g. \x1b]11;rgb:… from a background query) — skip
+      // wholesale, it is not a keystroke.
+      index = oscEnd;
+      continue;
     }
     if (input.startsWith(PASTE_START, index)) {
       const contentStart = index + PASTE_START.length;
@@ -665,12 +697,18 @@ export function createRawInputDecoder(
     if (!tail) return;
     if (forceCompleteOpenPaste) {
       // Stream/explicit end: never stall on a partial CSI — emit raw.
-      // Except a partial SGR mouse report (\x1b[<… without trailing M/m):
-      // it is not a keypress, and emitting it raw would surface as a lone
-      // \x1b (cooperative stop) plus `[<65;…` typed into the composer. Drop
-      // it — the report either completes in a later chunk or is lost (one
-      // scroll step, harmless).
-      if (consumeSgrMouseSequence(tail) === undefined) return;
+      // Except a partial SGR mouse report (\x1b[<… without trailing M/m)
+      // or an unterminated OSC reply (\x1b]… without BEL/ST): neither is a
+      // keypress, and emitting them raw would surface as a lone \x1b
+      // (cooperative stop) plus `[<65;…` / `]11;rgb:…` typed into the
+      // composer. Drop them — the report either completes in a later chunk
+      // or is lost (one scroll step / a dropped theme probe, harmless).
+      if (
+        consumeSgrMouseSequence(tail) === undefined ||
+        isIncompleteOsc(tail)
+      ) {
+        return;
+      }
       emitCodePoints(tail);
       return;
     }
@@ -707,13 +745,19 @@ export function createRawInputDecoder(
       if (pendingBuffer.startsWith(PASTE_START)) return;
       if (pendingBuffer.length > 0) {
         // Incomplete CSI only — short timeout, then force emit.
-        // SGR mouse reports (\x1b[<btn;col;rowM) are never a bare Esc key:
-        // slow SSH/network can split one across chunks with gaps longer than
-        // the esc timeout. Arming the timer here would force-emit the
-        // partial report as a lone \x1b (cooperative stop) plus `[<65;…`
-        // typed into the composer. Wait for the remaining bytes instead —
-        // the next chunk completes the report, or flush() drops it.
-        if (consumeSgrMouseSequence(pendingBuffer) === undefined) return;
+        // SGR mouse reports (\x1b[<btn;col;rowM) and OSC replies (\x1b]…)
+        // are never a bare Esc key: slow SSH/network can split one across
+        // chunks with gaps longer than the esc timeout. Arming the timer
+        // here would force-emit the partial report as a lone \x1b
+        // (cooperative stop) plus `[<65;…` / `]11;rgb:…` typed into the
+        // composer. Wait for the remaining bytes instead — the next chunk
+        // completes the report, or flush() drops it.
+        if (
+          consumeSgrMouseSequence(pendingBuffer) === undefined ||
+          isIncompleteOsc(pendingBuffer)
+        ) {
+          return;
+        }
         timer = setTimeout(() => flushEscPending(true), timeoutMs);
       }
       return;

@@ -62,8 +62,10 @@ import {
   themeColorSequence,
   themeText,
   getActiveDensity,
+  getActiveBrightness,
   setActiveBrightness,
   setActiveTerminalBaseHex,
+  applyDetectedBackground,
 } from "./theme";
 import { detectTerminalBackground } from "./detectBackground";
 import {
@@ -1148,6 +1150,61 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   let modalOwnsKeyboard = false;
   let rawActionGateTokenHandler: ((token: string) => void) | null = null;
 
+  // Auto-follow the terminal theme while the session runs: poll the background
+  // (OSC 11) every 30s and silently repaint when Ghostty et al. switch
+  // light<->dark. Only when the startup probe answered (`detected`), input is a
+  // real TTY, and the kill switch is not set. `/theme light|dark` pins
+  // brightness (getActiveBrightness() !== null) and pauses the poller;
+  // `/theme auto` (null) resumes it. A poll that gets no reply stops the timer.
+  // Defined after sessionEnded / renderHistoryToOutput / modalOwnsKeyboard /
+  // fixedInput are declared (no TDZ forward references).
+  const AUTO_THEME_POLL_MS = 30_000;
+  let autoThemeTimer: ReturnType<typeof setInterval> | null = null;
+  const maybeAutoRefreshTheme = async () => {
+    // Exit, a subprocess owning the TTY, or a modal owning the screen: skip a
+    // probe (writing OSC 11 / attaching stdin would pollute them) and skip the
+    // silent repaint (it would stomp the modal's frame). React on the next tick.
+    if (sessionEnded) return;
+    if (fixedInput.isPaused()) return; // git pager / editor / dialog owns the TTY
+    if (modalOwnsKeyboard) return; // picker / confirm modal owns the screen
+    if (getActiveBrightness() !== null) return; // manual /theme light|dark pinned it
+    if (!isInteractiveInput(input)) return;
+    const detected = await detectTerminalBackground({
+      stdin: input as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void },
+      stdout: output as NodeJS.WritableStream & { isTTY?: boolean },
+    });
+    if (sessionEnded) return; // exited while awaiting the 100ms probe — don't write to a restored TTY
+    if (!detected) {
+      if (autoThemeTimer !== null) {
+        clearInterval(autoThemeTimer);
+        autoThemeTimer = null;
+      }
+      return;
+    }
+    if (applyDetectedBackground(detected)) {
+      // Terminal switched light<->dark (or exact bg color changed). Silent
+      // repaint with the same BSU/ESU + cursor guard the activity indicator uses.
+      if (fixedInput.active && !fixedInput.isPaused() && !modalOwnsKeyboard) {
+        output.write("\x1b[?2026h\x1b[?25l");
+        try {
+          renderHistoryToOutput();
+          fixedInput.repaint(buffer, cursorPos);
+        } finally {
+          output.write("\x1b[?25h\x1b[?2026l");
+        }
+      }
+    }
+  };
+  if (
+    detected &&
+    isInteractiveInput(input) &&
+    (options.env ?? process.env).NOLO_TUI_AUTO_THEME !== "0"
+  ) {
+    autoThemeTimer = setInterval(() => {
+      void maybeAutoRefreshTheme();
+    }, AUTO_THEME_POLL_MS);
+  }
+
   // --- Chat queue (TUI binding, no Redux) ---
   //
   // runOneAgentTurn executes a single agent turn end-to-end: records the user
@@ -1511,6 +1568,25 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       } catch (error) {
         output.write(`${toErrorMessage(error)}\n`);
         output.write("Update failed. Check the error above, then run /update again or use nolo update.\n");
+      }
+    }
+
+    if (result.action?.type === "theme-refresh") {
+      // Re-probe the terminal background on demand (OSC 11) so a runtime
+      // theme switch in Ghostty et al. is picked up by the internal palette.
+      // emitCommandOutput renders the history and repaints the composer with
+      // the updated brightness, so no extra repaint is needed here.
+      const detected = await detectTerminalBackground({
+        stdin: input as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void },
+        stdout: output as NodeJS.WritableStream & { isTTY?: boolean },
+      });
+      if (detected && applyDetectedBackground(detected)) {
+        emitCommandOutput(t("themeRefreshed", detected.brightness));
+      } else if (detected) {
+        // Already matched — still echo the current brightness for the user.
+        emitCommandOutput(t("themeRefreshed", detected.brightness));
+      } else {
+        emitCommandOutput(t("themeRefreshFailed"));
       }
     }
 
@@ -1899,6 +1975,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       if (done) return;
       done = true;
       sessionEnded = true; // signal in-flight async git refresh to drop its repaint
+      if (autoThemeTimer !== null) {
+        clearInterval(autoThemeTimer);
+        autoThemeTimer = null;
+      }
       resolveDone?.();
       clearCollapsedPasteStore(pasteStore);
       resizeTarget.off?.("resize", onResize);

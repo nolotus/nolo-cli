@@ -322,6 +322,28 @@ export function getActiveTerminalBaseHex(): string | null {
   return activeTerminalBaseHex;
 }
 
+/**
+ * Record a freshly detected terminal background (brightness + exact base hex)
+ * and report whether anything changed. Single source of truth shared by the
+ * manual `/theme refresh` command and the auto-follow poller, so the two never
+ * drift. Returns true when a repaint is warranted (brightness or exact color
+ * changed), false when the terminal already matched.
+ */
+export function applyDetectedBackground(detected: {
+  brightness: TuiBrightness;
+  hex: string;
+}): boolean {
+  // Normalize before comparing against the stored base (uppercase, no '#');
+  // keeps a lower-case / '#'-prefixed input from re-triggering every poll.
+  const normalizedHex = detected.hex.replace(/^#/, "").toUpperCase();
+  const changed =
+    detected.brightness !== activeBrightness ||
+    normalizedHex !== activeTerminalBaseHex;
+  setActiveBrightness(detected.brightness);
+  setActiveTerminalBaseHex(detected.hex);
+  return changed;
+}
+
 /** Base hex for a brightness: the probed terminal color, or the fallback. */
 function resolveTerminalBaseHex(brightness: TuiBrightness): string {
   return activeTerminalBaseHex ?? TERMINAL_BASE[brightness];

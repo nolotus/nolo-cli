@@ -794,6 +794,14 @@ describe("handleTuiInput - path-vs-slash disambiguation", () => {
     expect(invalidResult.output).toContain("Unknown theme: unknown-theme");
   });
 
+  test("/theme refresh returns a theme-refresh action", () => {
+    const state = createInitialTuiState({});
+    const res = handleTuiInput("/theme refresh", state);
+    expect(res.action).toEqual({ type: "theme-refresh" });
+    expect(res.output).toBe("");
+    expect(res.nextState).toBe(state);
+  });
+
   test("handles /density command to view or switch density", () => {
     const state = createInitialTuiState({});
     const viewResult = handleTuiInput("/density", state);

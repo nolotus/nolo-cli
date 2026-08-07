@@ -129,6 +129,8 @@ describe("i18n", () => {
     "themeBrightnessSwitched",
     "themeBrightnessAuto",
     "themeSwitched",
+    "themeRefreshed",
+    "themeRefreshFailed",
     "themeUnknown",
     "densityCurrent",
     "densitySwitched",

@@ -218,6 +218,9 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       // has a light and a dark variant, and picking the wrong one is what makes
       // colors look washed out. It was previously reachable only through the
       // NOLO_TUI_THEME env var, which nobody discovers.
+      if (sub === "refresh") {
+        return { nextState: state, action: { type: "theme-refresh" }, output: "" };
+      }
       if (sub === "light" || sub === "dark") {
         setActiveBrightness(sub);
         return { nextState: state, output: t("themeBrightnessSwitched", sub) };

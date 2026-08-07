@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createFixedInput, createRawInputDecoder } from "./tuiRawInput";
+import {
+  createFixedInput,
+  createRawInputDecoder,
+  splitRawInput,
+  splitRawInputWithTail,
+} from "./tuiRawInput";
 import { t } from "./i18n";
 
 const TERM_ROWS = 24;
@@ -313,5 +318,77 @@ describe("createRawInputDecoder SGR mouse wheel", () => {
     expect(tokens).toEqual([]);
     await Bun.sleep(25);
     expect(tokens).toEqual(["\x1b"]);
+  });
+});
+
+describe("createRawInputDecoder 未完成 OSC flush 不泄漏", () => {
+  test("不完整 OSC 在超时与 flush() 后 0 token 泄漏", async () => {
+    // /theme refresh 探测的 OSC 11 回复（\x1b]11;rgb:…）跨 chunk 且间隔超过
+    // esc timeout：guard 必须阻止 arm 15ms timer，flush 时整体丢弃半截，
+    // 绝不把 \x1b（触发停止）+ `]11;rgb:…`（写进 composer）泄漏成按键。
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 20,
+    });
+    decode("\x1b]11;rgb:1F1F/");
+    expect(tokens).toEqual([]);
+    // 超过 esc timeout：不得 arm timer，也不得强制 emit 半截 OSC。
+    await Bun.sleep(50);
+    expect(tokens).toEqual([]);
+    // 强制 flush：半截 OSC 整体丢弃。
+    decode.flush();
+    expect(tokens).toEqual([]);
+  });
+
+  test("跨 chunk 且间隔超过 timeout：补齐后完整 OSC 被吞掉，0 token 泄漏", async () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 15,
+    });
+    decode("\x1b]11;rgb:1F1F/");
+    expect(tokens).toEqual([]);
+    // 超过 esc timeout：旧行为会把已收 tail 拆成 \x1b + 字符泄漏进 composer。
+    await Bun.sleep(40);
+    expect(tokens).toEqual([]);
+    // 迟到的剩余字节补齐 BEL 终结的完整 OSC：整体吞掉，0 个 token。
+    decode("2E2E/3E3E\x07");
+    decode.flush();
+    expect(tokens).toEqual([]);
+  });
+});
+
+describe("splitRawInput OSC 回复整体跳过", () => {
+  test("ST 终结的完整 OSC 回复产出 0 token", () => {
+    // /theme refresh 运行中探测背景色时，终端经 stdin 异步回复
+    // \x1b]11;rgb:…\x1b\\。旧行为把它当普通输入逐字符拆成按键 token 污染
+    // composer；现在必须在 decode 层整体跳过。
+    const tokens = splitRawInput("\x1b]11;rgb:1F1F2E/2E2E2E/3E3E3E\x1b\\");
+    expect(tokens).toEqual([]);
+  });
+
+  test("BEL 终结的完整 OSC 回复同样产出 0 token", () => {
+    const tokens = splitRawInput(
+      "\x1b]11;rgb:FFFFFFFF/FFFFFFFF/FFFFFFFF\x07",
+    );
+    expect(tokens).toEqual([]);
+  });
+
+  test("跨 chunk：不完整 OSC 留 tail，补齐后整体消费、无 token 泄漏", () => {
+    const part1 = "\x1b]11;rgb:1F";
+    const first = splitRawInputWithTail(part1);
+    expect(first.tokens).toEqual([]);
+    expect(first.tail).toBe(part1);
+    // 剩余字节到达后拼回完整报文，整体跳过。
+    const full = "\x1b]11;rgb:1F1F2E/2E2E2E/3E3E3E\x1b\\";
+    const second = splitRawInputWithTail(
+      first.tail + full.slice(part1.length),
+    );
+    expect(second.tokens).toEqual([]);
+    expect(second.tail).toBe("");
+  });
+
+  test("回归：普通文本与 CSI 方向键仍照常产出 token", () => {
+    expect(splitRawInput("abc")).toEqual(["a", "b", "c"]);
+    expect(splitRawInput("\x1b[A")).toEqual(["\x1b[A"]);
   });
 });

@@ -1,15 +1,18 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import {
-  resolveTuiBrightness,
-  themeColorSequence,
-  themeText,
+  applyDetectedBackground,
   blendHex,
   diffLineSequences,
-  setActiveThemeName,
-  supportsTruecolor,
-  setActiveTerminalBaseHex,
+  getActiveBrightness,
   getActiveTerminalBaseHex,
   renderDiffLine,
+  resolveTuiBrightness,
+  setActiveBrightness,
+  setActiveTerminalBaseHex,
+  setActiveThemeName,
+  supportsTruecolor,
+  themeColorSequence,
+  themeText,
 } from "./theme";
 
 describe("tui theme", () => {
@@ -225,6 +228,61 @@ describe("tui theme", () => {
       const out = renderDiffLine({ kind: "added", text: "+ foo", env: {}, colorEnabled: true });
       expect(out).not.toContain("48;2");
       expect(renderDiffLine({ kind: "context", text: " ctx", env: {}, colorEnabled: true })).toBe(" ctx");
+    });
+  });
+
+  describe("applyDetectedBackground", () => {
+    test("records a fresh detection and reports a change", () => {
+      setActiveBrightness(null);
+      setActiveTerminalBaseHex(null);
+      const changed = applyDetectedBackground({ brightness: "dark", hex: "1E1E2E" });
+      expect(changed).toBe(true);
+      expect(getActiveBrightness()).toBe("dark");
+      expect(getActiveTerminalBaseHex()).toBe("1E1E2E");
+    });
+
+    test("returns false when the terminal already matched", () => {
+      setActiveBrightness("dark");
+      setActiveTerminalBaseHex("1E1E2E");
+      expect(applyDetectedBackground({ brightness: "dark", hex: "1E1E2E" })).toBe(false);
+      expect(getActiveBrightness()).toBe("dark");
+      expect(getActiveTerminalBaseHex()).toBe("1E1E2E");
+    });
+
+    test("returns true when only brightness changes (same hex)", () => {
+      setActiveBrightness("dark");
+      setActiveTerminalBaseHex("1E1E2E");
+      expect(applyDetectedBackground({ brightness: "light", hex: "1E1E2E" })).toBe(true);
+      expect(getActiveBrightness()).toBe("light");
+      expect(getActiveTerminalBaseHex()).toBe("1E1E2E");
+    });
+
+    test("returns true when only the exact hex changes (same brightness)", () => {
+      setActiveBrightness("dark");
+      setActiveTerminalBaseHex("1E1E2E");
+      expect(applyDetectedBackground({ brightness: "dark", hex: "2E2E3E" })).toBe(true);
+      expect(getActiveBrightness()).toBe("dark");
+      expect(getActiveTerminalBaseHex()).toBe("2E2E3E");
+    });
+
+    test("normalizes a lower-case hex before comparing (no repeat repaint)", () => {
+      setActiveBrightness(null);
+      setActiveTerminalBaseHex(null);
+      expect(applyDetectedBackground({ brightness: "dark", hex: "1e1e2e" })).toBe(true);
+      expect(getActiveBrightness()).toBe("dark");
+      expect(getActiveTerminalBaseHex()).toBe("1E1E2E");
+      // Same lower-case input again: normalized comparison sees no change.
+      expect(applyDetectedBackground({ brightness: "dark", hex: "1e1e2e" })).toBe(false);
+    });
+
+    test("normalizes a '#'-prefixed hex before comparing (no repeat repaint)", () => {
+      setActiveBrightness(null);
+      setActiveTerminalBaseHex(null);
+      expect(applyDetectedBackground({ brightness: "dark", hex: "#1E1E2E" })).toBe(true);
+      expect(getActiveBrightness()).toBe("dark");
+      expect(getActiveTerminalBaseHex()).toBe("1E1E2E");
+      // Same '#1E1E2E' input again: normalized comparison sees no change.
+      expect(applyDetectedBackground({ brightness: "dark", hex: "#1E1E2E" })).toBe(false);
     });
   });
 });

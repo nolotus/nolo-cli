@@ -591,14 +591,22 @@ const STRINGS = {
   },
   themeCurrent: { en: "Current theme: {0} · {1}", zh: "当前主题：{0} · {1}" },
   themeUsage: {
-    en: "Usage: /theme <name> | /theme light | /theme dark",
-    zh: "用法：/theme <name> | /theme light | /theme dark",
+    en: "Usage: /theme <name> | /theme light | /theme dark | /theme refresh",
+    zh: "用法：/theme <name> | /theme light | /theme dark | /theme refresh",
   },
   themeAvailable: { en: "Available themes: {0}", zh: "可用主题：{0}" },
   themeBrightnessSwitched: { en: "Switched to {0} background colors.", zh: "已切换到 {0} 背景色。" },
   themeBrightnessAuto: {
     en: "Background colors follow terminal detection (now: {0}).",
     zh: "背景色跟随终端自动检测（当前：{0}）。",
+  },
+  themeRefreshed: {
+    en: "Re-detected terminal background: {0}.",
+    zh: "已重新检测终端背景：{0}。",
+  },
+  themeRefreshFailed: {
+    en: "Could not detect terminal background (not a TTY or no response).",
+    zh: "无法检测终端背景（非 TTY 或终端无响应）。",
   },
   themeSwitched: { en: "Switched to theme: {0}", zh: "已切换到主题：{0}" },
   themeUnknown: { en: "Unknown theme: {0}. Available themes: {1}", zh: "未知主题：{0}。可用主题：{1}" },

@@ -758,3 +758,5 @@ export function isBalanceExhaustedError(error: unknown): boolean {
         : String((error as { message?: unknown })?.message ?? "");
   return BALANCE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
+
+export type { RunAgentTurnOptions, RunAgentTurnResult };

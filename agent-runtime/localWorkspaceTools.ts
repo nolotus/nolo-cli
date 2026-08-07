@@ -656,7 +656,7 @@ const LINES_RANGE_FORMAT = /^(\d+)?\s*-\s*(\d+)?$/;
  * valid forms, so unlike the legacy integers there is nothing to salvage.
  */
 function parseLinesArg(value: unknown): { slice?: ReadFileSlice; warning?: string } {
-  const text = typeof value === "string" ? value.trim() : "";
+  const text = asTrimmedString(value);
   if (!text) {
     return {
       warning: `Ignored lines: expected ${LINES_ARG_SYNTAX}, received ${describeRejectedArgValue(value)}.`,
@@ -1178,6 +1178,68 @@ function resolveGrepBinary(): string | null {
   return resolveExecutableOnPath("grep");
 }
 
+export type WorkspaceExecResult =
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      timedOut: false;
+      spawnFailed: true;
+      content: string;
+      aborted?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    }
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      timedOut: false;
+      detached: true;
+      pid: number;
+      label: string;
+      content: string;
+      spawnFailed?: undefined;
+      aborted?: undefined;
+    }
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      timedOut: boolean;
+      aborted: boolean;
+      content: string;
+      spawnFailed?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    };
+
+export type WorkspaceExecLimitedLinesResult =
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      limitedByMaxResults: false;
+      spawnFailed: true;
+      aborted?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    }
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      limitedByMaxResults: boolean;
+      spawnFailed?: undefined;
+      aborted?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    };
+
 async function runWorkspaceCommand(args: {
   workspaceRoot: string;
   command: string[];
@@ -1187,7 +1249,7 @@ async function runWorkspaceCommand(args: {
   commandPrefix?: string[];
   abortSignal?: AbortSignal;
   detachMs?: number; // 超过这个时间仍未退出 → 转后台；默认从 env 读，见 resolveDetachMs
-}) {
+}): Promise<WorkspaceExecResult> {
   const timeoutMs = asOptionalPositiveFiniteNumber(args.timeoutMs);
   const detached = process.platform !== "win32";
   const command = [
@@ -1409,7 +1471,7 @@ async function runWorkspaceCommandLimitedLines(args: {
   command: string[];
   maxLines: number;
   commandPrefix?: string[];
-}) {
+}): Promise<WorkspaceExecLimitedLinesResult> {
   const command = [
     ...(args.commandPrefix ?? []),
     ...args.command,
@@ -1871,7 +1933,7 @@ async function searchFilesTool(args: {
   ];
   let searchEngine: WorkspaceSearchEngine = "js";
   let binariesUnavailable = !rgBinary && !grepBinary;
-  const result = await (async () => {
+  const result = await (async (): Promise<WorkspaceExecResult | WorkspaceExecLimitedLinesResult> => {
     if (rgCommand) {
       try {
         const rgResult = maxResults && !contextLines

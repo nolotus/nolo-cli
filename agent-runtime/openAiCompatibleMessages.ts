@@ -9,6 +9,7 @@ import type { AgentRuntimeChatMessage } from "./types";
 
 type AgentStateMessageLike = {
   role?: unknown;
+  content?: unknown;
   reasoning_content?: unknown;
   tool_calls?: unknown;
   tool_call_id?: unknown;
@@ -44,7 +45,7 @@ export function preserveAgentStateFields<T extends Record<string, any>>(
   source: AgentStateMessageLike,
   target: T,
   options?: PreserveAgentStateOptions,
-): T {
+): T & { tool_call_id?: string; tool_calls?: AgentRuntimeChatMessage["tool_calls"]; reasoning_content?: string } {
   const mutableTarget = target as Record<string, any>;
   if (source.role === "assistant") {
     if (

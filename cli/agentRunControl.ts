@@ -16,11 +16,8 @@ import { isCompiledBinary, resolveCliEntrypointPath } from "./cliEnvHelpers";
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
 
-export type LocalAgentLoopEvent =
-  | { kind: "llm-start"; round: number; atMs: number }
-  | { kind: "llm-end"; round: number; atMs: number; ok: boolean }
-  | { kind: "tool-start"; name: string; atMs: number }
-  | { kind: "tool-end"; name: string; atMs: number; ok: boolean };
+import type { LocalAgentLoopEvent } from "../agent-runtime/localLoop";
+export type { LocalAgentLoopEvent };
 
 export type RunActivity = {
   lastEventAt: string;

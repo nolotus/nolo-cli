@@ -141,10 +141,17 @@ function renderTurnBlock(
       const line = logicalLines[i];
       let styledLine: string;
       if (colorEnabled) {
-        // Reset foreground only (`39`), not full SGR (`0`), so a future
-        // bold/dim on the marker sequence would not wipe styles mid-line.
-        const prefix = i === 0 ? `${accentSeq}❯\x1b[39m ` : `${chromeSeq}│\x1b[39m `;
-        styledLine = `${prefix}${line}`;
+        // No `\x1b[39m` after the marker: the body's own accentSeq below
+        // overrides the foreground immediately, and wrapTranscriptLine only
+        // treats `\x1b[0m` as a style reset — an extra `39` would just pile up
+        // in its activeStyles and get re-emitted on every wrapped row.
+        const prefix = i === 0 ? `${accentSeq}❯ ` : `${chromeSeq}│ `;
+        // Body text is accent + bold so user turns stand out when scrolling
+        // back through a long transcript. No explicit closer here:
+        // wrapTranscriptLine terminates every styled row with `\x1b[0m`, which
+        // both stops the color bleeding into the scrollbar column and re-opens
+        // bold + accent on each soft-wrapped continuation row.
+        styledLine = `${prefix}\x1b[1m${accentSeq}${line}`;
       } else {
         const prefix = i === 0 ? "❯ " : "  ";
         styledLine = `${prefix}${line}`;
@@ -182,7 +189,8 @@ export function buildHistoryLines(history: TurnHistory, contentWidth: number): s
   const colorEnabled = resolveCliColorEnabled();
   // Visual rhythm: every turn is separated by a blank line, user turns carry an
   // accent ❯ marker on the first line and chrome │ markers on explicit multiline
-  // continuations (two spaces when no-color), with default body text for strong readability.
+  // continuations (two spaces when no-color), and render their body text in
+  // accent + bold so they stay easy to spot when scrolling back.
   //
   // Colors use theme tokens (tui/theme.ts) so the history area stays in the
   // same hue family as the status line.

@@ -257,7 +257,7 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
   beforeEach(() => setActiveThemeName("catppuccin"));
   afterEach(() => setActiveThemeName("catppuccin"));
 
-  test("first line uses accent ❯ and default body text", () => {
+  test("first line uses accent ❯ and accent + bold body text", () => {
     let lines: string[] = [];
     let accentSeq = "";
     let mutedSeq = "";
@@ -271,12 +271,13 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
     });
 
     expect(lines.length).toBe(1);
-    expect(lines[0]).toContain(`${accentSeq}❯\x1b[39m`);
-    expect(lines[0]).toContain("hello world");
+    expect(lines[0]).toContain(`${accentSeq}❯ `);
+    // Body is bold + accent so user turns pop out of a long transcript.
+    expect(lines[0]).toContain(`\x1b[1m${accentSeq}hello world`);
     expect(lines[0]).not.toContain(mutedSeq);
   });
 
-  test("explicit multiline uses chrome │ prefix and default body text", () => {
+  test("explicit multiline uses chrome │ prefix and accent + bold body text", () => {
     let lines: string[] = [];
     let accentSeq = "";
     let chromeSeq = "";
@@ -293,12 +294,12 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
 
     expect(lines.length).toBe(2);
 
-    expect(lines[0]).toContain(`${accentSeq}❯\x1b[39m`);
+    expect(lines[0]).toContain(`${accentSeq}❯ `);
     expect(lines[0]).toContain("first line");
     expect(lines[0]).not.toContain(mutedSeq);
 
-    expect(lines[1]).toContain(`${chromeSeq}│\x1b[39m`);
-    expect(lines[1]).toContain("second line");
+    expect(lines[1]).toContain(`${chromeSeq}│ `);
+    expect(lines[1]).toContain(`\x1b[1m${accentSeq}second line`);
     expect(lines[1]).not.toContain(mutedSeq);
   });
 
@@ -318,6 +319,30 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
     expect(lines[1]).toMatch(/^  /);
     expect(lines[1]).not.toContain(mutedSeq);
     expect(lines[1]).toContain("world");
+  });
+
+  test("soft-wrapped continuation rows re-open bold + accent and reset at EOL", () => {
+    let lines: string[] = [];
+    let accentSeq = "";
+    withTruecolor(() => {
+      lines = buildHistoryLines(
+        {
+          ...createTurnHistory(),
+          turns: [{ role: "user", content: "alpha bravo charlie delta echo" }],
+        },
+        24
+      ).filter(Boolean);
+      accentSeq = themeColorSequence("accent");
+    });
+
+    expect(lines.length).toBeGreaterThan(1);
+    // Every row — not just the first — must carry bold + accent, otherwise the
+    // user turn fades back into assistant-colored body text mid-paragraph.
+    for (const line of lines) {
+      expect(line).toContain(`\x1b[1m${accentSeq}`);
+      // Styles must be closed so accent never bleeds into the scrollbar column.
+      expect(line.endsWith("\x1b[0m")).toBe(true);
+    }
   });
 
   test("no-color mode produces ❯ marker, two-space multiline prefix, and zero \\x1b", () => {

@@ -31,15 +31,33 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function isCacheControl(value: unknown): value is { type: string } {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).type === "string",
+  );
+}
+
 function toAnthropicContent(content: unknown): JsonRecord[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
+  // Anthropic Messages API rejects empty text blocks with HTTP 400
+  // "text content blocks must be non-empty". Skip empty strings and empty
+  // text parts so they never reach the wire.
+  if (typeof content === "string") {
+    return content.length > 0 ? [{ type: "text", text: content }] : [];
+  }
   if (!Array.isArray(content)) return [];
   const blocks: JsonRecord[] = [];
   for (const raw of content) {
     if (!raw || typeof raw !== "object") continue;
     const part = raw as JsonRecord;
     if ((part.type === "text" || part.type === "input_text") && typeof part.text === "string") {
-      blocks.push({ type: "text", text: part.text });
+      if (part.text.length > 0) {
+        const block: JsonRecord = { type: "text", text: part.text };
+        if (isCacheControl(part.cache_control)) block.cache_control = part.cache_control;
+        blocks.push(block);
+      }
       continue;
     }
     if (part.type !== "image_url") continue;
@@ -49,12 +67,14 @@ function toAnthropicContent(content: unknown): JsonRecord[] {
         : stringValue((part.image_url as JsonRecord | undefined)?.url);
     if (!imageUrl) continue;
     const dataMatch = imageUrl.match(/^data:([^;,]+);base64,(.+)$/s);
-    blocks.push({
+    const block: JsonRecord = {
       type: "image",
       source: dataMatch
         ? { type: "base64", media_type: dataMatch[1], data: dataMatch[2] }
         : { type: "url", url: imageUrl },
-    });
+    };
+    if (isCacheControl(part.cache_control)) block.cache_control = part.cache_control;
+    blocks.push(block);
   }
   return blocks;
 }
@@ -149,6 +169,12 @@ export function buildAnthropicMessagesBody(args: {
   if (!hasClaudeCodeIdentity(system)) {
     system.unshift({ type: "text", text: CLAUDE_CODE_SYSTEM_INSTRUCTION });
   }
+  if (system.length > 0) {
+    const last = system[system.length - 1];
+    if (!isCacheControl(last.cache_control)) {
+      last.cache_control = { type: "ephemeral" };
+    }
+  }
 
   const tools = Array.isArray(args.openAiBody.tools)
     ? args.openAiBody.tools.flatMap((raw): JsonRecord[] => {
@@ -176,6 +202,24 @@ export function buildAnthropicMessagesBody(args: {
     typeof maxTokensRaw === "number" && Number.isFinite(maxTokensRaw)
       ? Math.max(1, Math.floor(maxTokensRaw))
       : 8192;
+
+  // Inject a single cache_control breakpoint on the last message's last
+  // content block. This caches the full conversation prefix (system + history)
+  // so the next turn's request can hit cache_read (0.1x quota vs 1x full input).
+  // Single breakpoint is deliberate — the caller rebuilds the full message
+  // array each turn, so a breakpoint on the current last message lets the next
+  // turn's identical prefix hit the cache. Anthropic allows up to 4 breakpoints;
+  // adding more on prior user turns is a future optimization, not needed now.
+  if (messages.length > 0) {
+    const lastMessage = messages[messages.length - 1];
+    const content = Array.isArray(lastMessage.content) ? lastMessage.content : [];
+    if (content.length > 0) {
+      const lastBlock = content[content.length - 1];
+      if (!isCacheControl(lastBlock.cache_control)) {
+        lastBlock.cache_control = { type: "ephemeral" };
+      }
+    }
+  }
 
   return {
     model,

@@ -80,7 +80,7 @@ const PROVIDER_LOOKUP_ORDER = [
   "mimo",
   "gmi",
   "google",
-  "deepseek",
+  "nolo",
   "mistral",
   "vultr",
   "deepinfra",

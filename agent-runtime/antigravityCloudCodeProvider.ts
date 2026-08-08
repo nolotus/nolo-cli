@@ -335,6 +335,10 @@ function accumulateCcaChunks(chunks: unknown[]) {
   let text = "";
   const toolCalls: AgentRuntimeToolCall[] = [];
   let usage: Record<string, unknown> | undefined;
+  // Gemini 3 Flash Preview 将 thoughtSignature 放在前置 thought part 上，
+  // functionCall part 自身不带签名。用这个变量暂存最近一个 thought part
+  // 的签名，传递给紧随其后的 functionCall part。
+  let pendingThoughtSignature: string | undefined;
 
   for (const chunk of chunks) {
     if (!chunk || typeof chunk !== "object") continue;
@@ -371,19 +375,34 @@ function accumulateCcaChunks(chunks: unknown[]) {
             text += piece;
           }
         }
+        // Gemini 3 Flash Preview 将 thoughtSignature 放在前置 thought part 上，
+        // 而非 functionCall part 自身。捕获 thought part 的签名作为 pending
+        // signature，传递给紧随其后的 functionCall part。
+        if (
+          (part as { thought?: boolean }).thought &&
+          typeof partSignature === "string" &&
+          partSignature
+        ) {
+          pendingThoughtSignature = partSignature;
+        }
         if ("functionCall" in part && (part as { functionCall: unknown }).functionCall) {
           const call = (part as { functionCall: Record<string, unknown> }).functionCall;
           const name = typeof call.name === "string" ? call.name : "tool";
           const id = typeof call.id === "string" ? call.id : `${name}_${toolCalls.length}`;
           const argsObj = asRecordOrEmpty(call.args);
-          // 只忠实捕获 Gemini 放在该 part 上的签名；并行调用时只有第一个
-          // functionCall part 会带签名，其余没有是正常形状，不要猜。
+          // 优先使用 functionCall part 自身的签名；没有时回退到前置 thought
+          // part 捕获的 pending 签名（gemini-3-flash-preview 的签名模式）。
+          const resolvedSignature =
+            typeof partSignature === "string" && partSignature
+              ? partSignature
+              : pendingThoughtSignature;
+          pendingThoughtSignature = undefined;
           toolCalls.push({
             id,
             type: "function",
             function: { name, arguments: JSON.stringify(argsObj) },
-            ...(typeof partSignature === "string" && partSignature
-              ? { thought_signature: partSignature }
+            ...(typeof resolvedSignature === "string" && resolvedSignature
+              ? { thought_signature: resolvedSignature }
               : {}),
           });
         }

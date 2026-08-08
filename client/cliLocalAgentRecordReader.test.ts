@@ -7,7 +7,6 @@ import {
   PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
   PUBLIC_GLM_52_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
-  PUBLIC_KIMI_K27_CODING_AGENT_KEY,
 } from "../core/builtinAgents";
 import { NOLO_DEFAULT_AGENT_KEY } from "../agentAliases";
 
@@ -76,22 +75,6 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
       key: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
       provider: "nolo",
       model: "kimi-k2.6",
-      apiSource: "platform",
-      useServerProxy: true,
-    });
-  });
-
-  test("returns nolo-hosted Kimi K2.7 Coding config", async () => {
-    const config = await readAgentFromStore({
-      store: emptyStore,
-      agentRef: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
-      userId: "user-1",
-    });
-    expect(config).not.toBeNull();
-    expect(config).toMatchObject({
-      key: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
-      provider: "nolo",
-      model: "kimi-k2.7-code",
       apiSource: "platform",
       useServerProxy: true,
     });

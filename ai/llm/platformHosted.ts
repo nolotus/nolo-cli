@@ -5,7 +5,6 @@
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import {
   PLATFORM_HOSTED_KIMI_K26_MODEL,
-  PLATFORM_HOSTED_KIMI_K27_CODE_MODEL,
   PLATFORM_HOSTED_KIMI_K3_MODEL,
 } from "./kimi";
 
@@ -28,14 +27,6 @@ const toPlatformCredits = (usdPerMillion: number): number =>
 export const PLATFORM_HOSTED_KIMI_PRICE = {
   input: toPlatformCredits(0.6),
   output: toPlatformCredits(2.4),
-} as const;
-
-/**
- * Kimi K2.7 Coding 官方 API $1.2/$4.8 per 1M，nolo 对外 8 折。
- */
-export const PLATFORM_HOSTED_KIMI_K27_CODE_PRICE = {
-  input: toPlatformCredits(1.2),
-  output: toPlatformCredits(4.8),
 } as const;
 
 /**
@@ -81,21 +72,35 @@ export const PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE = {
  * Open-source default: Ollama Cloud's OpenAI-compatible endpoint
  * (https://ollama.com/v1/chat/completions), authenticated via OLLAMA_API_KEY.
  *
- * nolo 内部生产环境的上游路由（组合 ollama cloud + 自有机器 + 官方 DeepSeek 等）
- * 不在开源仓库内——这部分由内部 provider 路由层接管，不暴露具体后端组合。
- * 当前开源实现只做单一中转：nolo provider → ollama cloud。
+ * nolo 内部生产环境的上游路由（组合 ollama cloud + 自有机器等）不在开源
+ * 仓库内。当前开源实现默认走 Ollama Cloud；DeepSeek Flash 可在指定状态码
+ * 下回退到官方 DeepSeek API。
  */
 export const PLATFORM_HOSTED_CHAT_COMPLETIONS_URL =
   "https://ollama.com/v1/chat/completions";
 
-/** Official DeepSeek OpenAI-compatible chat endpoint (Flash fallback / Pro primary). */
+/** Official DeepSeek endpoint used as an official-only primary or Ollama fallback. */
 export const DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_URL =
   "https://api.deepseek.com/chat/completions";
 
-/** Statuses that allow Platform Flash -> official DeepSeek fallback. */
+/** Statuses that allow Ollama Cloud -> official DeepSeek fallback. */
 export const DEEPSEEK_FLASH_HOSTED_FALLBACK_STATUSES = [
   401, 402, 429, 500, 502, 503, 504,
 ];
+
+export type PlatformDeepseekFlashRoutePlan =
+  | { kind: "configured" }
+  | { kind: "missing_key" }
+  | {
+      kind: "hosted";
+      primaryProvider: "nolo";
+      fallbackProvider?: "deepseek";
+    }
+  | {
+      kind: "hosted";
+      primaryProvider: "deepseek";
+      fallbackProvider?: never;
+    };
 
 export const isPlatformHostedDeepseekFlashModel = (
   model?: string | null,
@@ -119,6 +124,47 @@ export const isPlatformDeepseekFlashHosted = (
   );
 };
 
+/**
+ * Pure provider-ordering policy shared by chat proxy and agent-run.
+ * Explicit Responses, custom providers, and user credentials stay on their
+ * configured route; hosted Chat Completions prefers Ollama and can fall back
+ * to the official DeepSeek API.
+ */
+export const resolvePlatformDeepseekFlashRoute = (args: {
+  provider?: string | null;
+  model?: string | null;
+  endpoint?: string | null;
+  isCustomApi: boolean;
+  hasExplicitCredential: boolean;
+  hasOllamaKey: boolean;
+  hasDeepseekKey: boolean;
+}): PlatformDeepseekFlashRoutePlan => {
+  const usesResponsesApi =
+    typeof args.endpoint === "string" &&
+    /\/responses(?:[/?#]|$)/i.test(args.endpoint);
+  const eligible =
+    isPlatformDeepseekFlashHosted(args.provider, args.model) &&
+    !usesResponsesApi &&
+    !args.isCustomApi &&
+    !args.hasExplicitCredential;
+
+  if (!eligible) return { kind: "configured" };
+  if (args.hasOllamaKey) {
+    return {
+      kind: "hosted",
+      primaryProvider: "nolo",
+      fallbackProvider: args.hasDeepseekKey ? "deepseek" : undefined,
+    };
+  }
+  if (args.hasDeepseekKey) {
+    return {
+      kind: "hosted",
+      primaryProvider: "deepseek",
+    };
+  }
+  return { kind: "missing_key" };
+};
+
 export const platformHostedModels = [
   {
     name: PLATFORM_HOSTED_KIMI_K3_MODEL,
@@ -139,15 +185,7 @@ export const platformHostedModels = [
     contextWindow: 262144,
     supportsTool: true,
   },
-  {
-    name: PLATFORM_HOSTED_KIMI_K27_CODE_MODEL,
-    displayName: "Kimi K2.7 Coding",
-    hasVision: true,
-    price: { ...PLATFORM_HOSTED_KIMI_K27_CODE_PRICE },
-    maxOutputTokens: 262144,
-    contextWindow: 256000,
-    supportsTool: true,
-  },
+
   {
     name: PLATFORM_HOSTED_GLM_52_MODEL,
     displayName: "GLM 5.2",

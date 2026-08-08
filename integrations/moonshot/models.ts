@@ -47,22 +47,6 @@ export const moonshotModels: Model[] = [
     provider: "moonshot",
     description: "Moonshot 高性能通用模型。",
   },
-
-  // ── 编程 ──
-  {
-    name: "kimi-k2.7-code",
-    displayName: "Kimi K2.7 Code",
-    hasVision: false,
-    contextWindow: 262_144,
-    maxOutputTokens: 262_144,
-    jsonOutput: true,
-    fnCall: true,
-    supportsTool: true,
-    supportsReasoningEffort: true,
-    price: { input: 1.2 * 7, output: 4.8 * 7 },
-    provider: "moonshot",
-    description: "Moonshot 编程优化模型，适合代码生成与 Agent 编程。",
-  },
 ];
 
 /**

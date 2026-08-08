@@ -18,7 +18,9 @@ export const PLATFORM_CHAT_COMPLETIONS_ENDPOINTS: Readonly<
   Record<string, string>
 > = {
   deepinfra: "https://api.deepinfra.com/v1/openai/chat/completions",
-  deepseek: "https://api.deepseek.com/chat/completions",
+  // DeepSeek official API endpoint removed — all DeepSeek models now route
+  // through the nolo provider (Ollama Cloud). See providerRegistry.ts.
+  // deepseek: "https://api.deepseek.com/chat/completions",
   fireworks: "https://api.fireworks.ai/inference/v1/chat/completions",
   google:
     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -43,9 +45,9 @@ export function isOpenAiResponsesModel(args: {
   endpointKey?: string;
 }): boolean {
   const provider = asTrimmedLowercaseString(args.provider);
-  if (provider === "deepseek") {
-    return asTrimmedLowercaseString(args.model) === "deepseek-v4-flash";
-  }
+  // DeepSeek no longer uses the Responses API — it routes through nolo
+  // (Ollama Cloud) which uses the standard chat.completions format.
+  if (provider === "deepseek") return false;
   if (provider !== "openai") return false;
   if (args.endpointKey === "responses") return true;
   if (!args.model) return false;

@@ -23,7 +23,6 @@ import {
   PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
   PUBLIC_GLM_52_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
-  PUBLIC_KIMI_K27_CODING_AGENT_KEY,
 } from "../core/builtinAgents";
 
 /**
@@ -34,7 +33,6 @@ import {
  * - balanced tier: DeepSeek V4 Pro (deepseek / deepseek-v4-pro)
  * - quality tier: GLM 5.2 (nolo / glm-5.2)
  * - image tier: Kimi K2.6 (nolo / kimi-k2.6)
- * - coding executor: Kimi K2.7 Coding (nolo / kimi-k2.7-code)
  * - builtin nolo: platform-routed default agent.
  *   NOTE: the builtin nolo agent has no seed in `scripts/createSpaceAgents.ts`;
  *   its provider/model live only in the hosted production record. As a
@@ -64,14 +62,14 @@ const BUILTIN_PLATFORM_AGENT_CONFIGS: Record<string, AgentRuntimeAgentConfig> = 
   [PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY]: {
     key: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
     name: "DeepSeek V4 Pro",
-    provider: "deepseek",
+    provider: "nolo",
     model: "deepseek-v4-pro",
     apiSource: "platform",
     useServerProxy: true,
     rawRecord: {
       dbKey: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
       isPublic: true,
-      provider: "deepseek",
+      provider: "nolo",
       model: "deepseek-v4-pro",
       apiSource: "platform",
       useServerProxy: true,
@@ -105,22 +103,6 @@ const BUILTIN_PLATFORM_AGENT_CONFIGS: Record<string, AgentRuntimeAgentConfig> = 
       isPublic: true,
       provider: "nolo",
       model: "kimi-k2.6",
-      apiSource: "platform",
-      useServerProxy: true,
-    },
-  },
-  [PUBLIC_KIMI_K27_CODING_AGENT_KEY]: {
-    key: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
-    name: "Kimi K2.7 Coding",
-    provider: "nolo",
-    model: "kimi-k2.7-code",
-    apiSource: "platform",
-    useServerProxy: true,
-    rawRecord: {
-      dbKey: PUBLIC_KIMI_K27_CODING_AGENT_KEY,
-      isPublic: true,
-      provider: "nolo",
-      model: "kimi-k2.7-code",
       apiSource: "platform",
       useServerProxy: true,
     },

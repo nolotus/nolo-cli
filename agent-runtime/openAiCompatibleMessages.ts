@@ -128,9 +128,8 @@ export function toOpenAiCompatibleMessages(
  * `reasoning_content` from assistant messages.
  *
  * DeepSeek-V4-flash rejects a string `reasoning_content` on inbound history
- * with a serde deserialization error ("expected a sequence"). The Responses
- * API path does not send history as chat-completions messages, so this only
- * matters for the chat-completions wire.
+ * with a serde deserialization error ("expected a sequence"). Both Chat
+ * Completions messages and Responses input conversion apply this policy.
  */
 export function shouldStripReasoningContentForOutbound(
   provider?: string,
@@ -140,6 +139,7 @@ export function shouldStripReasoningContentForOutbound(
   const m = model?.trim().toLowerCase();
   if (!p || !m) return false;
   // DeepSeek-V4-flash rejects string reasoning_content on history replay.
-  if (p === "deepseek") return m === "deepseek-v4-flash";
+  // Applies to both legacy "deepseek" provider and current "nolo" provider.
+  if (p === "deepseek" || p === "nolo") return m === "deepseek-v4-flash";
   return false;
 }

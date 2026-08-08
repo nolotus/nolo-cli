@@ -12,7 +12,7 @@ export const deepSeekModels: Model[] = [
     fnCall: true,
     supportsTool: true,
     supportsReasoningEffort: true,
-    endpointKey: "responses",
+    endpointKey: "chat.completions",
     price: {
       input: 1,
       inputCacheHit: 0.02,

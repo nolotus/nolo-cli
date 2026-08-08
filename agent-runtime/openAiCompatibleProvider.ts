@@ -7,7 +7,10 @@ import {
   toBareImageUrlMessages,
 } from "../core/chat/bareImageUrlShape";
 import { providerHttpFailure } from "../core/chat/providerFailureMessage";
-import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
+import {
+  shouldStripReasoningContentForOutbound,
+  toOpenAiCompatibleMessages,
+} from "./openAiCompatibleMessages";
 import { buildProviderAuthHeaders } from "./providerResolution";
 import { kimiIdentityHeaders } from "./kimiUserAgent";
 import { parseSseDataLineJson } from "./sseDataLine";
@@ -42,7 +45,13 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
   tools?: OpenAiCompatibleTool[];
   stream?: boolean;
 }) {
-  const messages = toOpenAiCompatibleMessages(args.messages);
+  const shouldStripReasoning = shouldStripReasoningContentForOutbound(
+    args.providerConfig.provider,
+    args.providerConfig.model,
+  );
+  const messages = toOpenAiCompatibleMessages(args.messages, {
+    stripReasoningContent: shouldStripReasoning,
+  });
   const body = {
     model: args.providerConfig.model,
     messages: requiresBareImageUrl({

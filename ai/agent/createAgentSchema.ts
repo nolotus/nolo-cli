@@ -61,6 +61,9 @@ export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number];
 export const PROVIDER_REASONING_EFFORT_VALUES: Record<string, ReasoningEffort[]> = {
   openai: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   deepseek: ["low", "high", "max"],
+  // nolo (Ollama Cloud) 支持 DeepSeek/Kimi/GLM 等 thinking 模型，
+  // reasoning_effort 通过 OpenAI 兼容端点透传到 Ollama Cloud。
+  nolo: ["low", "high", "max"],
   xai: ["low", "medium", "high"],
   grok: ["low", "medium", "high"],
   // none：关闭思考；必须保留，否则上游 clamp 会把 none 抬成 low，

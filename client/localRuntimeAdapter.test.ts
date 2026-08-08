@@ -1558,7 +1558,7 @@ describe("CLI local runtime adapter", () => {
     });
   });
 
-  test("retries DeepSeek Responses as Chat Completions through an older platform proxy", async () => {
+  test("uses Chat Completions once for current platform DeepSeek Flash", async () => {
     const requests: Array<{ url: string; body: any }> = [];
     const store = new Map<string, any>([
       ["agent-user-1-deepseek", {
@@ -1566,7 +1566,7 @@ describe("CLI local runtime adapter", () => {
         id: "deepseek",
         prompt: "Reply exactly as requested.",
         model: "deepseek-v4-flash",
-        provider: "deepseek",
+        provider: "nolo",
         apiSource: "platform",
         useServerProxy: true,
         tools: ["readFile"],
@@ -1598,18 +1598,6 @@ describe("CLI local runtime adapter", () => {
           url: String(url),
           body: JSON.parse(String(init?.body)),
         });
-        if (requests.length === 1) {
-          return Response.json(
-            {
-              error: {
-                message:
-                  "Failed to deserialize the JSON body into the target type: tools[0]: missing field `function`",
-                code: "UPSTREAM_400",
-              },
-            },
-            { status: 400 },
-          );
-        }
         return Response.json({
           choices: [{ message: { content: "PONG" } }],
         });
@@ -1626,21 +1614,13 @@ describe("CLI local runtime adapter", () => {
     const turnRequests = requests.filter(
       (request) => request.body.agentKey === "agent-user-1-deepseek",
     );
-    expect(turnRequests).toHaveLength(2);
+    expect(turnRequests).toHaveLength(1);
     expect(turnRequests[0].body).toMatchObject({
-      url: "https://api.deepseek.com/v1/responses",
-      input: expect.any(Array),
-    });
-    expect(turnRequests[0].body.tools).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "function", name: "readFile" }),
-      ]),
-    );
-    expect(turnRequests[1].body).toMatchObject({
-      url: "https://api.deepseek.com/chat/completions",
+      url: "https://ollama.com/v1/chat/completions",
+      provider: "nolo",
       messages: expect.any(Array),
     });
-    expect(turnRequests[1].body.tools).toEqual(
+    expect(turnRequests[0].body.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "function",
@@ -1648,7 +1628,7 @@ describe("CLI local runtime adapter", () => {
         }),
       ]),
     );
-    expect(turnRequests[1].body.input).toBeUndefined();
+    expect(turnRequests[0].body.input).toBeUndefined();
   });
 
   test("retries transient certificate failures from the platform chat proxy", async () => {

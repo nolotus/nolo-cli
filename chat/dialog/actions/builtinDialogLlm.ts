@@ -5,7 +5,7 @@ const BASE_BUILTIN_DIALOG_LLM_CONFIG = {
 
 export const BUILTIN_TITLE_LLM_CONFIG = {
   ...BASE_BUILTIN_DIALOG_LLM_CONFIG,
-  provider: "deepseek" as const,
+  provider: "nolo" as const,
   id: "builtin-dialog-title-llm",
   name: "Builtin Dialog Title LLM",
   model: "deepseek-v4-flash",
@@ -15,7 +15,7 @@ export const BUILTIN_TITLE_LLM_CONFIG = {
 
 export const BUILTIN_SUMMARY_LLM_CONFIG = {
   ...BASE_BUILTIN_DIALOG_LLM_CONFIG,
-  provider: "deepseek" as const,
+  provider: "nolo" as const,
   id: "builtin-dialog-summary-llm",
   name: "Builtin Dialog Summary LLM",
   model: "deepseek-v4-flash",

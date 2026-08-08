@@ -144,7 +144,8 @@ export const toResponsesTools = (tools: any[] | undefined): any[] | undefined =>
 };
 
 export const convertMessagesToResponsesInput = (
-  messages: Array<Pick<Message, "role" | "content" | "tool_calls" | "tool_call_id"> & { reasoning_content?: unknown }>
+  messages: Array<Pick<Message, "role" | "content" | "tool_calls" | "tool_call_id"> & { reasoning_content?: unknown }>,
+  options?: { stripReasoningContent?: boolean },
 ): ResponseInputItem[] => {
   const input: ResponseInputItem[] = [];
 
@@ -164,6 +165,7 @@ export const convertMessagesToResponsesInput = (
     const role = message.role as ResponseInputMessage["role"];
     if (
       role === "assistant" &&
+      !options?.stripReasoningContent &&
       typeof message.reasoning_content === "string" &&
       message.reasoning_content
     ) {

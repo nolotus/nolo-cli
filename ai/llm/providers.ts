@@ -330,13 +330,32 @@ export function getApiEndpoint(agent: Agent): string {
    * 注意：apiSource="custom" 的 agent 不需要 provider 字段，
    * 使用 customProviderUrl + 自己的 apiKey，上面已经 return 了。
    * 只有 customProviderUrl 为空时才会走到这里报错。
+   *
+   * 降级路径：OAuth subscription agent（chatgpt/xai/antigravity/claude/cursor）
+   * 创建时 apiSource="custom" 但 customProviderUrl 可为空——URL 在运行时
+   * 由 provider endpoint 表解析。当 useServerProxy 未显式设置时，如果
+   * agent 有 apiKeyRef（OAuth）或已知 platform provider，自动走 server proxy。
+   * 这修复了 startAgentRun 派发子任务时 useServerProxy 未被传递导致的 crash。
    */
+  const OAUTH_API_KEY_REFS = new Set([
+    "chatgpt", "xai", "antigravity", "claude", "cursor",
+  ]);
   if (
     !effectiveProvider ||
     effectiveProvider.toLowerCase() === "custom" ||
     (agent as any).apiSource === "custom"
   ) {
     if (agent.useServerProxy) {
+      return "";
+    }
+    // OAuth subscription agents always need server proxy (token never in browser).
+    const apiKeyRef = (agent as any).apiKeyRef;
+    if (apiKeyRef && OAUTH_API_KEY_REFS.has(apiKeyRef)) {
+      return "";
+    }
+    // Graceful degradation: if the agent has a known platform provider,
+    // assume server proxy is available even if not explicitly set.
+    if (effectiveProvider && API_ENDPOINTS[effectiveProvider]) {
       return "";
     }
     throw new Error(

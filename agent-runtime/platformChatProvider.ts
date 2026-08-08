@@ -4,7 +4,10 @@ import type {
   AgentRuntimeChatMessage,
   AgentRuntimeResult,
 } from "./types";
-import { toOpenAiCompatibleMessages } from "./openAiCompatibleMessages";
+import {
+  shouldStripReasoningContentForOutbound,
+  toOpenAiCompatibleMessages,
+} from "./openAiCompatibleMessages";
 import {
   convertMessagesToResponsesInput,
   extractTextFromResponseOutput,
@@ -43,7 +46,8 @@ import {
   createToolCallAccumulator,
   finalizeAccumulatedToolCalls,
 } from "./toolCallAccumulator";
-import { resolvePlatformChatCompletionsEndpoint } from "./platformProviderEndpoints";
+// resolvePlatformChatCompletionsEndpoint no longer needed —
+// DeepSeek legacy fallback retired with the official provider.
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -146,11 +150,23 @@ export function buildPlatformChatCompletionRequest(args: {
   const requestOptions = usesResponsesApi
     ? toResponsesRequestOptions(args.providerConfig.requestOptions)
     : args.providerConfig.requestOptions;
+  const shouldStripReasoning = shouldStripReasoningContentForOutbound(
+    args.providerConfig.provider,
+    args.providerConfig.model,
+  );
   const body = {
     model: args.providerConfig.model,
     ...(usesResponsesApi
-      ? { input: convertMessagesToResponsesInput(args.messages as any) }
-      : { messages: toOpenAiCompatibleMessages(args.messages) }),
+      ? {
+          input: convertMessagesToResponsesInput(args.messages as any, {
+            stripReasoningContent: shouldStripReasoning,
+          }),
+        }
+      : {
+          messages: toOpenAiCompatibleMessages(args.messages, {
+            stripReasoningContent: shouldStripReasoning,
+          }),
+        }),
     stream: args.stream ?? false,
     ...(args.stream ? { stream_options: { include_usage: true } } : {}),
     ...requestOptions,
@@ -189,22 +205,10 @@ export function resolveLegacyDeepSeekProxyChatFallback(args: {
   status: number;
   raw: string;
 }): PlatformChatProviderConfig | undefined {
-  if (
-    args.status !== 400 ||
-    args.providerConfig.provider.toLowerCase() !== "deepseek" ||
-    !isResponsesEndpoint(args.providerConfig.endpoint) ||
-    !/UPSTREAM_400/.test(args.raw) ||
-    !/missing field [`\"]?(?:function|messages)/i.test(args.raw)
-  ) {
-    return undefined;
-  }
-  const endpoint = resolvePlatformChatCompletionsEndpoint("deepseek");
-  return endpoint
-    ? {
-        ...args.providerConfig,
-        endpoint,
-      }
-    : undefined;
+  // DeepSeek official API provider was retired — all DeepSeek models now
+  // route through nolo (Ollama Cloud). This legacy fallback (Responses →
+  // chat.completions for deepseek provider) is no longer applicable.
+  return undefined;
 }
 
 function tryParseJson(raw: string) {

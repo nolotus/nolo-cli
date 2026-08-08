@@ -181,6 +181,18 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
     traceLocalTools,
     eventMode,
     pushText(chunk: string) {
+      // Buffered-class tools (read/search/run/fetch/webSearch) accumulate
+      // their tree inside formatToolEvent and only flush when a non-buffered
+      // tool arrives or at finish(). Without this, a turn that is all
+      // read/search calls streams all text first and the tool tree pops in
+      // at the very end. Flush the pending tree before each text delta so
+      // tools and text stay interleaved in natural order.
+      if (eventMode !== "jsonl" && formatToolEvent.flush) {
+        const pendingToolOutput = formatToolEvent.flush();
+        if (pendingToolOutput) {
+          options.output.write(pendingToolOutput);
+        }
+      }
       writeVisibleAssistantChunk(chunk);
     },
     pushThinking(chunk: string) {

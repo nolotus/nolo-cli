@@ -14,7 +14,6 @@ export {
   parseOpenAiCompatibleChatCompletionResponse,
   parsePlatformChatCompletionData,
   parsePlatformChatCompletionResponse,
-  resolveLegacyDeepSeekProxyChatFallback,
   resolveAgentRuntimeConfigFromRecord,
   resolveCurrentRunRuntimeToolPolicy,
   resolveLocalRuntimeEnvFromPolicy,

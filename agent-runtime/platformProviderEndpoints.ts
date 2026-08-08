@@ -10,8 +10,6 @@ import { getModelConfig } from "../ai/llm/providers";
 
 export const OPENAI_RESPONSES_ENDPOINT =
   "https://api.openai.com/v1/responses";
-export const DEEPSEEK_RESPONSES_ENDPOINT =
-  "https://api.deepseek.com/v1/responses";
 
 /** Known platform chat.completions endpoints keyed by provider id. */
 export const PLATFORM_CHAT_COMPLETIONS_ENDPOINTS: Readonly<
@@ -44,10 +42,10 @@ export function isOpenAiResponsesModel(args: {
   model?: string;
   endpointKey?: string;
 }): boolean {
+  // Only OpenAI speaks the Responses wire format on the platform table.
+  // (DeepSeek once did too, before that provider was retired in favour of
+  // nolo/Ollama Cloud, which is plain chat.completions.)
   const provider = asTrimmedLowercaseString(args.provider);
-  // DeepSeek no longer uses the Responses API — it routes through nolo
-  // (Ollama Cloud) which uses the standard chat.completions format.
-  if (provider === "deepseek") return false;
   if (provider !== "openai") return false;
   if (args.endpointKey === "responses") return true;
   if (!args.model) return false;
@@ -59,25 +57,28 @@ export function isOpenAiResponsesModel(args: {
 }
 
 export function resolvePlatformResponsesEndpoint(provider: string): string | undefined {
-  switch (asTrimmedLowercaseString(provider)) {
-    case "openai":
-      return OPENAI_RESPONSES_ENDPOINT;
-    case "deepseek":
-      return DEEPSEEK_RESPONSES_ENDPOINT;
-    default:
-      return undefined;
-  }
+  return asTrimmedLowercaseString(provider) === "openai"
+    ? OPENAI_RESPONSES_ENDPOINT
+    : undefined;
 }
 
 /**
- * Legacy agent records may still store provider `ollama-cloud` (the retired
- * public product id, now canonicalised to `nolo`). Treat it as an alias of
- * `nolo` so the endpoint resolver never throws on records that predate the
- * rename. The catalog/provider layer (`packages/ai/llm`) also normalises
- * `ollama-cloud` → `nolo`; this keeps the execution seam consistent.
+ * Legacy agent records may still store a provider id that has since been
+ * retired. Alias those to `nolo` so the endpoint resolver never throws on
+ * records that predate the change:
+ *
+ * - `ollama-cloud`: the retired public product id, now canonicalised to `nolo`.
+ *   The catalog/provider layer (`packages/ai/llm`) normalises it too; this
+ *   keeps the execution seam consistent.
+ * - `deepseek`: the official DeepSeek API provider, retired on 2026-08-08.
+ *   Every DeepSeek model now runs on nolo (Ollama Cloud), so a stored
+ *   `provider: "deepseek"` means "stale record", not "different upstream" —
+ *   routing it to nolo is what the record already intended. Without this,
+ *   such agents fail with `does not support provider "deepseek"`.
  */
 const PLATFORM_PROVIDER_ENDPOINT_ALIASES: Readonly<Record<string, string>> = {
   "ollama-cloud": "nolo",
+  deepseek: "nolo",
 };
 
 /** Lookup a known platform chat.completions endpoint; undefined if unknown. */

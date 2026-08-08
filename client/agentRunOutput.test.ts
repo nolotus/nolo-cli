@@ -110,6 +110,59 @@ describe("createCliTurnOutput compact tool tree regression", () => {
     expect(visible).toContain(`• ${toolLabel("execShell")} (`);
   });
 
+  test("buffered tool tree flushes before subsequent text (not at finish)", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    const stream = createHistoryOutputStream(history, () => {});
+    const options = {
+      output: stream as unknown as NodeJS.WritableStream,
+      agentName: "TestAgent",
+      env: { COLORTERM: "truecolor" },
+    } as unknown as RunAgentTurnOptions;
+    const turn = createCliTurnOutput({ options });
+
+    const readTool = (path: string) => {
+      turn.handleToolEvent({
+        type: "tool-call",
+        toolName: "readFile",
+        toolCallId: path,
+        round: 1,
+        argumentsPreview: path,
+      } as LocalAgentToolEvent);
+      turn.handleToolEvent({
+        type: "tool-result",
+        toolName: "readFile",
+        toolCallId: path,
+        round: 1,
+        summary: "exit=0",
+        metadata: { exitCode: 0, path },
+        elapsedMs: 10,
+      } as LocalAgentToolEvent);
+    };
+
+    // readFile is a buffered tool: its tree is held inside the formatter.
+    turn.pushText("Start.\n");
+    readTool("a.ts");
+    // Next text delta must flush the pending tree BEFORE the text, so the
+    // tool appears mid-transcript instead of piling up at finish().
+    turn.pushText("Middle.\n");
+    readTool("b.ts");
+    turn.pushText("End.\n");
+    turn.finish();
+    finalizeCurrentTurn(history);
+
+    const visible = history.turns
+      .map((t) => t.content)
+      .join("\n")
+      .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+    const firstTree = `• ${toolLabel("readFile")} (`;
+    expect(visible.indexOf(firstTree)).toBeGreaterThan(visible.indexOf("Start."));
+    // First readFile tree flushed before "Middle." — not deferred to finish().
+    expect(visible.indexOf(firstTree)).toBeLessThan(visible.indexOf("Middle."));
+    // Both readFile entries appear.
+    expect(visible.match(new RegExp(`• ${escapeForRegExp(toolLabel("readFile"))} \\(`, "g"))?.length).toBe(2);
+  });
+
   test("no spinner frame residue (no (Ns) elapsed markers)", () => {
     const visible = runEventSequence();
     // Spinner frames leave "· Label (0s)" or "(1s)" etc. The folded tree

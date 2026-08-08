@@ -200,17 +200,6 @@ export function buildPlatformChatCompletionRequest(args: {
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export function resolveLegacyDeepSeekProxyChatFallback(args: {
-  providerConfig: PlatformChatProviderConfig;
-  status: number;
-  raw: string;
-}): PlatformChatProviderConfig | undefined {
-  // DeepSeek official API provider was retired — all DeepSeek models now
-  // route through nolo (Ollama Cloud). This legacy fallback (Responses →
-  // chat.completions for deepseek provider) is no longer applicable.
-  return undefined;
-}
-
 function tryParseJson(raw: string) {
   try {
     return JSON.parse(raw);
@@ -486,17 +475,6 @@ export async function executePlatformChatCompletion(args: {
 
   if (!res.ok) {
     const raw = await res.text().catch(() => "");
-    const fallbackProviderConfig = resolveLegacyDeepSeekProxyChatFallback({
-      providerConfig: args.providerConfig,
-      status: res.status,
-      raw,
-    });
-    if (fallbackProviderConfig) {
-      return executePlatformChatCompletion({
-        ...args,
-        providerConfig: fallbackProviderConfig,
-      });
-    }
     throw providerHttpFailure({
       label: "desktop platform provider",
       status: res.status,

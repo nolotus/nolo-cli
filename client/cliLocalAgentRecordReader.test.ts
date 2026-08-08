@@ -32,7 +32,9 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
     });
   });
 
-  test("returns deepseek provider/model for pro tier", async () => {
+  test("returns the nolo-hosted deepseek-v4-pro config for pro tier", async () => {
+    // The model id stays deepseek-v4-pro; only the official DeepSeek provider
+    // route was retired, so the pro tier runs on nolo like every other tier.
     const config = await readAgentFromStore({
       store: emptyStore,
       agentRef: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
@@ -41,7 +43,7 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
     expect(config).not.toBeNull();
     expect(config).toMatchObject({
       key: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-      provider: "deepseek",
+      provider: "nolo",
       model: "deepseek-v4-pro",
       apiSource: "platform",
       useServerProxy: true,

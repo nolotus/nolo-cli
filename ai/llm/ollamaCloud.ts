@@ -40,8 +40,8 @@ export const isOllamaCloudDeepseekFlashModel = (
 
 /**
  * Platform DeepSeek Flash (hosted): nolo/ollama-cloud catalog or legacy
- * deepseek provider records still pointing at deepseek-v4-flash.
- * Custom / explicit user keys stay on official DeepSeek only.
+ * `deepseek` provider records still pointing at deepseek-v4-flash. The official
+ * DeepSeek provider was retired, so `deepseek` here only means "stale record".
  */
 export const isPlatformDeepseekFlashHosted = (
   provider?: string | null,

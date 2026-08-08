@@ -42,6 +42,28 @@ type AntigravityCloudCodeCallArgs = {
   fetchImpl?: typeof fetch;
 };
 
+/**
+ * Cloud Code Assist 对 Claude 模型期望 Claude Messages wire 格式
+ * （messages 数组 + tool_use / tool_result + tool_use_id），而不是 Gemini 的
+ * contents/functionCall/functionResponse。此前所有模型统一走 Gemini 格式，
+ * 导致 Claude 模型在第二次调用回放 tool 结果时被网关 400 拒绝：
+ *   messages.2.content.0.tool_result.tool_use_id: Field required
+ *
+ * 网关对请求体做严格 schema 校验，因此这里产出纯净的 Claude Messages 结构：
+ * 不注入 cache_control、不注入 Claude Code 身份文本，避免未知字段被拒。
+ */
+/**
+ * Cloud Code Assist 网关的 request schema 是 Gemini generateContent proto
+ * （contents / systemInstruction / tools.functionDeclarations / generationConfig /
+ * labels / sessionId），不认 Claude Messages 字段（messages/system/tools.name/
+ * input_schema/max_tokens 都会被 protobuf 校验拒绝，HTTP 400）。
+ *
+ * Claude 模型也走 Gemini wire；网关内部把 Gemini contents 转成 Claude
+ * messages 时，需要 functionResponse → tool_result 的 tool_use_id 关联，
+ * 因此 convertOpenAiMessagesToGemini 在 functionResponse 上保留 OpenAI
+ * tool_call_id（见 geminiNativeShared.ts）。labels.used_claude 告诉网关
+ * 目标模型是 Claude。
+ */
 function buildCloudCodeAssistPayload(args: AntigravityCloudCodeCallArgs) {
   const projectId = readAntigravityProjectId(args.metadata);
   if (!projectId) {
@@ -57,6 +79,8 @@ function buildCloudCodeAssistPayload(args: AntigravityCloudCodeCallArgs) {
   const { wireModelId: model, profile } = resolveAntigravityWireModel(logicalModel);
 
   const rawMessages = Array.isArray(args.openAiBody.messages) ? args.openAiBody.messages : [];
+  const isClaude = model.toLowerCase().includes("claude");
+
   const { contents, systemTexts } = convertOpenAiMessagesToGemini(rawMessages, {
     attachSkipThoughtSignature: isGemini3Model(model),
   });
@@ -100,7 +124,6 @@ function buildCloudCodeAssistPayload(args: AntigravityCloudCodeCallArgs) {
   const trajectoryId = randomUUID();
   const step = 2;
   const requestId = `agent/${agentId}/${Date.now()}/${trajectoryId}/${step}`;
-  const isClaude = model.toLowerCase().includes("claude");
   const labels: Record<string, string> = {
     trajectory_id: trajectoryId,
     last_step_index: String(step - 1),

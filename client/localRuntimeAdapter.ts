@@ -224,7 +224,6 @@ import {
   createLocalWorkspaceToolExecutors,
   parsePlatformChatCompletionData,
   parsePlatformChatCompletionResponse,
-  resolveLegacyDeepSeekProxyChatFallback,
   resolvePlatformChatProviderConfig,
   resolveCurrentRunRuntimeToolPolicy,
   resolveLocalWorkspaceExecutorOptionsFromPolicy,
@@ -1223,47 +1222,8 @@ export function createCliLocalRuntimeAdapter(
                 loopbackRequest,
               },
             );
-            let responseProviderConfig = providerConfig;
-            let firstErrorRaw: string | undefined;
             if (!res.ok) {
-              firstErrorRaw = await res.text().catch(() => "");
-              const fallbackProviderConfig =
-                resolveLegacyDeepSeekProxyChatFallback({
-                  providerConfig,
-                  status: res.status,
-                  raw: firstErrorRaw,
-                });
-              if (fallbackProviderConfig) {
-                responseProviderConfig = fallbackProviderConfig;
-                const fallbackRequest = buildPlatformChatCompletionRequest({
-                  providerConfig: fallbackProviderConfig,
-                  messages,
-                  tools,
-                  stream: false,
-                });
-                logLocalRuntimeDiagnostic("provider.request.compatibility-fallback", {
-                  agentKey: agentConfig.key,
-                  provider: providerConfig.provider,
-                  fromEndpoint: summarizeEndpoint(providerConfig.endpoint) ?? null,
-                  toEndpoint:
-                    summarizeEndpoint(fallbackProviderConfig.endpoint) ?? null,
-                  reason: "legacy-proxy-responses-schema",
-                });
-                res = await fetchWithTransientRetry(
-                  fetchImpl,
-                  fallbackRequest.url,
-                  { ...fallbackRequest.init },
-                  {
-                    sleep: deps.sleep,
-                    loopbackRequest,
-                  },
-                );
-                firstErrorRaw = undefined;
-              }
-            }
-            if (!res.ok) {
-              const raw =
-                firstErrorRaw ?? (await res.text().catch(() => ""));
+              const raw = await res.text().catch(() => "");
               const data = parsePlatformChatCompletionData(raw);
               // `JSON.stringify(data)` collapses an empty/HTML/Cloudflare body into
               // `{}`, which is ambiguous and forces a long post-hoc investigation.
@@ -1333,7 +1293,7 @@ export function createCliLocalRuntimeAdapter(
             });
             const data = parsePlatformChatCompletionData(raw);
             return parsePlatformChatCompletionResponse({
-              providerConfig: responseProviderConfig,
+              providerConfig,
               data,
               trace: messages,
             });

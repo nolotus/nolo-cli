@@ -30,7 +30,7 @@ import {
  *
  * Coverage:
  * - flash tier: DeepSeek V4 Flash (nolo / deepseek-v4-flash)
- * - balanced tier: DeepSeek V4 Pro (deepseek / deepseek-v4-pro)
+ * - balanced tier: DeepSeek V4 Pro (nolo / deepseek-v4-pro)
  * - quality tier: GLM 5.2 (nolo / glm-5.2)
  * - image tier: Kimi K2.6 (nolo / kimi-k2.6)
  * - builtin nolo: platform-routed default agent.

@@ -36,7 +36,7 @@ export type GeminiPart =
       };
       thoughtSignature?: string;
     }
-  | { functionResponse: { name: string; response: { output: string } } }
+  | { functionResponse: { name: string; response: { output: string }; id?: string } }
   | { inlineData: { mimeType: string; data: string } };
 
 export type GeminiContent = { role: "user" | "model"; parts: GeminiPart[] };
@@ -241,7 +241,17 @@ export function convertOpenAiMessagesToGemini(
       const output =
         messageText(content as AgentRuntimeChatMessage["content"]) || "{}";
       pushOrMergeContent("user", [
-        { functionResponse: { name, response: { output } } },
+        {
+          functionResponse: {
+            name,
+            response: { output },
+            // 保留 OpenAI tool_call_id：antigravity Cloud Code Assist 网关把
+            // Gemini contents 转成 Claude messages 时需要 functionResponse →
+            // tool_result 的 tool_use_id；缺 id 时网关报
+            // "tool_result.tool_use_id: Field required"（HTTP 400）。
+            ...(toolCallId ? { id: toolCallId } : {}),
+          },
+        },
       ]);
     }
   }

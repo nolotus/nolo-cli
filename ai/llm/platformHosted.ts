@@ -73,34 +73,15 @@ export const PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE = {
  * (https://ollama.com/v1/chat/completions), authenticated via OLLAMA_API_KEY.
  *
  * nolo 内部生产环境的上游路由（组合 ollama cloud + 自有机器等）不在开源
- * 仓库内。当前开源实现默认走 Ollama Cloud；DeepSeek Flash 可在指定状态码
- * 下回退到官方 DeepSeek API。
+ * 仓库内。当前开源实现默认走 Ollama Cloud。
  */
 export const PLATFORM_HOSTED_CHAT_COMPLETIONS_URL =
   "https://ollama.com/v1/chat/completions";
 
-/** Official DeepSeek endpoint used as an official-only primary or Ollama fallback. */
-export const DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_URL =
-  "https://api.deepseek.com/chat/completions";
-
-/** Statuses that allow Ollama Cloud -> official DeepSeek fallback. */
-export const DEEPSEEK_FLASH_HOSTED_FALLBACK_STATUSES = [
-  401, 402, 429, 500, 502, 503, 504,
-];
-
 export type PlatformDeepseekFlashRoutePlan =
   | { kind: "configured" }
   | { kind: "missing_key" }
-  | {
-      kind: "hosted";
-      primaryProvider: "nolo";
-      fallbackProvider?: "deepseek";
-    }
-  | {
-      kind: "hosted";
-      primaryProvider: "deepseek";
-      fallbackProvider?: never;
-    };
+  | { kind: "hosted"; primaryProvider: "nolo" };
 
 export const isPlatformHostedDeepseekFlashModel = (
   model?: string | null,
@@ -108,8 +89,9 @@ export const isPlatformHostedDeepseekFlashModel = (
 
 /**
  * Platform DeepSeek Flash (hosted): nolo/platform-hosted catalog or legacy
- * deepseek provider records still pointing at deepseek-v4-flash.
- * Custom / explicit user keys stay on official DeepSeek only.
+ * `deepseek` provider records still pointing at deepseek-v4-flash. The official
+ * DeepSeek provider was retired on 2026-08-08, so `deepseek` here only means
+ * "stale record" — it resolves to the same nolo (Ollama Cloud) upstream.
  */
 export const isPlatformDeepseekFlashHosted = (
   provider?: string | null,
@@ -127,8 +109,8 @@ export const isPlatformDeepseekFlashHosted = (
 /**
  * Pure provider-ordering policy shared by chat proxy and agent-run.
  * Explicit Responses, custom providers, and user credentials stay on their
- * configured route; hosted Chat Completions prefers Ollama and can fall back
- * to the official DeepSeek API.
+ * configured route; hosted Chat Completions goes to Ollama Cloud. There is no
+ * official-DeepSeek fallback any more — that provider was retired.
  */
 export const resolvePlatformDeepseekFlashRoute = (args: {
   provider?: string | null;
@@ -137,7 +119,6 @@ export const resolvePlatformDeepseekFlashRoute = (args: {
   isCustomApi: boolean;
   hasExplicitCredential: boolean;
   hasOllamaKey: boolean;
-  hasDeepseekKey: boolean;
 }): PlatformDeepseekFlashRoutePlan => {
   const usesResponsesApi =
     typeof args.endpoint === "string" &&
@@ -149,19 +130,7 @@ export const resolvePlatformDeepseekFlashRoute = (args: {
     !args.hasExplicitCredential;
 
   if (!eligible) return { kind: "configured" };
-  if (args.hasOllamaKey) {
-    return {
-      kind: "hosted",
-      primaryProvider: "nolo",
-      fallbackProvider: args.hasDeepseekKey ? "deepseek" : undefined,
-    };
-  }
-  if (args.hasDeepseekKey) {
-    return {
-      kind: "hosted",
-      primaryProvider: "deepseek",
-    };
-  }
+  if (args.hasOllamaKey) return { kind: "hosted", primaryProvider: "nolo" };
   return { kind: "missing_key" };
 };
 
@@ -221,8 +190,5 @@ export const OLLAMA_CLOUD_DEEPSEEK_FLASH_PRICE =
 export const OLLAMA_CLOUD_GLM_52_MODEL = PLATFORM_HOSTED_GLM_52_MODEL;
 /** @deprecated Kept for backward compatibility. */
 export const OLLAMA_CLOUD_GLM_PRICE = PLATFORM_HOSTED_GLM_PRICE;
-/** @deprecated Kept for backward compatibility. */
-export const DEEPSEEK_FLASH_OLLAMA_FALLBACK_STATUSES =
-  DEEPSEEK_FLASH_HOSTED_FALLBACK_STATUSES;
 /** @deprecated Kept for backward compatibility. */
 export const ollamaCloudModels = platformHostedModels;

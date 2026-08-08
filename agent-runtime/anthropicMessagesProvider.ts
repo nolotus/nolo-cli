@@ -122,7 +122,22 @@ export function buildAnthropicMessagesBody(args: {
     const message = raw as JsonRecord;
     const role = String(message.role ?? "");
     if (role === "system" || role === "developer") {
-      system.push(...toAnthropicContent(message.content));
+      const stablePrefixChars = Number(message.stable_prefix_chars);
+      if (
+        typeof message.content === "string" &&
+        Number.isFinite(stablePrefixChars) &&
+        stablePrefixChars > 0 &&
+        stablePrefixChars <= message.content.length
+      ) {
+        const stable = message.content.slice(0, stablePrefixChars);
+        // Keep the suffix byte-for-byte, including the separator inserted by
+        // localLoop. Splitting for cache_control must not change model input.
+        const dynamic = message.content.slice(stablePrefixChars);
+        system.push({ type: "text", text: stable, cache_control: { type: "ephemeral" } });
+        if (dynamic) system.push({ type: "text", text: dynamic });
+      } else {
+        system.push(...toAnthropicContent(message.content));
+      }
       continue;
     }
     if (role === "tool") {
@@ -169,11 +184,11 @@ export function buildAnthropicMessagesBody(args: {
   if (!hasClaudeCodeIdentity(system)) {
     system.unshift({ type: "text", text: CLAUDE_CODE_SYSTEM_INSTRUCTION });
   }
-  if (system.length > 0) {
-    const last = system[system.length - 1];
-    if (!isCacheControl(last.cache_control)) {
-      last.cache_control = { type: "ephemeral" };
-    }
+  if (system.length > 0 && !system.some((block) => isCacheControl(block.cache_control))) {
+    // Legacy callers provide one undifferentiated system prompt. Scope-aware
+    // callers already mark the stable block; never move that breakpoint onto
+    // a dynamic suffix such as current time, memory, or summary.
+    system[system.length - 1].cache_control = { type: "ephemeral" };
   }
 
   const tools = Array.isArray(args.openAiBody.tools)
@@ -260,6 +275,10 @@ export function mapAnthropicMessageToOpenAi(payload: JsonRecord): JsonRecord {
     (typeof usage.input_tokens === "number" ? usage.input_tokens : 0) +
     (typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0) +
     (typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0);
+  const cacheCreationInputTokens =
+    typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0;
+  const cacheReadInputTokens =
+    typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
   const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
   const stopReason = String(payload.stop_reason ?? "");
   const message: JsonRecord = { role: "assistant", content: text || null };
@@ -280,9 +299,16 @@ export function mapAnthropicMessageToOpenAi(payload: JsonRecord): JsonRecord {
             : "stop",
     }],
     usage: {
+      // prompt_tokens/input_tokens are total input, including cache read/write.
+      // Preserve Anthropic's components so normalization and billing can apply
+      // the correct cache prices without double-counting them.
       prompt_tokens: inputTokens,
+      input_tokens: inputTokens,
       completion_tokens: outputTokens,
+      output_tokens: outputTokens,
       total_tokens: inputTokens + outputTokens,
+      cache_creation_input_tokens: cacheCreationInputTokens,
+      cache_read_input_tokens: cacheReadInputTokens,
     },
   };
 }

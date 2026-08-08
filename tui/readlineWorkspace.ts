@@ -1367,6 +1367,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(runResult.contextWindow
             ? { contextWindow: runResult.contextWindow }
             : {}),
+          // input_tokens 是累计上下文输入（含历史消息），把它持久化到
+          // estimatedContextTokens：下一轮若 provider 不返回 usage，context
+          // chip 仍显示真实累计占用而不是回退到启动时的静态估算。
+          ...(runResult.turnTokens && runResult.turnTokens.input > 0
+            ? { estimatedContextTokens: runResult.turnTokens.input }
+            : {}),
         };
       }
       // 把失败原因翻成人话：余额 / 额度 / 「对话已保留」/ 「本轮未入档」。

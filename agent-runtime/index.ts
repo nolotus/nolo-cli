@@ -136,7 +136,6 @@ export {
   parsePlatformChatCompletionData,
   parsePlatformChatCompletionResponse,
   readPlatformChatSseCompletion,
-  resolveLegacyDeepSeekProxyChatFallback,
   resolvePlatformChatProviderConfig,
   shouldUsePlatformChatProvider,
 } from "./platformChatProvider";

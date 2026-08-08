@@ -229,8 +229,9 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
     default: "https://api.x.ai/v1/chat/completions",
   },
   deepseek: {
+    // No `responses` entry: the official DeepSeek provider was retired and no
+    // deepseek model declares endpointKey "responses", so it was unreachable.
     default: "https://api.deepseek.com/chat/completions",
-    responses: "https://api.deepseek.com/v1/responses",
   },
   deepinfra: {
     default: "https://api.deepinfra.com/v1/openai/chat/completions",

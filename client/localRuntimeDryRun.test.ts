@@ -65,10 +65,14 @@ describe("CLI local runtime dry run", () => {
             // than pinning an exact ordered list: the old transcribed list went
             // stale the moment startAgentRun/controlAgentRun were added, and a
             // list that breaks on every new tool stops being read.
-            expect(sentToolNames).toContain("ui_ask_choice");
             for (const name of DEFAULT_LOCAL_TOOLS) {
               expect(sentToolNames).toContain(name);
             }
+            // ui_ask_choice is injected only when the runtime can actually
+            // present choices (requestUserChoice wired). This dry run is
+            // headless, so advertising it would offer a tool the model cannot
+            // get an answer from.
+            expect(sentToolNames).not.toContain("ui_ask_choice");
             // Relaxing the exact-list assertion above lost the guard against
             // the surface silently growing, so keep an explicit deny side:
             // tools retired for being unsafe must never come back by default.

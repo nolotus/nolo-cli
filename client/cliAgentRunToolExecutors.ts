@@ -15,6 +15,7 @@ import {
   formatStartRunCard,
   formatStatusRunCard,
   formatStopRunCard,
+  resolveRunLabel,
 } from "../ai/tools/agent/agentRunDisplayHelpers";
 import {
   type AgentRunControlDeps,
@@ -107,7 +108,7 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
       deps,
     );
 
-    const displayName = agentName ?? "agent";
+    const displayName = resolveRunLabel({ agentName, agentKey, runId });
     const labels = agentRunCardLabels();
     return {
       content: JSON.stringify({
@@ -171,7 +172,7 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
         tailLines > 0
           ? tailFile(record.logPath, tailLines, resolveFs(deps))
           : undefined;
-      const name = reconciled.agentName || "agent";
+      const name = resolveRunLabel(reconciled);
       const logLines = logTail ? logTail.split("\n") : undefined;
       const labels = agentRunCardLabels();
       return {

@@ -9,7 +9,7 @@
 
 import { callToolApi } from "../toolApiClient";
 import { toErrorMessage } from "../../../core/errorMessage";
-import { formatListRunsCard, formatStatusRunCard, formatStopRunCard } from "./agentRunDisplayHelpers";
+import { formatListRunsCard, formatStatusRunCard, formatStopRunCard, resolveRunLabel } from "./agentRunDisplayHelpers";
 
 export const controlAgentRunFunctionSchema = {
     name: "controlAgentRun",
@@ -143,7 +143,7 @@ async function handleStatus(
 
         const run = resData.run;
         const logLines: string[] | undefined = resData.logLines;
-        const name = run.agentName || run.name || "agent";
+        const name = resolveRunLabel(run);
 
         return {
             rawData: { found: true, ...run, ...(logLines ? { logLines } : {}) },

@@ -7,6 +7,10 @@ import {
   resolveToolDisplayMode,
   shouldEmitToolEvents,
 } from "./toolOutput";
+import {
+  isAgentNameFallback,
+  resolveRunLabel,
+} from "../ai/tools/agent/agentRunDisplayHelpers";
 import { Spinner } from "./agentRunSpinner";
 import type { RunAgentTurnOptions } from "./agentRunTypes";
 
@@ -236,12 +240,17 @@ function extractAgentRunStatusSnapshot(
     const parsed = JSON.parse(content) as Record<string, unknown>;
     const runId = typeof parsed.runId === "string" ? parsed.runId : "";
     const status = typeof parsed.status === "string" ? parsed.status : "running";
-    const agentName =
-      typeof parsed.agentName === "string"
-        ? parsed.agentName
-        : typeof parsed.name === "string"
-        ? parsed.name
-        : undefined;
+    // Same fallback chain as the run cards, minus runId: the panel already
+    // renders a runId suffix, so resolving to one here would print it twice.
+    // Undefined is kept as the "nothing to show" signal — the panel supplies
+    // its own default ("sub-agent"), which deliberately differs from the
+    // cards' literal.
+    const label = resolveRunLabel({
+      agentName: parsed.agentName,
+      name: parsed.name,
+      agentKey: parsed.agentKey,
+    });
+    const agentName = isAgentNameFallback(label) ? undefined : label;
     const logTail = typeof parsed.logTail === "string" ? parsed.logTail : undefined;
     const logLines = Array.isArray(parsed.logLines) ? (parsed.logLines as string[]) : undefined;
     const errorMessage = typeof parsed.errorMessage === "string" ? parsed.errorMessage : undefined;

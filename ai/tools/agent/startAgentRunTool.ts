@@ -14,7 +14,7 @@
 import { runAgentBackground } from "../../agent/runAgentBackground";
 import { toErrorMessage } from "../../../core/errorMessage";
 import { buildDelegatedTaskContent } from "./callAgentTool";
-import { formatStartRunCard } from "./agentRunDisplayHelpers";
+import { formatStartRunCard, resolveRunLabel } from "./agentRunDisplayHelpers";
 import { getActiveDialogKey } from "../../../chat/dialog/dialogRuntimeStore";
 import { extractCustomId } from "../../../core/prefix";
 
@@ -105,15 +105,19 @@ export async function startAgentRunFunc(
 
         const runId = bgResult.dialogId;
         const status = bgResult.status ?? "pending";
-        const displayName = agentName?.trim() || bgResult.agentName || bgResult.name || "agent";
+        // rawData carries only real identity fields; the display fallback chain
+        // lives in resolveRunLabel so a key never masquerades as a name.
+        const resolvedName = agentName?.trim() || bgResult.agentName || bgResult.name;
+        const identity = { agentName: resolvedName, agentKey, runId };
 
         return {
             rawData: {
                 runId,
                 status,
-                ...(displayName !== "agent" ? { agentName: displayName } : {}),
+                agentKey,
+                ...(resolvedName ? { agentName: resolvedName } : {}),
             },
-            displayData: formatStartRunCard(displayName, status),
+            displayData: formatStartRunCard(resolveRunLabel(identity), status),
         };
     } catch (e: any) {
         throw new Error(`startAgentRun 启动 Agent [${agentKey}] 失败: ${toErrorMessage(e)}`);

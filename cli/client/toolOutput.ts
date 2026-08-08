@@ -16,6 +16,8 @@ import {
   formatStatusRunCard,
   formatStopRunCard,
   isAgentRunTerminalStatus,
+  type RunLabelFields,
+  resolveRunLabel,
 } from "../../ai/tools/agent/agentRunDisplayHelpers";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 import { type DiffLineKind, renderDiffLine, themeText } from "../tui/theme";
@@ -274,13 +276,6 @@ function isNeedsActionToolResult(event: LocalAgentToolEvent) {
  * read in one place; the payload comes over a bridge we do not control, which
  * is exactly the kind of contract that should not be spelled out twice.
  */
-function readRunAgentName(parsed: Record<string, unknown>): string {
-  const agentName = typeof parsed.agentName === "string" ? parsed.agentName.trim() : "";
-  if (agentName) return agentName;
-  const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
-  return name || "agent";
-}
-
 function readRunLogLines(parsed: Record<string, unknown>): string[] | undefined {
   if (Array.isArray(parsed.logLines)) return parsed.logLines as string[];
   if (typeof parsed.logTail === "string" && parsed.logTail.trim()) {
@@ -456,18 +451,13 @@ function recoverOrchestrationDisplayFromContent(toolName: string, content: strin
       return formatAgentListCard(agents as Parameters<typeof formatAgentListCard>[0]);
     }
     if (toolName === "startAgentRun") {
-      const name =
-        typeof parsed.agentName === "string" && parsed.agentName.trim()
-          ? parsed.agentName.trim()
-          : typeof parsed.name === "string" && parsed.name.trim()
-            ? parsed.name.trim()
-            : "agent";
+      const name = resolveRunLabel(parsed);
       const status = typeof parsed.status === "string" ? parsed.status : "running";
       return formatStartRunCard(name, status, labels);
     }
     if (toolName === "controlAgentRun") {
       if (Array.isArray(parsed.runs)) {
-        const runs = parsed.runs as Array<{ agentName?: string; name?: string; status?: string }>;
+        const runs = parsed.runs as Array<RunLabelFields & { status?: string }>;
         return formatListRunsCard(runs, labels);
       }
       const status = typeof parsed.status === "string" ? parsed.status : undefined;
@@ -477,7 +467,7 @@ function recoverOrchestrationDisplayFromContent(toolName: string, content: strin
       if (status === "killed" || status === "cancelled" || status === "cancelling") {
         return formatStopRunCard(status, labels);
       }
-      return formatStatusRunCard(readRunAgentName(parsed), status ?? "—", {
+      return formatStatusRunCard(resolveRunLabel(parsed), status ?? "—", {
         errorMessage: readRunErrorMessage(parsed),
         logLines: readRunLogLines(parsed),
         labels,
@@ -520,7 +510,7 @@ function parseControlAgentRunStatusEvent(event: LocalAgentToolEvent): {
           ? event.metadata.runId
           : "";
     if (!runId) return null;
-    const agentName = readRunAgentName(parsed);
+    const agentName = resolveRunLabel(parsed);
     const errorMessage = readRunErrorMessage(parsed);
     const logLines = readRunLogLines(parsed);
     const logKey = logLines && logLines.length > 0 ? logLines.join("\n") : "";

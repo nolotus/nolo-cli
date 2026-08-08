@@ -56,6 +56,37 @@ export function isAgentNameFallback(agentName: string | undefined | null): boole
   return !trimmed || trimmed === "agent";
 }
 
+/** The identity fields a run may carry, in descending display preference. */
+export type RunLabelFields = {
+  agentName?: unknown;
+  name?: unknown;
+  agentKey?: unknown;
+  runId?: unknown;
+};
+
+/**
+ * Pick the most identifying label available for a run.
+ *
+ * `agentName` is optional everywhere (startAgentRun only requires `agentKey`),
+ * so anything rendered off `agentName` alone degrades to a screen of identical
+ * `agent` rows. `agentKey` is present on every run record and `runId` is
+ * unique, so both are strictly better fallbacks than the literal.
+ *
+ * Returns the literal `"agent"` only when a run carries no identity at all —
+ * that keeps `isAgentNameFallback(resolveRunLabel(run))` true, which is how the
+ * card formatters decide to drop the name row entirely.
+ *
+ * Fields are typed `unknown` because callers hand over raw parsed JSON.
+ */
+export function resolveRunLabel(run: RunLabelFields): string {
+  for (const candidate of [run.agentName, run.name, run.agentKey, run.runId]) {
+    if (typeof candidate === "string" && !isAgentNameFallback(candidate)) {
+      return candidate.trim();
+    }
+  }
+  return "agent";
+}
+
 export function formatStartRunCard(
   agentName: string,
   status: string = "running",
@@ -127,7 +158,7 @@ export function formatStopRunCard(
 }
 
 export function formatListRunsCard(
-  runs: Array<{ agentName?: string; name?: string; status?: string }>,
+  runs: Array<RunLabelFields & { status?: string }>,
   labels?: AgentRunDisplayLabels
 ): string {
   const L = resolveLabels(labels);
@@ -135,8 +166,9 @@ export function formatListRunsCard(
   for (const run of runs) {
     const status = run.status ?? "—";
     const icon = getAgentRunStatusIcon(status);
-    const name = run.agentName || run.name || "agent";
-    lines.push(`  ${icon}  ${name}`);
+    // runId stays out of the card by design (c88e918d0): it is noise next to a
+    // readable name and callers act on `rawData.runs[].runId` anyway.
+    lines.push(`  ${icon}  ${resolveRunLabel(run)}`);
   }
   return lines.join("\n");
 }

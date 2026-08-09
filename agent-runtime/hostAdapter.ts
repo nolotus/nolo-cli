@@ -113,6 +113,8 @@ export type AgentRuntimeToolCallInput = {
   name: string;
   arguments: string;
   userInput?: string;
+  /** Host-injected turn context; never supplied by the model. */
+  runtimeContext?: Record<string, any> | null;
 };
 
 export type AgentRuntimeToolResult = {
@@ -146,7 +148,10 @@ export type AgentRuntimeHostAdapter = {
   resolveProvider(agentConfig: AgentRuntimeAgentConfig): Promise<AgentRuntimeProvider>;
   executeTool(
     call: AgentRuntimeToolCallInput,
-    opts?: { abortSignal?: AbortSignal },
+    opts?: {
+      abortSignal?: AbortSignal;
+      runtimeContext?: Record<string, any> | null;
+    },
   ): Promise<AgentRuntimeToolResult>;
   /**
    * Optional: load a persisted dialog summary for local auto-compaction.

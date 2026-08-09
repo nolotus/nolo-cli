@@ -62,8 +62,8 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
   {
     id: "long-term-memory",
     label: "长期记忆",
-    description: "让 agent 能把值得长期保留的用户偏好、协作约定写成 episodic memory，跨对话复用。",
-    tools: ["rememberMemory"],
+    description: "对话前自动载入高相关记忆，并允许 agent 按需查询或写入长期记忆。",
+    tools: ["queryMemory", "rememberMemory"],
     defaultEnabled: true,
     icon: "🧠",
   },

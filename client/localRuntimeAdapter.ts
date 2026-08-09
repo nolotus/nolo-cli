@@ -1422,7 +1422,10 @@ export function createCliLocalRuntimeAdapter(
         },
       };
     },
-    executeTool: async (call, opts?: { abortSignal?: AbortSignal }) => {
+    executeTool: async (call, opts) => {
+      const contextualCall = opts?.runtimeContext
+        ? { ...call, runtimeContext: opts.runtimeContext }
+        : call;
       assertWithinLocalToolBudget({
         toolName: call.name,
         budgets: localToolBudgets,
@@ -1431,7 +1434,7 @@ export function createCliLocalRuntimeAdapter(
       const result = await executeLocalToolWithPolicy({
         env: deps.env,
         agentToolNames: activeAgentToolNames,
-        call,
+        call: contextualCall,
         executors: localToolExecutors,
         abortSignal: opts?.abortSignal,
         detachMs: resolveExecShellDetachMs(deps.env),

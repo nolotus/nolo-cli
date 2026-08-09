@@ -163,6 +163,7 @@ export const resolveMemoryRuntime = async (input: {
   userId?: string | null;
   spaceId?: string | null;
   agentKey: string;
+  memorySubjectId?: string | null;
   userInput: string;
 }): Promise<MemoryRuntimeResolution> => {
   const owners = chooseMemoryOwners({
@@ -180,6 +181,7 @@ export const resolveMemoryRuntime = async (input: {
       userId: input.userId,
       spaceId: input.spaceId,
       agentKey: input.agentKey,
+      memorySubjectId: input.memorySubjectId,
       policy,
     }),
     kinds: ["episodic", "semantic", "procedural"],

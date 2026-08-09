@@ -45,7 +45,13 @@ interface AgentGreetingConfig {
 }
 
 interface CreateDialogArgs {
-  cybots: string[];
+  cybots?: string[];
+  /** Ordinary entry points use auto; explicit Agent entry points use fixed. */
+  agentMode?: "auto" | "fixed";
+  autoRoute?: {
+    stickyTier?: "flash" | "balanced" | "quality" | "image";
+    version?: number;
+  };
   category?: string;
   title?: string;
   /**
@@ -103,7 +109,9 @@ export const createDialogAction = async (
   thunkApi: any
 ) => {
   const {
-    cybots,
+    cybots: requestedCybots = [],
+    agentMode: requestedAgentMode,
+    autoRoute,
     category,
     spaceId: explicitSpaceId,
     inheritFromDialogKey,
@@ -117,6 +125,9 @@ export const createDialogAction = async (
   } = args;
   const { dispatch: dispatchRaw, getState, extra } = thunkApi as any;
   const dispatch = dispatchRaw as any;
+  const agentMode =
+    requestedAgentMode ?? (requestedCybots.length > 0 ? "fixed" : "auto");
+  const cybots = agentMode === "auto" ? [] : requestedCybots;
   const agentKey = cybots[0];
   const currentUserId =
     (selectIdentityUserId(getState()) as string | null | undefined) ?? null;
@@ -145,6 +156,7 @@ export const createDialogAction = async (
   }
 
   const readAgentConfig = async () => {
+    if (!agentKey) return null;
     const existing = (await dispatch(
       readAndWait({
         dbKey: agentKey,
@@ -176,12 +188,13 @@ export const createDialogAction = async (
   };
 
   const canSkipAgentConfigRead =
-    !!skipAgentConfigRead && !!args.skipGreeting && !!titleOverride;
+    agentMode === "auto" ||
+    (!!skipAgentConfigRead && !!args.skipGreeting && !!titleOverride);
 
-  // 1. 获取 bot 配置。QuickChat 已经跳过 greeting 且传入标题时，URL 前不需要读取 agent。
+  // 1. 获取 bot 配置。auto 对话没有 Agent 实体；QuickChat fast path 也无需在跳转前读取。
   const agentConfig = canSkipAgentConfigRead ? null : await readAgentConfig();
 
-  if (!agentConfig && !canSkipAgentConfigRead) {
+  if (agentMode === "fixed" && !agentConfig && !canSkipAgentConfigRead) {
     throw new Error(`Agent with key ${agentKey} not found.`);
   }
 
@@ -226,7 +239,11 @@ export const createDialogAction = async (
   }
 
   const time = format(new Date(), "MM-dd HH:mm");
-  const title = titleOverride || (agentConfig?.name || "Agent") + "  " + time;
+  const title =
+    titleOverride ||
+    (agentMode === "auto" ? "新对话" : agentConfig?.name || "Agent") +
+      "  " +
+      time;
   // Important:
   // Space scoping is intentionally entry-driven, not action-driven.
   // Dialog creation must only honor an explicit caller-provided `spaceId`.
@@ -283,7 +300,10 @@ export const createDialogAction = async (
     id: dialogId,
     dbKey: dialogPath,
     userId,
+    agentMode,
     cybots,
+    ...(agentMode === "fixed" && agentKey ? { primaryAgentKey: agentKey } : {}),
+    ...(agentMode === "auto" && autoRoute ? { autoRoute } : {}),
     title,
     type: DataType.DIALOG,
     createdAt: formatISO(new Date()),

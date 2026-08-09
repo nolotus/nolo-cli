@@ -67,8 +67,15 @@ export interface DialogConfig {
   id: string; // 对话的唯一标识符/路径
   type: DataType.DIALOG; // 数据类型标记
   title: string; // 对话标题
-  cybots: string[]; // 兼容字段：当前对话参与的 agent ID 列表
+  cybots: string[]; // 兼容字段：fixed 对话参与的 agent ID 列表；auto 对话为空
+  /** auto=代码内置执行策略；fixed=显式绑定 Agent。历史有 agent 的对话按 fixed 解释。 */
+  agentMode?: "auto" | "fixed";
   primaryAgentKey?: string;
+  /** auto 对话可持久化稳定档位，不持久化具体 Agent 实体依赖。 */
+  autoRoute?: {
+    stickyTier?: "flash" | "balanced" | "quality" | "image";
+    version?: number;
+  };
   taskLabel?: string;
   tags?: string[];
   createdAt: string; // 创建时间戳

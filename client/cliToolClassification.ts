@@ -42,7 +42,10 @@ export const LOCAL_SERVER_WEB_TOOL_NAME_SET = new Set<string>(
  * capability pack but silently dropped from the CLI tool schema, so the TUI
  * could recall memories yet never write one.
  */
-export const LOCAL_SERVER_MEMORY_TOOL_NAMES = ["rememberMemory"] as const;
+export const LOCAL_SERVER_MEMORY_TOOL_NAMES = [
+  "queryMemory",
+  "rememberMemory",
+] as const;
 export const LOCAL_SERVER_MEMORY_TOOL_NAME_SET = new Set<string>(
   LOCAL_SERVER_MEMORY_TOOL_NAMES,
 );

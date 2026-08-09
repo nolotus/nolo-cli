@@ -34,6 +34,8 @@ export interface RememberMemoryInput {
    * the memory shows up in that agent's "这个 Agent 记得你什么" tab.
    */
   agentKey?: string | null;
+  /** Explicit relationship subject; overrides agentKey for storage ownership only. */
+  memorySubjectId?: string | null;
 }
 
 export interface RememberMemoryResult {
@@ -89,6 +91,7 @@ export const rememberMemory = async (
     throw new Error("rememberMemory: kind must be episodic, semantic, or procedural");
   }
   const agentKey = input.agentKey?.trim() || null;
+  const memorySubjectId = input.memorySubjectId?.trim() || agentKey;
   const source = input.source ?? "agent-inferred";
 
   // 置信度按来源区分（§3.2 判别标准）：
@@ -104,9 +107,10 @@ export const rememberMemory = async (
 
   const savedItems = await Promise.all(
     targets.map(async (target) => {
-      const subject = agentKey
-        ? buildAgentSubjectTarget(target, agentKey)
-        : target;
+      const subject =
+        (input.scope ?? "auto") === "auto" && memorySubjectId
+          ? buildAgentSubjectTarget(target, memorySubjectId)
+          : target;
 
       // 去重：查同 owner + 同 content + 同 subject 的已有记忆（Bug 2 修复）
       // 找到 → 更新激活时间 + 提升计数 + 取较高 confidence（不新建）

@@ -33,6 +33,7 @@ export function buildServerPlatformToolExecutors(args: {
    * agent is resolved; the server then falls back to owner-level scoping.
    */
   agentKey?: string | null;
+  memorySubjectId?: string | null;
 }) {
   const postServer = async (
     path: string,
@@ -188,6 +189,31 @@ export function buildServerPlatformToolExecutors(args: {
     ]),
   );
 
+  const queryMemory = async (call: any) => {
+    const parsed = parseNoloWorkspaceToolArguments(call.arguments);
+    const query = typeof parsed.query === "string" ? parsed.query.trim() : "";
+    if (!query) {
+      return {
+        content: JSON.stringify({ error: "queryMemory 需要非空 query。" }),
+        metadata: { serverPlatformTool: true, memoryRead: false },
+      };
+    }
+    const body: Record<string, unknown> = { userInput: query };
+    if (args.agentKey) body.agentKey = args.agentKey;
+    const memorySubjectId =
+      typeof call.runtimeContext?.memorySubjectId === "string"
+        ? call.runtimeContext.memorySubjectId.trim()
+        : args.memorySubjectId?.trim();
+    if (memorySubjectId) body.memorySubjectId = memorySubjectId;
+    const raw = await postServer("/api/memory/query", body, {
+      retryTransient: true,
+    });
+    return {
+      content: raw,
+      metadata: { serverPlatformTool: true, memoryRead: true },
+    };
+  };
+
   // Long-term memory writes bridge to /api/memory/remember — the same store
   // /api/memory/query recalls from. `source: agent-inferred` matches the web
   // tool: an agent deciding on its own to remember is a guess, not a user
@@ -211,6 +237,11 @@ export function buildServerPlatformToolExecutors(args: {
       source: "agent-inferred",
     };
     if (args.agentKey) body.agentKey = args.agentKey;
+    const memorySubjectId =
+      typeof call.runtimeContext?.memorySubjectId === "string"
+        ? call.runtimeContext.memorySubjectId.trim()
+        : args.memorySubjectId?.trim();
+    if (memorySubjectId) body.memorySubjectId = memorySubjectId;
     const raw = await postServer("/api/memory/remember", body, {
       retryTransient: true,
     });
@@ -220,5 +251,5 @@ export function buildServerPlatformToolExecutors(args: {
     };
   };
 
-  return { ...tableExecutors, ...webExecutors, rememberMemory };
+  return { ...tableExecutors, ...webExecutors, queryMemory, rememberMemory };
 }

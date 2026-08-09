@@ -36,11 +36,13 @@ export function buildMemorySubjectsForAgent(input: {
   userId?: string | null;
   spaceId?: string | null;
   agentKey: string;
+  memorySubjectId?: string | null;
   policy?: AgentMemoryPolicy;
 }): MemorySubjectRef[] {
   const policy = input.policy ?? resolveAgentMemoryPolicy({ agentKey: input.agentKey });
+  const subjectId = input.memorySubjectId?.trim() || input.agentKey;
   return [
-    { subjectType: "agent" as const, subjectId: input.agentKey },
+    { subjectType: "agent" as const, subjectId },
     policy.includeUserSubject && input.userId
       ? { subjectType: "user" as const, subjectId: input.userId }
       : null,

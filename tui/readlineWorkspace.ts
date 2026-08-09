@@ -553,6 +553,15 @@ async function runAgentChat(
     serverUrl: state.serverUrl,
     message: effectiveMessage,
     continueDialogId: state.dialogId,
+    ...(state.agentKey === DEFAULT_TUI_AGENT_KEY && env.NOLO_AUTO_ROUTE !== "0"
+      ? {
+          dialogAgentMode: "auto" as const,
+          memorySubjectId: "builtin:auto",
+        }
+      : {
+          dialogAgentMode: "fixed" as const,
+          memorySubjectId: effectiveAgentKey,
+        }),
     runtimeMode: state.runtimeMode,
     localRuntimeCwd: process.cwd(),
     scriptDir,

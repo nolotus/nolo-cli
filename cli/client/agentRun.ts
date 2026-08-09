@@ -507,6 +507,12 @@ async function runHttpAgentTurn(
         runtime: "bun",
         entrypoint: "nolo-cli",
         capabilities: ["text-io", "streaming", "slash-commands"],
+        ...(options.dialogAgentMode
+          ? { dialogAgentMode: options.dialogAgentMode }
+          : {}),
+        ...(options.memorySubjectId
+          ? { memorySubjectId: options.memorySubjectId }
+          : {}),
         ...(subjectRefs ? { subjectRefs } : {}),
         ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
         ...(blockedToolNames?.length ? { blockedToolNames } : {}),
@@ -695,9 +701,16 @@ async function runLocalAgentTurnForCli(
     allowedChildAgentKeys?.length ||
     allowedToolNames?.length ||
     blockedToolNames?.length ||
-    options.parentWakeOnTerminal
+    options.parentWakeOnTerminal ||
+    options.dialogAgentMode
       ? {
           ...(subjectRefs ? { subjectRefs } : {}),
+          ...(options.dialogAgentMode
+            ? { dialogAgentMode: options.dialogAgentMode }
+            : {}),
+          ...(options.memorySubjectId
+            ? { memorySubjectId: options.memorySubjectId }
+            : {}),
           ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
           ...(allowedToolNames?.length ? { allowedToolNames } : {}),
           ...(blockedToolNames?.length ? { blockedToolNames } : {}),

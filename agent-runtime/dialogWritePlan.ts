@@ -186,14 +186,33 @@ export function buildAgentRuntimeDialogWritePlan(args: {
   const nowIso = new Date(args.now).toISOString();
   const dialogKey = `dialog-${args.userId}-${dialogId}`;
   const subjectRefs = buildRuntimeSubjectRefs(args.input.runtimeContext);
+  const requestedAgentMode =
+    args.input.runtimeContext?.dialogAgentMode === "auto" ||
+    args.input.runtimeContext?.dialogAgentMode === "fixed"
+      ? args.input.runtimeContext.dialogAgentMode
+      : undefined;
+  const agentMode =
+    requestedAgentMode ??
+    (args.existingDialog?.agentMode === "auto" ? "auto" : "fixed");
+  const dialogAgentFields =
+    agentMode === "auto"
+      ? {
+          agentMode: "auto" as const,
+          cybots: [] as string[],
+          primaryAgentKey: undefined,
+        }
+      : {
+          agentMode: "fixed" as const,
+          cybots: [args.input.agentKey],
+          primaryAgentKey: args.input.agentKey,
+        };
   const dialogRecord = {
     ...asRecordOrEmpty(args.existingDialog),
     id: dialogId,
     dbKey: dialogKey,
     type: "dialog",
     userId: args.userId,
-    cybots: [args.input.agentKey],
-    primaryAgentKey: args.input.agentKey,
+    ...dialogAgentFields,
     title: pickDialogTitle({
       existingDialog: args.existingDialog,
       titleOverride: args.titleOverride,

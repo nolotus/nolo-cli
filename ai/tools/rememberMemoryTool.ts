@@ -1,4 +1,8 @@
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getActiveDialogKey } from "../../chat/dialog/dialogRuntimeStore";
+import { selectById } from "../../database/dbSlice";
+import type { DialogConfig } from "../../app/types";
+import { resolveDialogMemorySubjectId } from "../../chat/dialog/dialogAgentPolicy";
 import { callToolApi } from "./toolApiClient";
 import type { RememberMemoryScope } from "../memory/remember";
 import type { MemoryKind } from "../memory/types";
@@ -21,6 +25,10 @@ export async function rememberMemoryFunc(
   const spaceId = selectCurrentSpaceId(state) || undefined;
   const content = String(args.content ?? "").trim();
   const scope = args.scope ?? "auto";
+  const dialogKey = getActiveDialogKey();
+  const dialog = dialogKey
+    ? (selectById(state, dialogKey) as DialogConfig | null)
+    : null;
   const kind = args.kind ?? "episodic";
 
   if (!content) {
@@ -40,6 +48,9 @@ export async function rememberMemoryFunc(
       scope,
       kind,
       spaceId,
+      ...(scope === "auto"
+        ? { memorySubjectId: resolveDialogMemorySubjectId(dialog) }
+        : {}),
     },
     { withAuth: true }
   );

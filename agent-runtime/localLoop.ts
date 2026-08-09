@@ -1505,7 +1505,15 @@ export async function runLocalAgentTurn(
             name: toolName,
             arguments: toolCall.function.arguments,
             ...(userInputText ? { userInput: userInputText } : {}),
+            ...(input.runtimeContext
+              ? { runtimeContext: input.runtimeContext }
+              : {}),
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+          }, {
+            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+            ...(input.runtimeContext
+              ? { runtimeContext: input.runtimeContext }
+              : {}),
           });
           toolResult = await raceWithAbort(input, executePromise, toolName);
           const actionGate = buildActionGate({

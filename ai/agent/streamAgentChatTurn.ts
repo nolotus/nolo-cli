@@ -1648,6 +1648,12 @@ export const streamAgentChatTurnHandler = async (
                         runtime: "react",
                         entrypoint: "chat-dialog",
                         capabilities: ["streaming", "dialog-ui", "tool-cards"],
+                        ...(runtimeOptions?.memorySubjectId
+                            ? { memorySubjectId: runtimeOptions.memorySubjectId }
+                            : {}),
+                        ...(dialogConfig?.agentMode
+                            ? { dialogAgentMode: dialogConfig.agentMode }
+                            : {}),
                     },
                     ...(runtimeOptions?.quickChatReasoningEffort
                         ? {

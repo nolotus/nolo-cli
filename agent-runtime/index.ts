@@ -1,5 +1,17 @@
 export const AGENT_RUNTIME_PACKAGE_ID = "agent-runtime";
 
+export {
+  AUTO_ASSISTANT_MEMORY_SUBJECT_ID,
+  AUTO_EXECUTION_PROFILES,
+  DEFAULT_AUTO_EXECUTION_PROFILE,
+  DEFAULT_AUTO_EXECUTION_TIER,
+  resolveAutoExecutionProfile,
+} from "./autoExecutionProfiles";
+export type {
+  AutoExecutionProfile,
+  AutoExecutionTier,
+} from "./autoExecutionProfiles";
+
 export type {
   ActionGate,
   ActionGateKind,

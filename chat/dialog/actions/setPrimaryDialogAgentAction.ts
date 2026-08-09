@@ -21,7 +21,7 @@ export const setPrimaryDialogAgentAction = async (
     throw new Error("No current dialog selected");
   }
 
-  if (!agentId || typeof agentId !== "string") {
+  if (typeof agentId !== "string") {
     throw new Error("No valid agent ID provided");
   }
 
@@ -38,16 +38,27 @@ export const setPrimaryDialogAgentAction = async (
     await cleanupCliSessionForDialog({ dispatch, getState }, dialogConfig);
   }
 
-  return await dispatch(
-    patch({
-      dbKey: currentDialogKey,
-      changes: {
+  const changes = agentId
+    ? {
+        agentMode: "fixed" as const,
+        primaryAgentKey: agentId,
         cybots: replacePrimaryDialogAgentId(
           dialogConfig.cybots || [],
           agentId,
         ),
         updatedAt: formatISO(new Date()),
-      },
+      }
+    : {
+        agentMode: "auto" as const,
+        primaryAgentKey: undefined,
+        cybots: [],
+        updatedAt: formatISO(new Date()),
+      };
+
+  return await dispatch(
+    patch({
+      dbKey: currentDialogKey,
+      changes,
     }),
   ).unwrap();
 };

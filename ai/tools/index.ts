@@ -322,6 +322,10 @@ import {
   rememberMemoryFunc,
   rememberMemoryFunctionSchema,
 } from "./rememberMemoryTool";
+import {
+  queryMemoryFunc,
+  queryMemoryFunctionSchema,
+} from "./queryMemoryTool";
 import { execShellFunctionSchema, execShellFunc } from "./execShellTool";
 import { checkEnvFunctionSchema, checkEnvFunc } from "./checkEnvTool";
 
@@ -644,6 +648,17 @@ const baseToolDefinitions: ToolDefinition[] = [
       category: "交互 / UI",
     },
     behavior: "answer",
+  },
+  {
+    id: "queryMemory",
+    schema: queryMemoryFunctionSchema,
+    executor: queryMemoryFunc,
+    description: {
+      name: "queryMemory",
+      description: "按需查询当前用户、Space 和助手主体的长期记忆。",
+      category: "记忆 / 长期上下文",
+    },
+    behavior: "data",
   },
   {
     id: "rememberMemory",

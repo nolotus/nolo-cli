@@ -106,6 +106,14 @@ export type AgentThread = {
   dialogId?: string;
   dialogKey?: string;
 
+  /**
+   * Optional batch id grouping this run with siblings (CLI + server share the
+   * same semantics). Persisted on the thread so handleList can filter by batch
+   * and runOverlayMachine can aggregate cross-end. Absent on legacy records →
+   * undefined (no extra storage layer, schema-compatible with old data).
+   */
+  batchId?: string;
+
   subjectRefs?: AgentThreadSubjectRef[];
 
   schedule?: AgentThreadSchedule;

@@ -177,6 +177,13 @@ export interface Message {
   usage?: any;
   metadata?: Record<string, unknown>;
 
+  /** 自动重试进度（UI 展示「自动重试 N/M · Xs」）。仅流式等待期间存在。 */
+  retryProgress?: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+  };
+
   controller?: AbortController;
 
   // ========= Tool 扩展字段 =========

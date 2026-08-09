@@ -55,7 +55,7 @@ import {
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 import { themeColorSequence, themeText } from "./theme";
 import { displayWidth } from "./tuiAnsi";
-import { parseScrollAction } from "./tuiScrollbar";
+import { SGR_MOUSE_REGEX, parseScrollAction } from "./tuiScrollbar";
 import type { UserChoiceRequest, UserChoiceResult } from "../client/localRuntimeAdapterTypes";
 
 // ── Rendering ──────────────────────────────────────────────────────
@@ -243,10 +243,6 @@ export async function runAskChoiceDialog(args: {
   const input = args.input ?? process.stdin;
   const readKey = args.readKey ?? createRawKeyReader(input);
 
-  // Re-enable mouse tracking for wheel scroll inside the dialog.
-  // dialogHost.pause() disabled it; resumeFromDialog() re-enables on exit.
-  output.write("\x1b[?1006h\x1b[?1000h");
-
   const wasRaw = Boolean(input.isTTY && input.isRaw);
   let renderedLineCount = 0;
   const bottomAnchored = Boolean(args.bottomAnchored && args.bottomRow);
@@ -365,15 +361,18 @@ export async function runAskChoiceDialog(args: {
   };
   const onOutputResize = () => paint();
 
-  if (input.isTTY && !wasRaw) {
-    input.setRawMode?.(true);
-  }
-  if (bottomAnchored && outputIsTty(output)) {
-    resizeTarget.on?.("resize", onOutputResize);
-  }
-  paint();
-
   try {
+    // Re-enable mouse tracking for wheel scroll inside the dialog.
+    // dialogHost.pause() disabled it; resumeFromDialog() re-enables on exit.
+    output.write("\x1b[?1006h\x1b[?1000h");
+    if (input.isTTY && !wasRaw) {
+      input.setRawMode?.(true);
+    }
+    if (bottomAnchored && outputIsTty(output)) {
+      resizeTarget.on?.("resize", onOutputResize);
+    }
+    paint();
+
     while (state.phase === "active") {
       const sequence = await readKey();
       if (sequence == null) {
@@ -389,6 +388,14 @@ export async function runAskChoiceDialog(args: {
           delta: scrollAction === "wheel-up" ? -1 : 1,
         });
         paint();
+        continue;
+      }
+
+      // Any other SGR mouse report (click / drag / release) must never cancel
+      // the dialog. Swallow it silently — the user clicked into the terminal,
+      // not at a button. Re-entering the window from another app used to
+      // reject the prompt; this guard keeps it open without redrawing.
+      if (SGR_MOUSE_REGEX.test(sequence)) {
         continue;
       }
 

@@ -134,6 +134,11 @@ export async function runConfirmDialog(args: {
     titleLines,
     input,
     output,
+    // confirm is a non-list modal: a wheel scroll must do nothing at all — no
+    // highlight move, no repaint, no cancel (spec). Without this it would
+    // inherit runSelectDialog's default "move" and let the wheel flip
+    // Allow/Deny, which is the opposite of the intended silent-swallow.
+    wheelPolicy: "ignore",
     ...(args.readKey ? { readKey: args.readKey } : {}),
     ...(args.bottomAnchored ? { bottomAnchored: args.bottomAnchored } : {}),
     ...(args.bottomRow ? { bottomRow: args.bottomRow } : {}),

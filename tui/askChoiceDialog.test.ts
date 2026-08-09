@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 import {
   createInitialAskChoiceState,
   type AskChoiceQuestion,
@@ -8,6 +9,7 @@ import {
   runAskChoiceDialog,
 } from "./askChoiceDialog";
 import { getCliLocale, setCliLocale } from "./i18n";
+import { createRawKeyReader } from "./selectDialog";
 import { displayWidth, stripAnsi } from "./tuiAnsi";
 
 function makeQuestion(
@@ -261,5 +263,143 @@ describe("runAskChoiceDialog", () => {
     // After parking the cursor on Other, the next paint / exit clear must
     // walk back down before the classic `\x1b[1A\x1b[2K` clear loop.
     expect(joined).toMatch(/\x1b\[\d+B(?:\x1b\[1A\x1b\[2K)+/);
+  });
+
+  test("a wheel report moves the highlight, never cancels", async () => {
+    // Regression for the reported bug: scrolling the wheel in an ask_choice
+    // dialog cancelled it. The reader now recognizes the whole SGR report
+    // and parseScrollAction turns it into a wheel-down that moves the
+    // highlight. The report is emitted as a single chunk — see
+    // selectDialog.test.ts for why the split emit + esc-pending timer was
+    // removed (hand-rolled state machine, not real raw-mode delivery).
+    setCliLocale("en");
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const writes: string[] = [];
+    const resultPromise = runAskChoiceDialog({
+      request: {
+        question: "Pick",
+        choices: [
+          { id: "a", label: "A", userMessage: "chose A" },
+          { id: "b", label: "B", userMessage: "chose B" },
+        ],
+        blocking: true,
+      },
+      output: {
+        isTTY: false,
+        write: (c: string) => {
+          writes.push(String(c));
+          return true;
+        },
+      } as any,
+      input: { isTTY: false } as any,
+      readKey,
+    });
+
+    // Wheel-down moves highlight to choice B.
+    input.emit("data", "\x1b[<65;3;3M");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(writes.join("")).toContain("❯ [2] B");
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toEqual({
+      kind: "selected",
+      userMessage: "chose B",
+      label: "B",
+    });
+  });
+
+  test("a bare Escape still cancels an ask_choice dialog", async () => {
+    // A lone ESC with no continuation arriving within the 30ms bounded wait
+    // is a genuine bare Escape -> cancel. The split-arrival test below
+    // covers the other direction (ESC is a sequence prefix, not a cancel).
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const resultPromise = runAskChoiceDialog({
+      request: {
+        question: "Pick",
+        choices: [{ id: "a", label: "A", userMessage: "chose A" }],
+        blocking: true,
+      },
+      output: { write: () => true } as any,
+      input: { isTTY: false } as any,
+      readKey,
+    });
+    input.emit("data", "\x1b");
+    const result = await resultPromise;
+    expect(result).toEqual({ kind: "cancelled" });
+  });
+
+  test("a split SGR wheel report does not cancel an ask_choice dialog", async () => {
+    // Same split-arrival regression as selectDialog: the lone ESC half of a
+    // wheel report must NOT cancel. Same reader, two emits.
+    setCliLocale("en");
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const writes: string[] = [];
+    const resultPromise = runAskChoiceDialog({
+      request: {
+        question: "Pick",
+        choices: [
+          { id: "a", label: "A", userMessage: "chose A" },
+          { id: "b", label: "B", userMessage: "chose B" },
+        ],
+        blocking: true,
+      },
+      output: {
+        isTTY: false,
+        write: (c: string) => {
+          writes.push(String(c));
+          return true;
+        },
+      } as any,
+      input: { isTTY: false } as any,
+      readKey,
+    });
+
+    input.emit("data", "\x1b");
+    await new Promise((r) => setTimeout(r, 5));
+    input.emit("data", "[<65;3;3M");
+    await new Promise((r) => setTimeout(r, 10));
+    // Wheel-down moved highlight to choice B, not a cancel.
+    expect(writes.join("")).toContain("❯ [2] B");
+
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toEqual({
+      kind: "selected",
+      userMessage: "chose B",
+      label: "B",
+    });
+  });
+
+  test("a non-wheel SGR mouse click does not cancel an ask_choice dialog", async () => {
+    setCliLocale("en");
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const resultPromise = runAskChoiceDialog({
+      request: {
+        question: "Pick",
+        choices: [{ id: "a", label: "A", userMessage: "chose A" }],
+        blocking: true,
+      },
+      output: { write: () => true } as any,
+      input: { isTTY: false } as any,
+      readKey,
+    });
+    // A plain left-click report, emitted whole, must be swallowed.
+    input.emit("data", "\x1b[<0;1;1M");
+    await new Promise((r) => setTimeout(r, 10));
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toEqual({
+      kind: "selected",
+      userMessage: "chose A",
+      label: "A",
+    });
   });
 });

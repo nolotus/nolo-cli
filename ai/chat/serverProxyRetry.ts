@@ -63,10 +63,17 @@ export const performServerProxyFetchWithRetry = async ({
   execute,
   signal,
   logPrefix = "[fetchWithServerProxy]",
+  onRetry,
 }: {
   execute: () => Promise<Response>;
   signal?: AbortSignal;
   logPrefix?: string;
+  /** 每次决定重试前回调，供 UI 展示「自动重试 N/M · 剩余 Xs」。 */
+  onRetry?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+  }) => void;
 }): Promise<Response> => {
   let networkRetries = 0;
   let statusRetries = 0;
@@ -95,6 +102,11 @@ export const performServerProxyFetchWithRetry = async ({
         console.warn(
           `${logPrefix} 检测到${response.status}状态，${retryAfterMs}ms后重试...`
         );
+        onRetry?.({
+          attempt: statusRetries,
+          maxAttempts: maxStatusRetries,
+          delayMs: retryAfterMs,
+        });
         await waitForServerProxyRetry(retryAfterMs, signal);
         continue;
       }
@@ -115,6 +127,11 @@ export const performServerProxyFetchWithRetry = async ({
           `${logPrefix} 检测到网络瞬断，${retryDelay}ms后重试(第${networkRetries}次)...`,
           error
         );
+        onRetry?.({
+          attempt: networkRetries,
+          maxAttempts: MAX_SERVER_PROXY_RETRIES,
+          delayMs: retryDelay,
+        });
         await waitForServerProxyRetry(retryDelay, signal);
         continue;
       }

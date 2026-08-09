@@ -27,6 +27,12 @@ interface FetchParams {
   signal?: AbortSignal; // signal 是可选的
   // 仅用于 server-proxy 的 provider-call 证据链路（不会发给上游 provider）
   dialogId?: string;
+  /** 重试进度上报（UI 展示「自动重试 N/M · Xs」）。 */
+  onRetry?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+  }) => void;
 }
 
 const buildProxyPayload = (
@@ -100,11 +106,13 @@ const fetchWithServerProxy = async ({
   token,
   signal,
   dialogId,
+  onRetry,
 }: FetchParams): Promise<Response> => {
   try {
     const payload = buildProxyPayload(bodyData, api, agentConfig, dialogId);
     return await performServerProxyFetchWithRetry({
       signal,
+      onRetry,
       execute: () =>
         fetch(`${currentServer}${API_ENDPOINTS.CHAT}`, {
           method: "POST",

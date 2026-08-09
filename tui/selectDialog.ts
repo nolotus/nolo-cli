@@ -147,7 +147,7 @@ export function createRawKeyReader(input: NodeJS.ReadStream): KeyReader {
 
   const tryParseSequence = () => {
     if (!buffer) return null;
-    if (isSubmit(buffer) || isCancel(buffer)) {
+    if (isSubmit(buffer)) {
       const sequence = buffer;
       buffer = "";
       return sequence;
@@ -179,6 +179,9 @@ export function createRawKeyReader(input: NodeJS.ReadStream): KeyReader {
           return candidate;
         }
       }
+      // Bare ESC — wait for bounded timer to disambiguate from
+      // ESC-prefixed sequences that may arrive split across chunks.
+      if (buffer === "\x1b") return undefined;
       if (buffer.length >= 8) {
         buffer = "";
         return null;
@@ -197,11 +200,29 @@ export function createRawKeyReader(input: NodeJS.ReadStream): KeyReader {
   // arrows and Enter. A persistent 'data' listener uses the same delivery
   // path as the rest of the TUI and never drops bytes between reads.
   let waiter: ((sequence: string | null) => void) | null = null;
+  let escTimer: ReturnType<typeof setTimeout> | null = null;
 
   const tryDeliver = () => {
     if (!waiter || !buffer) return;
     const parsed = tryParseSequence();
-    if (parsed === undefined) return;
+    if (parsed === undefined) {
+      if (buffer === "\x1b" && !escTimer) {
+        escTimer = setTimeout(() => {
+          escTimer = null;
+          if (waiter && buffer === "\x1b") {
+            const resolve = waiter;
+            waiter = null;
+            buffer = "";
+            resolve("\x1b");
+          }
+        }, 30);
+      }
+      return;
+    }
+    if (escTimer) {
+      clearTimeout(escTimer);
+      escTimer = null;
+    }
     const resolve = waiter;
     waiter = null;
     resolve(parsed);
@@ -209,6 +230,10 @@ export function createRawKeyReader(input: NodeJS.ReadStream): KeyReader {
 
   const onData = (chunk: Buffer | string) => {
     buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    if (escTimer) {
+      clearTimeout(escTimer);
+      escTimer = null;
+    }
     tryDeliver();
   };
   input.on("data", onData);
@@ -220,6 +245,10 @@ export function createRawKeyReader(input: NodeJS.ReadStream): KeyReader {
       tryDeliver();
     });
   reader.dispose = () => {
+    if (escTimer) {
+      clearTimeout(escTimer);
+      escTimer = null;
+    }
     waiter = null;
     input.off("data", onData);
   };
@@ -243,6 +272,7 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   input?: NodeJS.ReadStream;
   output?: NodeJS.WritableStream;
   readKey?: KeyReader;
+  wheelPolicy?: "move" | "ignore";
   /**
    * Dock the list above the composer instead of letting it scroll to the top
    * of the terminal. When true, `bottomRow` (1-indexed absolute cursor row)
@@ -266,9 +296,6 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   const output = args.output ?? process.stdout;
   const input = args.input ?? process.stdin;
   const readKey = args.readKey ?? createRawKeyReader(input);
-
-  // Re-enable mouse tracking for wheel scroll inside the dialog.
-  output.write("\x1b[?1006h\x1b[?1000h");
 
   const wasRaw = Boolean(input.isTTY && input.isRaw);
   let renderedLineCount = 0;
@@ -334,17 +361,19 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
   };
   const onOutputResize = () => paint();
 
-  // Do not pause the stream here: the key reader listens via 'data' events,
-  // which an explicit pause() would silence.
-  if (input.isTTY && !wasRaw) {
-    input.setRawMode?.(true);
-  }
-  if (bottomAnchored && outputIsTty(output)) {
-    resizeTarget.on?.("resize", onOutputResize);
-  }
-  paint();
-
   try {
+    // Re-enable mouse tracking for wheel scroll inside the dialog.
+    output.write("\x1b[?1006h\x1b[?1000h");
+    // Do not pause the stream here: the key reader listens via 'data' events,
+    // which an explicit pause() would silence.
+    if (input.isTTY && !wasRaw) {
+      input.setRawMode?.(true);
+    }
+    if (bottomAnchored && outputIsTty(output)) {
+      resizeTarget.on?.("resize", onOutputResize);
+    }
+    paint();
+
     while (true) {
       const sequence = await readKey();
       if (sequence == null) {
@@ -354,6 +383,9 @@ export async function runSelectDialog<T extends SelectDialogItem>(args: {
       // Mouse wheel scrolls the list
       const scrollAction = parseScrollAction(sequence);
       if (scrollAction === "wheel-up" || scrollAction === "wheel-down") {
+        if (args.wheelPolicy === "ignore") {
+          continue; // non-list modals (confirm) silently swallow wheel
+        }
         selectedIndex = Math.min(
           Math.max(
             selectedIndex + (scrollAction === "wheel-up" ? -1 : 1),

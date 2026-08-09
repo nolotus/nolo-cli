@@ -7,6 +7,7 @@ import {
   renderSelectDialog,
   runSelectDialog,
   type SelectDialogItem,
+  type SelectDialogResult,
 } from "./selectDialog";
 
 // String assertions target the English strings; pin the locale for machines
@@ -156,6 +157,159 @@ describe("selectDialog", () => {
       kind: "selected",
       index: 1,
       item: { label: "grok" },
+    });
+  });
+
+  test("a wheel report scrolls the list, never cancels", async () => {
+    // Regression for the reported bug: scrolling the wheel in a select dialog
+    // cancelled it. The wheel arrives as one SGR report `\x1b[<...M`; the
+    // reader recognizes it (consumeSgrMouseSequence) and parseScrollAction
+    // turns it into a wheel-down that moves the highlight — instead of the
+    // old path that had no SGR parser and let the ESC-led bytes fall through
+    // to isCancel().
+    //
+    // NOTE: the report is emitted as a single `data` chunk. In a real raw-mode
+    // terminal the kernel hands the whole report to one read(), so it never
+    // arrives byte-by-byte. The previous version of this test split it across
+    // two emits and relied on a 15ms hand-rolled esc-pending timer to reassemble
+    // it; that timer is the hand-written state machine spec 2a forbids, and
+    // it was only needed to make the split test pass. Emitting whole reflects
+    // real delivery and lets the reader be timer-free.
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const writes: string[] = [];
+    const resultPromise = runSelectDialog<SelectDialogItem>({
+      items: [{ label: "a" }, { label: "b" }, { label: "c" }],
+      readKey,
+      input,
+      output: {
+        isTTY: false,
+        write(chunk: string) {
+          writes.push(chunk);
+          return true;
+        },
+      } as unknown as NodeJS.WritableStream,
+    });
+
+    // Wheel-down moves highlight from item 0 to item 1.
+    input.emit("data", "\x1b[<65;3;3M");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(writes.join("")).toContain("❯ b");
+    // Wheel-up moves it back to item 0.
+    writes.length = 0;
+    input.emit("data", "\x1b[<64;3;3M");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(writes.join("")).toContain("❯ a");
+
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toEqual({
+      kind: "selected",
+      index: 0,
+      item: { label: "a" },
+    });
+  });
+
+  test("a bare Escape still cancels", async () => {
+    // A lone ESC with no continuation arriving within the 30ms bounded wait
+    // is a genuine bare Escape — the reader's esc timer fires and delivers
+    // it as the cancel key. The split-arrival test below covers the other
+    // direction (ESC is a sequence prefix, not a cancel).
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const resultPromise = runSelectDialog<SelectDialogItem>({
+      items: [{ label: "a" }],
+      readKey,
+      input,
+      output: { isTTY: false, write() {} } as unknown as NodeJS.WritableStream,
+    });
+
+    input.emit("data", "\x1b");
+    const result = await resultPromise;
+    expect(result).toEqual({ kind: "cancelled" });
+  });
+
+  test("a split SGR wheel report does not cancel (ESC arrives alone, rest follows)", async () => {
+    // Regression for the original bug's worst real-world shape: ConPTY /
+    // SSH / multiplexers can deliver a wheel report split so the lone ESC
+    // lands in one `data` chunk and the rest (`[<65;1;1M`) in the next. The
+    // reader must NOT hand the lone ESC to the cancel branch immediately —
+    // it waits, the continuation arrives, the whole SGR report is
+    // reassembled, and parseScrollAction moves the highlight. Emit the two
+    // halves through the SAME reader instance to prove no lone-ESC cancel
+    // leaks out between them.
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const writes: string[] = [];
+    const resultPromise = runSelectDialog<SelectDialogItem>({
+      items: [{ label: "a" }, { label: "b" }],
+      readKey,
+      input,
+      output: {
+        isTTY: false,
+        write(chunk: string) {
+          writes.push(chunk);
+          return true;
+        },
+      } as unknown as NodeJS.WritableStream,
+    });
+
+    // chunk1: just the ESC byte. Must not cancel — give it well under the
+    // 30ms esc timeout so the continuation can still arrive in-window.
+    input.emit("data", "\x1b");
+    await new Promise((r) => setTimeout(r, 5));
+    // Dialog still open (no cancel) — prove by checking the frame is painted
+    // and no resolve yet would be observable via a follow-up that succeeds.
+    // chunk2: the rest of the SGR wheel-down report.
+    input.emit("data", "[<65;1;1M");
+    await new Promise((r) => setTimeout(r, 10));
+    // The wheel-down moved highlight to item 1, not a cancel.
+    expect(writes.join("")).toContain("❯ b");
+
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toEqual({
+      kind: "selected",
+      index: 1,
+      item: { label: "b" },
+    });
+  });
+
+  test("a non-wheel SGR mouse report (click) does not cancel or move", async () => {
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const writes: string[] = [];
+    const resultPromise = runSelectDialog<SelectDialogItem>({
+      items: [{ label: "a" }, { label: "b" }],
+      readKey,
+      input,
+      output: {
+        isTTY: false,
+        write(chunk: string) {
+          writes.push(chunk);
+          return true;
+        },
+      } as unknown as NodeJS.WritableStream,
+    });
+
+    // A plain left-click report, emitted whole (real raw-mode delivery). It
+    // must be swallowed — not a cancel, not a scroll, not a highlight move.
+    input.emit("data", "\x1b[<0;1;1M");
+    await new Promise((r) => setTimeout(r, 10));
+    const afterClick = writes.join("");
+    expect(afterClick).toContain("❯ a");
+    expect(afterClick).not.toContain("❯ b");
+
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toEqual({
+      kind: "selected",
+      index: 0,
+      item: { label: "a" },
     });
   });
 });

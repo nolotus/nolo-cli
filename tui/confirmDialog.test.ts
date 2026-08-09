@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
 import { getCliLocale, setCliLocale } from "./i18n";
 import { runConfirmDialog } from "./confirmDialog";
+import { createRawKeyReader } from "./selectDialog";
 
 describe("runConfirmDialog", () => {
   const originalLocale = getCliLocale();
@@ -273,5 +275,149 @@ describe("runConfirmDialog", () => {
       expect(out).toContain("Confirm reading a file outside the workspace");
       expect(out).toContain("This path is outside the current workspace. Allow this one-time access, or deny it.");
     }
+  });
+
+  test("a wheel report is swallowed: no move, no repaint, no cancel", async () => {
+    // confirm is a NON-list modal (spec): the wheel must be silently swallowed
+    // — it must NOT move the Allow/Deny highlight, NOT repaint, NOT cancel.
+    // The previous version of this test asserted wheel-down "moved the
+    // highlight and clamped at Deny", which is the opposite of the spec, and
+    // its assertion (`result === false`) passed under both the swallow and
+    // the move implementations because the initial index is already Deny — so
+    // it proved nothing. This rewrite fixes the semantics and makes the test
+    // fail if the wheel does anything at all.
+    setCliLocale("en");
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const writes: string[] = [];
+    const output = {
+      isTTY: true,
+      write(chunk: string) {
+        writes.push(chunk);
+        return true;
+      },
+    } as unknown as NodeJS.WritableStream;
+
+    const resultPromise = runConfirmDialog({
+      request: baseRequest,
+      input,
+      output,
+      readKey,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Snapshot the rendered frame right before the wheel. The initial index
+    // is 1 (Cancel), so Allow is the OTHER row.
+    const frameBeforeWheel = writes.join("");
+    expect(frameBeforeWheel).toContain("Allow");
+    expect(frameBeforeWheel).toContain("Cancel");
+    const initialAllowFocused = frameBeforeWheel.match(/❯ .*Allow/)?.[0] != null;
+    const initialCancelFocused = frameBeforeWheel.match(/❯ .*Cancel/)?.[0] != null;
+    // Sanity: exactly one of Allow/Cancel is focused, and it's Cancel (initialIndex 1).
+    expect(initialAllowFocused).toBe(false);
+    expect(initialCancelFocused).toBe(true);
+
+    // Wheel-up. If the wheel were treated as "move", it would move the
+    // highlight from Cancel (index 1) to Allow (index 0) — which is exactly
+    // the wrong behavior the spec forbids (a stray wheel would silently
+    // approve a destructive command). Under the correct "ignore" policy the
+    // highlight stays on Cancel and nothing is repainted.
+    writes.length = 0;
+    input.emit("data", "\x1b[<64;3;3M");
+    await new Promise((r) => setTimeout(r, 10));
+    // No repaint for a swallowed wheel event.
+    expect(writes.length).toBe(0);
+
+    // Wheel-down too: still no move, no repaint.
+    input.emit("data", "\x1b[<65;3;3M");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(writes.length).toBe(0);
+
+    // Submit — the dialog is still open (wheel did not cancel) and the
+    // highlight never left Cancel, so Enter picks Cancel → false.
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toBe(false);
+  });
+
+  test("a wheel-up from the initial Cancel does NOT move to Allow", async () => {
+    // The single most important regression for confirm: wheel-up on a dialog
+    // that starts on Cancel must NOT flip to Allow. Under the old "move"
+    // policy this would have moved index 1 → 0 and silently approved a
+    // destructive command. This test fails against any "move" implementation.
+    setCliLocale("en");
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const writes: string[] = [];
+    const output = {
+      isTTY: true,
+      write(chunk: string) {
+        writes.push(chunk);
+        return true;
+      },
+    } as unknown as NodeJS.WritableStream;
+
+    const resultPromise = runConfirmDialog({
+      request: baseRequest,
+      input,
+      output,
+      readKey,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Wheel-up: highlight must stay on Cancel.
+    input.emit("data", "\x1b[<64;3;3M");
+    await new Promise((r) => setTimeout(r, 10));
+    // No repaint ⇒ no move happened. If a move had occurred the frame would
+    // have been repainted with Allow focused.
+    expect(writes.join("").match(/❯ .*Allow/)).toBeNull();
+
+    // Submit Cancel to prove the dialog is still open and unchanged.
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toBe(false);
+  });
+
+  test("a bare Escape still cancels a confirm dialog", async () => {
+    setCliLocale("en");
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const output = { isTTY: true, write: () => true } as unknown as NodeJS.WritableStream;
+    const resultPromise = runConfirmDialog({
+      request: baseRequest,
+      input,
+      output,
+      readKey,
+    });
+    input.emit("data", "\x1b");
+    const result = await resultPromise;
+    expect(result).toBe(false); // cancel → deny
+  });
+
+  test("a non-wheel SGR mouse click does not cancel a confirm dialog", async () => {
+    setCliLocale("en");
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    (input as { isTTY?: boolean }).isTTY = true;
+    const readKey = createRawKeyReader(input);
+    const output = { isTTY: true, write: () => true } as unknown as NodeJS.WritableStream;
+    const resultPromise = runConfirmDialog({
+      request: baseRequest,
+      input,
+      output,
+      readKey,
+    });
+    // A plain left-click report, emitted whole, must be swallowed, not turned
+    // into a cancel. After the click, move up to Allow and submit — if the
+    // click had cancelled the dialog this Enter would never arrive.
+    input.emit("data", "\x1b[<0;1;1M");
+    await new Promise((r) => setTimeout(r, 10));
+    input.emit("data", "\x1b[A"); // up to Allow
+    await new Promise((r) => setTimeout(r, 10));
+    input.emit("data", "\r");
+    const result = await resultPromise;
+    expect(result).toBe(true); // Allow — proves the click did not cancel
   });
 });

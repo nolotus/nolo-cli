@@ -329,6 +329,10 @@ const STRINGS = {
     en: "selected",
     zh: "已选",
   },
+  dialogMultiSelectRequired: {
+    en: "Pick at least one option to submit",
+    zh: "至少选择一项才能提交",
+  },
   dialogConfirmHint: {
     en: "(↑↓ move · Enter choose · Esc cancel)",
     zh: "（↑↓ 移动 · Enter 选择 · Esc 取消）",

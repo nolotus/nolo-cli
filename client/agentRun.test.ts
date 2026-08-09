@@ -1184,7 +1184,7 @@ describe("cli agent run client", () => {
     expect(await run).toMatchObject({ exitCode: 0, dialogId: "dialog-live-shell" });
   });
 
-  test("restores the spinner for the next LLM round after hidden thinking and a tool", async () => {
+  test("restores the spinner for the next LLM round after thinking and a tool", async () => {
     const output = new CaptureOutput();
     (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
     let completeCalls = 0;
@@ -1203,7 +1203,7 @@ describe("cli agent run client", () => {
       serverUrl: "https://nolo.chat",
       message: "run tests",
       scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
+      env: { AUTH_TOKEN: "token-123" },
       output,
       runtimeMode: "local",
       localRuntimeAdapter: {
@@ -1264,7 +1264,9 @@ describe("cli agent run client", () => {
     const completedToolAt = inFlightOutput.lastIndexOf("frontend -> working locally");
     expect(completedToolAt).toBeGreaterThanOrEqual(0);
     expect(inFlightOutput.slice(completedToolAt)).toContain("working locally");
-    expect(inFlightOutput).not.toContain("choose a command");
+    // Thinking content now scrolls on the spinner line during the turn,
+    // but should be cleared by the time the spinner resumes for round 2.
+    // The visible assistant text should still be present.
     expect(inFlightOutput).toContain("frontend > I'll run the focused test.\n");
   });
 
@@ -2650,7 +2652,7 @@ describe("cli agent run client", () => {
     expect(text).not.toContain("nolo -> working...");
   });
 
-  test("SSE stream renders thinking events according to thinking mode (show vs hide)", async () => {
+  test("SSE stream shows thinking on the spinner line and text as content", async () => {
     const sseBody = [
       `data: ${JSON.stringify({ type: "thinking", content: "Deep thinking details..." })}`,
       "",
@@ -2660,45 +2662,26 @@ describe("cli agent run client", () => {
       "",
     ].join("\n");
 
-    // Mode: show
-    const outputShow = new CaptureOutput();
+    const output = new CaptureOutput();
+    (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
     await runAgentTurn({
       agentName: "nolo",
       agentKey: "agent-pub-test",
       serverUrl: "https://nolo.chat",
       message: "hello",
       scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "show" },
+      env: { AUTH_TOKEN: "token-123" },
       runtimeMode: "server",
-      output: outputShow,
+      output,
       fetchImpl: async () =>
         new Response(sseBody, {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
         }),
     });
-    expect(outputShow.text()).toContain("Deep thinking details...");
-    expect(outputShow.text()).toContain("Final answer");
-
-    // Mode: hide
-    const outputHide = new CaptureOutput();
-    await runAgentTurn({
-      agentName: "nolo",
-      agentKey: "agent-pub-test",
-      serverUrl: "https://nolo.chat",
-      message: "hello",
-      scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
-      runtimeMode: "server",
-      output: outputHide,
-      fetchImpl: async () =>
-        new Response(sseBody, {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        }),
-    });
-    expect(outputHide.text()).not.toContain("Deep thinking details...");
-    expect(outputHide.text()).toContain("Final answer");
+    // Thinking appears on the spinner line, not as standalone content
+    expect(output.text()).toContain("Deep thinking details...");
+    expect(output.text()).toContain("Final answer");
   });
 
   test("SSE stream renders compact tool events without verbose tool_result content flooding", async () => {
@@ -2771,7 +2754,7 @@ describe("cli agent run client", () => {
     expect(text).toContain("Actual response text");
   });
 
-  test("pure thinking + done stream falls back to (no text response) when thinking is hidden", async () => {
+  test("pure thinking + done stream shows thinking on spinner and falls back to (no text response)", async () => {
     const sseBody = [
       `data: ${JSON.stringify({ type: "thinking", content: "Thinking only..." })}`,
       "",
@@ -2779,44 +2762,27 @@ describe("cli agent run client", () => {
       "",
     ].join("\n");
 
-    // show mode: displays thinking
-    const outputShow = new CaptureOutput();
+    const output = new CaptureOutput();
+    (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
     await runAgentTurn({
       agentName: "nolo",
       agentKey: "agent-pub-test",
       serverUrl: "https://nolo.chat",
       message: "hello",
       scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "show" },
+      env: { AUTH_TOKEN: "token-123" },
       runtimeMode: "server",
-      output: outputShow,
+      output,
       fetchImpl: async () =>
         new Response(sseBody, {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
         }),
     });
-    expect(outputShow.text()).toContain("Thinking only...");
-
-    // hide mode: falls back to (no text response)
-    const outputHide = new CaptureOutput();
-    await runAgentTurn({
-      agentName: "nolo",
-      agentKey: "agent-pub-test",
-      serverUrl: "https://nolo.chat",
-      message: "hello",
-      scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
-      runtimeMode: "server",
-      output: outputHide,
-      fetchImpl: async () =>
-        new Response(sseBody, {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        }),
-    });
-    expect(outputHide.text()).not.toContain("Thinking only...");
-    expect(outputHide.text()).toContain("(no text response)");
+    // Thinking appears on the spinner line
+    expect(output.text()).toContain("Thinking only...");
+    // No text content, so fallback message shows
+    expect(output.text()).toContain("(no text response)");
   });
 
   describe("auto runtime local failure — no server fallback", () => {

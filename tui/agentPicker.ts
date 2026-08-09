@@ -8,7 +8,8 @@ import {
   renderAgentCatalogList,
   type AgentCatalogEntry,
 } from "./agentCatalog";
-import { runSelectDialog, type SelectDialogItem } from "./selectDialog";
+import { runSelectDialog, outputIsTty, type SelectDialogItem } from "./selectDialog";
+import { t } from "./i18n";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -50,12 +51,27 @@ export async function runAgentPicker(args: {
   const interactive =
     args.interactive ??
     ("isTTY" in input && Boolean(input.isTTY) && "isTTY" in output && Boolean(output.isTTY));
-  const entries = await loadAgentCatalog({
-    env: args.env,
-    currentKey: args.currentKey,
-    fetchImpl: args.fetchImpl,
-    fallbackFetchImpl: args.fallbackFetchImpl,
-  });
+
+  // 加载期间显示提示，网络快时一闪而过，慢时给用户反馈。
+  const isTty = outputIsTty(output);
+  if (isTty) {
+    output.write(t("agentPickerLoading"));
+  }
+
+  let entries: Awaited<ReturnType<typeof loadAgentCatalog>>;
+  try {
+    entries = await loadAgentCatalog({
+      env: args.env,
+      currentKey: args.currentKey,
+      fetchImpl: args.fetchImpl,
+      fallbackFetchImpl: args.fallbackFetchImpl,
+    });
+  } finally {
+    // 清除 loading 提示行（异常时也不残留）。
+    if (isTty) {
+      output.write("\r\x1b[2K");
+    }
+  }
 
   if (!interactive) {
     return {

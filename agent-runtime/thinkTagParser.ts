@@ -7,6 +7,8 @@
  * chunk-by-chunk parsing with partial-tag buffering.
  */
 
+import { longestTagPrefixLength } from "./tagPrefixMatch";
+
 export type ThinkParseState = {
   mode: "content" | "reasoning";
   /** unprocessed tail kept to detect tags split across chunks */
@@ -17,21 +19,6 @@ export type ThinkParseState = {
 
 const OPEN_TAG = "\u003cthink\u003e";
 const CLOSE_TAG = "\u003c/think\u003e";
-
-/**
- * Returns the length of the longest suffix of `buffer` that is also a
- * prefix of `tag`. Used to keep only the bytes that could complete a tag
- * when a chunk ends mid-tag.
- */
-function longestTagPrefixLength(buffer: string, tag: string): number {
-  const max = Math.min(buffer.length, tag.length - 1);
-  for (let len = max; len > 0; len--) {
-    if (tag.startsWith(buffer.slice(-len))) {
-      return len;
-    }
-  }
-  return 0;
-}
 
 /**
  * Extract thinking blocks from a complete response string.

@@ -1,5 +1,6 @@
 // ai/llm/providers.ts
 import { anthropicModels } from "../../integrations/anthropic/anthropicModels";
+import { anthropicOAuthModels } from "../../integrations/anthropic/anthropicOAuthModels";
 import { deepSeekModels } from "../../integrations/deepseek/models";
 import { googleModels } from "../../integrations/google/models";
 import { openAIModels } from "../../integrations/openai/models";
@@ -73,7 +74,7 @@ const MODEL_MAP = {
 } as const;
 
 export const MODEL_LOOKUP_MAP = {
-  anthropic: anthropicModels,
+  anthropic: [...anthropicModels, ...anthropicOAuthModels],
   xai: xaiModels,
   ...MODEL_MAP,
 } as const;

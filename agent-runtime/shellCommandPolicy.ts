@@ -176,17 +176,33 @@ const buildCombinedShellInput = (args: {
     .join("\n");
 };
 
-export function isDestructiveShellCommand(args: {
+/**
+ * Reduce a tool-call payload to the text policy patterns should scan, or
+ * undefined when there is nothing to scan. Commands that embed shell-string
+ * execution (`bash -c ...`, `env sh -c ...`) are scanned verbatim — the outer
+ * command is trivially non-destructive, so only the inner string matters; for
+ * plain command lines quoted segments are blanked first so keywords inside
+ * commit messages / echoed strings cannot trigger policy.
+ */
+function resolveScannableShellInput(args: {
   command?: unknown;
   input?: unknown;
-}): boolean {
+}): string | undefined {
   const combined = buildCombinedShellInput(args);
-  if (!combined.trim()) return false;
-  const scannable = SHELL_STRING_EXECUTION_PATTERNS.some((pattern) =>
+  if (!combined.trim()) return undefined;
+  return SHELL_STRING_EXECUTION_PATTERNS.some((pattern) =>
     pattern.test(combined),
   )
     ? combined
     : stripQuotedSegments(combined);
+}
+
+export function isDestructiveShellCommand(args: {
+  command?: unknown;
+  input?: unknown;
+}): boolean {
+  const scannable = resolveScannableShellInput(args);
+  if (scannable === undefined) return false;
   return SHELL_DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(scannable));
 }
 
@@ -210,14 +226,68 @@ export function isLongRunningShellCommand(args: {
   command?: unknown;
   input?: unknown;
 }): boolean {
-  const combined = buildCombinedShellInput(args);
-  if (!combined.trim()) return false;
-  const scannable = SHELL_STRING_EXECUTION_PATTERNS.some((pattern) =>
-    pattern.test(combined),
-  )
-    ? combined
-    : stripQuotedSegments(combined);
+  const scannable = resolveScannableShellInput(args);
+  if (scannable === undefined) return false;
   return LONG_RUNNING_COMMAND_PATTERNS.some((pattern) => pattern.test(scannable));
+}
+
+// Commands that clearly will not exit on their own (long sleeps, tail -f,
+// watch, infinite loops, plus the dev-server/watcher patterns above). Unlike
+// longRunningHint (prompt-only), these are acted on: execShell promotes them
+// to background immediately instead of freezing the conversation. A false
+// positive is cheap — the command still runs, just in the background — while
+// a false negative blocks the whole turn, so err on the detach side.
+const IMMEDIATE_DETACH_COMMAND_PATTERNS: RegExp[] = [
+  /\btail\s+(?:-\S*[fF]\S*|--follow)\b/,
+  /\bwatch\s+\S/,
+  /\bwhile\s+(?:true|:|\[\s*true\s*\])\s*;\s*do\b/,
+];
+
+// Sleeps longer than this many seconds are detached immediately. Short sleeps
+// (test pacing, retry backoff) stay inline so the turn keeps their ordering.
+// Exported: the execShell tool description (localWorkspaceToolDefs) quotes
+// this value verbatim — a consistency test locks the two together.
+export const IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS = 5;
+
+const SLEEP_PREFIX_PATTERN =
+  /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:nohup\s+|time\s+)*sleep\s+(\S+)/;
+
+function parseSleepDurationSeconds(token: string): number | undefined {
+  const match = /^(\d+(?:\.\d+)?)(s|m|h|d)?$/i.exec(token);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return undefined;
+  const unit = (match[2] ?? "s").toLowerCase();
+  const factor =
+    unit === "m" ? 60 : unit === "h" ? 3600 : unit === "d" ? 86400 : 1;
+  return value * factor;
+}
+
+function isLongSleepCommand(scannable: string): boolean {
+  const match = SLEEP_PREFIX_PATTERN.exec(scannable.trim());
+  if (!match) return false;
+  const durationToken = match[1] ?? "";
+  if (/^inf(inity)?$/i.test(durationToken)) return true;
+  const seconds = parseSleepDurationSeconds(durationToken);
+  // Unparseable duration (e.g. `sleep $DELAY`): detach to be safe — a blocked
+  // turn is worse than a backgrounded command.
+  if (seconds === undefined) return true;
+  return seconds > IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS;
+}
+
+export function isImmediateDetachShellCommand(args: {
+  command?: unknown;
+  input?: unknown;
+}): boolean {
+  const scannable = resolveScannableShellInput(args);
+  if (scannable === undefined) return false;
+  return (
+    isLongSleepCommand(scannable)
+    || LONG_RUNNING_COMMAND_PATTERNS.some((pattern) => pattern.test(scannable))
+    || IMMEDIATE_DETACH_COMMAND_PATTERNS.some((pattern) =>
+      pattern.test(scannable),
+    )
+  );
 }
 
 export function evaluateShellCommandPolicy(args: {

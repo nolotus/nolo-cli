@@ -1,8 +1,9 @@
 import type { RawUsage } from "./types";
 
-const APPROX_CHARS_PER_TOKEN = 4;
+export const APPROX_CHARS_PER_TOKEN = 4;
 
-const stringifyContent = (content: unknown): string => {
+/** 任意消息内容（string / 多模态数组 / null）→ 用于 token 估算的纯文本。 */
+export const stringifyContent = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content

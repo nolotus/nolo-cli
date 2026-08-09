@@ -16,6 +16,7 @@ import { kimiIdentityHeaders } from "./kimiUserAgent";
 import { parseSseDataLineJson } from "./sseDataLine";
 import { readSseFrames } from "./sseFrames";
 import { extractThinkContent, createThinkParserState } from "./thinkTagParser";
+import { createToolCallTextParserState } from "./toolCallTextParser";
 import {
   applyChatCompletionDelta,
   flushChatCompletionStream,
@@ -138,6 +139,7 @@ export async function readOpenAiCompatibleSseCompletion(args: {
     usage: undefined,
     accumulatedToolCalls: createToolCallAccumulator(),
     thinkState: createThinkParserState(),
+    toolCallTextState: createToolCallTextParserState(),
     onTextDelta: args.onTextDelta,
     onReasoningDelta: args.onReasoningDelta,
   };

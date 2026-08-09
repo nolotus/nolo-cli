@@ -21,6 +21,15 @@ export {
 } from "./thinkTagParser";
 export type { ThinkParseState } from "./thinkTagParser";
 export {
+  createToolCallTextParserState,
+  processToolCallTextChunk,
+  flushToolCallTextParser,
+  tryParseToolCallText,
+  processContentChunkWithToolCallStripping,
+  flushToolCallTextParserIntoCallback,
+} from "./toolCallTextParser";
+export type { ToolCallTextParseState } from "./toolCallTextParser";
+export {
   accumulateToolCallDelta,
   createToolCallAccumulator,
   finalizeAccumulatedToolCalls,

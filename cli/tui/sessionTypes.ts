@@ -1,5 +1,4 @@
 import type { AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
-import type { ThinkingDisplayMode } from "../client/thinkingOutput";
 import type { TurnTokenUsage } from "../client/tokenUsage";
 import type { ToolDisplayMode } from "../client/toolOutput";
 import type { AttachedImage } from "./pasteImage";
@@ -43,7 +42,6 @@ export type TuiState = {
    */
   modeLabel: string;
   gitStatus?: GitStatus;
-  thinkingDisplay: ThinkingDisplayMode;
   toolDisplay: ToolDisplayMode;
   turnTokens?: TurnTokenUsage;
   /**

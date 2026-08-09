@@ -96,6 +96,14 @@ export interface Model {
   supportsReasoningEffort?: boolean; // 是否支持推理功能
   endpointKey?: string;
 
+  /**
+   * 模型思考模式（provider 请求体格式分流的权威来源）。
+   * - "adaptive": Anthropic 5 代 + 4.6/4.7/4.8 系，走 thinking:{type:"adaptive"} + output_config.effort
+   * - "extended": 4.5 及更早（含 haiku-4-5），走 thinking:{type:"enabled", budget_tokens}
+   * 未填时由消费方 fallback 判定（如模型 id 子串匹配）。
+   */
+  thinkingMode?: "adaptive" | "extended";
+
   /** Optional benchmark capability metadata. */
   ability?: ModelAbility;
 }

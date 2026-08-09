@@ -998,18 +998,17 @@ function buildMessages(args: {
       .filter(Boolean);
     const stableContent = stableParts.join("\n\n");
     const dynamicContent = dynamicParts.join("\n\n");
-    // If there are dynamic blocks, we need to split the system message.
-    // For Claude: use content array with cache_control on the stable part.
-    // For non-Claude: join stable + dynamic into one string (prefix cache is automatic).
-    // The provider layer handles the actual cache_control injection;
-    // here we just ensure the stable prefix comes first.
     const systemContent = dynamicContent
       ? `${stableContent}\n\n${dynamicContent}`
       : stableContent;
     return {
       messages: [
         ...(systemContent
-          ? [{ role: "system" as const, content: systemContent }]
+          ? [{
+              role: "system" as const,
+              content: systemContent,
+              ...(stableContent ? { stable_prefix_chars: stableContent.length } : {}),
+            }]
           : []),
         ...prepareHistoryForNextTurn(args.history, args.contextReferenceResolver),
         { role: "user" as const, content: args.input },

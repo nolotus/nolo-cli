@@ -179,6 +179,7 @@ import {
   buildWorkspaceToolDefinition,
   filterDeclaredWorkspaceToolNames,
 } from "./localWorkspaceToolDefs";
+import { isImmediateDetachShellCommand } from "./shellCommandPolicy";
 
 function readTrimmedString(value: unknown): string | undefined {
   return asOptionalTrimmedString(value);
@@ -192,9 +193,13 @@ function resolveExecShellTimeoutMs(override: number | undefined) {
   return asOptionalPositiveFiniteNumber(Number(raw));
 }
 
-export function resolveDetachMs(override: number | undefined): number | undefined {
-  const fromOverride = asOptionalPositiveFiniteNumber(override);
-  if (fromOverride !== undefined) return fromOverride;
+/** Always returns a concrete threshold: override >= 0 (0 = detach immediately,
+ * the smart-detach path) wins, otherwise env NOLO_EXEC_SHELL_DETACH_MS,
+ * otherwise the default. */
+export function resolveDetachMs(override: number | undefined): number {
+  if (typeof override === "number" && Number.isFinite(override) && override >= 0) {
+    return override;
+  }
   const raw = process.env[EXEC_SHELL_DETACH_ENV];
   if (raw === undefined) return DEFAULT_EXEC_SHELL_DETACH_MS;
   const parsed = asOptionalPositiveFiniteNumber(Number(raw));
@@ -1173,6 +1178,68 @@ function resolveGrepBinary(): string | null {
   return resolveExecutableOnPath("grep");
 }
 
+export type WorkspaceExecResult =
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      timedOut: false;
+      spawnFailed: true;
+      content: string;
+      aborted?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    }
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      timedOut: false;
+      detached: true;
+      pid: number;
+      label: string;
+      content: string;
+      spawnFailed?: undefined;
+      aborted?: undefined;
+    }
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      timedOut: boolean;
+      aborted: boolean;
+      content: string;
+      spawnFailed?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    };
+
+export type WorkspaceExecLimitedLinesResult =
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      limitedByMaxResults: false;
+      spawnFailed: true;
+      aborted?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    }
+  | {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      limitedByMaxResults: boolean;
+      spawnFailed?: undefined;
+      aborted?: undefined;
+      detached?: undefined;
+      pid?: undefined;
+      label?: undefined;
+    };
+
 async function runWorkspaceCommand(args: {
   workspaceRoot: string;
   command: string[];
@@ -1182,7 +1249,7 @@ async function runWorkspaceCommand(args: {
   commandPrefix?: string[];
   abortSignal?: AbortSignal;
   detachMs?: number; // 超过这个时间仍未退出 → 转后台；默认从 env 读，见 resolveDetachMs
-}) {
+}): Promise<WorkspaceExecResult> {
   const timeoutMs = asOptionalPositiveFiniteNumber(args.timeoutMs);
   const detached = process.platform !== "win32";
   const command = [
@@ -1275,12 +1342,14 @@ async function runWorkspaceCommand(args: {
   // detach path: if the command runs longer than detachMs it is promoted to
   // a background process (registered in processRegistry) and the turn
   // continues instead of hanging forever. Default 120s, env-overridable.
+  // execShell passes detachMs=0 for commands that obviously never exit
+  // (isImmediateDetachShellCommand) so they never block the conversation.
   const effectiveDetachMs = resolveDetachMs(args.detachMs);
-  const detachPromise = effectiveDetachMs
-    ? new Promise<typeof detachResult>((r) => {
-        detachTimer = setTimeout(() => r(detachResult), effectiveDetachMs);
-      })
-    : null;
+  // Note: 0 is a valid value meaning "detach immediately" — never use a
+  // truthiness check here.
+  const detachPromise = new Promise<typeof detachResult>((r) => {
+    detachTimer = setTimeout(() => r(detachResult), effectiveDetachMs);
+  });
 
   const racers: Promise<unknown>[] = [exitPromise];
   if (timeoutMs) {
@@ -1291,7 +1360,7 @@ async function runWorkspaceCommand(args: {
     );
   }
   if (abortPromise) racers.push(abortPromise);
-  if (detachPromise) racers.push(detachPromise);
+  racers.push(detachPromise);
 
   let raceWinner: unknown;
   try {
@@ -1330,29 +1399,46 @@ async function runWorkspaceCommand(args: {
   }
 
   if (didDetach) {
-    // Promote the still-running child to a background process: register it
-    // (so listProcesses / processRegistry can inspect it), detach host-signal
-    // forwarding (the child survives independently), and stop reading
+    // Promote the still-running child to a background process: register it so
+    // listProcesses / processRegistry can inspect it, and stop reading
     // stdout/stderr — those streams staying open is harmless once the child
-    // is no longer our responsibility.
-    detachSignalCleanup();
+    // is no longer our responsibility. Host-signal forwarding stays active
+    // (same lifecycle as launchProcess): a backgrounded command belongs to
+    // this host session and is cleaned up on SIGHUP/SIGTERM/SIGINT (terminal
+    // close) instead of orphaning; the forwarder is removed once the child
+    // settles.
+    // With detachMs=0 (smart detach) the detach timer can win the race before
+    // a spawn error surfaces; swallow that late rejection so it cannot become
+    // an unhandledRejection after we already returned.
+    exitPromise.catch(() => {});
     const pid = typeof proc.pid === "number" ? proc.pid : 0;
     const label = deriveLabel(args.command.join(" "));
     const pgid = pid;
     const registry = getProcessRegistry();
     registry.add({ pid, pgid, command: args.command.join(" "), label });
     proc.on("close", (code) => {
+      detachSignalCleanup();
       registry.markExited(pid, code ?? 1);
     });
+    const immediate = effectiveDetachMs === 0;
+    const reason = immediate
+      ? `command looks long-running; moved to background immediately (pid=${pid}, label=${label})`
+      : `command detached to background after ${effectiveDetachMs}ms (pid=${pid}, label=${label})`;
     return {
       stdout: "",
-      stderr: `command detached to background after ${effectiveDetachMs}ms (pid=${pid}, label=${label})\nUse listProcesses / processRegistry to inspect.`,
+      stderr: `${reason}\nUse listProcesses to inspect or stop it.`,
       exitCode: 0,
       timedOut: false,
       detached: true,
       pid,
       label,
-      content: JSON.stringify({ detached: true, pid, label, status: "running" }),
+      content: JSON.stringify({
+        detached: true,
+        pid,
+        label,
+        status: "running",
+        ...(immediate ? { reason: "long-running-command" } : {}),
+      }),
     };
   }
 
@@ -1385,7 +1471,7 @@ async function runWorkspaceCommandLimitedLines(args: {
   command: string[];
   maxLines: number;
   commandPrefix?: string[];
-}) {
+}): Promise<WorkspaceExecLimitedLinesResult> {
   const command = [
     ...(args.commandPrefix ?? []),
     ...args.command,
@@ -1847,7 +1933,7 @@ async function searchFilesTool(args: {
   ];
   let searchEngine: WorkspaceSearchEngine = "js";
   let binariesUnavailable = !rgBinary && !grepBinary;
-  const result = await (async () => {
+  const result = await (async (): Promise<WorkspaceExecResult | WorkspaceExecLimitedLinesResult> => {
     if (rgCommand) {
       try {
         const rgResult = maxResults && !contextLines
@@ -2375,7 +2461,11 @@ async function execShellTool(args: {
     outputLimit: args.commandOutputLimit,
     commandPrefix: args.commandPrefix,
     abortSignal: args.abortSignal,
-    detachMs: args.detachMs,
+    // Commands that clearly never exit (long sleeps, tail -f, watch, dev
+    // servers, infinite loops) are promoted to background immediately so the
+    // turn — and the user's conversation — keeps going. Everything else keeps
+    // the caller/env detach grace window.
+    detachMs: isImmediateDetachShellCommand({ command }) ? 0 : args.detachMs,
   });
   const activity = extractActivity(parsed);
   return {

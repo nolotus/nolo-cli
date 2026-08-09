@@ -205,4 +205,63 @@ describe("fetchWithTransientRetry", () => {
     expect(calls.length).toBe(3);
     expect(slept.length).toBe(2);
   });
+
+  it("reports retry progress via onRetry with attempt/maxAttempts/delayMs", async () => {
+    const slept: number[] = [];
+    const reported: Array<{ attempt: number; maxAttempts: number; delayMs: number }> = [];
+    const { impl, calls } = scriptedFetch([
+      json(503, { retryAfterMs: 1500 }),
+      json(200, { ok: true }),
+    ]);
+    const res = await fetchWithTransientRetry(impl, "https://example.test/x", undefined, {
+      sleep: async (ms) => { slept.push(ms); },
+      onRetry: (info) => reported.push(info),
+    });
+    expect(res.status).toBe(200);
+    expect(calls.length).toBe(2);
+    expect(reported).toEqual([{ attempt: 2, maxAttempts: 3, delayMs: 1500 }]);
+  });
+
+  it("reports 502 retry progress when retryableStatuses includes it", async () => {
+    const reported: Array<{ attempt: number; maxAttempts: number; delayMs: number }> = [];
+    const { impl, calls } = scriptedFetch([
+      json(502, { error: "bad gateway" }),
+      json(200, { ok: true }),
+    ]);
+    const res = await fetchWithTransientRetry(
+      impl,
+      "https://example.test/x",
+      undefined,
+      {
+        sleep: async () => {},
+        retryableStatuses: new Set([429, 502, 503]),
+        onRetry: (info) => reported.push(info),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(calls.length).toBe(2);
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.attempt).toBe(2);
+    expect(reported[0]!.maxAttempts).toBe(3);
+  });
+
+  it("reports network-error retries via onRetry too", async () => {
+    const reported: Array<{ attempt: number; maxAttempts: number; delayMs: number }> = [];
+    let calls = 0;
+    const impl = (async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("ECONNRESET socket hang up");
+      return json(200, { ok: true });
+    }) as any;
+    const res = await fetchWithTransientRetry(impl, "https://example.test/x", undefined, {
+      sleep: async () => {},
+      onRetry: (info) => reported.push(info),
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toBe(2);
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.attempt).toBe(2);
+    expect(reported[0]!.maxAttempts).toBe(3);
+    expect(reported[0]!.delayMs).toBeGreaterThan(0);
+  });
 });

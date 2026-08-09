@@ -558,7 +558,6 @@ async function runAgentChat(
     scriptDir,
     env: {
       ...env,
-      NOLO_CLI_THINKING: state.thinkingDisplay,
       NOLO_CLI_TOOLS: state.toolDisplay,
     },
     output,
@@ -584,6 +583,9 @@ async function runAgentChat(
               env: factoryEnv,
               cwd: factoryOptions?.cwd ?? state.cwd,
               pastedTextStore: options.pastedTextStore,
+              ...(options.activityReporter
+                ? { activityReporter: options.activityReporter }
+                : {}),
             }),
         }
       : {}),

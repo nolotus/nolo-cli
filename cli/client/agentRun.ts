@@ -35,7 +35,10 @@ import {
   type AgentRunSubjectRef,
   type RunAgentTurnOptions,
   type RunAgentTurnResult,
+  type TaskEvidenceInput,
 } from "./agentRunTypes";
+
+export type { RunAgentTurnOptions, RunAgentTurnResult, TaskEvidenceInput };
 import { Spinner } from "./agentRunSpinner";
 import {
   resolveServerPlatformToolNames,
@@ -95,6 +98,9 @@ function buildDefaultLocalRuntimeAdapter(options: RunAgentTurnOptions) {
       : {}),
     ...(options.pastedTextStore?.items.size
       ? { pastedTextStore: options.pastedTextStore }
+      : {}),
+    ...(options.activityReporter
+      ? { activityReporter: options.activityReporter }
       : {}),
   });
 }
@@ -453,7 +459,7 @@ async function readAgentRunFailureMetadata(
 async function runHttpAgentTurn(
   options: RunAgentTurnOptions,
   authToken: string,
-) {
+): Promise<RunAgentTurnResult> {
   const spinner = new Spinner(
     options.output,
     `${options.agentName} -> working`,
@@ -618,7 +624,6 @@ async function runHttpAgentTurn(
 
   const content = formatAssistantResponseForCli(
     String(data?.content ?? data?.message ?? ""),
-    options,
   );
   if (content) {
     options.output.write(`\n${options.agentName} > ${content}\n`);
@@ -640,7 +645,7 @@ async function runHttpAgentTurn(
   };
 }
 
-async function runInjectedLocalAgentTurn(options: RunAgentTurnOptions) {
+async function runInjectedLocalAgentTurn(options: RunAgentTurnOptions): Promise<RunAgentTurnResult> {
   return runLocalAgentTurnForCli(options, { reportFailure: true });
 }
 
@@ -654,7 +659,7 @@ async function refreshMissingLocalAgentConfig(options: RunAgentTurnOptions) {
 async function runLocalAgentTurnForCli(
   options: RunAgentTurnOptions,
   settings: { reportFailure: boolean },
-) {
+): Promise<RunAgentTurnResult> {
   const resolvedBaseAdapter = resolveLocalRuntimeAdapter(options);
   const baseAdapter = (() => {
     let adapter =
@@ -891,7 +896,7 @@ async function runLocalAgentTurnForCli(
   }
 }
 
-export async function runAgentTurn(options: RunAgentTurnOptions) {
+export async function runAgentTurn(options: RunAgentTurnOptions): Promise<RunAgentTurnResult> {
   const authToken = resolveAuthToken(options.env);
   const runtimeMode = resolveRequestedRuntimeMode(options);
 

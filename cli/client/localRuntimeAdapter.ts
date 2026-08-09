@@ -12,6 +12,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   AgentRuntimeChatMessage,
+  AgentRuntimeResult,
   AgentRuntimeToolCall,
   AgentRuntimeToolCallInput,
   AgentRuntimeToolResult,
@@ -234,6 +235,14 @@ import {
 import { fetchAntigravityCloudCodeCompletion } from "../../agent-runtime/antigravityCloudCodeProvider";
 import { isAntigravityOAuthAgent } from "../../agent-runtime/antigravityOAuth";
 import {
+  accumulateGeminiChunks,
+  buildGeminiGenerateContentRequest,
+  isGemini3Model,
+  shouldUseGeminiNativeToolRoute,
+} from "../../agent-runtime/geminiNativeShared";
+import { readSseDataValues } from "../../agent-runtime/sseFrames";
+import { parseSseDataLineJson } from "../../agent-runtime/sseDataLine";
+import {
   fetchAnthropicMessagesCompletion,
   isAnthropicOAuthAgent,
 } from "../../agent-runtime/anthropicMessagesProvider";
@@ -241,6 +250,10 @@ import {
   createCursorProvider,
   isCursorOAuthAgent,
 } from "../../agent-runtime/cursor/cursorProvider";
+import {
+  fetchCodexResponsesCompletion,
+  isCodexOAuthAgent,
+} from "../../agent-runtime/codexResponsesProvider";
 import { readOAuthCredential } from "../../agent-runtime/oauthTokenStore";
 import { getDefaultCliLocalRuntimeDb } from "../localRuntimeDb";
 import { resolveAgentRuntimeConfigFromRecord } from "./agentConfigResolver";
@@ -859,6 +872,90 @@ export function createCliLocalRuntimeAdapter(
         };
       }
 
+      // ChatGPT Codex (subscription OAuth) — Responses API at
+      // /backend-api/codex/responses. ChatGPT OAuth tokens cannot call
+      // api.openai.com/v1/responses (returns 401 missing_scope: model.request);
+      // they must go through the Codex backend. Mirrors the server-side
+      // loopUpstream.ts Codex branch.
+      if (isCodexOAuthAgent(agentConfig)) {
+        const accessToken = await apiKeyRefResolver("chatgpt");
+        if (!accessToken) {
+          throw new Error(
+            'OAuth credential for "chatgpt" not found locally. Run `nolo auth chatgpt`.',
+          );
+        }
+        const credential = readOAuthCredential("chatgpt");
+        const accountId = credential?.accountId;
+        const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
+          agentConfig,
+          deps.env,
+          buildProviderOpenAiTools,
+          additionalToolNames,
+          { hasUserChoice: Boolean(deps.requestUserChoice) },
+        );
+        logLocalRuntimeDiagnostic("provider.selected", {
+          agentKey: agentConfig.key,
+          transport: "codex-responses",
+          provider: "openai",
+          model: agentConfig.model ?? "gpt-5.6-sol",
+          hasApiKey: true,
+        });
+        return {
+          model: agentConfig.model || "gpt-5.6-sol",
+          complete: async (messages, options) => {
+            const result = await fetchCodexResponsesCompletion({
+              agentConfig,
+              accessToken,
+              ...(accountId ? { accountId } : {}),
+              openAiBody: {
+                model: agentConfig.model || "gpt-5.6-sol",
+                messages,
+                stream: false,
+                ...(tools.length > 0 ? { tools } : {}),
+              },
+              fetchImpl: (url: string | URL | Request, init?: RequestInit) =>
+                fetchWithTransientRetry(fetchImpl, url, init, {
+                  sleep: deps.sleep,
+                  loopbackRequest,
+                }),
+            });
+            if (result.status < 200 || result.status >= 300) {
+              const errMsg =
+                result.body?.error &&
+                typeof result.body.error === "object" &&
+                typeof result.body.error.message === "string"
+                  ? result.body.error.message
+                  : JSON.stringify(result.body);
+              throw new Error(
+                `local Codex OAuth provider failed: HTTP ${result.status} ${errMsg}`,
+              );
+            }
+            const choice = Array.isArray(result.body.choices)
+              ? result.body.choices[0]
+              : undefined;
+            const message = choice?.message ?? {};
+            const content = typeof message.content === "string" ? message.content : "";
+            const tool_calls = Array.isArray(message.tool_calls)
+              ? message.tool_calls
+              : undefined;
+            if (content && options?.onTextDelta) options.onTextDelta(content);
+            logLocalRuntimeDiagnostic("provider.request.result", {
+              agentKey: agentConfig.key,
+              transport: "codex-responses",
+              ok: true,
+              contentChars: content.length,
+              toolCallCount: tool_calls?.length ?? 0,
+              requestedToolNames,
+            });
+            return {
+              content,
+              ...(tool_calls ? { tool_calls } : {}),
+              trace: messages,
+            };
+          },
+        };
+      }
+
       // Cursor OAuth uses a bespoke ConnectRPC + protobuf wire (HTTP/2 to
       // api2.cursor.sh), not OpenAI-compatible chat.completions. Route through
       // the dedicated cursorProvider which translates nolo messages to the
@@ -941,6 +1038,125 @@ export function createCliLocalRuntimeAdapter(
         };
       }
 
+      // Gemini 3 系列 + tools → 走 native generateContent 以支持 thought_signature
+      // Platform proxy 的 OpenAI-compatible 路径无法传递 thought_signature
+      if (
+        shouldUsePlatformChatProvider(deps.env, agentConfig) &&
+        isGemini3Model(agentConfig.model ?? "") &&
+        agentConfig.provider === "google"
+      ) {
+        const providerConfig = await resolvePlatformChatProviderConfig({
+          agentConfig,
+          env: deps.env,
+          apiKeyRefResolver,
+          credentialBroker,
+          syncFetcher,
+        });
+        const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
+          agentConfig,
+          deps.env,
+          buildProviderOpenAiTools,
+          additionalToolNames,
+          { hasUserChoice: Boolean(deps.requestUserChoice) },
+        );
+
+        // 只有本地有 API key 时才走 native route；
+        // platform agent（无本地 key）由 server 端 chatHandler 的 native 路由处理
+        if (
+          tools.length > 0 &&
+          providerConfig.apiKey &&
+          shouldUseGeminiNativeToolRoute(
+            agentConfig.provider ?? "",
+            agentConfig.model ?? "",
+            tools,
+            () => false, // CLI 端不区分 image 模型
+          )
+        ) {
+          logLocalRuntimeDiagnostic("provider.selected", {
+            agentKey: agentConfig.key,
+            transport: "gemini-native-tool",
+            apiSource: agentConfig.apiSource ?? null,
+            provider: providerConfig.provider,
+            model: providerConfig.model,
+            hasApiKey: Boolean(providerConfig.apiKey),
+          });
+          return {
+            model: providerConfig.model,
+            complete: async (messages, options) => {
+              const requestBody = buildGeminiGenerateContentRequest({
+                messages: messages as unknown[],
+                tools: tools as unknown[],
+                maxTokens: typeof agentConfig.max_tokens === "number"
+                  ? agentConfig.max_tokens
+                  : undefined,
+                temperature: typeof agentConfig.temperature === "number"
+                  ? agentConfig.temperature
+                  : undefined,
+                attachSkipThoughtSignature: true,
+              });
+
+              const model = providerConfig.model;
+              const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
+
+              logLocalRuntimeDiagnostic("provider.request.start", {
+                agentKey: agentConfig.key,
+                transport: "gemini-native-tool",
+                model,
+                messageCount: messages.length,
+                toolCount: tools.length,
+                requestedToolNames,
+              });
+
+              const res = await fetchImpl(url, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": providerConfig.apiKey ?? "",
+                },
+                body: JSON.stringify(requestBody),
+                signal: AbortSignal.timeout(120000),
+              });
+
+              if (!res.ok) {
+                const errText = await res.text();
+                logLocalRuntimeDiagnostic("provider.request.failed", {
+                  agentKey: agentConfig.key,
+                  transport: "gemini-native-tool",
+                  status: res.status,
+                  error: errText.slice(0, 200),
+                });
+                throw new Error(
+                  `gemini native tool provider failed: HTTP ${res.status} ${errText.slice(0, 500)}`,
+                );
+              }
+
+              const chunks = await readSseDataValues(res, parseSseDataLineJson);
+              const { text, toolCalls, usage } = accumulateGeminiChunks(chunks);
+
+              if (text && options?.onTextDelta) {
+                options.onTextDelta(text);
+              }
+
+              const result: AgentRuntimeResult = {
+                content: text,
+                model,
+                tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+                ...(usage ? { usage } : {}),
+                trace: messages,
+              };
+              logLocalRuntimeDiagnostic("provider.request.result", {
+                agentKey: agentConfig.key,
+                transport: "gemini-native-tool",
+                ok: true,
+                contentChars: text.length,
+                toolCallCount: toolCalls.length,
+              });
+              return result;
+            },
+          };
+        }
+      }
+
       if (shouldUsePlatformChatProvider(deps.env, agentConfig)) {
         const providerConfig = await resolvePlatformChatProviderConfig({
           agentConfig,
@@ -1004,6 +1220,17 @@ export function createCliLocalRuntimeAdapter(
               {
                 sleep: deps.sleep,
                 loopbackRequest,
+                // auto 档位转发 nolo.chat 时，网关层 502（server: Caddy、空 body）
+                // 意味着请求根本没到 Bun 上游，provider 未受理，重试安全。
+                // 与 429/503 同口径：不会重复计费/重复生成。
+                retryableStatuses: new Set([429, 502, 503]),
+                onRetry: deps.activityReporter
+                  ? ({ attempt, maxAttempts, delayMs }) => {
+                      deps.activityReporter!(
+                        `自动重试 ${attempt}/${maxAttempts} · ${Math.ceil(delayMs / 1000)}s`,
+                      );
+                    }
+                  : undefined,
               },
             );
             if (!res.ok) {

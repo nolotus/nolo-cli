@@ -25,6 +25,12 @@ import {
   processThinkChunk,
   type ThinkParseState,
 } from "../../agent-runtime/thinkTagParser";
+import {
+  createToolCallTextParserState,
+  processContentChunkWithToolCallStripping,
+  flushToolCallTextParserIntoCallback,
+  type ToolCallTextParseState,
+} from "../../agent-runtime/toolCallTextParser";
 import { EMPTY_ASSISTANT_REPAIR_PROMPT } from "../../agent-runtime/localLoop";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
@@ -150,6 +156,7 @@ type StreamState = {
   accumulatedToolCalls: any[];
   reasoningBuffer: string;
   thinkState: ThinkParseState;
+  toolCallTextState: ToolCallTextParseState;
   assistantToolCalls?: AssistantToolCall[];
   hasHandedOff: boolean;
   hasProcessedToolCalls: boolean;
@@ -251,6 +258,7 @@ function createInitialStreamState(): StreamState {
     accumulatedToolCalls: [],
     reasoningBuffer: "",
     thinkState: createThinkParserState(),
+    toolCallTextState: createToolCallTextParserState(),
     assistantToolCalls: undefined,
     hasHandedOff: false,
     hasProcessedToolCalls: false,
@@ -488,7 +496,21 @@ function applyDelta(
   // 文本增量：模型可能把思考过程直接包在 \u003cthink\u003e 标签里返回（如 MiniMax M3）
   const contentChunk = delta.content || "";
   if (contentChunk) {
-    const parsed = processThinkChunk(contentChunk, next.thinkState);
+    // Strip Qwen3-style tool-call text markers from visible content.
+    const { cleanedContent, state: tcState } =
+      processContentChunkWithToolCallStripping(
+        contentChunk,
+        next.toolCallTextState,
+        (name, arguments_) => {
+          next.accumulatedToolCalls = accumulateToolCallChunks(
+            next.accumulatedToolCalls ?? [],
+            [{ index: next.accumulatedToolCalls.length, type: "function", function: { name, arguments: arguments_ } }],
+          );
+        },
+      );
+    next.toolCallTextState = tcState;
+    if (!cleanedContent) return { state: next, hasNewVisibleContent };
+    const parsed = processThinkChunk(cleanedContent, next.thinkState);
     next.thinkState = parsed.state;
     if (parsed.reasoning) {
       next.reasoningBuffer = (next.reasoningBuffer || "") + parsed.reasoning;
@@ -805,15 +827,26 @@ async function handleStreamCompletion(
   let hasPendingInteraction = false;
 
   // Flush any buffered think-tag bytes so the final message is complete.
+  const { residualContent, state: tcFlushState } = flushToolCallTextParserIntoCallback(
+    state.toolCallTextState,
+    (name, arguments_) => {
+      state.accumulatedToolCalls = accumulateToolCallChunks(
+        state.accumulatedToolCalls ?? [],
+        [{ index: state.accumulatedToolCalls.length, type: "function", function: { name, arguments: arguments_ } }],
+      );
+    },
+  );
+  state.toolCallTextState = tcFlushState;
   const flushed = flushThinkParser(state.thinkState);
   state.thinkState = flushed.state;
   if (flushed.reasoning) {
     state.reasoningBuffer = (state.reasoningBuffer || "") + flushed.reasoning;
   }
-  if (flushed.content) {
+  const combinedFlushContent = residualContent + (flushed.content ?? "");
+  if (combinedFlushContent) {
     state = {
       ...state,
-      contentBuffer: appendTextChunk(state.contentBuffer, flushed.content),
+      contentBuffer: appendTextChunk(state.contentBuffer, combinedFlushContent),
     };
   }
 

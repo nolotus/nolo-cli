@@ -123,6 +123,10 @@ const STRINGS = {
     en: "Agent switch cancelled.",
     zh: "已取消切换 agent。",
   },
+  agentPickerLoading: {
+    en: "Loading agents…",
+    zh: "正在加载 agent 列表…",
+  },
   historyPickerTitle: {
     en: "Resume dialog (↑↓ Enter Esc)",
     zh: "恢复对话（↑↓ 移动 · Enter 选择 · Esc 取消）",
@@ -287,6 +291,10 @@ const STRINGS = {
     en: "Run stopped",
     zh: "运行已停止",
   },
+  runFinishedLabel: {
+    en: "Run finished",
+    zh: "运行已结束",
+  },
   runLogTailLabel: {
     en: "Log tail:",
     zh: "日志尾部：",
@@ -442,10 +450,6 @@ const STRINGS = {
     en: "tools",
     zh: "工具",
   },
-  contextFieldThinking: {
-    en: "thinking",
-    zh: "思考",
-  },
   contextFieldServer: {
     en: "server",
     zh: "服务端",
@@ -483,7 +487,6 @@ const STRINGS = {
       "  /context              Show workspace context and next actions",
       "  /runtime <mode>       Use auto, local, or server runtime",
       "  /tools <mode>         Control tool trace: hide, compact, verbose",
-      "  /thinking <mode>      Control thinking output: hide, marker, show",
       "  /switch               Pick an agent interactively (↑↓, Enter)",
       "  /switch list          List agents as text",
       "  /switch <name>        Switch directly by name, alias, or key (alias: /agent)",
@@ -520,7 +523,6 @@ const STRINGS = {
       "  /context              查看工作区上下文与后续操作",
       "  /runtime <mode>       切换 runtime：auto、local、server",
       "  /tools <mode>         工具轨迹显示：hide、compact、verbose",
-      "  /thinking <mode>      思考过程显示：hide、marker、show",
       "  /switch               交互式选择 agent（↑↓ 移动，Enter 确认）",
       "  /switch list          以文本列出全部 agent",
       "  /switch <name>        按名称、别名或 key 直接切换（别名：/agent）",
@@ -565,12 +567,6 @@ const STRINGS = {
   },
   toolsUsage: { en: "Usage: /tools <hide|compact|verbose>", zh: "用法：/tools <hide|compact|verbose>" },
   toolsSet: { en: "Tool display: {0}", zh: "工具显示：{0}" },
-  thinkingCurrent: {
-    en: "Thinking display: {0} (hide | marker | show)",
-    zh: "思考显示：{0}（hide | marker | show）",
-  },
-  thinkingUsage: { en: "Usage: /thinking <hide|marker|show>", zh: "用法：/thinking <hide|marker|show>" },
-  thinkingSet: { en: "Thinking display: {0}", zh: "思考显示：{0}" },
   tasksRunning: { en: "Running processes ({0}):", zh: "运行中的进程（{0}）：" },
   tasksStopped: { en: "Stopped/exited ({0}):", zh: "已停止/已退出（{0}）：" },
   tasksNone: { en: "No processes.", zh: "没有运行中的进程。" },
@@ -780,6 +776,7 @@ export function agentRunCardLabels(): {
   runStatus: string;
   runStarted: string;
   runStopped: string;
+  runFinished: string;
   logTail: string;
   runs: (count: number) => string;
 } {
@@ -787,6 +784,7 @@ export function agentRunCardLabels(): {
     runStatus: t("runStatusLabel"),
     runStarted: t("runStartedLabel"),
     runStopped: t("runStoppedLabel"),
+    runFinished: t("runFinishedLabel"),
     logTail: t("runLogTailLabel"),
     runs: (count: number) => t("runsListLabel", String(count)),
   };

@@ -37,6 +37,8 @@ export interface AgentRuntimeToolCall {
 export interface AgentRuntimeChatMessage {
   role: (typeof AGENT_RUNTIME_MESSAGE_ROLES)[number];
   content: AgentRuntimeMessageContent;
+  /** Internal system-prompt boundary used by explicit-cache providers. */
+  stable_prefix_chars?: number;
   /**
    * Provider-visible replacement for a durable message body. The complete
    * `content` remains the source of truth; local runtime history projection

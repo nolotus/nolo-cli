@@ -56,7 +56,7 @@ import {
 } from "../context/retention";
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
-import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, resolveEffectiveEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter, getDefaultSystemCapabilityTools } from "../tools/toolPacks";
+import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, resolveEffectiveEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter, addDefaultSystemCapabilityTools } from "../tools/toolPacks";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -835,12 +835,6 @@ export const mergeAgentToolsWithRuntime = (
     const enhancedTools = new Set<string>([
         ...webPadded,
         ...(isInlineVisualArtifactAgent(agentConfig) ? [] : getRuntimeCoreTools()),
-        // Default-on system capabilities (agent-orchestration): mount idempotently;
-        // the global systemBuiltinSkills filter below removes them if the user
-        // turned the capability off.
-        ...(isInlineVisualArtifactAgent(agentConfig)
-            ? []
-            : getDefaultSystemCapabilityTools()),
         ...(isInlineVisualArtifactAgent(agentConfig) ? [] : requiredSkillTools),
         ...(isInlineVisualArtifactAgent(agentConfig)
             ? []
@@ -873,8 +867,15 @@ export const mergeAgentToolsWithRuntime = (
     // Web 端直接从 Redux state 读 systemBuiltinSkills（已 hydrate 归一化）；
     // 缺失 key 视为开启（默认全开）。
     const systemBuiltinSkills = (state as any)?.settings?.systemBuiltinSkills;
+    // Default-on system capabilities (agent-orchestration) are mounted right
+    // before the global filter — same pipeline order as the CLI
+    // (resolveCliRequestedToolNames): mount first, then the user's global
+    // "off" removes them again.
+    const mountedTools = isInlineVisualArtifactAgent(agentConfig)
+        ? Array.from(enhancedTools)
+        : addDefaultSystemCapabilityTools(Array.from(enhancedTools));
     const filteredTools = applySystemBuiltinSkillFilter(
-        Array.from(enhancedTools),
+        mountedTools,
         systemBuiltinSkills,
     );
 

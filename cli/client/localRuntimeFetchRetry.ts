@@ -193,6 +193,17 @@ export type FetchWithTransientRetryOptions = {
    * 刻意不含 502/504。幂等写路径可传入含 502 的集合以放宽重试。
    */
   retryableStatuses?: ReadonlySet<number>;
+  /**
+   * 每次决定重试前回调，供 UI 层展示「自动重试 N/M · 剩余 Xs」。
+   * 纯函数，不持有共享状态；TUI 通过它把进度画到 docked 活动行。
+   * 参数：attempt=即将进行的第几次尝试（1-based），maxAttempts=本次预算上限，
+   * delayMs=本次等待毫秒数。core_draining 长预算同样会触发。
+   */
+  onRetry?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+  }) => void;
 };
 
 /**
@@ -245,6 +256,11 @@ export async function fetchWithTransientRetry(
           : maxAttempts;
         if (attempt < attemptBudget) {
           const delayMs = await resolveRetryAfterMs(response, attempt);
+          options.onRetry?.({
+            attempt: attempt + 1,
+            maxAttempts: attemptBudget,
+            delayMs,
+          });
           await (options.sleep ?? defaultSleep)(delayMs);
           continue;
         }
@@ -259,7 +275,13 @@ export async function fetchWithTransientRetry(
       if (!isTransientFetchError(error)) throw error;
       lastError = error;
       if (attempt < maxAttempts) {
-        await (options.sleep ?? defaultSleep)(transientFetchRetryDelayMs(attempt));
+        const delayMs = transientFetchRetryDelayMs(attempt);
+        options.onRetry?.({
+          attempt: attempt + 1,
+          maxAttempts,
+          delayMs,
+        });
+        await (options.sleep ?? defaultSleep)(delayMs);
       }
     }
   }

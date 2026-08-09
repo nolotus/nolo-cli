@@ -12,8 +12,22 @@ export function formatElapsed(totalSeconds: number): string {
 }
 
 /**
+ * Truncate a thinking hint to fit within a reasonable width on the spinner
+ * line. Keeps the last `maxLen` characters of accumulated thinking so the
+ * user sees what the model is currently reasoning about.
+ */
+function truncateThinkingHint(text: string, maxLen: number): string {
+  const cleaned = text.replace(/\n/g, " ").trim();
+  if (cleaned.length <= maxLen) return cleaned;
+  return "…" + cleaned.slice(cleaned.length - maxLen + 1);
+}
+
+/**
  * 终端 spinner：在 agent turn 进行中作为唯一的"alive"指示器，
  * 取代静态光标，避免被误判为卡死。非 TTY 环境下降级为一次性文本输出。
+ *
+ * 支持显示实时 thinking 片段：当 thinking 内容到达时，spinner 行
+ * 切换为显示最近一段思考内容，让用户看到模型正在想什么。
  */
 export class Spinner {
   private timer: any = null;
@@ -21,6 +35,7 @@ export class Spinner {
   private frameIndex = 0;
   private frames = ["·", "~", "≈", "∿", "≈", "~"];
   private isTTY: boolean;
+  private thinkingHint = "";
 
   constructor(
     private output: OutputLike,
@@ -50,6 +65,9 @@ export class Spinner {
     }
     this.frameIndex = 0;
     this.startTime = Date.now();
+    // Preserve any thinking hint that arrived before the spinner started
+    // (e.g. the first streaming chunk was a think block — setThinkingHint
+    // caches it even when the timer isn't running yet).
     // Take over the cursor role: the spinner becomes the only "alive"
     // indicator while the agent turn is in flight, so a static terminal
     // cursor can no longer be mistaken for a frozen process.
@@ -76,10 +94,12 @@ export class Spinner {
       this.output.write("\r\x1b[K");
       this.output.write("\x1b[?25h");
     }
+    this.thinkingHint = "";
   }
 
   show(text: string) {
     this.text = text;
+    this.thinkingHint = "";
     if (this.silent) {
       if (!this.startTime) {
         this.startTime = Date.now();
@@ -96,11 +116,25 @@ export class Spinner {
     this.output.write(`\r${this.renderLine(this.frames[0])}`);
   }
 
+  /**
+   * Update the thinking hint displayed on the spinner line. The hint is
+   * truncated to a reasonable length and shown as part of the spinner text.
+   * Only meaningful while the spinner is active (TTY mode).
+   */
+  setThinkingHint(text: string) {
+    this.thinkingHint = text;
+    if (this.silent || !this.isTTY || !this.timer) return;
+    this.output.write(`\r${this.renderLine(this.frames[this.frameIndex])}`);
+  }
+
   private renderLine(frame: string): string {
     const elapsedSeconds = Math.max(
       0,
       Math.floor((Date.now() - this.startTime) / 1000),
     );
-    return `${themeColorSequence("accent")}${frame}\x1b[39m ${this.text} (${formatElapsed(elapsedSeconds)})`;
+    const thinkingPart = this.thinkingHint
+      ? `: ${truncateThinkingHint(this.thinkingHint, 60)}`
+      : "";
+    return `${themeColorSequence("accent")}${frame}\x1b[39m ${this.text}${thinkingPart} (${formatElapsed(elapsedSeconds)})`;
   }
 }

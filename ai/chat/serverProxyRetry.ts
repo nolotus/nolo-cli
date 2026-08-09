@@ -12,7 +12,7 @@ import {
 
 const DEFAULT_SERVER_PROXY_RETRY_AFTER_MS = 1_500;
 const MAX_SERVER_PROXY_RETRIES = 2;
-const MAX_STATUS_RETRIES = 1;
+const MAX_STATUS_RETRIES = 3;
 const MAX_SERVER_DRAIN_STATUS_RETRIES = 30;
 
 const readRetryableResponseBody = async (response: Response) => {

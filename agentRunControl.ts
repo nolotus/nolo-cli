@@ -10,8 +10,9 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import * as nodeFs from "node:fs";
-import { spawn as nodeSpawn } from "node:child_process";
+import { execFileSync as nodeExecFileSync, spawn as nodeSpawn } from "node:child_process";
 import { isCompiledBinary, resolveCliEntrypointPath } from "./cliEnvHelpers";
+import { isAgentRunTerminalStatus as sharedIsAgentRunTerminalStatus } from "./ai/tools/agent/agentRunDisplayHelpers";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -26,6 +27,8 @@ export type RunActivity = {
   updatedAt: string;
 };
 
+export type RunStatus = "running" | "done" | "failed" | "timeout" | "killed" | "orphaned";
+
 export type RunRecord = {
   runId: string;
   pid?: number;
@@ -35,14 +38,42 @@ export type RunRecord = {
   msgFile?: string;
   startedAt: string;
   timeoutMs?: number;
-  status: "running" | "done" | "failed" | "timeout" | "killed";
+  status: RunStatus;
   exitCode?: number;
   endedAt?: string;
   logPath: string;
   dialogId?: string;
   note?: string;
+  /** Batch id for grouping related runs; auto-generated when not supplied. */
+  batchId?: string;
+  /** Timestamp the record was reconciled to a terminal status (orphaned). */
+  reconciledAt?: string;
+  /** OS-reported start time of the spawned process, when the platform exposes it. */
+  processStartedAt?: string;
   activity?: RunActivity;
 };
+
+/**
+ * Terminal run statuses. `orphaned` is a terminal status reached when a run
+ * record still claims `running` but its pid no longer exists (process was
+ * killed / OOM'd / crashed without writing back a terminal status).
+ *
+ * 跨模块一致性：此集合与共享层 `agentRunDisplayHelpers.AGENT_RUN_TERMINAL_STATUSES`
+ * 是同一份真值（B/D1/T 三方均从共享层 `isAgentRunTerminalStatus` 派生）。
+ * 本集合保留为 CLI RunStatus 类型的编译期约束；运行时判定委托共享层，
+ * 避免两份集合漂移（reviewer 指出的"同一概念两个名字"根因）。
+ */
+export const RUN_TERMINAL_STATUSES = new Set<RunStatus>([
+  "done",
+  "failed",
+  "timeout",
+  "killed",
+  "orphaned",
+]);
+
+export function isRunTerminalStatus(status: string | undefined): boolean {
+  return sharedIsAgentRunTerminalStatus(status);
+}
 
 export type FsLike = {
   mkdirSync: typeof nodeFs.mkdirSync;
@@ -71,9 +102,11 @@ export type AgentRunControlDeps = {
   kill?: KillLike;
   now?: () => Date;
   generateRunId?: () => string;
+  generateBatchId?: () => string;
   sleep?: SleepLike;
   setSignalHandler?: (handler: () => void) => void;
   clearSignalHandler?: () => void;
+  getProcessStartTime?: (pid: number) => Date | null | undefined;
 };
 
 export function resolveNoloHome(env?: EnvLike, homedir = nodeHomedir): string {
@@ -106,6 +139,17 @@ export function defaultGenerateRunId(): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const random = Math.random().toString(36).slice(2, 8);
   return `run-${timestamp}-${random}`;
+}
+
+/**
+ * Default batch id generator: `batch-<ISO>-<rand>`. Same shape as run ids so
+ * the two read consistently in logs. A caller that supplies its own batchId
+ * bypasses this entirely.
+ */
+export function defaultGenerateBatchId(): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const random = Math.random().toString(36).slice(2, 8);
+  return `batch-${timestamp}-${random}`;
 }
 
 export function writeRunRecord(record: RunRecord, deps: AgentRunControlDeps = {}): void {
@@ -272,6 +316,202 @@ export function findRunRecord(
   return readRunRecord(target, deps) ?? undefined;
 }
 
+// ── List query: filter + paginate + reconcile ──────────────────────────────
+
+/**
+ * Default page size for `controlAgentRun(action:"list")` on the CLI local
+ * path. The old list returned the entire registry (1000+ records) in one
+ * shot and blew up caller context. A bounded default keeps reads cheap even
+ * when the caller passes nothing.
+ */
+export const DEFAULT_LIST_LIMIT = 20;
+
+/**
+ * Upper bound on `limit` so a caller asking for a huge page can't re-trigger
+ * the "blow up caller context" problem. Records beyond this are paged.
+ */
+export const MAX_LIST_LIMIT = 200;
+
+export type ListRunsQuery = {
+  /** Only return runs in this batch. */
+  batchId?: string;
+  /** One status, or a comma-separated list (e.g. "running,orphaned"). */
+  status?: string;
+  /** Max records to return; clamped to [1, MAX_LIST_LIMIT], default DEFAULT_LIST_LIMIT. */
+  limit?: number;
+  /** Number of records to skip before the page (offset pagination). */
+  offset?: number;
+};
+
+export type ListRunsResult = {
+  runs: RunRecord[];
+  total: number;
+  hasMore: boolean;
+};
+
+function parseStatusFilter(status?: string): Set<string> | undefined {
+  if (typeof status !== "string" || status.trim() === "" || status === "all") {
+    return undefined;
+  }
+  const parts = status
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return parts.length > 0 ? new Set(parts) : undefined;
+}
+
+function clampLimit(limit?: number): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+    return DEFAULT_LIST_LIMIT;
+  }
+  const floored = Math.floor(limit);
+  if (floored > MAX_LIST_LIMIT) return MAX_LIST_LIMIT;
+  if (floored < 1) return 1;
+  return floored;
+}
+
+/**
+ * Query the local run registry with filter + paginate. Lazily reconciles any
+ * `running` record whose pid is gone (see `checkStaleRun`) *before* filtering
+ * so a newly-orphaned run is visible with its terminal status. `total` is the
+ * count of records matching the filter (after reconcile, before pagination),
+ * `hasMore` signals whether the page was truncated.
+ *
+ * Reconcile is lazy and idempotent: a record already reconciled to `orphaned`
+ * has no pid and is skipped, so repeated reads don't re-probe.
+ */
+export function queryRunRecords(
+  query: ListRunsQuery,
+  deps: AgentRunControlDeps = {}
+): ListRunsResult {
+  let records = listRunRecords(deps);
+
+  // Lazy reconcile: flip dead-but-still-running records to `orphaned`.
+  // Done before filtering so status=orphaned picks them up on the same call.
+  records = records.map((record) =>
+    record.status === "running" ? (checkStaleRun(record.runId, deps) ?? record) : record
+  );
+
+  const statusSet = parseStatusFilter(query.status);
+  const batchId = typeof query.batchId === "string" && query.batchId.trim() !== "" ? query.batchId.trim() : undefined;
+
+  let filtered = records.filter((record) => {
+    if (batchId && record.batchId !== batchId) return false;
+    if (statusSet && !statusSet.has(record.status)) return false;
+    return true;
+  });
+
+  const total = filtered.length;
+  const limit = clampLimit(query.limit);
+  const offset =
+    typeof query.offset === "number" && Number.isFinite(query.offset) && query.offset > 0
+      ? Math.floor(query.offset)
+      : 0;
+  const sliced = filtered.slice(offset, offset + limit);
+  const hasMore = offset + sliced.length < total;
+
+  return { runs: sliced, total, hasMore };
+}
+
+// ── GC: sweep terminal records past retention ─────────────────────────────
+
+/**
+ * Retention window for terminal run records (including `orphaned`). Default
+ * 7 days. Non-terminal records (`running`) are never swept — a sweep on a
+ * live run would corrupt an in-flight run's registry entry.
+ */
+export const DEFAULT_GC_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+export type GcRunRecordsResult = {
+  swept: number;
+  /** Run ids that were swept (for logging / tests). */
+  sweptIds: string[];
+  /** Runs retained because at least one file could not be deleted. */
+  failedIds: string[];
+};
+
+function tryUnlinkFile(fs: FsLike, path: string | undefined): boolean {
+  if (typeof path !== "string" || path.length === 0) return true;
+  try {
+    if (fs.existsSync(path)) {
+      fs.unlinkSync(path);
+    }
+    return true;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    return code === "ENOENT";
+  }
+}
+
+/**
+ * Sweep terminal run records whose `endedAt` (or `reconciledAt` for orphaned)
+ * is older than `retentionMs`. Removes the `.json`, `.log`, and `.msg.md`
+ * triplet from `~/.nolo/runs/`. Non-terminal records are never removed.
+ *
+ * Deletion order: auxiliary files (.log / .msg.md) first, index file (.json) LAST.
+ * If any auxiliary file fails to unlink (e.g. EPERM/EBUSY), the index file is
+ * retained so future GC passes can discover and retry sweeping this run.
+ * ENOENT is treated as successful cleanup.
+ *
+ * Intended to be called opportunistically (e.g. on `list`), not on a timer.
+ * `now` and `retentionMs` are injectable so the sweep is deterministic in
+ * tests — the sweep never reads `Date.now()` directly.
+ */
+export function gcRunRecords(
+  deps: AgentRunControlDeps = {},
+  options: { retentionMs?: number } = {}
+): GcRunRecordsResult {
+  const fs = deps.fs ?? nodeFs;
+  const now = (deps.now ?? (() => new Date()))();
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  const retentionMs =
+    typeof options.retentionMs === "number" && options.retentionMs >= 0
+      ? options.retentionMs
+      : DEFAULT_GC_RETENTION_MS;
+
+  const records = listRunRecords(deps);
+  const sweptIds: string[] = [];
+  const failedIds: string[] = [];
+
+  for (const record of records) {
+    if (!isRunTerminalStatus(record.status)) continue;
+
+    // Use the most recent terminal timestamp: reconciled orphans carry
+    // reconciledAt; normally-ended runs carry endedAt. Fall back to startedAt
+    // so a malformed-but-terminal record still ages out rather than leaking
+    // forever.
+    const ts = record.reconciledAt ?? record.endedAt ?? record.startedAt;
+    const ageMs = nowMs - new Date(ts).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < retentionMs) continue;
+
+    const jsonPath = resolveRunRecordPath(record.runId, deps.env, deps.homedir);
+    const logPath = resolveRunLogPath(record.runId, deps.env, deps.homedir);
+    const msgPath =
+      record.msgFile ?? join(resolveRunsDir(deps.env, deps.homedir), `${record.runId}.msg.md`);
+
+    // 1. Delete auxiliary files FIRST (.log and .msg.md)
+    const logOk = tryUnlinkFile(fs, logPath);
+    const msgOk = tryUnlinkFile(fs, msgPath);
+
+    // 2. If any auxiliary file failed to delete, KEEP the .json index file
+    // so future GC passes can discover and retry sweeping this run.
+    if (!logOk || !msgOk) {
+      failedIds.push(record.runId);
+      continue;
+    }
+
+    // 3. Delete index .json file LAST
+    const jsonOk = tryUnlinkFile(fs, jsonPath);
+    if (jsonOk) {
+      sweptIds.push(record.runId);
+    } else {
+      failedIds.push(record.runId);
+    }
+  }
+
+  return { swept: sweptIds.length, sweptIds, failedIds };
+}
+
 export function stripBackgroundFlag(args: string[]): string[] {
   const result: string[] = [];
   for (const arg of args) {
@@ -371,10 +611,16 @@ export async function spawnLocalBackgroundRun(
     /** 已解析的任务内容；提供时会快照进 runs 目录并让子进程读快照而非原始文件。 */
     message?: string;
     timeoutMs?: number;
+    /**
+     * Optional batch id to group this run with siblings. When omitted a new
+     * batch id is generated so every run carries one, letting callers filter
+     * by batch on the read path. Persisted on the run record.
+     */
+    batchId?: string;
     output: OutputLike;
   },
   deps: AgentRunControlDeps = {}
-): Promise<{ runId: string; pid?: number; logPath: string }> {
+): Promise<{ runId: string; pid?: number; logPath: string; batchId: string }> {
   const env = deps.env ?? process.env;
   const homedir = deps.homedir ?? nodeHomedir;
   const fs = deps.fs ?? nodeFs;
@@ -383,6 +629,7 @@ export async function spawnLocalBackgroundRun(
   const now = deps.now ?? (() => new Date());
 
   const runId = generateRunId();
+  const batchId = input.batchId ?? (deps.generateBatchId ?? defaultGenerateBatchId)();
   const logPath = resolveRunLogPath(runId, env, homedir);
   const recordPath = resolveRunRecordPath(runId, env, homedir);
   const runsDir = resolveRunsDir(env, homedir);
@@ -405,6 +652,7 @@ export async function spawnLocalBackgroundRun(
     ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
     status: "running",
     logPath,
+    batchId,
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2));
 
@@ -432,10 +680,12 @@ export async function spawnLocalBackgroundRun(
 
   if (typeof proc.pid === "number") {
     record.pid = proc.pid;
+    const processStartedAt = (deps.getProcessStartTime ?? defaultGetProcessStartTime)(proc.pid);
+    if (processStartedAt) record.processStartedAt = processStartedAt.toISOString();
     fs.writeFileSync(recordPath, JSON.stringify(record, null, 2));
   }
 
-  return { runId, pid: proc.pid, logPath };
+  return { runId, pid: proc.pid, logPath, batchId };
 }
 
 export function finalizeRunRecord(
@@ -476,10 +726,63 @@ export function isPidGone(pid: number, deps: AgentRunControlDeps = {}): boolean 
 }
 
 /**
+ * Attempts to retrieve process start time for a PID via `ps` CLI tool.
+ * Returns null if unsupported (Windows / ps missing / process not found).
+ */
+export function defaultGetProcessStartTime(pid: number): Date | null {
+  try {
+    const output = nodeExecFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1000,
+    }).trim();
+    if (!output) return null;
+    const d = new Date(output);
+    return isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+}
+
+export const MAX_PROCESS_START_TIME_DIFF_MS = 30_000;
+const MAX_PERSISTED_PROCESS_START_TIME_DIFF_MS = 1_000;
+
+/**
+ * Validates process start time against the run record's `startedAt` timestamp.
+ * Returns true if the PID exists but belongs to a different process (PID reuse).
+ * If start time cannot be fetched (fallback path), returns false (NEVER misjudge live process as dead).
+ */
+export function isPidReused(
+  pid: number,
+  expectedStartedAt: string,
+  deps: AgentRunControlDeps = {},
+  maxDiffMs = MAX_PROCESS_START_TIME_DIFF_MS
+): boolean {
+  const getStartTime = deps.getProcessStartTime ?? defaultGetProcessStartTime;
+  const procStartTime = getStartTime(pid);
+  if (!procStartTime) {
+    // Fallback path: platform or test cannot fetch process start time.
+    // Safe degradation rule: NEVER misjudge a living process as dead.
+    return false;
+  }
+  const recordTime = new Date(expectedStartedAt).getTime();
+  if (isNaN(recordTime)) return false;
+
+  const diffMs = Math.abs(procStartTime.getTime() - recordTime);
+  return diffMs > maxDiffMs;
+}
+
+/**
  * If a run record claims to be running and carries a pid, verify the pid is
- * still alive via `kill(pid, 0)`. When the pid is gone (ESRCH), mark the
- * record as `failed` and record a note explaining the process disappeared.
- * Returns the (possibly refreshed) record.
+ * still alive via `kill(pid, 0)` and matches the process start time (`startedAt`).
+ * When the pid is gone (ESRCH) or the pid was reused by an unrelated process,
+ * mark the record as `orphaned` — a terminal status meaning the process died
+ * without writing back its own terminal status (killed / OOM / crashed). The pid
+ * is cleared on the record to prevent pid-reuse false positives. Returns the
+ * (possibly refreshed) record.
+ *
+ * EPERM (process exists but owned by another user) is treated as still
+ * running — never misjudged as dead.
  */
 export function checkStaleRun(
   runId: string,
@@ -489,11 +792,30 @@ export function checkStaleRun(
   if (!record) return null;
   if (record.status !== "running") return record;
   if (typeof record.pid !== "number") return record;
-  if (!isPidGone(record.pid, deps)) return record;
+
+  const pidGone = isPidGone(record.pid, deps);
+  // New records persist the OS-reported process start time at spawn. Legacy
+  // records fall back to run startedAt with a tolerance for spawn/ps precision.
+  const expectedStartedAt = record.processStartedAt ?? record.startedAt;
+  const maxStartTimeDiffMs = record.processStartedAt
+    ? MAX_PERSISTED_PROCESS_START_TIME_DIFF_MS
+    : MAX_PROCESS_START_TIME_DIFF_MS;
+  const pidReused =
+    !pidGone && isPidReused(record.pid, expectedStartedAt, deps, maxStartTimeDiffMs);
+
+  if (!pidGone && !pidReused) return record;
+
   const now = deps.now ?? (() => new Date());
-  record.status = "failed";
-  record.note = "process gone: pid no longer exists";
+  record.status = "orphaned";
+  record.note = pidReused
+    ? "orphaned: process gone (pid reused by another process)"
+    : "orphaned: process gone without writing terminal status";
   record.endedAt = now().toISOString();
+  record.reconciledAt = now().toISOString();
+  // Clear pid: once dead, it can be reused by the OS for an unrelated process.
+  // Keeping it would let a future read-path reconcile mistake the recycled pid
+  // for a still-alive run (false "running"). Clearing pins the terminal status.
+  record.pid = undefined;
   writeRunRecord(record, deps);
   return record;
 }

@@ -709,37 +709,6 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   return result.exitCode;
 }
 
-// Detect quota/limit exhaustion from a run error. Covers the structured
-// CliProviderQuotaError (local CLI providers), raw HTTP 429 responses, and
-// provider error messages that mention quota/额度/上限/rate limit keywords.
-const QUOTA_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
-  /429/,
-  /quota/i,
-  /rate\s*limit/i,
-  /too\s*many\s*requests/i,
-  /额度/,
-  /上限/,
-  /用尽/,
-  /CliProviderQuotaError/i,
-];
-
-export function isQuotaExhaustedError(error: unknown): boolean {
-  if (!error) return false;
-  if (error instanceof CliProviderQuotaError) return true;
-  if (error instanceof Error) {
-    return QUOTA_ERROR_PATTERNS.some((pattern) => pattern.test(error.message));
-  }
-  if (typeof error === "string") {
-    return QUOTA_ERROR_PATTERNS.some((pattern) => pattern.test(error));
-  }
-  // Some adapter errors carry an HTTP status code directly on the object.
-  const maybeStatus = (error as { status?: unknown }).status;
-  if (typeof maybeStatus === "number" && maybeStatus === 429) return true;
-  const maybeStatusCode = (error as { statusCode?: unknown }).statusCode;
-  if (typeof maybeStatusCode === "number" && maybeStatusCode === 429) return true;
-  return false;
-}
-
 const BALANCE_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
   /UPSTREAM_402/i,
   /Insufficient Balance/i,
@@ -758,5 +727,12 @@ export function isBalanceExhaustedError(error: unknown): boolean {
         : String((error as { message?: unknown })?.message ?? "");
   return BALANCE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
+
+// ── Quota 识别已下沉共享层（packages/ai/tools/agent/quotaCircuitBreaker）──
+// import 供本文件内部调用（fallback 判定）；export 保持既有调用方
+// （tui/readlineWorkspace、本文件测试）的 import 路径不变。
+// 不再保留第二份 QUOTA_ERROR_PATTERNS / isQuotaExhaustedError。
+import { isQuotaExhaustedError, QUOTA_ERROR_PATTERNS } from "../ai/tools/agent/quotaCircuitBreaker";
+export { isQuotaExhaustedError, QUOTA_ERROR_PATTERNS };
 
 export type { RunAgentTurnOptions, RunAgentTurnResult };

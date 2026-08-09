@@ -7,10 +7,16 @@ export const AGENT_THREAD_STATUSES = [
   "done",
   "failed",
   "cancelled",
+  // orphaned: 进程消失但记录仍 running（OOM/crash/进程重启）。
+  // 与 CLI 端 RunStatus 的 orphaned 同义——此前 server 终态集合缺这个值，
+  // 导致 server 端 reconcile stale run 时只能写 cancelled，与 CLI 端
+  // 写 orphaned 的语义漂移（reviewer 指出的 B 模块根因）。加入后 server
+  // 端终态集合与共享层 isAgentRunTerminalStatus 含 orphaned 对齐。
+  "orphaned",
 ] as const;
 
 export const AGENT_THREAD_ACTIVE_STATUSES = ["pending", "running"] as const;
-export const AGENT_THREAD_TERMINAL_STATUSES = ["done", "failed", "cancelled"] as const;
+export const AGENT_THREAD_TERMINAL_STATUSES = ["done", "failed", "cancelled", "orphaned"] as const;
 
 export const AGENT_THREAD_KINDS = [
   "chat",

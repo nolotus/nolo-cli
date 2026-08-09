@@ -15,18 +15,20 @@ export const controlAgentRunFunctionSchema = {
     name: "controlAgentRun",
     description:
         "观察和控制后台 agent run。一个工具三个 action：" +
-        "list（列出所有 run）、status（查单条 + 可选日志）、stop（取消 run）。" +
+        "list（列出 run，支持按批次/状态过滤与分页）、status（查单条 + 可选日志）、stop（取消 run）。" +
         "相当于 Unix 的 wait + signal + /proc。" +
-        "用 startAgentRun 拿到 runId 后，用本工具跟进度或叫停。",
+        "用 startAgentRun 拿到 runId 后，用本工具跟进度或叫停。" +
+        "list 默认只返回最近 20 条，避免全量冲爆上下文；用 status/batchId/limit/offset 取所需分页。",
     parameters: {
         type: "object",
         properties: {
             action: {
                 type: "string",
-                enum: ["list", "status", "stop"],
+                enum: ["list", "status", "stop", "todo"],
                 description:
-                    "要执行的操作：list=列出所有 run（省略 runId）；" +
-                    "status=查单条 run 状态 + 可选日志；stop=取消 run。",
+                    "要执行的操作：list=列出 run（省略 runId）；" +
+                    "status=查单条 run 状态 + 可选日志；stop=取消 run；" +
+                    "todo=列出 runtime todo（由 startAgentRun 的 batchId/trackTodo 产生，状态由关联 run 推导）。",
             },
             runId: {
                 type: "string",
@@ -39,14 +41,33 @@ export const controlAgentRunFunctionSchema = {
                     "可选。action=status 时：0=只返回状态摘要，>0=同时返回最近 N 行日志（默认 0）。",
                 default: 0,
             },
+            batchId: {
+                type: "string",
+                description:
+                    "可选。action=list 时只返回该批次的 run（startAgentRun 返回值或入参中的 batchId）。",
+            },
+            status: {
+                type: "string",
+                description:
+                    "可选。action=list 时按状态过滤，支持单值或逗号分隔多值（如 'running,orphaned'）。" +
+                    "与 statusFilter 同义，status 优先；取值包含 orphaned（pid 已死但记录仍 running 的孤儿 run）。" +
+                    "默认 all（不过滤）。",
+            },
             statusFilter: {
                 type: "string",
-                enum: ["running", "done", "failed", "cancelled", "all"],
-                description: "可选。action=list 时按状态过滤，默认 all。",
+                enum: ["running", "done", "failed", "cancelled", "orphaned", "all"],
+                description:
+                    "可选。action=list 时按状态过滤，默认 all。与 status 同义（status 优先，且 status 支持多值）。",
             },
             limit: {
                 type: "number",
-                description: "可选。action=list 时限制返回数量，默认 20。",
+                description:
+                    "可选。action=list 时限制返回数量，默认 20，上限 200。不带任何参数不会返回全量。",
+            },
+            offset: {
+                type: "number",
+                description:
+                    "可选。action=list 时跳过前 N 条，配合 limit 翻页。默认 0。",
             },
         },
         required: ["action"],
@@ -54,11 +75,14 @@ export const controlAgentRunFunctionSchema = {
 };
 
 interface ControlAgentRunArgs {
-    action: "list" | "status" | "stop";
+    action: "list" | "status" | "stop" | "todo";
     runId?: string;
     tailLines?: number;
+    batchId?: string;
+    status?: string;
     statusFilter?: string;
     limit?: number;
+    offset?: number;
 }
 
 /**
@@ -69,10 +93,14 @@ export async function controlAgentRunFunc(
     thunkApi: any,
     _context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string }
 ): Promise<{ rawData: any; displayData: string }> {
-    const { action, runId, tailLines, statusFilter, limit } = args;
+    const { action, runId, tailLines, batchId, status, statusFilter, limit, offset } = args;
 
     if (action === "list") {
-        return handleList(thunkApi, { statusFilter, limit });
+        return handleList(thunkApi, { batchId, status, statusFilter, limit, offset });
+    }
+
+    if (action === "todo") {
+        return handleTodo(thunkApi, { status });
     }
 
     if (action === "status") {
@@ -92,12 +120,20 @@ export async function controlAgentRunFunc(
 
 async function handleList(
     thunkApi: any,
-    opts: { statusFilter?: string; limit?: number }
+    opts: { batchId?: string; status?: string; statusFilter?: string; limit?: number; offset?: number }
 ): Promise<{ rawData: any; displayData: string }> {
     try {
         const body: Record<string, any> = { action: "list" };
-        if (opts.statusFilter) body.statusFilter = opts.statusFilter;
+        // `status` supports multi-value ("running,orphaned") and takes precedence
+        // over `statusFilter` (single enum value); both map to the server's
+        // statusFilter param. The server handler currently filters on exact
+        // status match, so multi-value is sent as-is for forward compatibility
+        // and the CLI local path splits it in queryRunRecords.
+        const statusVal = opts.status ?? opts.statusFilter;
+        if (statusVal) body.statusFilter = statusVal;
+        if (opts.batchId) body.batchId = opts.batchId;
         if (opts.limit !== undefined) body.limit = opts.limit;
+        if (opts.offset !== undefined) body.offset = opts.offset;
 
         const data = await callToolApi(
             thunkApi,
@@ -108,10 +144,13 @@ async function handleList(
 
         const resData = data?.data ?? data;
         const runs = resData?.runs ?? [];
-        const count = resData?.count ?? runs.length;
+        // total/hasMore come from the server (and the CLI local path). Fall back
+        // to count/length for older servers that don't return pagination fields.
+        const total = typeof resData?.total === "number" ? resData.total : runs.length;
+        const hasMore = typeof resData?.hasMore === "boolean" ? resData.hasMore : false;
 
         return {
-            rawData: { runs, count },
+            rawData: { runs, count: runs.length, total, hasMore },
             displayData: formatListRunsCard(runs),
         };
     } catch (e: any) {
@@ -185,5 +224,40 @@ async function handleStop(
         };
     } catch (e: any) {
         throw new Error(`controlAgentRun(stop) 失败: ${toErrorMessage(e)}`);
+    }
+}
+
+// ── todo ───────────────────────────────────────────────────────────────────
+//
+// todo 是 runtime 级状态（"还有什么没做完"），由 startAgentRun 的 batchId/
+// trackTodo 产生，状态由关联 run + review 结论推导。工具层走 callToolApi
+// 转发到 /api/agent/runs/control { action: "todo" }；CLI 本地 executor 直接
+// 读 ~/.nolo/todos.json 并调共享层 deriveTodoStatus 刷新（见
+// cliAgentRunToolExecutors）。两端共用共享层 runtimeTodo.ts 的推导逻辑，
+// 不平行定义第二套 todo 语义。
+
+async function handleTodo(
+    thunkApi: any,
+    opts: { status?: string }
+): Promise<{ rawData: any; displayData: string }> {
+    try {
+        const body: Record<string, any> = { action: "todo" };
+        if (opts.status) body.status = opts.status;
+        const data = await callToolApi(
+            thunkApi,
+            "/api/agent/runs/control",
+            body,
+            { withAuth: true }
+        );
+        const resData = data?.data ?? data;
+        const todos = resData?.todos ?? [];
+        return {
+            rawData: { todos, count: todos.length },
+            displayData: formatListRunsCard(
+                todos.map((t: any) => ({ agentName: t?.title ?? t?.id, status: t?.status })),
+            ),
+        };
+    } catch (e: any) {
+        throw new Error(`controlAgentRun(todo) 失败: ${toErrorMessage(e)}`);
     }
 }

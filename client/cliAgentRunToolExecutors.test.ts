@@ -67,11 +67,13 @@ describe("cli startAgentRun executor", () => {
       arguments: JSON.stringify({ agentKey: "agent-pub-x", task: "帮我查一下资料" }),
     });
 
-    expect(JSON.parse(result.content)).toEqual({
+    expect(JSON.parse(result.content)).toMatchObject({
       runId: "run-1",
       status: "running",
       taskPreview: "帮我查一下资料",
     });
+    // batchId is always present (auto-generated when not supplied).
+    expect(typeof JSON.parse(result.content).batchId).toBe("string");
     // 卡片标题现在按 CLI locale 本地化（默认 zh）；断言用同一套 label 源，
     // 避免把「英文字面量」当成契约再次写死。
     expect(result.metadata?.displayData).toContain(agentRunCardLabels().runStarted);
@@ -136,12 +138,13 @@ describe("cli startAgentRun executor", () => {
       }),
     });
 
-    expect(JSON.parse(result.content)).toEqual({
+    expect(JSON.parse(result.content)).toMatchObject({
       runId: "run-1",
       status: "running",
       agentName: "页面生成助手",
       taskPreview: "做一个页面",
     });
+    expect(typeof JSON.parse(result.content).batchId).toBe("string");
     expect(result.metadata?.displayData).toContain("页面生成助手");
     const record = JSON.parse(deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!);
     expect(record.agentName).toBe("页面生成助手");
@@ -302,5 +305,56 @@ describe("cli controlAgentRun executor", () => {
     await expect(
       executor({ arguments: JSON.stringify({ action: "nope" }) }),
     ).rejects.toThrow("未知 action");
+  });
+
+  // ── D1 接线：list + batchId 附加 batchSummary ──────────────────────
+  it("list with batchId attaches batchSummary when the batch converged", async () => {
+    const deps = buildDeps({ kill: () => {} });
+    seedRun(deps, "run-1", { batchId: "batch-a", status: "done" });
+    seedRun(deps, "run-2", { batchId: "batch-a", status: "done" });
+    seedRun(deps, "run-3", { batchId: "batch-a", status: "done" });
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "list", batchId: "batch-a" }),
+    });
+    const data = JSON.parse(result.content);
+    expect(data.count).toBe(3);
+    // 收敛时必须带 batchSummary（D1 接线核心断言）
+    expect(typeof data.batchSummary, "收敛批次应附加 batchSummary").toBe("string");
+    expect(data.batchSummary.length).toBeGreaterThan(0);
+  });
+
+  it("list without batchId does not attach batchSummary", async () => {
+    const deps = buildDeps({ kill: () => {} });
+    seedRun(deps, "run-1", { status: "done" });
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({ arguments: JSON.stringify({ action: "list" }) });
+    const data = JSON.parse(result.content);
+    expect(data.batchSummary).toBeUndefined();
+  });
+
+  // ── T 接线：startAgentRun + batchId 写 todo；action=todo 读 ─────────
+  it("startAgentRun with batchId writes a todo; action=todo lists it", async () => {
+    const { createInMemoryTodoStore } = await import("./__testHelpers");
+    const todoStore = createInMemoryTodoStore();
+    const deps = buildDeps({ todoStore } as any);
+    const startExec = createCliStartAgentRunExecutor(deps);
+    const controlExec = createCliControlAgentRunExecutor(deps);
+
+    await startExec({
+      arguments: JSON.stringify({ agentKey: "agent-pub-x", task: "接线测试任务", batchId: "batch-t1" }),
+    });
+
+    // todo 应已写入
+    const todo = await todoStore.getTodo("todo-batch-t1");
+    expect(todo, "startAgentRun+batchId 应写入 todo").toBeDefined();
+    expect(todo!.runIds).toEqual(["run-1"]);
+
+    // action=todo 应列出，状态由关联 run 推导（run-1 是 running → todo running）
+    const res = await controlExec({ arguments: JSON.stringify({ action: "todo" }) });
+    const data = JSON.parse(res.content);
+    expect(data.count).toBe(1);
+    expect(data.todos[0].id).toBe("todo-batch-t1");
+    expect(data.todos[0].status).toBe("running");
   });
 });

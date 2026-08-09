@@ -1,7 +1,7 @@
 import { isAbortError } from "../../core/abortError";
 import { waitForAbortableDelay } from "../../core/abortableDelay";
 
-export const MAX_INITIAL_STREAM_RETRIES = 1;
+export const MAX_INITIAL_STREAM_RETRIES = 3;
 export const DEFAULT_INITIAL_STREAM_RETRY_AFTER_MS = 1_500;
 
 const normalizeInitialStreamRetryAfterMs = (value: unknown) => {

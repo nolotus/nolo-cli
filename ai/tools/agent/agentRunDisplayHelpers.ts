@@ -12,6 +12,10 @@ export function getAgentRunStatusIcon(status: string): string {
     case "cancelled":
     case "cancelling":
       return "🛑";
+    case "orphaned":
+      // Distinct from killed: the process vanished without writing a terminal
+      // status (OOM/crash/network). A ghost icon signals "we inferred death".
+      return "👻";
     case "not_found":
     default:
       return "?";
@@ -375,6 +379,10 @@ const AGENT_RUN_TERMINAL_STATUSES = new Set([
   "timeout",
   "killed",
   "cancelled",
+  // orphaned: pid gone but the run record was still "running" — the process
+  // died (killed/OOM/crashed) before writing its own terminal status. Treated
+  // as terminal by all display/filter/GC consumers.
+  "orphaned",
 ]);
 
 export function isAgentRunTerminalStatus(status: string | undefined): boolean {

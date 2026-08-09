@@ -49,6 +49,19 @@ export const startAgentRunFunctionSchema = {
                 description:
                     "可选。为 true 时本次 run 不持久化 dialog（不留记录）。用于一次性审查（review）等不需留痕的场景。默认 false。",
             },
+            batchId: {
+                type: "string",
+                description:
+                    "可选。批次 id，用于把多个并行 run 归为一组，便于后续 controlAgentRun(list, batchId=...) 按批查询。" +
+                    "未传时自动生成一个并在返回值中带回，调用方无需先创建。",
+            },
+            trackTodo: {
+                type: "boolean",
+                description:
+                    "可选。为 true 时本次 run 会被记录进 runtime todo（~/.nolo/todos.json）。" +
+                    "传了 batchId 时默认即记录（每批对应一项 todo）。" +
+                    "todo 状态由关联 run 状态 + review 结论推导，用 controlAgentRun(action:\"todo\") 查询。",
+            },
         },
         required: ["agentKey", "task"],
     },
@@ -60,6 +73,7 @@ interface StartAgentRunArgs {
     input?: any;
     agentName?: string;
     ephemeral?: boolean;
+    batchId?: string;
 }
 
 /**
@@ -75,8 +89,18 @@ export async function startAgentRunFunc(
     thunkApi: any,
     _context?: { parentMessageId?: string; signal?: AbortSignal; toolRunId?: string }
 ): Promise<{ rawData: any; displayData: string }> {
-    const { agentKey, task, input, agentName, ephemeral } = args;
+    const { agentKey, task, input, agentName, ephemeral, batchId } = args;
     const { dispatch } = thunkApi;
+
+    // A batch id is always present on the return value. The caller may supply
+    // one to group parallel runs; otherwise we mint a fresh one here so the
+    // server path (runAgentBackground, which does not currently carry batchId)
+    // still gives the caller a stable handle to filter on later via list.
+    // The CLI local path receives the same id and persists it on the run record.
+    const effectiveBatchId =
+        typeof batchId === "string" && batchId.trim()
+            ? batchId.trim()
+            : `batch-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
 
     if (!agentKey) {
         throw new Error("startAgentRun: 缺少 agentKey 参数。");
@@ -120,6 +144,11 @@ export async function startAgentRunFunc(
                 runId,
                 status,
                 agentKey,
+                // batchId is always returned — minted above when the caller didn't
+                // supply one — so controlAgentRun(list, batchId=...) works on every
+                // host. On the server path the id lives in the tool return; on the
+                // CLI local path it is also persisted on the run record.
+                batchId: effectiveBatchId,
                 ...(resolvedName ? { agentName: resolvedName } : {}),
                 ...(taskPreview ? { taskPreview } : {}),
             },

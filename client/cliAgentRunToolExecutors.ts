@@ -209,6 +209,9 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
         agentKey,
         ...(agentName ? { agentName } : {}),
         ...(batchId ? { batchId } : {}),
+        ...(typeof args.parentDialogId === "string" && args.parentDialogId.trim()
+          ? { parentDialogId: args.parentDialogId.trim() }
+          : {}),
         cwd: deps.cwd ?? process.cwd(),
         message,
         output: noopOutput,

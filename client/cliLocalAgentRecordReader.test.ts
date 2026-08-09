@@ -112,3 +112,66 @@ describe("resolveBuiltinPlatformAgentConfig", () => {
     expect(resolveBuiltinPlatformAgentConfig("")).toBeNull();
   });
 });
+
+describe("readAgentFromStore key lookup", () => {
+  test("returns config from store when a candidate key matches", async () => {
+    const key = "agent-user-1-my-helper";
+    const record = {
+      type: "agent",
+      id: "my-helper",
+      userId: "user-1",
+      name: "My Helper",
+      model: "deepseek-v4-flash",
+      apiSource: "cli",
+      provider: "cli",
+    };
+    const store = {
+      read: async (k: string) => (k === key ? record : null),
+      iterator: async function* () {
+        throw new Error("iterator should not be touched on key-hit");
+      },
+    } as any;
+    const config = await readAgentFromStore({
+      store,
+      agentRef: key,
+      userId: "user-1",
+    });
+    expect(config).not.toBeNull();
+    expect(config).toMatchObject({
+      key,
+      name: "My Helper",
+      model: "deepseek-v4-flash",
+    });
+  });
+
+  test("misses handle-matched record whose key segment differs (handle scan removed)", async () => {
+    // Key lookup for a concrete ref misses; the record is only reachable via
+    // the old handle-scan path. With the scan removed it must NOT be found,
+    // and the iterator must never be consulted.
+    const ref = "agent-user-1-some-alias";
+    const handleMatchedRecord = {
+      type: "agent",
+      id: "other-key",
+      name: "Handle Only Agent",
+      handle: "some-alias",
+      model: "deepseek-v4-flash",
+      apiSource: "cli",
+      provider: "cli",
+    };
+    const store = {
+      read: async () => null,
+      iterator: async function* () {
+        throw new Error("iterator should not be touched: handle scan removed");
+      },
+    } as any;
+    const config = await readAgentFromStore({
+      store,
+      agentRef: ref,
+      userId: "user-1",
+    });
+    // Key miss + not a builtin ref → null (fallback also null). The record
+    // whose handle matches but whose dbKey segment differs is deliberately
+    // no longer reachable.
+    expect(config).toBeNull();
+  });
+});

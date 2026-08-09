@@ -14,7 +14,6 @@ import {
   buildLocalAgentLookupKeys,
   shouldReadAgentKeyRemotely,
 } from "./localAgentRecords";
-import { normalizeAgentHandle } from "../core/agentHandle";
 import { dialogMessageRange } from "../database/keys";
 import { localDialogMessageRecordToRuntimeMessage } from "./localDialogRecords";
 import {
@@ -62,11 +61,10 @@ export function resolveBuiltinLocalCliAgentConfig(
 /**
  * Read an agent config from the store.
  *
- * Two-phase lookup:
+ * Single-phase lookup:
  * 1. Key lookup: build candidate dbKeys from agentRef (alias → agent-{userId}-{ref}),
  *    read each from the store (remote-first for concrete agent keys).
- * 2. Handle scan: if no key matched, iterate all `agent-*` records and match
- *    by `handle` field (case-insensitive, whitespace-collapsed).
+ * 2. If no key matched, fall back to the builtin platform agent config.
  */
 export async function readAgentFromStore(args: {
   store: HybridRecordStore;
@@ -81,32 +79,10 @@ export async function readAgentFromStore(args: {
     if (!record || typeof record !== "object") continue;
     return resolveAgentRuntimeConfigFromRecord(key, record);
   }
-  const normalizedRef = normalizeAgentHandle(args.agentRef);
-  if (!normalizedRef) {
-    // Last-chance fallback: known built-in platform agent keys (quick-chat
-    // tiers + builtin nolo) may not be in the local store or the remote
-    // record may 404. Synthesize the platform config so auto-mode routing
-    // keeps working instead of erroring "Local agent config not found".
-    return resolveBuiltinPlatformAgentConfig(args.agentRef);
-  }
-  try {
-    // Async iterator — must consume entries sequentially from the store cursor.
-    const iterator = args.store.iterator({
-      gte: "agent-",
-      lte: "agent-\uffff",
-    });
-    for await (const [key, record] of iterator) {
-      if (!record || typeof record !== "object") continue;
-      const handle = normalizeAgentHandle((record as any).handle);
-      if (handle !== normalizedRef) continue;
-      return resolveAgentRuntimeConfigFromRecord(key, record);
-    }
-  } catch {
-    // local handle scan unavailable
-  }
-  // Same fallback as above — covers concrete agent keys (e.g.
-  // agent-pub-01DSV4FLASHPB...) whose normalized handle is non-empty but
-  // neither key lookup nor handle scan matched.
+  // Last-chance fallback: known built-in platform agent keys (quick-chat
+  // tiers + builtin nolo) may not be in the local store or the remote
+  // record may 404. Synthesize the platform config so auto-mode routing
+  // keeps working instead of erroring "Local agent config not found".
   return resolveBuiltinPlatformAgentConfig(args.agentRef);
 }
 

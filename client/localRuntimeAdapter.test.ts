@@ -245,7 +245,7 @@ describe("CLI local runtime adapter", () => {
     });
   });
 
-  test("loads local CLI agent records by their handle", async () => {
+  test("does NOT load local CLI agent records by handle when handle differs from key segment", async () => {
     const adapter = createAdapter({
       env: {
         NOLO_LOCAL_USER_ID: "user-1",
@@ -272,11 +272,12 @@ describe("CLI local runtime adapter", () => {
       fetchImpl: async () => new Response("not found", { status: 404 }),
     } as any);
 
-    await expect(adapter.loadAgentConfig("frontend-implementer")).resolves.toMatchObject({
-      key: "agent-user-1-frontend",
-      name: "Frontend Implementer",
-      cliProvider: "agy",
-    });
+    // Handle scan was removed from readAgentFromStore: a record whose handle
+    // matches but whose dbKey segment differs is no longer reachable by that
+    // handle. The ref resolves only by key, so it misses.
+    await expect(
+      adapter.loadAgentConfig("frontend-implementer"),
+    ).resolves.toBeNull();
   });
 
   test("falls back to built-in local Codex CLI agent without machine binding", async () => {

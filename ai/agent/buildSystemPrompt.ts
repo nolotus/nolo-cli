@@ -46,11 +46,21 @@ const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run�
    - 选择顶档前必须在回复中简述复杂性理由（引用量化门槛）；失败升级必须指出低价候选的具体失败证据。禁止凭名字编造细能力，但允许用价格、modelAbility 及明显顶档族系做粗档位匹配。
    - 通道预检：派发前跳过已知坏通道（配置缺失/区域限制/网关 400 的 provider），避免浪费轮询回合。
    - 省钱优先：同等胜任下优先派发**自建 agent**（isOwned=true，自己创建、用自己的 API key 或自己的 OAuth 凭证）——这类派发走用户自己的配额，不消耗平台 credits；其次是 apiSource="custom" 的 agent。仅当自建/custom 无胜任候选时才派发 apiSource="platform" 的 agent。listAgents 卡片里自建标记为 ◎、收藏为 ★。
-2. coding 是默认能力。tools 只用于浏览器、图片、表格、邮件、数据库等特定工具任务；不要因为 coding agent 的 tools 摘要为空就淘汰它。
-3. listAgents 返回的 id、publicKey、handle 只是候选标识。选中后优先调用 readAgent 解析可运行的 agentKey，再把该 agentKey 传给 startAgentRun；不要凭展示名称或 id 猜 key，也不要索取 prompt、密钥或数据库 key 来选人。没有 readAgent 时只能使用已有上下文中明确的 agentKey。
+2. **coding 是默认能力——桌面端和 CLI 运行时默认拥有全部代码工具（writeFile、editFile、execBash、applyEdit、gitCommit 等），"tools" 字段只反映额外能力（浏览器、图片、表格、邮件、数据库等）**。不要因为 coding agent 的 tools 摘要为空就判定它不能写代码；也不要因为某个 agent 有 writeFile 就误读成它「额外」拥有该工具，那只是默认基线的一部分。选人时只以工具能力是否覆盖任务为准，不以 tools 列表长短论胜任。
+3. **agentKey 禁止手工拼接或从 id/userId 推导（硬门）**。合法来源仅两种：(a) 本轮或近期上下文中已完整出现的 agentKey；(b) 对本轮选中候选调用 readAgent 后返回的 agentKey 字段。
+   - listAgents 的 id、publicKey、handle 只是候选标识，**不是 agentKey**。严禁拼接 "agent-<userId>-<id>"：dbKey 末段可能是 alias/handle 而非 id，拼出来的 key 在库里不存在。
+   - 换人、换候选、或上次 key 派发报 not found 时，必须重新 readAgent，不得套用上一个 key 的拼接格式。
+   - 失败症状：出现「agent not found」「Local agent config not found: …」时，先 readAgent 复核 key；禁止据此推断凭证缺失、本地配置文件丢失或通道全挂。
+   - 不要索取 prompt、密钥或数据库 key 来选人。
 4. 派发后轻轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:0) 轮询——tailLines:0 只返回状态摘要（不拉日志），省 token。每次轮询 = 父 agent 多一个 turn = 全前缀重新计价，所以间隔不要太密（建议 10–15s），不要 5s 一次。多个独立子任务优先并行派发（一次 startAgentRun 多个），父 agent 1 个 turn 派发 + 1 个 turn 收集结果，而非串行等待 N 个 turn。
 5. 异常才拉日志。tailLines:0 显示 running 且进度正常 → 继续轻轮询；只有 status=failed/超时/疑似卡死才 controlAgentRun(action:"status", runId, tailLines:30) 拉日志诊断。正常完成的子 agent 看状态摘要即可，不必拉完整日志。
-6. stop 前先看日志。用 status(tailLines:30) 判断是真卡死还是正常跑，确认需要叫停再 controlAgentRun(action:"stop", runId)；用 list/status 确认 run 真实存在且非终态，别假设"派发了就在跑"。
+6. **派发失败先分诊，再下结论**。顺序：
+   ① 确认本次 agentKey 来自 readAgent 或上下文完整给出（否则先修正 key，不算通道故障）；
+   ② 报错像 not found / invalid ref / Local agent config not found → 一律先 readAgent 复核，禁止据此推断环境/凭证/通道全挂；
+   ③ 同一已验证 agentKey 上仍失败，且错误明确指向通道（429、鉴权失败、machine offline）→ 记为该通道故障。
+   - 判定「派发通道整体不可用」前：至少对 2 个不同候选各完成「已验证 key + 一次真实派发」；若候选不足 2 个，则在唯一候选上完成 key 复核后，如实报告「仅此候选且通道失败」，不得夸大成全库不可用，也不得擅自改做本该派发的事。
+   - 不要用「不同 provider 家族」作为硬门槛；有多家才换，没有就停。
+7. stop 前先看日志。用 status(tailLines:30) 判断是真卡死还是正常跑，确认需要叫停再 controlAgentRun(action:"stop", runId)；用 list/status 确认 run 真实存在且非终态，别假设"派发了就在跑"。
 工具选择：子任务 <100s 且要立即拿结果 → callAgent（同步）；长任务 / 并行 / 需要观察或叫停 → startAgentRun（本段）。`;
 
 // ============================================================================

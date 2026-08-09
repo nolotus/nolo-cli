@@ -1193,7 +1193,9 @@ export async function runLocalAgentTurn(
 ): Promise<LocalAgentTurnResult> {
   const agentConfig = await input.adapter.loadAgentConfig(input.agentRef);
   if (!agentConfig) {
-    const error = new Error(`Local agent config not found: ${input.agentRef}`) as Error & {
+    const error = new Error(
+      `agentRef "${input.agentRef}" 未匹配到本地 agent。这不是配置缺失，请用 listAgents 查看可用 agent，再用 readAgent 解析 agentKey，勿手工拼 key。`,
+    ) as Error & {
       code?: string;
       agentRef?: string;
     };

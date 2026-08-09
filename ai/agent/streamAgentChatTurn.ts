@@ -37,6 +37,7 @@ import {
     finalizeTransientMessageOnError,
     removeTransientMessage,
     selectAllMsgs,
+    appendOverlayMessage,
 } from "../../chat/messages/messageSlice";
 import { persistToolMessages } from "../../chat/messages/persistToolMessage";
 import {
@@ -1648,9 +1649,6 @@ export const streamAgentChatTurnHandler = async (
                         runtime: "react",
                         entrypoint: "chat-dialog",
                         capabilities: ["streaming", "dialog-ui", "tool-cards"],
-                        ...(runtimeOptions?.memorySubjectId
-                            ? { memorySubjectId: runtimeOptions.memorySubjectId }
-                            : {}),
                     },
                     ...(runtimeOptions?.quickChatReasoningEffort
                         ? {
@@ -2614,6 +2612,36 @@ export const streamAgentChatTurnHandler = async (
         //     finished — which defeated the whole "queue while busy" feature.
         if (turnAborted) {
             dispatch(clearPendingUserInputQueue(runtimeDialogKey ? { dialogKey: runtimeDialogKey } : undefined));
+        }
+        // Run-overlay presentation: after a clean (non-aborted) turn, query
+        // this dialog's background runs and append a snapshot presentation as
+        // a non-billed assistant message. Fire-and-forget-safe: queryRunOverlay
+        // catches its own errors and returns null, so this never throws into
+        // the turn-end path. Awaiting (rather than `.catch()`) keeps the
+        // overlay message ordered after the assistant reply on the wire; the
+        // query is a single lightweight GET and does not block meaningfully.
+        if (runtimeDialogKey && !turnAborted) {
+            try {
+                const { queryRunOverlay } = await import("./queryRunOverlay");
+                const overlayState = await queryRunOverlay(
+                    getState() as RootState,
+                    runtimeDialogKey,
+                );
+                if (overlayState && overlayState.runs.size > 0) {
+                    const { buildOverlayPresentation } = await import(
+                        "../../core/chat/runOverlayPresentation"
+                    );
+                    const presentation = buildOverlayPresentation(overlayState);
+                    if (presentation) {
+                        dispatch(appendOverlayMessage({
+                            dialogKey: runtimeDialogKey,
+                            text: presentation,
+                        }));
+                    }
+                }
+            } catch {
+                // Overlay is best-effort; never fail the turn over it.
+            }
         }
         // Notify the cross-platform queue core that this turn ended. The
         // adapter (if registered in the store's thunk extra) will emit a

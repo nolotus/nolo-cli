@@ -18,6 +18,7 @@ import { addReferenceKeysAction } from "../dialog/actions/addReferenceKeysAction
 import { DataType } from "../../create/types";
 import { getRuntimeServerContext } from "../../database/runtimeServerContext";
 import { remove, write, patch, selectById as selectDbRecordById } from "../../database/dbSlice";
+import { createDialogMessageKeyAndId } from "../../database/keys";
 import type { CompletionFinishReason, Message } from "./types";
 import { buildEditedMessageContent } from "./messageEditContent";
 import { planDeleteMessageCascade } from "./messageDeleteCascade";
@@ -490,6 +491,37 @@ export const messageSlice = createSliceWithThunks({
           isLoadingInitial: action.payload.isLoadingInitial,
         });
       }
+    }),
+
+    /**
+     * Append a run-overlay presentation as a non-streaming assistant message.
+     *
+     * This is a pure UI presentation action — it does NOT trigger a new agent
+     * turn, does NOT call the LLM, and is therefore not billed. The message
+     * is upserted into the dialog's message list so the user sees the run
+     * status snapshot at turn-end. A fresh message id/dbKey are minted from
+     * the dialog id so repeated overlays across turns don't collide.
+     *
+     * The message is marked role:"assistant" with isStreaming:false. Callers
+     * that want to keep it out of the LLM context can post-filter by the
+     * `metadata.overlayMessage` flag set here.
+     */
+    appendOverlayMessage: create.reducer<{
+      dialogKey: string;
+      text: string;
+    }>((state, action) => {
+      const dialogId = extractCustomId(action.payload.dialogKey);
+      if (!dialogId) return;
+      const dialogState = ensureMessageDialogState(state, dialogId);
+      const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
+      upsertOneMessage(dialogState, {
+        id: messageId,
+        dbKey: msgKey,
+        role: "assistant",
+        content: action.payload.text,
+        isStreaming: false,
+        metadata: { overlayMessage: true },
+      } as Message);
     }),
 
 
@@ -1363,6 +1395,7 @@ export const {
   addToolMessage,
   updateToolMessage,
   removeMessagesByIds,
+  appendOverlayMessage,
 } = messageSlice.actions as any;
 
 

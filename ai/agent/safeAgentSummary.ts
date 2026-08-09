@@ -2,6 +2,13 @@ import { getModelAbility, type ModelAbility } from "../llm/modelAbility";
 
 export interface SafeAgentSummary {
   id: string | null;
+  /**
+   * A runnable agent dbKey (agent-<userId>-<id> for owned agents, agent-pub-<id>
+   * for confirmed public agents) that can be passed directly to startAgentRun /
+   * readAgent. Present only when a signed-in userId is available and the key is
+   * resolvable; never exposes privateKey or secret material.
+   */
+  agentKey?: string;
   /** Only present when a real public record is confirmed; omitted for private agents. */
   publicKey?: string;
   name: string;
@@ -201,8 +208,22 @@ export function toSafeAgentSummary(
     record.dbKey.startsWith(`agent-${currentUserId}-`);
   const isOwned = isOwnedByRecord || isOwnedByDbKey;
 
+  // Runnable agentKey for delegation: owned agents → agent-<userId>-<id> (the
+  // current user can always resolve these); confirmed public agents → their
+  // publicKey. Omitted when there is no signed-in user or the key cannot resolve,
+  // so models never see a key that would 404 in startAgentRun.
+  let agentKey: string | undefined;
+  if (Boolean(currentUserId) && id) {
+    if (isOwned) {
+      agentKey = `agent-${currentUserId}-${id}`;
+    } else if (publicKey) {
+      agentKey = publicKey;
+    }
+  }
+
   return {
     id,
+    ...(agentKey !== undefined ? { agentKey } : {}),
     ...(publicKey !== undefined ? { publicKey } : {}),
     name,
     handle,

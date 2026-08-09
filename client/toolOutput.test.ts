@@ -1085,7 +1085,7 @@ describe("toolOutput", () => {
       false
     );
     expect(listLine).toBe(
-      "● listAgents\n  Agents (1)\n  ★ Agent A  model-x  platform\n"
+      "● listAgents\n  Agents (1)\n  ★  Agent A  model-x  platform\n"
     );
 
     const startLine = formatToolEventForCli(

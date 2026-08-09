@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach } from "bun:test";
 import {
   applyDetectedBackground,
   blendHex,
+  detectSystemBrightnessFromEnv,
   diffLineSequences,
   getActiveBrightness,
   getActiveTerminalBaseHex,
@@ -70,6 +71,8 @@ describe("tui theme", () => {
   test("brightness detection respects NOLO_TUI_THEME", () => {
     expect(resolveTuiBrightness({ NOLO_TUI_THEME: "light" })).toBe("light");
     expect(resolveTuiBrightness({ NOLO_TUI_THEME: "dark" })).toBe("dark");
+    // Explicit override beats system signal
+    expect(resolveTuiBrightness({ NOLO_TUI_THEME: "light", AppleInterfaceStyle: "Dark" })).toBe("light");
   });
 
   test("brightness detection reads COLORFGBG", () => {
@@ -79,6 +82,37 @@ describe("tui theme", () => {
     expect(resolveTuiBrightness({ COLORFGBG: "15;0" })).toBe("dark"); // bright fg, dark bg
     expect(resolveTuiBrightness({ COLORFGBG: "0;7" })).toBe("light"); // dark fg, light bg
     expect(resolveTuiBrightness({ COLORFGBG: "0;15" })).toBe("light");
+  });
+
+  test("falls back to system dark/light mode when OSC 11 / COLORFGBG missing", () => {
+    expect(resolveTuiBrightness({ COLOR_SCHEME: "prefer-light" })).toBe("light");
+    expect(resolveTuiBrightness({ AppleInterfaceStyle: "Dark" })).toBe("dark");
+  });
+
+  describe("detectSystemBrightnessFromEnv", () => {
+    test("detects dark mode from AppleInterfaceStyle on macOS env", () => {
+      expect(detectSystemBrightnessFromEnv({ AppleInterfaceStyle: "Dark" })).toBe("dark");
+      expect(detectSystemBrightnessFromEnv({ AppleInterfaceStyle: "dark" })).toBe("dark");
+    });
+
+    test("detects dark or light mode from COLOR_SCHEME", () => {
+      expect(detectSystemBrightnessFromEnv({ COLOR_SCHEME: "prefer-dark" })).toBe("dark");
+      expect(detectSystemBrightnessFromEnv({ COLOR_SCHEME: "prefer-light" })).toBe("light");
+    });
+
+    test("word boundary prevents false positives like flashlight", () => {
+      expect(detectSystemBrightnessFromEnv({ COLOR_SCHEME: "flashlight" })).toBe(null);
+      expect(detectSystemBrightnessFromEnv({ GTK_THEME: "darkling" })).toBe(null);
+    });
+
+    test("detects mode from GTK_THEME and QT_STYLE_OVERRIDE with word boundaries", () => {
+      expect(detectSystemBrightnessFromEnv({ GTK_THEME: "Adwaita-dark" })).toBe("dark");
+      expect(detectSystemBrightnessFromEnv({ QT_STYLE_OVERRIDE: "breeze-light" })).toBe("light");
+    });
+
+    test("returns null when no system dark/light signals match", () => {
+      expect(detectSystemBrightnessFromEnv({})).toBe(null);
+    });
   });
 
   test("defaults to dark when no hints are present", () => {
@@ -283,6 +317,18 @@ describe("tui theme", () => {
       expect(getActiveTerminalBaseHex()).toBe("1E1E2E");
       // Same '#1E1E2E' input again: normalized comparison sees no change.
       expect(applyDetectedBackground({ brightness: "dark", hex: "#1E1E2E" })).toBe(false);
+    });
+
+    test("empty hex (system fallback) does not force a repaint on repeat", () => {
+      setActiveBrightness(null);
+      setActiveTerminalBaseHex(null);
+      // System fallback reports brightness without an exact color.
+      expect(applyDetectedBackground({ brightness: "dark", hex: "" })).toBe(true);
+      expect(getActiveBrightness()).toBe("dark");
+      // Same brightness, still no exact color: must NOT repaint again.
+      expect(applyDetectedBackground({ brightness: "dark", hex: "" })).toBe(false);
+      // A real change of brightness with empty hex must still repaint.
+      expect(applyDetectedBackground({ brightness: "light", hex: "" })).toBe(true);
     });
   });
 });

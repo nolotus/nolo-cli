@@ -30,7 +30,7 @@ export const startAgentRunFunctionSchema = {
         properties: {
             agentKey: {
                 type: "string",
-                description: "要启动的 Agent 的可运行 dbKey（优先用 readAgent 解析出 agentKey，格式如 agent-xxx；readAgent 接受 dbKey/id/alias/URL，不要自己拼 key）。如果已通过 listAgents/readAgent 获取名称，请同时传 agentName。",
+                description: "要启动的 Agent 的可运行 dbKey，必须是 listAgents 返回的 agentKey 字段（owned: agent-<userId>-<id>；public: agent-pub-<id>）或 readAgent 返回的 agentKey。只接受精确 dbKey，不接受 name/handle/bare id。",
             },
             task: {
                 type: "string",

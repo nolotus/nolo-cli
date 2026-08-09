@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { ReadStream } from "node:tty";
-import type { TuiBrightness } from "./theme";
+import { detectSystemBrightnessFromEnv, type TuiBrightness } from "./theme";
 
 /**
  * Terminal background detection via OSC 11.
@@ -96,6 +97,14 @@ export type DetectTerminalBackgroundArgs = {
   timeoutMs?: number;
   /** Override the terminal-device check. Tests use this to drive a fake pair. */
   isTerminal?: (stream: unknown) => boolean;
+  /**
+   * When the terminal probe returns null (silent / non-TTY), fall back to the
+   * system dark/light preference (reads macOS `defaults` / Linux `gsettings`).
+   * Opt-in so the hot rendering path (which calls resolveTuiBrightness → pure
+   * env check) never forks a subprocess; only the low-frequency probe callers
+   * (startup / 30s poll / `/theme refresh`) pass this.
+   */
+  allowSystemFallback?: boolean;
 };
 
 export type DetectedTerminalBackground = {
@@ -110,7 +119,7 @@ export type DetectedTerminalBackground = {
  * answers with something unparseable — callers treat null as "keep the current
  * default" rather than guessing.
  */
-export async function detectTerminalBackground(
+async function probeTerminalBackground(
   args: DetectTerminalBackgroundArgs = {},
 ): Promise<DetectedTerminalBackground | null> {
   const stdin = (args.stdin ?? process.stdin) as Stdin;
@@ -173,14 +182,93 @@ export async function detectTerminalBackground(
 }
 
 /**
+ * Probe the terminal for its background color, with an optional system
+ * dark/light fallback when the probe yields nothing.
+ *
+ * When `args.allowSystemFallback` is set and the probe returns null (non-TTY,
+ * silent terminal, unparseable reply), this resolves from the OS dark/light
+ * preference (macOS `defaults` / Linux `gsettings`). The brightness is used as
+ * the detected value; the base hex is left empty so the palette's per-theme
+ * default hex applies. Low-frequency callers (startup / 30s poll / `/theme
+ * refresh`) pass this flag; the hot rendering path never does.
+ */
+export async function detectTerminalBackground(
+  args: DetectTerminalBackgroundArgs = {},
+): Promise<DetectedTerminalBackground | null> {
+  const r = await probeTerminalBackground(args);
+  if (r || !args.allowSystemFallback) return r;
+  const brightness = detectSystemBrightness(process.env, { allowSubprocess: true });
+  return brightness ? { brightness, hex: "" } : null;
+}
+
+/**
  * Probe the terminal for its background brightness.
  *
  * Thin wrapper over detectTerminalBackground returning only the brightness,
  * kept for callers that just need light/dark (existing tests depend on it).
  */
 export async function detectTerminalBrightness(
-  args: DetectTerminalBackgroundArgs = {},
+  args: DetectTerminalBackgroundArgs & { allowSubprocess?: boolean } = {},
 ): Promise<TuiBrightness | null> {
-  const r = await detectTerminalBackground(args);
+  const r = await detectTerminalBackground({
+    ...args,
+    // Preserve legacy `allowSubprocess` semantics through the wrapper's
+    // system fallback.
+    allowSystemFallback: args.allowSystemFallback ?? args.allowSubprocess,
+  });
   return r ? r.brightness : null;
 }
+
+/**
+ * Detect system dark/light mode preference via environment variables or OS-level signals.
+ *
+ * Strategy (first match wins):
+ * 1. Pure env signals via detectSystemBrightnessFromEnv (AppleInterfaceStyle, COLOR_SCHEME, GTK_THEME, etc.).
+ * 2. OS subprocess fallback (macOS `defaults read -g AppleInterfaceStyle` or Linux `gsettings`).
+ *    Subprocess check is disabled by default (allowSubprocess=false) and only runs when opted in.
+ */
+export function detectSystemBrightness(
+  env: Record<string, string | undefined> = process.env,
+  options: { allowSubprocess?: boolean } = {},
+): TuiBrightness | null {
+  const envResult = detectSystemBrightnessFromEnv(env);
+  if (envResult) return envResult;
+
+  const allowSubprocess = options.allowSubprocess ?? false;
+  if (!allowSubprocess) {
+    return null;
+  }
+
+  if (process.platform === "darwin") {
+    try {
+      const out = execFileSync("defaults", ["read", "-g", "AppleInterfaceStyle"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 200,
+      }).trim();
+      if (out.toLowerCase() === "dark") return "dark";
+    } catch {
+      // Key doesn't exist when macOS is in light mode, or defaults read failed
+    }
+  } else if (process.platform === "linux") {
+    try {
+      const out = execFileSync(
+        "gsettings",
+        ["get", "org.gnome.desktop.interface", "color-scheme"],
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 200,
+        },
+      ).trim();
+      const val = out.toLowerCase();
+      if (/(?:^|[\s\-_:])dark(?:$|[\s\-_:])/i.test(val)) return "dark";
+      if (/(?:^|[\s\-_:])light(?:$|[\s\-_:])/i.test(val)) return "light";
+    } catch {
+      // gsettings binary missing or failed
+    }
+  }
+
+  return null;
+}
+

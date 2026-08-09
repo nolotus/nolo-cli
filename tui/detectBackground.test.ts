@@ -4,6 +4,7 @@ import {
   brightnessFromRgb,
   detectTerminalBrightness,
   detectTerminalBackground,
+  detectSystemBrightness,
   parseOsc11Reply,
   parseOsc11Background,
 } from "./detectBackground";
@@ -134,5 +135,89 @@ describe("detectBackground", () => {
     });
     stdin.emit("data", Buffer.from("\x1b]11;rgb:fafa/fafa/fafa\x07", "latin1"));
     expect(await pending).toBe("light");
+  });
+
+  describe("detectSystemBrightness", () => {
+    test("detects dark mode from AppleInterfaceStyle on macOS", () => {
+      expect(detectSystemBrightness({ AppleInterfaceStyle: "Dark" })).toBe("dark");
+      expect(detectSystemBrightness({ AppleInterfaceStyle: "dark" })).toBe("dark");
+    });
+
+    test("detects dark or light mode from COLOR_SCHEME", () => {
+      expect(detectSystemBrightness({ COLOR_SCHEME: "prefer-dark" })).toBe("dark");
+      expect(detectSystemBrightness({ COLOR_SCHEME: "prefer-light" })).toBe("light");
+    });
+
+    test("detects mode from GTK_THEME and QT_STYLE_OVERRIDE", () => {
+      expect(detectSystemBrightness({ GTK_THEME: "Adwaita-dark" })).toBe("dark");
+      expect(detectSystemBrightness({ QT_STYLE_OVERRIDE: "breeze-light" })).toBe("light");
+    });
+
+    test("returns null when no system dark/light signals match", () => {
+      expect(detectSystemBrightness({})).toBe(null);
+    });
+
+    test("does not trigger subprocess check by default when allowSubprocess is omitted", () => {
+      // Even if env is empty, without allowSubprocess: true, it must return null immediately
+      // without running execFileSync.
+      expect(detectSystemBrightness({}, {})).toBe(null);
+      expect(detectSystemBrightness({})).toBe(null);
+    });
+
+    test("word boundary checks prevent false positives like flashlight", () => {
+      expect(detectSystemBrightness({ COLOR_SCHEME: "flashlight" })).toBe(null);
+    });
+
+    test("detectTerminalBrightness falls back to system dark when allowSubprocess is true and OSC 11 stays silent", async () => {
+      const stdin = fakeStdin();
+      const stdout = fakeStdout();
+      const prev = process.env.COLOR_SCHEME;
+      process.env.COLOR_SCHEME = "prefer-dark";
+      try {
+        const pending = detectTerminalBrightness({
+          stdin,
+          stdout,
+          timeoutMs: 20,
+          isTerminal: () => true,
+          allowSubprocess: true,
+        });
+        expect(await pending).toBe("dark");
+      } finally {
+        if (prev === undefined) delete process.env.COLOR_SCHEME;
+        else process.env.COLOR_SCHEME = prev;
+      }
+    });
+
+    test("detectTerminalBackground with allowSystemFallback resolves {brightness:'dark', hex:''} on a silent terminal", async () => {
+      const stdin = fakeStdin();
+      const stdout = fakeStdout();
+      const prev = process.env.COLOR_SCHEME;
+      process.env.COLOR_SCHEME = "prefer-dark";
+      try {
+        const pending = detectTerminalBackground({
+          stdin,
+          stdout,
+          timeoutMs: 20,
+          isTerminal: () => true,
+          allowSystemFallback: true,
+        });
+        expect(await pending).toEqual({ brightness: "dark", hex: "" });
+      } finally {
+        if (prev === undefined) delete process.env.COLOR_SCHEME;
+        else process.env.COLOR_SCHEME = prev;
+      }
+    });
+
+    test("detectTerminalBackground without allowSystemFallback stays null on a silent terminal (hot path never forks)", async () => {
+      const stdin = fakeStdin();
+      const stdout = fakeStdout();
+      const pending = detectTerminalBackground({
+        stdin,
+        stdout,
+        timeoutMs: 20,
+        isTerminal: () => true,
+      });
+      expect(await pending).toBeNull();
+    });
   });
 });

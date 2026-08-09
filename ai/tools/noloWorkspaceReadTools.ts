@@ -512,7 +512,7 @@ export function formatAgentListCard(agents: SafeAgentSummaryForCard[], maxDispla
 export const listAgentsFunctionSchema = {
   name: "listAgents",
   description:
-    "List the current user's Nolo agents as safe summaries. Use readAgent with the selected id/publicKey to resolve the runnable agentKey before delegation.",
+    "List the current user's Nolo agents as safe summaries. The `agents` array in the JSON result carries each agent's runnable `agentKey` (agent-<userId>-<id> for owned, agent-pub-<id> for public) plus model, apiSource, tools, prices, isOwned, isFavorite. Copy `agentKey` verbatim into startAgentRun/callAgent. Prefer isOwned agents (use your own quota, no platform credits).",
   parameters: {
     type: "object",
     properties: {
@@ -578,7 +578,7 @@ export async function listAgentsFunc(args: any, thunkApi: any): Promise<ToolResu
 export const readAgentFunctionSchema = {
   name: "readAgent",
   description:
-    "Read one agent's full config from the Nolo workspace. Accepts an agent dbKey (agent-xxx), plain id, alias, or agent URL; resolves it (including public agents via agent-pub-<id>; the server runtime also falls back to handle lookup) and returns the runnable agentKey plus a redacted record with fields such as model, provider, apiSource, tools, prompt, inputPrice, outputPrice, and isPublic. Use it before delegation to confirm an agent's identity and capabilities, or to resolve the agentKey that startAgentRun requires.",
+    "Read one agent's full config from the Nolo workspace. Accepts an agent dbKey (agent-xxx), plain id, alias, or agent URL; resolves it (including public agents via agent-pub-<id>; the server runtime also falls back to handle lookup) and returns the runnable agentKey plus a redacted record with fields such as model, provider, apiSource, tools, prompt, inputPrice, outputPrice, and isPublic. Use it to inspect an agent's full capabilities/credential status before delegation. Note: startAgentRun/callAgent take the exact agentKey from listAgents/readAgent; readAgent is not required before every dispatch when listAgents already gave you the key.",
   parameters: {
     type: "object",
     properties: {

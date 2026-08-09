@@ -236,13 +236,44 @@ export function supportsTruecolor(env: Record<string, string | undefined> = proc
 }
 
 /**
+ * Detect system dark/light mode preference strictly from environment variables.
+ * Pure logic — 0 subprocesses, safe for rendering hot paths and non-Node environments.
+ */
+export function detectSystemBrightnessFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): TuiBrightness | null {
+  const appleStyle = (env.AppleInterfaceStyle ?? "").trim().toLowerCase();
+  if (appleStyle === "dark") return "dark";
+
+  const colorScheme = (
+    env.COLOR_SCHEME ??
+    env.COLORSCHEME ??
+    env.SYSTEM_COLOR_SCHEME ??
+    ""
+  )
+    .trim()
+    .toLowerCase();
+  if (/(?:^|[\s\-_:])dark(?:$|[\s\-_:])/i.test(colorScheme)) return "dark";
+  if (/(?:^|[\s\-_:])light(?:$|[\s\-_:])/i.test(colorScheme)) return "light";
+
+  const gtkTheme = (env.GTK_THEME ?? env.QT_STYLE_OVERRIDE ?? "")
+    .trim()
+    .toLowerCase();
+  if (/(?:^|[\s\-_:])dark(?:$|[\s\-_:])/i.test(gtkTheme)) return "dark";
+  if (/(?:^|[\s\-_:])light(?:$|[\s\-_:])/i.test(gtkTheme)) return "light";
+
+  return null;
+}
+
+/**
  * Resolve the terminal background brightness.
  *
  * Strategy (first match wins):
  * 1. NOLO_TUI_THEME explicit override ("light" | "dark").
- * 2. COLORFGBG convention ("0;15" = light bg "15;0" = dark bg) — emitted by
- *    many terminals (Konsole, rxvt, some iTerm2/Ghostty configs).
- * 3. Default to "dark" — the most common developer terminal setting.
+ * 2. Active brightness set by /theme light|dark or startup OSC 11 probe.
+ * 3. COLORFGBG convention ("0;15" = light bg "15;0" = dark bg).
+ * 4. System dark/light mode preference (macOS / Linux env signals).
+ * 5. Default to "dark" — the most common developer terminal setting.
  */
 export function resolveTuiBrightness(env: Record<string, string | undefined> = process.env): TuiBrightness {
   const explicit = (env.NOLO_TUI_THEME ?? "").trim().toLowerCase();
@@ -265,6 +296,9 @@ export function resolveTuiBrightness(env: Record<string, string | undefined> = p
     if (!Number.isNaN(bg) && bg >= 0 && bg <= 6) return "dark";
     if (!Number.isNaN(bg) && bg >= 7 && bg <= 15) return "light";
   }
+
+  const sys = detectSystemBrightnessFromEnv(env);
+  if (sys) return sys;
 
   return "dark";
 }
@@ -336,9 +370,12 @@ export function applyDetectedBackground(detected: {
   // Normalize before comparing against the stored base (uppercase, no '#');
   // keeps a lower-case / '#'-prefixed input from re-triggering every poll.
   const normalizedHex = detected.hex.replace(/^#/, "").toUpperCase();
-  const changed =
-    detected.brightness !== activeBrightness ||
-    normalizedHex !== activeTerminalBaseHex;
+  // An empty hex means "no exact color info" (e.g. the system dark-mode
+  // fallback path). Compare brightness only in that case; comparing "" against
+  // the stored null would be always-true and force a repaint every poll.
+  const hexChanged =
+    normalizedHex !== "" && normalizedHex !== activeTerminalBaseHex;
+  const changed = detected.brightness !== activeBrightness || hexChanged;
   setActiveBrightness(detected.brightness);
   setActiveTerminalBaseHex(detected.hex);
   return changed;

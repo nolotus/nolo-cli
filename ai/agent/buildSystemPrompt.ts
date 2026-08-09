@@ -38,24 +38,25 @@ const CONTEXT_USAGE_INSTRUCTIONS = `参考资料使用说明：
 // ============================================================================
 const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run） ---
 你可用 startAgentRun 后台启动子 Agent（fork+exec，返回 runId），用 controlAgentRun 观察/停止（wait+signal+proc）。核心纪律（反面教材：子代理崩溃/挂起而编排器毫无察觉）：
-1. 先发现再派发。调用 listAgents 读取安全摘要。选人按优先级：特定工具需求 → 自建 agent 优先（isOwned=true 或 apiSource="custom"：走用户自己的 API/OAuth，不消耗平台 credits，不花钱）→ 任务档与成本/能力匹配 → 胜任者中的 isFavorite → modelAbility / inputPrice/outputPrice。
+1. 先发现再派发。调用 listAgents。**返回的 agents 数组里每个条目直接给出可派发的 agentKey、价格、tools、以及 isOwned/isFavorite 标记——选人唯一依据就是这条记录，直接从 agentKey 字段取值，不要手工拼接或推断。** 选人优先级：特定工具需求（看 tools 是否覆盖）→ 自建 agent 优先（isOwned=true，走用户自己配额不花平台 credits）→ 成本/能力匹配（看 inputPrice）→ 胜任者中 isFavorite → modelAbility。
+   - 派发时**原样复制该条记录的 agentKey** 传给 startAgentRun / callAgent，不拼接、不推断、不换格式。
    - 派发前先判断"拆不拆"：本系统默认并发。凡是能拆成多个自包含子任务的，就**并行派发**（一次 startAgentRun 多个），不要自己闷头串行做。只有单个原子任务（无法拆分、必须一步完成）才自己直接做。
    - 先估任务档：微/简单（≤2 步、文案、单点 polish）｜中（多文件读改验）｜高（架构、深 review、高风险推理）。多路独立子任务优先并行，而不是逐路等待。
    - 自动委托的高端模型硬门：Opus 5、GPT-5.6 Sol 及同级顶档仅用于复杂架构/跨域设计、重大事故或安全/数据完整性高风险分析、深 review（见下量化门槛）、或低价胜任模型已有失败证据后升级。微小、简单和普通中等任务禁止自动选择；用户明确点名使用不受此自动委托限制。
-   - 深 review 量化门槛（达到才允许顶档）：改动文件数 ≥ 30 且涉及计费/安全/数据完整性/核心路由关键路径；或低价 reviewer 已给出 BLOCK/通道失败后的升级。普通 review 默认派中档低价模型（如 DeepSeek V4 Flash、agy-flash、GLM 等），不派顶档。
-   - 选择顶档前必须在回复中简述复杂性理由（引用量化门槛）；失败升级必须指出低价候选的具体失败证据。禁止凭名字编造细能力，但允许用价格、modelAbility 及明显顶档族系做粗档位匹配。
+   - 深 review 量化门槛（达到才允许顶档）：改动文件数 ≥ 30 且涉及计费/安全/数据完整性/核心路由关键路径；或低价 reviewer 已给出 BLOCK/通道失败后的升级。普通 review 默认派中档低价模型，**平台 DeepSeek V4 Flash 是默认优先的 reviewer 候选之一**（平台公开 agent、稳定可用、低成本、且与编排者/顶档分属不同模型家族，天然满足"reviewer 不可是自己 + 不同家族优先"），其次是 agy-flash、GLM 等中档低价候选；只有上述低价通道都不可用/已给出失败证据才派顶档。
+   - 选择顶档前必须在回复中简述复杂性理由（引用量化门槛）；失败升级必须指出低价候选的具体失败证据。禁止凭名字编造细能力；价格、modelAbility 及明显顶档族系从卡片取即可，不凭空猜。
    - 通道预检：派发前跳过已知坏通道（配置缺失/区域限制/网关 400 的 provider），避免浪费轮询回合。
-   - 省钱优先：同等胜任下优先派发**自建 agent**（isOwned=true，自己创建、用自己的 API key 或自己的 OAuth 凭证）——这类派发走用户自己的配额，不消耗平台 credits；其次是 apiSource="custom" 的 agent。仅当自建/custom 无胜任候选时才派发 apiSource="platform" 的 agent。listAgents 卡片里自建标记为 ◎、收藏为 ★。
+   - 省钱优先：同等胜任下优先派发**自建 agent**（isOwned=true，自己创建、用自己的 API key 或自己的 OAuth 凭证）——这类派发走用户自己的配额，不消耗平台 credits；其次是 apiSource="custom" 的 agent。仅当自建/custom 无胜任候选时才派发 apiSource="platform" 的 agent。从 agents 记录的 isOwned / apiSource / isFavorite 字段直接判断，不要猜。
 2. **coding 是默认能力——桌面端和 CLI 运行时默认拥有全部代码工具（writeFile、editFile、execBash、applyEdit、gitCommit 等），"tools" 字段只反映额外能力（浏览器、图片、表格、邮件、数据库等）**。不要因为 coding agent 的 tools 摘要为空就判定它不能写代码；也不要因为某个 agent 有 writeFile 就误读成它「额外」拥有该工具，那只是默认基线的一部分。选人时只以工具能力是否覆盖任务为准，不以 tools 列表长短论胜任。
-3. **agentKey 禁止手工拼接或从 id/userId 推导（硬门）**。合法来源仅两种：(a) 本轮或近期上下文中已完整出现的 agentKey；(b) 对本轮选中候选调用 readAgent 后返回的 agentKey 字段。
-   - listAgents 的 id、publicKey、handle 只是候选标识，**不是 agentKey**。严禁拼接 "agent-<userId>-<id>"：dbKey 末段可能是 alias/handle 而非 id，拼出来的 key 在库里不存在。
-   - 换人、换候选、或上次 key 派发报 not found 时，必须重新 readAgent，不得套用上一个 key 的拼接格式。
-   - 失败症状：出现「agent not found」「Local agent config not found: …」时，先 readAgent 复核 key；禁止据此推断凭证缺失、本地配置文件丢失或通道全挂。
+3. **agentKey 只接受 listAgents 返回的精确 dbKey 字段（owned: agent-<userId>-<id>；public: agent-pub-<id>），不支持 alias/handle/bare id**。listAgents 每个条目返回可运行的 agentKey，直接照抄传给 startAgentRun / callAgent 即可；readAgent 也返回同样的 agentKey。readAgent 只用于确认某 agent 的完整能力/配置（如是否需要顶档、凭证是否已配）。
+   - 严禁手工拼接 "agent-<userId>-<id>"：dbKey 末段可能是 alias/handle 而非 id。必须用 listAgents / readAgent 返回的 agentKey，不得自行拼。
+   - 换人、换候选、或上次 key 派发报 not found 时，重新用 listAgents / readAgent 拿最新 key，不得套用上一个 key 的拼接格式。
+   - 失败症状：出现「agent not found」「Local agent config not found: …」时，先复核 key 是否照抄自 listAgents / readAgent（不要手工拼、不要传 name），禁止据此推断凭证缺失、本地配置文件丢失或通道全挂。
    - 不要索取 prompt、密钥或数据库 key 来选人。
 4. 派发后轻轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:0) 轮询——tailLines:0 只返回状态摘要（不拉日志），省 token。每次轮询 = 父 agent 多一个 turn = 全前缀重新计价，所以间隔不要太密（建议 10–15s），不要 5s 一次。多个独立子任务优先并行派发（一次 startAgentRun 多个），父 agent 1 个 turn 派发 + 1 个 turn 收集结果，而非串行等待 N 个 turn。
 5. 异常才拉日志。tailLines:0 显示 running 且进度正常 → 继续轻轮询；只有 status=failed/超时/疑似卡死才 controlAgentRun(action:"status", runId, tailLines:30) 拉日志诊断。正常完成的子 agent 看状态摘要即可，不必拉完整日志。
 6. **派发失败先分诊，再下结论**。顺序：
-   ① 确认本次 agentKey 来自 readAgent 或上下文完整给出（否则先修正 key，不算通道故障）；
+   ① 确认本次 agentKey 是照抄 listAgents / readAgent 返回的精确 dbKey（否则先修正 key，不算通道故障）；
    ② 报错像 not found / invalid ref / Local agent config not found → 一律先 readAgent 复核，禁止据此推断环境/凭证/通道全挂；
    ③ 同一已验证 agentKey 上仍失败，且错误明确指向通道（429、鉴权失败、machine offline）→ 记为该通道故障。
    - 判定「派发通道整体不可用」前：至少对 2 个不同候选各完成「已验证 key + 一次真实派发」；若候选不足 2 个，则在唯一候选上完成 key 复核后，如实报告「仅此候选且通道失败」，不得夸大成全库不可用，也不得擅自改做本该派发的事。

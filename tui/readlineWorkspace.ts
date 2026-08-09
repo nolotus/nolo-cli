@@ -985,6 +985,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   const detected = await detectTerminalBackground({
     stdin: input as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void },
     stdout: output as NodeJS.WritableStream & { isTTY?: boolean },
+    allowSystemFallback: true,
   });
   if (detected) {
     setActiveBrightness(detected.brightness);
@@ -1255,6 +1256,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const detected = await detectTerminalBackground({
       stdin: input as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void },
       stdout: output as NodeJS.WritableStream & { isTTY?: boolean },
+      allowSystemFallback: true,
     });
     if (sessionEnded) return; // exited while awaiting the 100ms probe — don't write to a restored TTY
     if (!detected) {
@@ -1682,6 +1684,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       const detected = await detectTerminalBackground({
         stdin: input as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void },
         stdout: output as NodeJS.WritableStream & { isTTY?: boolean },
+        allowSystemFallback: true,
       });
       if (detected && applyDetectedBackground(detected)) {
         emitCommandOutput(t("themeRefreshed", detected.brightness));

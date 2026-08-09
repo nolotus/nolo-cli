@@ -40,10 +40,7 @@ export const callAgentFunctionSchema = {
             agentKey: {
                 type: "string",
                 description:
-                    "要调用的 Agent 的唯一 ID 或 alias/handle。" +
-                    "支持三种形式：完整 agentKey（如 agent-xxx-01ABC）、" +
-                    "alias（如 reviewer，会自动解析为 agent-{userId}-{alias} 和 agent-pub-{alias}）、" +
-                    "或 public agent id（如 01ABC）。",
+                    "要调用的 Agent 的可运行 dbKey，必须是 listAgents 返回的 agentKey 字段（owned: agent-<userId>-<id>；public: agent-pub-<id>）或 readAgent 返回的 agentKey。只接受精确 dbKey，不接受 name/handle/bare id。",
             },
             task: {
                 type: "string",

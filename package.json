@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.16.0-alpha.16",
+  "version": "0.16.0-alpha.17",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -1053,6 +1053,7 @@
     "render/page/createPageAction.ts",
     "render/table/tableSlice.ts",
     "render/table/fetchAndCacheTableRows.ts",
+    "render/table/tableColumnCore.ts",
     "render/table/createTableAction.ts",
     "render/table/deleteTableAction.ts",
     "render/table/types.ts",

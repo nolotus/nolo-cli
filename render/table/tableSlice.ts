@@ -21,6 +21,14 @@ import { metaKey, rowKey } from "../../database/keys";
 import { DataType } from "../../create/types";
 import { resolveReplicationServers, scheduleWriteReplication } from "../../database/actions/replication";
 import { fetchAndCacheTableRows } from "./fetchAndCacheTableRows";
+import {
+  addColumnToMeta,
+  deleteColumnFromMeta,
+  renameColumnInMeta,
+  renameColumnLabelInMeta,
+  reorderColumnInMeta,
+  updateColumnWidthInMeta,
+} from "./tableColumnCore";
 
 import type { CreateTableArgs } from "./createTableAction";
 import { createTableAction } from "./createTableAction";
@@ -62,17 +70,6 @@ const initialState: TableSliceState = {
   error: null,
   rows: [],
   focusContext: null,
-};
-
-/* --------------------------------------------------------------------------
- * 工具方法
- * ------------------------------------------------------------------------*/
-
-const reorderList = <T,>(list: T[], from: number, to: number): T[] => {
-  const next = [...list];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved);
-  return next;
 };
 
 /* --------------------------------------------------------------------------
@@ -418,10 +415,6 @@ export const tableSlice = createSliceWithThunks({
       async (args: AddColumnArgs, { dispatch, getState, rejectWithValue }) => {
         const { tenantId, tableId, columnName } = args;
 
-        if (!columnName.trim()) {
-          return rejectWithValue("字段名不能为空");
-        }
-
         const state = (getState() as any).table;
         const meta = state.currentTable;
 
@@ -429,39 +422,24 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        if (meta.columns.some((c: TableColumn) => c.name === columnName)) {
-          return rejectWithValue(`字段 ${columnName} 已存在`);
+        const result = addColumnToMeta(
+          meta,
+          { columnName },
+          { id: ulid(), nowIso: formatISO(new Date()) }
+        );
+        if (!result.ok) {
+          return rejectWithValue(result.error);
         }
 
         try {
-          const nowIso = formatISO(new Date());
-
-          const newColumn: TableColumn = {
-            id: ulid(),
-            name: columnName,
-            // 默认显示名与机器名一致；之后用户可以单独改 label
-            label: columnName,
-          };
-
-          const newColumns: TableColumn[] = [...meta.columns, newColumn];
-
           await dispatch(
             patch({
               dbKey: meta.dbKey,
-              changes: {
-                columns: newColumns,
-                updatedAt: nowIso,
-              },
+              changes: result.value.metaChanges,
             })
           ).unwrap();
 
-          const nextMeta: TableMeta = {
-            ...meta,
-            columns: newColumns,
-            updatedAt: nowIso,
-          };
-
-          return nextMeta;
+          return result.value.meta;
         } catch (e: any) {
           return rejectWithValue(e.message || "添加字段失败");
         }
@@ -500,67 +478,30 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        if (!meta.columns.some((c: TableColumn) => c.name === columnName)) {
-          return rejectWithValue(`字段 ${columnName} 不存在`);
-        }
-
-        const nowIso = formatISO(new Date());
-        const newColumns: TableColumn[] = meta.columns.filter(
-          (c: TableColumn) => c.name !== columnName
+        const result = deleteColumnFromMeta(
+          meta,
+          state.rows,
+          { columnName },
+          { nowIso: formatISO(new Date()) }
         );
-        const rows = state.rows;
+        if (!result.ok) {
+          return rejectWithValue(result.error);
+        }
+        const { meta: nextMeta, metaChanges, rows: newRows, rowPatches } =
+          result.value;
 
         try {
           // 1) 删除所有行上的该字段（利用 patch 的 null -> 删除语义）
-          const rowsWithField = rows.filter((row: any) =>
-            Object.prototype.hasOwnProperty.call(row, columnName)
-          );
-
           await Promise.all(
-            rowsWithField.map((row: any) =>
-              dispatch(
-                patch({
-                  dbKey: row.dbKey,
-                  changes: {
-                    [columnName]: null,
-                    updatedAt: nowIso,
-                  },
-                })
-              ).unwrap()
-            )
+            rowPatches.map((p) => dispatch(patch(p)).unwrap())
           );
 
           // 2) 更新 meta.columns
           await dispatch(
-            patch({
-              dbKey: meta.dbKey,
-              changes: {
-                columns: newColumns,
-                updatedAt: nowIso,
-              },
-            })
+            patch({ dbKey: meta.dbKey, changes: metaChanges })
           ).unwrap();
 
-          // 3) 生成新的 rows（内存态）
-          const newRows = rows.map((row: any) => {
-            if (!Object.prototype.hasOwnProperty.call(row, columnName)) {
-              return row;
-            }
-            const { [columnName]: _removed, ...rest } = row;
-            return {
-              ...rest,
-              updatedAt: nowIso,
-            };
-          });
-
-          return {
-            meta: {
-              ...meta,
-              columns: newColumns,
-              updatedAt: nowIso,
-            } as TableMeta,
-            rows: newRows,
-          };
+          return { meta: nextMeta, rows: newRows };
         } catch (e: any) {
           return rejectWithValue(e.message || "删除字段失败");
         }
@@ -602,40 +543,24 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        const columnCount = meta.columns.length;
-        if (
-          fromIndex < 0 ||
-          fromIndex >= columnCount ||
-          toIndex < 0 ||
-          toIndex >= columnCount
-        ) {
-          return rejectWithValue("列索引超出范围");
+        const result = reorderColumnInMeta(
+          meta,
+          { fromIndex, toIndex },
+          { nowIso: formatISO(new Date()) }
+        );
+        if (!result.ok) {
+          return rejectWithValue(result.error);
         }
-
-        if (fromIndex === toIndex) {
+        if (result.value.noop) {
           // 不需要改动，直接返回原 meta，避免无意义写库
           return meta;
         }
-
-        const nowIso = formatISO(new Date());
-        const newColumns = reorderList(meta.columns, fromIndex, toIndex);
+        const { meta: nextMeta, metaChanges } = result.value;
 
         try {
           await dispatch(
-            patch({
-              dbKey: meta.dbKey,
-              changes: {
-                columns: newColumns,
-                updatedAt: nowIso,
-              },
-            })
+            patch({ dbKey: meta.dbKey, changes: metaChanges })
           ).unwrap();
-
-          const nextMeta: TableMeta = {
-            ...meta,
-            columns: newColumns,
-            updatedAt: nowIso,
-          };
 
           return nextMeta;
         } catch (e: any) {
@@ -670,11 +595,6 @@ export const tableSlice = createSliceWithThunks({
         { dispatch, getState, rejectWithValue }
       ) => {
         const { tenantId, tableId, oldName, newName } = args;
-        const trimmedNewName = newName.trim();
-
-        if (!trimmedNewName) {
-          return rejectWithValue("新的字段名不能为空");
-        }
 
         const state = (getState() as any).table;
         const meta = state.currentTable;
@@ -683,76 +603,30 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        if (!meta.columns.some((c: TableColumn) => c.name === oldName)) {
-          return rejectWithValue(`字段 ${oldName} 不存在`);
-        }
-
-        if (meta.columns.some((c: TableColumn) => c.name === trimmedNewName)) {
-          return rejectWithValue(`字段 ${trimmedNewName} 已存在`);
-        }
-
-        const nowIso = formatISO(new Date());
-        const rows = state.rows;
-
-        const newColumns: TableColumn[] = meta.columns.map((c: TableColumn) =>
-          c.name === oldName ? { ...c, name: trimmedNewName } : c
+        const result = renameColumnInMeta(
+          meta,
+          state.rows,
+          { oldName, newName },
+          { nowIso: formatISO(new Date()) }
         );
+        if (!result.ok) {
+          return rejectWithValue(result.error);
+        }
+        const { meta: nextMeta, metaChanges, rows: newRows, rowPatches } =
+          result.value;
 
         try {
           // 1) 遍历所有行，把 oldName -> newName，并删除 oldName
-          const rowsWithOldField = rows.filter((row: any) =>
-            Object.prototype.hasOwnProperty.call(row, oldName)
-          );
-
           await Promise.all(
-            rowsWithOldField.map((row: any) => {
-              const changes: Record<string, any> = {
-                [trimmedNewName]: row[oldName],
-                [oldName]: null,
-                updatedAt: nowIso,
-              };
-
-              return dispatch(
-                patch({
-                  dbKey: row.dbKey,
-                  changes,
-                })
-              ).unwrap();
-            })
+            rowPatches.map((p) => dispatch(patch(p)).unwrap())
           );
 
           // 2) 更新 meta.columns
           await dispatch(
-            patch({
-              dbKey: meta.dbKey,
-              changes: {
-                columns: newColumns,
-                updatedAt: nowIso,
-              },
-            })
+            patch({ dbKey: meta.dbKey, changes: metaChanges })
           ).unwrap();
 
-          // 3) 内存态 rows 同步字段名
-          const newRows = rows.map((row: any) => {
-            if (!Object.prototype.hasOwnProperty.call(row, oldName)) {
-              return row;
-            }
-            const { [oldName]: oldValue, ...rest } = row;
-            return {
-              ...rest,
-              [trimmedNewName]: oldValue,
-              updatedAt: nowIso,
-            };
-          });
-
-          return {
-            meta: {
-              ...meta,
-              columns: newColumns,
-              updatedAt: nowIso,
-            } as TableMeta,
-            rows: newRows,
-          };
+          return { meta: nextMeta, rows: newRows };
         } catch (e: any) {
           return rejectWithValue(e.message || "重命名字段失败");
         }
@@ -789,11 +663,6 @@ export const tableSlice = createSliceWithThunks({
         { dispatch, getState, rejectWithValue }
       ) => {
         const { tenantId, tableId, columnId, newLabel } = args;
-        const trimmedLabel = newLabel.trim();
-
-        if (!trimmedLabel) {
-          return rejectWithValue("字段显示名不能为空");
-        }
 
         const state = (getState() as any).table;
         const meta = state.currentTable;
@@ -802,33 +671,20 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        const column = meta.columns.find((c: TableColumn) => c.id === columnId);
-        if (!column) {
-          return rejectWithValue("要重命名的字段不存在");
-        }
-
-        const nowIso = formatISO(new Date());
-
-        const newColumns: TableColumn[] = meta.columns.map((c: TableColumn) =>
-          c.id === columnId ? { ...c, label: trimmedLabel } : c
+        const result = renameColumnLabelInMeta(
+          meta,
+          { columnId, label: newLabel },
+          { nowIso: formatISO(new Date()) }
         );
+        if (!result.ok) {
+          return rejectWithValue(result.error);
+        }
+        const { meta: nextMeta, metaChanges } = result.value;
 
         try {
           await dispatch(
-            patch({
-              dbKey: meta.dbKey,
-              changes: {
-                columns: newColumns,
-                updatedAt: nowIso,
-              },
-            })
+            patch({ dbKey: meta.dbKey, changes: metaChanges })
           ).unwrap();
-
-          const nextMeta: TableMeta = {
-            ...meta,
-            columns: newColumns,
-            updatedAt: nowIso,
-          };
 
           return nextMeta;
         } catch (e: any) {
@@ -870,36 +726,20 @@ export const tableSlice = createSliceWithThunks({
           return rejectWithValue("当前没有加载对应的表定义");
         }
 
-        const column = meta.columns.find((c: TableColumn) => c.id === columnId);
-        if (!column) {
-          return rejectWithValue("要调整宽度的字段不存在");
-        }
-
-        const normalizedWidth =
-          typeof width === "number" && width > 0 ? Math.round(width) : undefined;
-
-        const nowIso = formatISO(new Date());
-
-        const newColumns: TableColumn[] = meta.columns.map((c: TableColumn) =>
-          c.id === columnId ? { ...c, width: normalizedWidth } : c
+        const result = updateColumnWidthInMeta(
+          meta,
+          { columnId, width },
+          { nowIso: formatISO(new Date()) }
         );
+        if (!result.ok) {
+          return rejectWithValue(result.error);
+        }
+        const { meta: nextMeta, metaChanges } = result.value;
 
         try {
           await dispatch(
-            patch({
-              dbKey: meta.dbKey,
-              changes: {
-                columns: newColumns,
-                updatedAt: nowIso,
-              },
-            })
+            patch({ dbKey: meta.dbKey, changes: metaChanges })
           ).unwrap();
-
-          const nextMeta: TableMeta = {
-            ...meta,
-            columns: newColumns,
-            updatedAt: nowIso,
-          };
 
           return nextMeta;
         } catch (e: any) {

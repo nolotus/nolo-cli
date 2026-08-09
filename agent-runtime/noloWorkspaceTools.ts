@@ -26,7 +26,7 @@ export const NOLO_WORKSPACE_TOOL_NAMES = [
 export type NoloWorkspaceToolName = typeof NOLO_WORKSPACE_TOOL_NAMES[number];
 
 export const NOLO_WORKSPACE_TOOL_PROMPT =
-  "Nolo workspace tools are available for Nolo data: use listDialogs/readDialog/queryDialogsBySubjectRef, listAgents/readAgent, listSpaces/readSpace, readDoc/readSkillDoc, loadSkill, listTables/queryTableRows, cliWhoami, and cliDoctor when the user asks to inspect Nolo workspace data. Use deleteDialogs only when the user explicitly asks to delete dialogs; it must preview matches and wait for user confirmation before deleting. Prefer tools over guessing, and combine tool results when the user asks for summaries or analysis.";
+  "Nolo workspace tools are available for Nolo data: use listDialogs/readDialog/queryDialogsBySubjectRef to inspect dialogs, listAgents to discover agents and readAgent to resolve the runnable agentKey and full config before delegation, listSpaces/readSpace to inspect spaces, readDoc/readSkillDoc to read docs, loadSkill to activate a skill, listTables/queryTableRows to query tables, and cliWhoami/cliDoctor to check CLI state when the user asks to inspect Nolo workspace data. Use deleteDialogs only when the user explicitly asks to delete dialogs; it must preview matches and wait for user confirmation before deleting. Prefer tools over guessing, and combine tool results when the user asks for summaries or analysis.";
 
 const NOLO_WORKSPACE_TOOL_NAME_SET = new Set<string>(NOLO_WORKSPACE_TOOL_NAMES);
 const DIALOG_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
@@ -103,8 +103,8 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
     // listAgentsFunc 另有 limit（默认 100，最大 500）。如后续对齐需在
     // parseAgentListArgs / agentListCommands 增加 --limit 透传。
   });
-  add("readAgent", "Read one agent config in the Nolo workspace.", {
-    agent: stringToolParam("Agent key, id, alias, or URL."),
+  add("readAgent", "Read one agent's full config from the Nolo workspace. Accepts an agent dbKey (agent-xxx), plain id, alias, or agent URL; resolves it (including public agents via agent-pub-<id>; the server runtime also falls back to handle lookup) and returns the runnable agentKey plus a redacted record with fields such as model, provider, apiSource, tools, prompt, inputPrice, outputPrice, and isPublic. Use it before delegation to confirm an agent's identity and capabilities, or to resolve the agentKey that startAgentRun requires.", {
+    agent: stringToolParam("Agent dbKey (e.g. agent-xxx), agent id, alias, or agent URL."),
   }, ["agent"]);
   add("listSpaces", "List joined spaces in the Nolo workspace.", {});
   add("readSpace", "Read one space in the Nolo workspace.", {

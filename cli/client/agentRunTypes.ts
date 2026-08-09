@@ -164,7 +164,9 @@ export type RunAgentTurnOptions = {
    * Memory-only / ephemeral mode: skip all dialog & message persistence
    * (LevelDB writes and remote server sync). The turn runs in-process and
    * its result is discarded once the run returns. Intended for liveness
-   * probes (e.g. nolo-plan探活). Only effective with the local runtime.
+   * probes (e.g. nolo-plan探活). Effective with both the local runtime
+   * (wrapAdapterEphemeral) and the HTTP/server runtime (request body
+   * carries `ephemeral: true`, which the server honors).
    *
    * Note: this covers `adapter.saveTurn` (dialog + messages) and
    * `adapter.loadDialogHistory`. The `callAgent` sub-agent path writes its

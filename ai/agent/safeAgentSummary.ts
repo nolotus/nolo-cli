@@ -18,6 +18,11 @@ export interface SafeAgentSummary {
   isFavorite: boolean;
   favoritedAt: number | string | null;
   isPublic: boolean;
+  /** True when the agent is owned by the current user (record.userId matches).
+   *  Self-owned agents that use the user's own API key (apiSource "custom") or
+   *  the user's own OAuth run on the user's own quota — they do not consume
+   *  platform credits, so delegation should prefer them. */
+  isOwned: boolean;
   updatedAt: string | number | null;
 }
 
@@ -180,6 +185,22 @@ export function toSafeAgentSummary(
   const isPublic = record?.isPublic === true || record?.isPublicFlag === true || record?.publicRecordExists === true;
   const updatedAt = safeTimestamp(record?.updatedAt ?? record?.createdAt ?? record?.created);
 
+  // 自建判断：record.userId / ownerId 任一等于当前用户，或 dbKey 以完整前缀
+  // `agent-<currentUserId>-` 开头（不解析分段——userId 本身可能含连字符，
+  // 如 user-1，解析首个连字符会误判为非自建）。
+  // 自建 agent 若用自己的 API（apiSource "custom"）或本地 OAuth，派发走用户自己的
+  // 配额，不消耗平台 credits——选人时优先它们能省钱。
+  const currentUserId = options?.userId;
+  const isOwnedByRecord =
+    Boolean(currentUserId) &&
+    ((typeof record?.userId === "string" && record.userId === currentUserId) ||
+      (typeof record?.ownerId === "string" && record.ownerId === currentUserId));
+  const isOwnedByDbKey =
+    Boolean(currentUserId) &&
+    typeof record?.dbKey === "string" &&
+    record.dbKey.startsWith(`agent-${currentUserId}-`);
+  const isOwned = isOwnedByRecord || isOwnedByDbKey;
+
   return {
     id,
     ...(publicKey !== undefined ? { publicKey } : {}),
@@ -197,12 +218,14 @@ export function toSafeAgentSummary(
     isFavorite: favStatus.isFavorite,
     favoritedAt: favStatus.favoritedAt,
     isPublic,
+    isOwned,
     updatedAt,
   };
 }
 
 export function sortSafeAgentSummaries<
   T extends {
+    isOwned?: boolean;
     isFavorite?: boolean;
     favoritedAt?: number | string | null;
     updatedAt?: number | string | null;
@@ -210,6 +233,13 @@ export function sortSafeAgentSummaries<
   }
 >(agents: T[]): T[] {
   return [...agents].sort((left, right) => {
+    // 自建（自己的 API/OAuth，不消耗平台配额）优先 → 收藏 → 时间。
+    const leftOwned = left.isOwned === true;
+    const rightOwned = right.isOwned === true;
+
+    if (leftOwned && !rightOwned) return -1;
+    if (!leftOwned && rightOwned) return 1;
+
     const leftFav = left.isFavorite === true;
     const rightFav = right.isFavorite === true;
 

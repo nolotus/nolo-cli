@@ -67,19 +67,11 @@ describe("cli startAgentRun executor", () => {
       arguments: JSON.stringify({ agentKey: "agent-pub-x", task: "帮我查一下资料" }),
     });
 
-    expect(JSON.parse(result.content)).toEqual({
-      runId: "run-1",
-      status: "running",
-      taskPreview: "帮我查一下资料",
-    });
+    expect(JSON.parse(result.content)).toEqual({ runId: "run-1", status: "running" });
     // 卡片标题现在按 CLI locale 本地化（默认 zh）；断言用同一套 label 源，
     // 避免把「英文字面量」当成契约再次写死。
     expect(result.metadata?.displayData).toContain(agentRunCardLabels().runStarted);
-    // runId 以 `#run-1` 后缀出现（并行 run 的唯一区分依据），而不是 `runId  ` 行。
-    expect(result.metadata?.displayData).toContain("#run-1");
     expect(result.metadata?.displayData).not.toContain("runId");
-    // task 上卡：两个并行 run 才能一眼分清各自在做什么。
-    expect(result.metadata?.displayData).toContain("task    帮我查一下资料");
 
     // 注册表记录已写入
     const record = JSON.parse(deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!);
@@ -140,7 +132,6 @@ describe("cli startAgentRun executor", () => {
       runId: "run-1",
       status: "running",
       agentName: "页面生成助手",
-      taskPreview: "做一个页面",
     });
     expect(result.metadata?.displayData).toContain("页面生成助手");
     const record = JSON.parse(deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!);

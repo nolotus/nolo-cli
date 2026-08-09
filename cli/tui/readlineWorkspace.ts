@@ -558,6 +558,7 @@ async function runAgentChat(
     scriptDir,
     env: {
       ...env,
+      NOLO_CLI_THINKING: state.thinkingDisplay,
       NOLO_CLI_TOOLS: state.toolDisplay,
     },
     output,

@@ -53,7 +53,9 @@ export type ParsedAgentRunArgs = {
    * Ephemeral / memory-only mode: dialog & messages stay in process memory,
    * never written to LevelDB or synced to a remote server. Intended for
    * liveness probes (e.g. nolo-plan探活) where persistence is pure overhead.
-   * Only meaningful with the local runtime (`--local`); ignored otherwise.
+   * Local runtime strips persistence via wrapAdapterEphemeral; the
+   * HTTP/server runtime forwards `ephemeral: true` in the request body and
+   * the server skips dialog persistence accordingly.
    */
   ephemeral: boolean;
   cwd?: string;

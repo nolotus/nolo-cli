@@ -716,14 +716,3 @@ export function createRenderAwareStreamWriter(args: {
     },
   };
 }
-/**
- * Clean assistant text for CLI display. Think tags are stripped because
- * thinking content arrives via separate "thinking" events (shown on the
- * spinner line), not inline in the content stream.
- */
-export function formatAssistantTextForCli(text: string): string {
-  return text
-    .replace(/\u003cthink\u003e[\s\S]*?\u003c\/think\u003e\s*/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}

@@ -38,13 +38,14 @@ const CONTEXT_USAGE_INSTRUCTIONS = `参考资料使用说明：
 // ============================================================================
 const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run） ---
 你可用 startAgentRun 后台启动子 Agent（fork+exec，返回 runId），用 controlAgentRun 观察/停止（wait+signal+proc）。核心纪律（反面教材：子代理崩溃/挂起而编排器毫无察觉）：
-1. 先发现再派发。调用 listAgents 读取安全摘要。选人按优先级：特定工具需求 → 任务档与成本/能力匹配 → 胜任者中的 isFavorite → modelAbility / inputPrice/outputPrice。
+1. 先发现再派发。调用 listAgents 读取安全摘要。选人按优先级：特定工具需求 → 自建 agent 优先（isOwned=true 或 apiSource="custom"：走用户自己的 API/OAuth，不消耗平台 credits，不花钱）→ 任务档与成本/能力匹配 → 胜任者中的 isFavorite → modelAbility / inputPrice/outputPrice。
    - 派发前先判断"该不该派发"：父 agent 轮询 + 上下文传递本身有成本，子代理单价低不等于总成本更低。小任务直接做；只有任务大到单 agent 装不下、或可并行省时间，编排才划算。
    - 先估任务档：微/简单（≤2 步、文案、单点 polish）｜中（多文件读改验）｜高（架构、深 review、高风险推理）。
    - 自动委托的高端模型硬门：Opus 5、GPT-5.6 Sol 及同级顶档仅用于复杂架构/跨域设计、重大事故或安全/数据完整性高风险分析、深 review（见下量化门槛）、或低价胜任模型已有失败证据后升级。微小、简单和普通中等任务禁止自动选择；用户明确点名使用不受此自动委托限制。
    - 深 review 量化门槛（达到才允许顶档）：改动文件数 ≥ 30 且涉及计费/安全/数据完整性/核心路由关键路径；或低价 reviewer 已给出 BLOCK/通道失败后的升级。普通 review 默认派中档低价模型（如 DeepSeek V4 Flash、agy-flash、GLM 等），不派顶档。
    - 选择顶档前必须在回复中简述复杂性理由（引用量化门槛）；失败升级必须指出低价候选的具体失败证据。禁止凭名字编造细能力，但允许用价格、modelAbility 及明显顶档族系做粗档位匹配。
    - 通道预检：派发前跳过已知坏通道（配置缺失/区域限制/网关 400 的 provider），避免浪费轮询回合。
+   - 省钱优先：同等胜任下优先派发**自建 agent**（isOwned=true，自己创建、用自己的 API key 或自己的 OAuth 凭证）——这类派发走用户自己的配额，不消耗平台 credits；其次是 apiSource="custom" 的 agent。仅当自建/custom 无胜任候选时才派发 apiSource="platform" 的 agent。listAgents 卡片里自建标记为 ◎、收藏为 ★。
 2. coding 是默认能力。tools 只用于浏览器、图片、表格、邮件、数据库等特定工具任务；不要因为 coding agent 的 tools 摘要为空就淘汰它。
 3. listAgents 返回的 id、publicKey、handle 只是候选标识。选中后优先调用 readAgent 解析可运行的 agentKey，再把该 agentKey 传给 startAgentRun；不要凭展示名称或 id 猜 key，也不要索取 prompt、密钥或数据库 key 来选人。没有 readAgent 时只能使用已有上下文中明确的 agentKey。
 4. 派发后轻轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:0) 轮询——tailLines:0 只返回状态摘要（不拉日志），省 token。每次轮询 = 父 agent 多一个 turn = 全前缀重新计价，所以间隔不要太密（建议 10–15s），不要 5s 一次。多个独立子任务优先并行派发（一次 startAgentRun 多个），父 agent 1 个 turn 派发 + 1 个 turn 收集结果，而非串行等待 N 个 turn。

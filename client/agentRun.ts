@@ -35,10 +35,7 @@ import {
   type AgentRunSubjectRef,
   type RunAgentTurnOptions,
   type RunAgentTurnResult,
-  type TaskEvidenceInput,
 } from "./agentRunTypes";
-
-export type { RunAgentTurnOptions, RunAgentTurnResult, TaskEvidenceInput };
 import { Spinner } from "./agentRunSpinner";
 import {
   resolveServerPlatformToolNames,
@@ -456,7 +453,7 @@ async function readAgentRunFailureMetadata(
 async function runHttpAgentTurn(
   options: RunAgentTurnOptions,
   authToken: string,
-): Promise<RunAgentTurnResult> {
+) {
   const spinner = new Spinner(
     options.output,
     `${options.agentName} -> working`,
@@ -521,6 +518,7 @@ async function runHttpAgentTurn(
         ? { parentDialogId: options.parentDialogId }
         : {}),
       ...(options.background ? { background: true } : {}),
+      ...(options.ephemeral ? { ephemeral: true } : {}),
       ...(typeof options.timeoutMs === "number"
         ? { timeoutMs: options.timeoutMs }
         : {}),
@@ -620,6 +618,7 @@ async function runHttpAgentTurn(
 
   const content = formatAssistantResponseForCli(
     String(data?.content ?? data?.message ?? ""),
+    options,
   );
   if (content) {
     options.output.write(`\n${options.agentName} > ${content}\n`);
@@ -641,7 +640,7 @@ async function runHttpAgentTurn(
   };
 }
 
-async function runInjectedLocalAgentTurn(options: RunAgentTurnOptions): Promise<RunAgentTurnResult> {
+async function runInjectedLocalAgentTurn(options: RunAgentTurnOptions) {
   return runLocalAgentTurnForCli(options, { reportFailure: true });
 }
 
@@ -655,7 +654,7 @@ async function refreshMissingLocalAgentConfig(options: RunAgentTurnOptions) {
 async function runLocalAgentTurnForCli(
   options: RunAgentTurnOptions,
   settings: { reportFailure: boolean },
-): Promise<RunAgentTurnResult> {
+) {
   const resolvedBaseAdapter = resolveLocalRuntimeAdapter(options);
   const baseAdapter = (() => {
     let adapter =
@@ -892,7 +891,7 @@ async function runLocalAgentTurnForCli(
   }
 }
 
-export async function runAgentTurn(options: RunAgentTurnOptions): Promise<RunAgentTurnResult> {
+export async function runAgentTurn(options: RunAgentTurnOptions) {
   const authToken = resolveAuthToken(options.env);
   const runtimeMode = resolveRequestedRuntimeMode(options);
 
@@ -974,14 +973,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<RunAge
     return { exitCode: 1 };
   }
 
-  // Reaching the HTTP/server path means the run will be persisted by the
-  // server. --ephemeral/--memory-only only suppresses *local* persistence, so
-  // warn whether the user asked for --server explicitly or auto fell back here.
-  if (options.ephemeral) {
-    options.output.write(
-      "[nolo] --ephemeral/--memory-only is only effective with the local runtime (--local); the server stores dialogs on its own and cannot run memory-only.\n",
-    );
-  }
+  // HTTP/server path 同样支持 ephemeral（请求体透传 ephemeral: true，
+  // 服务端据此跳过 dialog 持久化），与本地 wrapAdapterEphemeral 一致。
+  // 无需在此警告"仅 local 生效"——那是修复前的过时语义。
 
   return runHttpAgentTurn(options, authToken);
 }

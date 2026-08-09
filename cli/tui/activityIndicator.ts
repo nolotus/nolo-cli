@@ -19,14 +19,6 @@
  */
 
 import { resolveCliColorEnabled } from "../client/terminalStyles";
-import type { AgentRunSnapshot } from "../client/agentRunSnapshot";
-import {
-  formatRunAge,
-  getAgentRunStatusIcon,
-  isAgentRunTerminalStatus,
-  runShowsLogTail,
-  shortRunId,
-} from "../../ai/tools/agent/agentRunDisplayHelpers";
 import { t } from "./i18n";
 import { themeText } from "./theme";
 
@@ -41,11 +33,16 @@ export type ActivityIndicatorView = {
   elapsedSec: number;
 };
 
-/**
- * The panel renders the same snapshot the transcript cards do — one parser,
- * one shape, so the two surfaces cannot disagree about a run's state.
- */
-export type AgentRunStatusSnapshot = AgentRunSnapshot;
+export type AgentRunStatusSnapshot = {
+  runId: string;
+  agentName?: string;
+  status: string; // "running", "completed", "killed", "failed", etc.
+  polls?: number;
+  lastPollMs?: number;
+  logTail?: string;
+  logLines?: string[];
+  errorMessage?: string;
+};
 
 export type ActivityIndicatorDeps = {
   /** turn 是否进行中（readlineWorkspace 用 () => activeTurnAbort !== null）。 */
@@ -233,7 +230,7 @@ export function createActivityIndicator(
     }
 
     if (agentRunSnapshot) {
-      lines.push(...formatAgentRunPanelLines(agentRunSnapshot, colorEnabled, now()));
+      lines.push(...formatAgentRunPanelLines(agentRunSnapshot, colorEnabled));
     }
 
     return lines.length > 0 ? lines : null;
@@ -266,93 +263,60 @@ export function createActivityIndicator(
   };
 }
 
-/**
- * Progress suffix: ` · 12 tools · read, grep`. Empty when the run has not
- * reported any tool activity yet.
- */
-function formatPanelProgress(snapshot: AgentRunStatusSnapshot): string {
-  const parts: string[] = [];
-  if (typeof snapshot.toolCallCount === "number" && Number.isFinite(snapshot.toolCallCount)) {
-    parts.push(`${snapshot.toolCallCount} tools`);
-  }
-  if (snapshot.lastToolNames && snapshot.lastToolNames.length > 0) {
-    parts.push(snapshot.lastToolNames.join(", "));
-  }
-  return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
-}
-
-/**
- * The run's own words beat its stdout. `lastAssistantText` is a sentence the
- * sub-agent wrote; the log tail is whatever byte sequence happened to land last
- * and is regularly a truncated JSON fragment.
- */
-function formatPanelDetail(snapshot: AgentRunStatusSnapshot): string {
-  const note = snapshot.lastAssistantText?.trim();
-  if (note) return note;
-  // The log fallback obeys the same rule as the cards (`runShowsLogTail`)
-  // rather than a second one of its own: raw stdout is evidence on a failed run
-  // and noise on a healthy one. Falling back unconditionally here put the very
-  // `DATA_CLONE_ERR: 25,` fragments the cards now withhold straight back onto
-  // the dock.
-  if (!runShowsLogTail(snapshot.status)) return "";
-  const lines = snapshot.logLines;
-  if (!lines || lines.length === 0) return "";
-  return lines[lines.length - 1]?.trim() ?? "";
-}
-
 export function formatAgentRunPanelLines(
   snapshot: AgentRunStatusSnapshot,
-  colorEnabled: boolean,
-  now: number = Date.now()
+  colorEnabled: boolean
 ): string[] {
   const lines: string[] = [];
   const name = snapshot.agentName || "sub-agent";
-  const short = shortRunId(snapshot.runId);
-  const runId = short ? ` (${short})` : "";
+  const runId = snapshot.runId ? ` (${snapshot.runId.slice(0, 8)})` : "";
   const status = snapshot.status || "running";
 
-  // Status vocabulary comes from the run store (`done`/`failed`/`timeout`/
-  // `killed`/`cancelled`), not from a guessed list — the previous local list
-  // checked for `completed`/`finished`/`success`, none of which the store ever
-  // emits, so a finished run kept rendering with the in-progress hourglass.
-  const statusSymbol = getAgentRunStatusIcon(status);
-  const statusColor: "warning" | "success" | "danger" = !isAgentRunTerminalStatus(status)
-    ? "warning"
-    : status === "done"
-      ? "success"
-      : "danger";
+  let statusSymbol = "⌛";
+  let statusColor: "warning" | "success" | "danger" | "muted" = "warning";
+  if (status === "completed" || status === "finished" || status === "success") {
+    statusSymbol = "✓";
+    statusColor = "success";
+  } else if (status === "killed" || status === "cancelled" || status === "failed" || status === "stopped") {
+    statusSymbol = "🔴";
+    statusColor = "danger";
+  }
 
+  const pollPart = snapshot.polls !== undefined ? ` (polls: ${snapshot.polls})` : "";
   const errPart = snapshot.errorMessage ? ` · ${snapshot.errorMessage}` : "";
-  const progressPart = formatPanelProgress(snapshot);
-  // The panel repaints on a timer, so this ticks live — unlike the transcript
-  // cards, which freeze the age at the moment they were emitted.
-  const age = formatRunAge(snapshot, now);
-  const agePart = age ? ` · ${age}` : "";
 
   if (!colorEnabled) {
-    lines.push(
-      `🤖 Sub-Agent: ${name}${runId} · ${statusSymbol} ${status}${agePart}${progressPart}${errPart}`
-    );
+    lines.push(`🤖 Sub-Agent: ${name}${runId} · ${statusSymbol} ${status}${pollPart}${errPart}`);
   } else {
     const botIcon = themeText("🤖", "accent", true);
     const labelText = themeText(" Sub-Agent: ", "muted", true);
     const nameText = themeText(`${name}${runId}`, "chrome", true);
-    // agePart belongs on the coloured branch too — the real TUI runs with
-    // colour on, so omitting it here made the live duration invisible in
-    // exactly the mode users see.
     const statusText = themeText(` · ${statusSymbol} ${status}`, statusColor, true);
-    const ageText = agePart ? themeText(agePart, "chrome") : "";
-    const progressText = progressPart ? themeText(progressPart, "chrome") : "";
+    const pollsText = pollPart ? themeText(pollPart, "chrome") : "";
     const errorText = errPart ? themeText(errPart, "danger") : "";
-    lines.push(`${botIcon}${labelText}${nameText}${statusText}${ageText}${progressText}${errorText}`);
+    lines.push(`${botIcon}${labelText}${nameText}${statusText}${pollsText}${errorText}`);
   }
 
-  const detail = formatPanelDetail(snapshot);
-  if (detail) {
+  let logLine: string | undefined;
+  if (snapshot.logTail) {
+    const trimmed = snapshot.logTail.trim();
+    if (trimmed) {
+      const parts = trimmed.split(/\r?\n/);
+      logLine = parts[parts.length - 1];
+    }
+  } else if (snapshot.logLines && snapshot.logLines.length > 0) {
+    logLine = snapshot.logLines[snapshot.logLines.length - 1];
+  }
+
+  if (logLine && logLine.trim()) {
+    const cleanLog = logLine.trim();
     if (!colorEnabled) {
-      lines.push(`   └ ${detail}`);
+      lines.push(`   └ Log: ${cleanLog}`);
     } else {
-      lines.push(`${themeText("   └ ", "muted")}${themeText(detail, "chrome")}`);
+      const branchChar = themeText("   └ ", "muted");
+      const logTag = themeText("Log: ", "muted");
+      const logContent = themeText(cleanLog, "chrome");
+      lines.push(`${branchChar}${logTag}${logContent}`);
     }
   }
 

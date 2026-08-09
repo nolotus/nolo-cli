@@ -32,7 +32,6 @@ import {
   extractThinkContent,
 } from "./thinkTagParser";
 import type { ThinkParseState } from "./thinkTagParser";
-import { createToolCallTextParserState } from "./toolCallTextParser";
 import {
   applyChatCompletionDelta,
   extractChatCompletionStreamError,
@@ -383,7 +382,6 @@ export async function readPlatformChatSseCompletion(args: {
     streamError: undefined as ChatCompletionStreamError | undefined,
     accumulatedToolCalls: createToolCallAccumulator(),
     thinkState: createThinkParserState(),
-    toolCallTextState: createToolCallTextParserState(),
   };
 
   for await (const frame of readSseFrames(args.response)) {

@@ -14,7 +14,7 @@
 import { runAgentBackground } from "../../agent/runAgentBackground";
 import { toErrorMessage } from "../../../core/errorMessage";
 import { buildDelegatedTaskContent } from "./callAgentTool";
-import { formatStartRunCard, resolveRunLabel, TASK_PREVIEW_MAX } from "./agentRunDisplayHelpers";
+import { formatStartRunCard, resolveRunLabel } from "./agentRunDisplayHelpers";
 import { getActiveDialogKey } from "../../../chat/dialog/dialogRuntimeStore";
 import { extractCustomId } from "../../../core/prefix";
 
@@ -30,7 +30,7 @@ export const startAgentRunFunctionSchema = {
         properties: {
             agentKey: {
                 type: "string",
-                description: "要启动的 Agent 的可运行 dbKey（优先使用 readAgent 返回的 agentKey，格式如 agent-xxx）。如果已通过 listAgents/readAgent 获取名称，请同时传 agentName。",
+                description: "要启动的 Agent 的可运行 dbKey（优先用 readAgent 解析出 agentKey，格式如 agent-xxx；readAgent 接受 dbKey/id/alias/URL，不要自己拼 key）。如果已通过 listAgents/readAgent 获取名称，请同时传 agentName。",
             },
             task: {
                 type: "string",
@@ -109,11 +109,6 @@ export async function startAgentRunFunc(
         // lives in resolveRunLabel so a key never masquerades as a name.
         const resolvedName = agentName?.trim() || bgResult.agentName || bgResult.name;
         const identity = { agentName: resolvedName, agentKey, runId };
-        // A clipped copy of the task rides along so every renderer can say what
-        // this run is *for*. Without it two concurrent runs are indistinguishable
-        // on screen — same card, same status, different work. Clipped rather than
-        // full: this is display text, and the caller already holds the original.
-        const taskPreview = task.replace(/\s+/g, " ").trim().slice(0, TASK_PREVIEW_MAX);
 
         return {
             rawData: {
@@ -121,12 +116,8 @@ export async function startAgentRunFunc(
                 status,
                 agentKey,
                 ...(resolvedName ? { agentName: resolvedName } : {}),
-                ...(taskPreview ? { taskPreview } : {}),
             },
-            displayData: formatStartRunCard(resolveRunLabel(identity), status, {
-                task: taskPreview,
-                runId,
-            }),
+            displayData: formatStartRunCard(resolveRunLabel(identity), status),
         };
     } catch (e: any) {
         throw new Error(`startAgentRun 启动 Agent [${agentKey}] 失败: ${toErrorMessage(e)}`);

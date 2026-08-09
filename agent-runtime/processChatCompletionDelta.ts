@@ -16,12 +16,6 @@ import {
   accumulateToolCallDelta,
   type ToolCallAccumulator,
 } from "./toolCallAccumulator";
-import {
-  createToolCallTextParserState,
-  processContentChunkWithToolCallStripping,
-  flushToolCallTextParserIntoCallback,
-  type ToolCallTextParseState,
-} from "./toolCallTextParser";
 
 /** In-band stream failure carried by an SSE frame instead of an HTTP status. */
 export type ChatCompletionStreamError = { message: string; code?: string };
@@ -40,7 +34,6 @@ export type ChatCompletionStreamState = {
   streamError?: ChatCompletionStreamError;
   accumulatedToolCalls: ToolCallAccumulator;
   thinkState: ThinkParseState;
-  toolCallTextState: ToolCallTextParseState;
   onTextDelta?: (chunk: string) => void;
   onReasoningDelta?: (chunk: string) => void;
 };
@@ -135,9 +128,6 @@ export function applyChatCompletionDelta(
   if (!delta || typeof delta !== "object") return false;
 
   // reasoning_content (DeepSeek) / reasoning (Ollama, Qwen3)
-  // Note: tool-call text markers in reasoning are not stripped here —
-  // Qwen3 typically emits them in delta.content, not delta.reasoning.
-  // If a model puts them in reasoning, they pass through as-is.
   const reasoningChunk =
     typeof delta.reasoning_content === "string"
       ? delta.reasoning_content
@@ -156,20 +146,7 @@ export function applyChatCompletionDelta(
   // Text delta: some models (MiniMax M3, etc.) inline ٬think blocks in content
   const textChunk = typeof delta.content === "string" ? delta.content : "";
   if (textChunk) {
-    // Strip Qwen3-style tool-call text markers before they enter visible content.
-    const { cleanedContent, state: newState } =
-      processContentChunkWithToolCallStripping(
-        textChunk,
-        state.toolCallTextState,
-        (name, arguments_) =>
-          accumulateToolCallDelta(state.accumulatedToolCalls, [
-            { index: state.accumulatedToolCalls.slots.length, type: "function", function: { name, arguments: arguments_ } },
-          ]),
-      );
-    state.toolCallTextState = newState;
-    if (!cleanedContent) return true;
-
-    const parsedChunk = processThinkChunk(cleanedContent, state.thinkState);
+    const parsedChunk = processThinkChunk(textChunk, state.thinkState);
     state.thinkState = parsedChunk.state;
     if (parsedChunk.content) {
       state.content += parsedChunk.content;
@@ -186,22 +163,11 @@ export function applyChatCompletionDelta(
 
 /** Flush the think parser at end-of-stream, folding residual buffer into state. */
 export function flushChatCompletionStream(state: ChatCompletionStreamState): void {
-  // Flush tool-call text parser first (strips any trailing partial markers)
-  const { residualContent, state: tcState } = flushToolCallTextParserIntoCallback(
-    state.toolCallTextState,
-    (name, arguments_) =>
-      accumulateToolCallDelta(state.accumulatedToolCalls, [
-        { index: state.accumulatedToolCalls.slots.length, type: "function", function: { name, arguments: arguments_ } },
-      ]),
-  );
-  state.toolCallTextState = tcState;
-
   const flushed = flushThinkParser(state.thinkState);
   state.thinkState = flushed.state;
-  const combinedContent = residualContent + (flushed.content ?? "");
-  if (combinedContent) {
-    state.content += combinedContent;
-    state.onTextDelta?.(combinedContent);
+  if (flushed.content) {
+    state.content += flushed.content;
+    state.onTextDelta?.(flushed.content);
   }
   if (flushed.reasoning) {
     state.reasoning += flushed.reasoning;

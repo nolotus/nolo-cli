@@ -1141,8 +1141,6 @@ describe("toolOutput", () => {
               found: true,
               status: "running",
               agentName: "Worker",
-              toolCallCount: i + 1,
-              lastToolNames: ["readFile"],
               logLines,
             }),
           })
@@ -1154,136 +1152,62 @@ describe("toolOutput", () => {
     expect(out.match(/● controlAgentRun/g)?.length ?? 0).toBe(1);
     expect(out.match(/Run status/g)?.length ?? 0).toBe(1);
     expect(out).toContain("⏳ running");
-    expect(out).toContain("agent   Worker  #fold-1");
-    // Latest poll wins for the progress row.
-    expect(out).toContain("tools   4 tools · readFile");
-    // Observer detail (how often the model polled, how fast the endpoint
-    // answered) is not run state and must not reach the card.
-    expect(out).not.toContain("polls");
-    expect(out).not.toContain("13ms");
-    // A healthy run's stdout stays off the card entirely.
-    expect(out).not.toContain("Log tail:");
-    expect(out).not.toContain("agent-xxx → working locally");
+    expect(out).toContain("polls   4");
+    expect(out).toContain("last    13ms");
+    expect(out).toContain("agent   Worker");
+    // Identical log tail appears once, not once per poll.
+    expect(out.match(/Log tail:/g)?.length ?? 0).toBe(1);
+    expect(out.match(/agent-xxx → working locally/g)?.length ?? 0).toBe(1);
   });
 
-  // Log tails only reach a card once a run has failed, so the dedupe that keeps
-  // an unchanged tail from being redrawn is exercised on a failed run.
-  test("a repeated poll does not redraw an unchanged log tail", () => {
+  test("folded controlAgentRun status omits unchanged log tail on a later fold", () => {
     const format = createToolEventFormatter("compact", false);
     const logLines = ["same-tail"];
-    const failedPoll = (toolCallId: string) =>
-      format(
-        toolEvent({
-          type: "tool-result",
-          toolCallId,
-          toolName: "controlAgentRun",
-          content: JSON.stringify({
-            runId: "run-fold-2",
-            status: "failed",
-            agentName: "Worker",
-            logLines,
-          }),
-        })
-      );
-
-    // Terminal statuses flush immediately, so each poll emits its own card.
-    const first = failedPoll("s1");
-    expect(first).toContain("Log tail:");
-    expect(first).toContain("same-tail");
-
-    const second = failedPoll("s2");
-    expect(second).toContain("● controlAgentRun");
-    expect(second).not.toContain("Log tail:");
-    expect(second).not.toContain("same-tail");
-  });
-
-  test("a tail withheld while the run was healthy still prints when it fails", () => {
-    // The tail dedupe must only remember tails it actually printed. Banking the
-    // key on every poll would mark a never-shown tail as already seen and
-    // suppress it on the failure card — the one card that exists to show it.
-    const format = createToolEventFormatter("compact", false);
-    const logLines = ["connecting", "boom"];
-    const poll = (toolCallId: string, status: string) =>
-      format(
-        toolEvent({
-          type: "tool-result",
-          toolCallId,
-          toolName: "controlAgentRun",
-          content: JSON.stringify({ runId: "run-l", status, agentName: "Worker", logLines }),
-        })
-      );
-
-    expect(poll("p1", "running")).toBe("");
-    const out = poll("p2", "failed");
-
-    expect(out).toContain("Log tail:");
-    expect(out).toContain("boom");
-  });
-
-  test("a status transition breaks the fold so the ending gets its own card", () => {
-    const format = createToolEventFormatter("compact", false);
-    const poll = (toolCallId: string, status: string, extra: Record<string, unknown> = {}) =>
-      format(
-        toolEvent({
-          type: "tool-result",
-          toolCallId,
-          toolName: "controlAgentRun",
-          content: JSON.stringify({
-            runId: "run-t",
-            status,
-            agentName: "Worker",
-            ...extra,
-          }),
-        })
-      );
-
-    expect(poll("p1", "running", { toolCallCount: 3 })).toBe("");
-    expect(poll("p2", "running", { toolCallCount: 8 })).toBe("");
-    // running → done: the progress card closes and a finished card opens.
-    const out = poll("p3", "done");
-
-    expect(out).toContain("Run status");
-    expect(out).toContain("⏳ running");
-    // Progress from the folded polls survives into the closing card.
-    expect(out).toContain("tools   8 tools");
-    expect(out).toContain("Run finished");
-    expect(out).toContain("✓ done");
-    expect(format.flush ? format.flush() : "").toBe("");
-  });
-
-  test("a finished run reports totals a terminal poll did not repeat", () => {
-    const format = createToolEventFormatter("compact", false);
     format(
       toolEvent({
         type: "tool-result",
-        toolCallId: "p1",
+        toolCallId: "s1",
         toolName: "controlAgentRun",
+        elapsedMs: 5,
         content: JSON.stringify({
-          runId: "run-c",
+          runId: "run-fold-2",
           status: "running",
           agentName: "Worker",
-          toolCallCount: 31,
-          startedAt: 1_000_000,
+          logLines,
         }),
       })
     );
-    // The terminal poll carries only the outcome; totals are carried forward.
-    const out = format(
+    // Interrupt with a write so the first fold emits (with log).
+    const first = format(
       toolEvent({
         type: "tool-result",
-        toolCallId: "p2",
+        toolCallId: "w1",
+        toolName: "writeFile",
+        argumentsPreview: "out.txt",
+      })
+    );
+    expect(first).toContain("Log tail:");
+    expect(first).toContain("same-tail");
+
+    format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "s2",
         toolName: "controlAgentRun",
+        elapsedMs: 8,
         content: JSON.stringify({
-          runId: "run-c",
-          status: "done",
+          runId: "run-fold-2",
+          status: "running",
           agentName: "Worker",
-          finishedAt: 1_000_000 + 242_000,
+          logLines,
         }),
       })
     );
-    expect(out).toContain("Run finished");
-    expect(out).toContain("31 tools");
-    expect(out).toContain("4m02s");
+    const second = format.flush ? format.flush() : "";
+    expect(second).toContain("● controlAgentRun");
+    expect(second).toContain("polls   1");
+    expect(second).not.toContain("Log tail:");
+    expect(second).not.toContain("same-tail");
   });
 
   test("controlAgentRun status without agentName does not render agent   agent", () => {
@@ -1341,6 +1265,8 @@ describe("toolOutput", () => {
     expect(out).toContain("● controlAgentRun");
     expect(out).toContain("✗ failed");
     expect(out).toContain("error   API key expired");
+    expect(out).toContain("polls   2");
+    expect(out).toContain("last    22ms");
     // Flush should be empty — terminal already emitted.
     expect(format.flush ? format.flush() : "").toBe("");
   });
@@ -1380,41 +1306,5 @@ describe("toolOutput", () => {
       expect(read).not.toContain("• Read (");
       expect(fetch).not.toContain("• Fetch (");
     }
-  });
-});
-
-describe("toolOutput transcript ordering", () => {
-  const ev = (o: Partial<LocalAgentToolEvent>) =>
-    ({ round: 0, toolCallId: "x", toolName: "t", type: "tool-result", ...o }) as LocalAgentToolEvent;
-
-  // Both a status card and a read tree are held back; whichever class the next
-  // event does not belong to has to be emitted first, or the transcript reports
-  // them out of the order they happened.
-  test("a tool between two polls prints between their cards", () => {
-    const format = createToolEventFormatter("compact", false);
-    let out = "";
-    out += format(
-      ev({
-        toolCallId: "c1",
-        toolName: "controlAgentRun",
-        content: JSON.stringify({ runId: "r1", status: "running", agentName: "W" }),
-      })
-    );
-    out += format(ev({ toolCallId: "rr", toolName: "readFile", metadata: { path: "a.ts" } }));
-    out += format(
-      ev({
-        toolCallId: "c2",
-        toolName: "controlAgentRun",
-        content: JSON.stringify({ runId: "r1", status: "done", agentName: "W" }),
-      })
-    );
-    out += format.flush ? format.flush() : "";
-
-    const runningAt = out.indexOf("running");
-    const readAt = out.indexOf("a.ts");
-    const doneAt = out.indexOf("done");
-    expect(runningAt).toBeGreaterThan(-1);
-    expect(readAt).toBeGreaterThan(runningAt);
-    expect(doneAt).toBeGreaterThan(readAt);
   });
 });

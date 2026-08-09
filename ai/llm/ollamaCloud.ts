@@ -1,7 +1,6 @@
 // packages/ai/llm/ollamaCloud.ts
 // Legacy compatibility facade. The active nolo catalog lives in platformHosted.ts.
 
-import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import {
   PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
   PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL,
@@ -37,17 +36,3 @@ export const ollamaCloudModels = platformHostedModels;
 export const isOllamaCloudDeepseekFlashModel = (
   model?: string | null,
 ): boolean => model === OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL;
-
-/**
- * Platform DeepSeek Flash (hosted): nolo/ollama-cloud catalog or legacy
- * `deepseek` provider records still pointing at deepseek-v4-flash. The official
- * DeepSeek provider was retired, so `deepseek` here only means "stale record".
- */
-export const isPlatformDeepseekFlashHosted = (
-  provider?: string | null,
-  model?: string | null,
-): boolean => {
-  if (!isOllamaCloudDeepseekFlashModel(model)) return false;
-  const p = asTrimmedLowercaseString(provider);
-  return p === "nolo" || p === "ollama-cloud" || p === "deepseek";
-};

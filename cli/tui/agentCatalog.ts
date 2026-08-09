@@ -161,16 +161,8 @@ type AgentCatalogCacheEntry = {
   entries: AgentCatalogEntry[];
 };
 
-/** 原始目录数据（网络拉取结果，不含 currentKey 排序）。 */
-type RawCatalogData = {
-  privateAgents: AgentCatalogEntry[];
-  favoritedAtByKey: Record<string, number>;
-};
-
 let agentCatalogCache: AgentCatalogCacheEntry | null = null;
 let agentCatalogRefreshInFlight: Promise<void> | null = null;
-/** 首次加载的 in-flight Promise（原始数据层，不含 currentKey 排序）。 */
-let agentCatalogRawLoadInFlight: Promise<RawCatalogData> | null = null;
 
 /** 缓存「新鲜」窗口：窗口内重复打开 /agent 不再触发后台刷新。 */
 const AGENT_CATALOG_FRESH_MS = 15_000;
@@ -178,12 +170,11 @@ const AGENT_CATALOG_FRESH_MS = 15_000;
 /** 清空目录缓存（测试与显式刷新用）。 */
 export function invalidateAgentCatalogCache() {
   agentCatalogCache = null;
-  agentCatalogRawLoadInFlight = null;
 }
 
 /**
  * SWR 目录加载：
- * - 无缓存 → 前台拉取（仅会话首次），复用 in-flight Promise 避免重复请求；
+ * - 无缓存 → 前台拉取（仅会话首次）；
  * - 有缓存 → 立即返回旧数据；超过新鲜窗口则在后台刷新，
  *   新建的 agent 最迟下次打开出现（不会永远看不到）。
  */
@@ -207,29 +198,7 @@ export async function loadAgentCatalog(args: {
     return cached.entries;
   }
 
-  // 复用已有的原始数据请求（prefetch 触发后用户很快 /switch 时命中），
-  // 然后用调用方自己的 currentKey 做排序合并——避免 prefetch 的空 key 影响排序。
-  let rawData: RawCatalogData;
-  if (agentCatalogRawLoadInFlight) {
-    rawData = await agentCatalogRawLoadInFlight;
-  } else {
-    const promise = fetchRawCatalogData(args, env);
-    agentCatalogRawLoadInFlight = promise;
-    try {
-      rawData = await promise;
-    } catch (error) {
-      agentCatalogRawLoadInFlight = null;
-      throw error;
-    }
-    agentCatalogRawLoadInFlight = null;
-  }
-
-  const entries = mergeCatalogEntries(
-    args.currentKey,
-    resolveCatalogPlatformAgents(env),
-    rawData.privateAgents,
-    rawData.favoritedAtByKey,
-  );
+  const entries = await fetchAgentCatalog(args, env);
   agentCatalogCache = { cacheKey, at: Date.now(), entries };
   return entries;
 }
@@ -245,14 +214,8 @@ function refreshAgentCatalogInBackground(
   cacheKey: string,
 ) {
   if (agentCatalogRefreshInFlight) return;
-  agentCatalogRefreshInFlight = fetchRawCatalogData(args, env)
-    .then((rawData) => {
-      const entries = mergeCatalogEntries(
-        args.currentKey,
-        resolveCatalogPlatformAgents(env),
-        rawData.privateAgents,
-        rawData.favoritedAtByKey,
-      );
+  agentCatalogRefreshInFlight = fetchAgentCatalog(args, env)
+    .then((entries) => {
       agentCatalogCache = { cacheKey, at: Date.now(), entries };
     })
     .catch(() => {
@@ -271,11 +234,7 @@ export function prefetchAgentCatalog(args: {
   void loadAgentCatalog({ ...args, currentKey: "" }).catch(() => {});
 }
 
-/**
- * 原始数据拉取：只做网络请求，不做 currentKey 排序。
- * in-flight dedup 作用在这一层，保证不同 currentKey 的调用者都能复用同一次网络请求。
- */
-async function fetchRawCatalogData(
+async function fetchAgentCatalog(
   args: {
     env?: EnvLike;
     currentKey: string;
@@ -283,14 +242,18 @@ async function fetchRawCatalogData(
     fallbackFetchImpl?: CliFetchImpl;
   },
   env: EnvLike,
-): Promise<RawCatalogData> {
+): Promise<AgentCatalogEntry[]> {
   const fetchImpl = args.fetchImpl ?? fetch;
   const fallbackFetchImpl = args.fallbackFetchImpl;
   const authToken = resolveAuthToken([], env);
   const userId = authToken ? parseUserIdFromAuthToken(authToken) : null;
 
   if (!authToken || !userId) {
-    return { privateAgents: [], favoritedAtByKey: {} };
+    return mergeCatalogEntries(
+      args.currentKey,
+      resolveCatalogPlatformAgents(env),
+      [],
+    );
   }
 
   const serverUrl = resolveServerUrl(env);
@@ -333,7 +296,12 @@ async function fetchRawCatalogData(
   }
 
   const favoritedAtByKey = await favoritesPromise;
-  return { privateAgents, favoritedAtByKey };
+  return mergeCatalogEntries(
+    args.currentKey,
+    resolveCatalogPlatformAgents(env),
+    privateAgents,
+    favoritedAtByKey,
+  );
 }
 
 export function renderAgentCatalogList(entries: AgentCatalogEntry[], currentKey: string) {

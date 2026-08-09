@@ -16,7 +16,6 @@ import {
   formatStatusRunCard,
   formatStopRunCard,
   resolveRunLabel,
-  TASK_PREVIEW_MAX,
 } from "../../ai/tools/agent/agentRunDisplayHelpers";
 import {
   type AgentRunControlDeps,
@@ -27,7 +26,6 @@ import {
   listRunRecords,
   spawnLocalBackgroundRun,
 } from "../agentRunControl";
-import { readTimestamp } from "./agentRunSnapshot";
 import { agentRunCardLabels } from "../tui/i18n";
 
 type EnvLike = Record<string, string | undefined>;
@@ -121,25 +119,14 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
 
     const displayName = resolveRunLabel({ agentName, agentKey, runId });
     const labels = agentRunCardLabels();
-    // Same reason as the server-side executor: without the task text two
-    // concurrent runs render as identical cards.
-    const taskPreview =
-      typeof args.task === "string"
-        ? args.task.replace(/\s+/g, " ").trim().slice(0, TASK_PREVIEW_MAX)
-        : "";
     return {
       content: JSON.stringify({
         runId,
         status: "running",
         ...(agentName ? { agentName } : {}),
-        ...(taskPreview ? { taskPreview } : {}),
       }),
       metadata: {
-        displayData: formatStartRunCard(displayName, "running", {
-          task: taskPreview,
-          runId,
-          labels,
-        }),
+        displayData: formatStartRunCard(displayName, "running", labels),
       },
     };
   };
@@ -221,15 +208,7 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
           ...(logLines ? { logLines } : {}),
         }),
         metadata: {
-          displayData: formatStatusRunCard(name, reconciled.status, {
-            runId: reconciled.runId,
-            timing: {
-              startedAt: readTimestamp(reconciled.startedAt),
-              finishedAt: readTimestamp(reconciled.endedAt),
-            },
-            logLines,
-            labels,
-          }),
+          displayData: formatStatusRunCard(name, reconciled.status, { logLines, labels }),
         },
       };
     }

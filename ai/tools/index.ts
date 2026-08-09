@@ -1470,7 +1470,7 @@ const baseToolDefinitions: ToolDefinition[] = [
     executor: readAgentFunc,
     description: {
       name: "readAgent",
-      description: "Read a Nolo agent config.",
+      description: "Read a Nolo agent's full config and resolve its runnable agentKey.",
       category: "Nolo workspace",
     },
     behavior: "data",

@@ -141,6 +141,49 @@ describe("cli agent run client", () => {
     );
   });
 
+  test("passes ephemeral over HTTP when requested", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      ephemeral: true,
+      output,
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "ok", dialogId: "dialog-ephemeral" });
+      },
+    });
+
+    expect(requests[0]?.body.ephemeral).toBe(true);
+  });
+
+  test("omits ephemeral from HTTP body when not requested", async () => {
+    const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "server",
+      output,
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "ok", dialogId: "dialog-plain" });
+      },
+    });
+
+    expect(requests[0]?.body.ephemeral).toBeUndefined();
+  });
+
   test("converts legacy extraContextBlocks to turn scopes for HTTP compatibility", async () => {
     const output = new CaptureOutput();
     const requests: Array<{ body: any }> = [];
@@ -167,8 +210,9 @@ describe("cli agent run client", () => {
     ]);
   });
 
-  test("warns that --ephemeral is ignored when running directly on the server", async () => {
+  test("does not warn that --ephemeral is ignored on the server path (now supported)", async () => {
     const output = new CaptureOutput();
+    const requests: Array<{ body: any }> = [];
 
     await runAgentTurn({
       agentName: "nolo",
@@ -180,13 +224,18 @@ describe("cli agent run client", () => {
       runtimeMode: "server",
       ephemeral: true,
       output,
-      fetchImpl: async () =>
-        Response.json({ content: "hi", dialogId: "dialog-1" }),
+      fetchImpl: async (_url, init) => {
+        requests.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ content: "hi", dialogId: "dialog-1" });
+      },
     });
 
-    expect(output.text()).toContain(
+    // HTTP server 路径现在支持 ephemeral：不再输出"仅 local 生效"的过时警告，
+    // 且请求体应透传 ephemeral: true 给服务端。
+    expect(output.text()).not.toContain(
       "--ephemeral/--memory-only is only effective with the local runtime",
     );
+    expect(requests[0]?.body.ephemeral).toBe(true);
   });
 
   test("prints agent run error details from failed HTTP responses", async () => {
@@ -1135,7 +1184,7 @@ describe("cli agent run client", () => {
     expect(await run).toMatchObject({ exitCode: 0, dialogId: "dialog-live-shell" });
   });
 
-  test("restores the spinner for the next LLM round after thinking and a tool", async () => {
+  test("restores the spinner for the next LLM round after hidden thinking and a tool", async () => {
     const output = new CaptureOutput();
     (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
     let completeCalls = 0;
@@ -1154,7 +1203,7 @@ describe("cli agent run client", () => {
       serverUrl: "https://nolo.chat",
       message: "run tests",
       scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123" },
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
       output,
       runtimeMode: "local",
       localRuntimeAdapter: {
@@ -1215,9 +1264,7 @@ describe("cli agent run client", () => {
     const completedToolAt = inFlightOutput.lastIndexOf("frontend -> working locally");
     expect(completedToolAt).toBeGreaterThanOrEqual(0);
     expect(inFlightOutput.slice(completedToolAt)).toContain("working locally");
-    // Thinking content now scrolls on the spinner line during the turn,
-    // but should be cleared by the time the spinner resumes for round 2.
-    // The visible assistant text should still be present.
+    expect(inFlightOutput).not.toContain("choose a command");
     expect(inFlightOutput).toContain("frontend > I'll run the focused test.\n");
   });
 
@@ -2603,7 +2650,7 @@ describe("cli agent run client", () => {
     expect(text).not.toContain("nolo -> working...");
   });
 
-  test("SSE stream shows thinking on the spinner line and text as content", async () => {
+  test("SSE stream renders thinking events according to thinking mode (show vs hide)", async () => {
     const sseBody = [
       `data: ${JSON.stringify({ type: "thinking", content: "Deep thinking details..." })}`,
       "",
@@ -2613,26 +2660,45 @@ describe("cli agent run client", () => {
       "",
     ].join("\n");
 
-    const output = new CaptureOutput();
-    (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
+    // Mode: show
+    const outputShow = new CaptureOutput();
     await runAgentTurn({
       agentName: "nolo",
       agentKey: "agent-pub-test",
       serverUrl: "https://nolo.chat",
       message: "hello",
       scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123" },
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "show" },
       runtimeMode: "server",
-      output,
+      output: outputShow,
       fetchImpl: async () =>
         new Response(sseBody, {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
         }),
     });
-    // Thinking appears on the spinner line, not as standalone content
-    expect(output.text()).toContain("Deep thinking details...");
-    expect(output.text()).toContain("Final answer");
+    expect(outputShow.text()).toContain("Deep thinking details...");
+    expect(outputShow.text()).toContain("Final answer");
+
+    // Mode: hide
+    const outputHide = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
+      runtimeMode: "server",
+      output: outputHide,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+    expect(outputHide.text()).not.toContain("Deep thinking details...");
+    expect(outputHide.text()).toContain("Final answer");
   });
 
   test("SSE stream renders compact tool events without verbose tool_result content flooding", async () => {
@@ -2705,7 +2771,7 @@ describe("cli agent run client", () => {
     expect(text).toContain("Actual response text");
   });
 
-  test("pure thinking + done stream shows thinking on spinner and falls back to (no text response)", async () => {
+  test("pure thinking + done stream falls back to (no text response) when thinking is hidden", async () => {
     const sseBody = [
       `data: ${JSON.stringify({ type: "thinking", content: "Thinking only..." })}`,
       "",
@@ -2713,27 +2779,44 @@ describe("cli agent run client", () => {
       "",
     ].join("\n");
 
-    const output = new CaptureOutput();
-    (output as CaptureOutput & { isTTY: boolean }).isTTY = true;
+    // show mode: displays thinking
+    const outputShow = new CaptureOutput();
     await runAgentTurn({
       agentName: "nolo",
       agentKey: "agent-pub-test",
       serverUrl: "https://nolo.chat",
       message: "hello",
       scriptDir: "C:/missing/scripts",
-      env: { AUTH_TOKEN: "token-123" },
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "show" },
       runtimeMode: "server",
-      output,
+      output: outputShow,
       fetchImpl: async () =>
         new Response(sseBody, {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
         }),
     });
-    // Thinking appears on the spinner line
-    expect(output.text()).toContain("Thinking only...");
-    // No text content, so fallback message shows
-    expect(output.text()).toContain("(no text response)");
+    expect(outputShow.text()).toContain("Thinking only...");
+
+    // hide mode: falls back to (no text response)
+    const outputHide = new CaptureOutput();
+    await runAgentTurn({
+      agentName: "nolo",
+      agentKey: "agent-pub-test",
+      serverUrl: "https://nolo.chat",
+      message: "hello",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123", NOLO_CLI_THINKING: "hide" },
+      runtimeMode: "server",
+      output: outputHide,
+      fetchImpl: async () =>
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    });
+    expect(outputHide.text()).not.toContain("Thinking only...");
+    expect(outputHide.text()).toContain("(no text response)");
   });
 
   describe("auto runtime local failure — no server fallback", () => {

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   LuX,
@@ -173,12 +173,22 @@ function ToastList() {
   const toasts = useSyncExternalStore(
     (cb) => toastManager.subscribe(cb),
     () => toastManager.getSnapshot(),
+    // getServerSnapshot：缺了会在 hydration 期抛 "Missing getServerSnapshot"。
+    () => toastManager.getSnapshot(),
   );
   return toasts.map((item) => <ToastItem key={item.id} toast={item} />);
 }
 
 export function MyToastRegion() {
-  if (typeof document === "undefined") return null;
+  // 只在 hydration 结束后再挂 portal：SSR 时 body 里没有 toast-viewport，
+  // 若在 hydration 阶段就 createPortal(document.body)，React 会拿 toast-viewport
+  // 去匹配 body 里已有的 app 容器，导致整棵 root 的 hydration 被丢弃重渲染。
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) return null;
   return createPortal(
     <div className="toast-viewport">
       <ToastList />

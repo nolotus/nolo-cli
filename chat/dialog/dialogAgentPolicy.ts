@@ -1,4 +1,4 @@
-import type { DialogConfig } from "../../app/types";
+import type { Agent, DialogConfig } from "../../app/types";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import {
   DEFAULT_AUTO_EXECUTION_PROFILE,
@@ -41,6 +41,22 @@ export const resolveDialogAutoTier = (
 };
 
 
+/**
+ * auto 模式对话没有 Agent 实体，执行真相来自代码内置的 execution profile。
+ * 调用方（送信权限 / composer UI）统一从这里拿一份等价的 Agent 配置，
+ * 不要各自再手搓一个假 Agent 对象。非 auto 对话返回 null。
+ */
+export const resolveDialogAutoAgentConfig = (
+  dialog: Partial<DialogAgentPolicyShape> | null | undefined,
+): Agent | null => {
+  if (!isAutoDialog(dialog)) return null;
+  const profile = resolveAutoExecutionProfile(resolveDialogAutoTier(dialog));
+  return {
+    ...profile.rawRecord,
+    id: profile.id,
+    name: profile.name,
+  } as unknown as Agent;
+};
 
 /**
  * Compatibility runtime key for callers that have not yet accepted an

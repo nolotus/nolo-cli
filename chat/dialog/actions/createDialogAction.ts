@@ -19,6 +19,7 @@ import { prepareAndPersistMessage } from "../../messages/messageSlice";
 import { buildBuiltinObjectAssistantAgentFromKey } from "../objectAssistantRegistry";
 
 import type { Agent, DialogConfig } from "../../../app/types";
+import { isDevelopment } from "../../../app/utils/env";
 import type { UiOption } from "../../messages/types";
 import {
   uiAskChoiceFunc,
@@ -227,7 +228,8 @@ export const createDialogAction = async (
   if (
     typeof window !== "undefined" &&
     recentRelationshipRecapResolution &&
-    process.env.NODE_ENV !== "production"
+    // 浏览器端没有 process：走 app/utils/env 的安全读法。
+    isDevelopment
   ) {
     console.debug("[dialog] recent relationship recap", {
       agentKey,

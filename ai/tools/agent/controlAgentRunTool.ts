@@ -148,9 +148,12 @@ async function handleStatus(
         return {
             rawData: { found: true, ...run, ...(logLines ? { logLines } : {}) },
             displayData: formatStatusRunCard(name, run.status, {
+                runId: opts.runId,
                 lastToolNames: run.lastToolNames,
                 toolCallCount: run.toolCallCount,
+                lastAssistantText: run.lastAssistantText,
                 errorMessage: run.errorMessage,
+                timing: { startedAt: run.startedAt, finishedAt: run.finishedAt },
                 logLines,
             }),
         };

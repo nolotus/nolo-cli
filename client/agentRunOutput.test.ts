@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createCliTurnOutput } from "./agentRunOutput";
+import { createSseToolEventAdapter } from "./toolOutput";
 import {
   createHistoryOutputStream,
   createTurnHistory,
@@ -171,7 +172,7 @@ describe("createCliTurnOutput compact tool tree regression", () => {
     expect(visible).not.toMatch(/· .* \(\d+s\)/);
   });
 
-  test("controlAgentRun results do not update the composer dock panel", () => {
+  function collectPanelUpdates(events: LocalAgentToolEvent[]): unknown[] {
     const output: string[] = [];
     const statusUpdates: unknown[] = [];
     const options = {
@@ -181,16 +182,67 @@ describe("createCliTurnOutput compact tool tree regression", () => {
       onAgentRunStatus: (snapshot: unknown) => statusUpdates.push(snapshot),
     } as unknown as RunAgentTurnOptions;
     const turn = createCliTurnOutput({ options });
+    for (const event of events) turn.handleToolEvent(event);
+    return statusUpdates;
+  }
 
-    turn.handleToolEvent({
-      type: "tool-result",
-      toolName: "controlAgentRun",
-      toolCallId: "control-1",
-      round: 1,
-      content: JSON.stringify({ runId: "run-1", status: "running", logTail: "working" }),
-    } as LocalAgentToolEvent);
+  // The panel used to subscribe to startAgentRun only, which pinned it to the
+  // run's first status: polls reporting `done` never reached it and the dock
+  // kept claiming `running` until the turn ended.
+  test("controlAgentRun status polls update the composer dock panel", () => {
+    const updates = collectPanelUpdates([
+      {
+        type: "tool-result",
+        toolName: "startAgentRun",
+        toolCallId: "start-1",
+        round: 0,
+        content: JSON.stringify({ runId: "run-1", status: "running", agentName: "Worker" }),
+      },
+      {
+        type: "tool-result",
+        toolName: "controlAgentRun",
+        toolCallId: "control-1",
+        round: 1,
+        content: JSON.stringify({
+          runId: "run-1",
+          status: "done",
+          agentName: "Worker",
+          toolCallCount: 7,
+        }),
+      },
+    ] as LocalAgentToolEvent[]);
 
-    expect(statusUpdates).toEqual([]);
+    expect(updates).toHaveLength(2);
+    expect(updates[0]).toMatchObject({ runId: "run-1", status: "running" });
+    expect(updates[1]).toMatchObject({ runId: "run-1", status: "done", toolCallCount: 7 });
+  });
+
+  test("a run the server no longer knows about clears the dock panel", () => {
+    const updates = collectPanelUpdates([
+      {
+        type: "tool-result",
+        toolName: "controlAgentRun",
+        toolCallId: "control-1",
+        round: 1,
+        content: JSON.stringify({ runId: "run-gone", found: false }),
+      },
+    ] as LocalAgentToolEvent[]);
+
+    expect(updates).toEqual([null]);
+  });
+
+  test("controlAgentRun list results leave the dock panel untouched", () => {
+    const updates = collectPanelUpdates([
+      {
+        type: "tool-result",
+        toolName: "controlAgentRun",
+        toolCallId: "control-1",
+        round: 1,
+        content: JSON.stringify({ runs: [{ runId: "a" }, { runId: "b" }], count: 2 }),
+      },
+    ] as LocalAgentToolEvent[]);
+
+    expect(updates).toEqual([]);
   });
 
   test("no block of ≥2 consecutive blank lines in the tool region", () => {
@@ -234,5 +286,57 @@ describe("createCliTurnOutput compact tool tree regression", () => {
     // in the tool region indicate zombie spinner lines or stray newlines
     // from buffered tools — the exact regression we are fixing.
     expect(maxBlankRun).toBeLessThan(2);
+  });
+});
+describe("HTTP/SSE path parity", () => {
+  // The SSE adapter used to clip the payload into `summary` and drop `content`
+  // entirely, so every consumer that parses structured results — the dock panel
+  // among them — was silently inert on the server path while working locally.
+  test("an SSE tool result reaches the dock panel like a local one does", () => {
+    const statusUpdates: unknown[] = [];
+    const options = {
+      output: { write: () => {} },
+      agentName: "TestAgent",
+      env: { COLORTERM: "truecolor" },
+      onAgentRunStatus: (snapshot: unknown) => statusUpdates.push(snapshot),
+    } as unknown as RunAgentTurnOptions;
+    const turn = createCliTurnOutput({ options });
+    const sse = createSseToolEventAdapter((evt) => turn.handleToolEvent(evt));
+
+    sse.onToolStart({ calls: [{ toolCallId: "t1", toolName: "startAgentRun" }] });
+    sse.onToolResult({
+      toolCallId: "t1",
+      toolName: "startAgentRun",
+      content: JSON.stringify({ runId: "run-1", status: "running", agentName: "Worker" }),
+    });
+    sse.onToolEnd();
+    sse.onToolStart({ calls: [{ toolCallId: "t2", toolName: "controlAgentRun" }] });
+    sse.onToolResult({
+      toolCallId: "t2",
+      toolName: "controlAgentRun",
+      content: JSON.stringify({
+        runId: "run-1",
+        status: "done",
+        agentName: "Worker",
+        toolCallCount: 9,
+      }),
+    });
+
+    expect(statusUpdates).toHaveLength(2);
+    expect(statusUpdates[0]).toMatchObject({ runId: "run-1", status: "running" });
+    expect(statusUpdates[1]).toMatchObject({ runId: "run-1", status: "done", toolCallCount: 9 });
+  });
+
+  test("the SSE adapter preserves the full payload, not just a clipped summary", () => {
+    const events: any[] = [];
+    const sse = createSseToolEventAdapter((evt) => events.push(evt));
+    const content = JSON.stringify({ runId: "r", status: "running", note: "x".repeat(400) });
+    sse.onToolStart({ calls: [{ toolCallId: "t1", toolName: "controlAgentRun" }] });
+    sse.onToolResult({ toolCallId: "t1", toolName: "controlAgentRun", content });
+
+    const result = events.find((e) => e.type === "tool-result");
+    expect(result.content).toBe(content);
+    // summary stays clipped — it is the one-line label, not the payload.
+    expect(result.summary.length).toBeLessThan(content.length);
   });
 });

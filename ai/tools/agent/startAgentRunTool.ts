@@ -14,7 +14,7 @@
 import { runAgentBackground } from "../../agent/runAgentBackground";
 import { toErrorMessage } from "../../../core/errorMessage";
 import { buildDelegatedTaskContent } from "./callAgentTool";
-import { formatStartRunCard, resolveRunLabel } from "./agentRunDisplayHelpers";
+import { formatStartRunCard, resolveRunLabel, TASK_PREVIEW_MAX } from "./agentRunDisplayHelpers";
 import { getActiveDialogKey } from "../../../chat/dialog/dialogRuntimeStore";
 import { extractCustomId } from "../../../core/prefix";
 
@@ -109,6 +109,11 @@ export async function startAgentRunFunc(
         // lives in resolveRunLabel so a key never masquerades as a name.
         const resolvedName = agentName?.trim() || bgResult.agentName || bgResult.name;
         const identity = { agentName: resolvedName, agentKey, runId };
+        // A clipped copy of the task rides along so every renderer can say what
+        // this run is *for*. Without it two concurrent runs are indistinguishable
+        // on screen — same card, same status, different work. Clipped rather than
+        // full: this is display text, and the caller already holds the original.
+        const taskPreview = task.replace(/\s+/g, " ").trim().slice(0, TASK_PREVIEW_MAX);
 
         return {
             rawData: {
@@ -116,8 +121,12 @@ export async function startAgentRunFunc(
                 status,
                 agentKey,
                 ...(resolvedName ? { agentName: resolvedName } : {}),
+                ...(taskPreview ? { taskPreview } : {}),
             },
-            displayData: formatStartRunCard(resolveRunLabel(identity), status),
+            displayData: formatStartRunCard(resolveRunLabel(identity), status, {
+                task: taskPreview,
+                runId,
+            }),
         };
     } catch (e: any) {
         throw new Error(`startAgentRun 启动 Agent [${agentKey}] 失败: ${toErrorMessage(e)}`);

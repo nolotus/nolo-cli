@@ -16,6 +16,7 @@ import {
   formatStatusRunCard,
   formatStopRunCard,
   resolveRunLabel,
+  TASK_PREVIEW_MAX,
 } from "../ai/tools/agent/agentRunDisplayHelpers";
 import {
   type AgentRunControlDeps,
@@ -26,6 +27,7 @@ import {
   listRunRecords,
   spawnLocalBackgroundRun,
 } from "../agentRunControl";
+import { readTimestamp } from "./agentRunSnapshot";
 import { agentRunCardLabels } from "../tui/i18n";
 
 type EnvLike = Record<string, string | undefined>;
@@ -85,7 +87,16 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
 
     // --msg-file 占位会被 spawnLocalBackgroundRun 的 rewriteMsgFileArg 改写为
     // runs 目录里的内容快照（~/.nolo/runs/<runId>.msg.md）；--bg 会被子进程剥离。
-    const rawArgs = ["--agent", agentKey, "--msg-file", "PLACEHOLDER", "--bg"];
+    const rawArgs = [
+      "--agent",
+      agentKey,
+      "--msg-file",
+      "PLACEHOLDER",
+      "--bg",
+      // 非持久化派发（review 等一次性任务）：透传 --ephemeral，run 完成后不留
+      // dialog 记录。与 web 端 runAgentBackground 的 ephemeral: true 对齐。
+      ...(args.ephemeral === true ? ["--ephemeral"] : []),
+    ];
 
     const agentName =
       typeof args.agentName === "string" && args.agentName.trim()
@@ -110,14 +121,25 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
 
     const displayName = resolveRunLabel({ agentName, agentKey, runId });
     const labels = agentRunCardLabels();
+    // Same reason as the server-side executor: without the task text two
+    // concurrent runs render as identical cards.
+    const taskPreview =
+      typeof args.task === "string"
+        ? args.task.replace(/\s+/g, " ").trim().slice(0, TASK_PREVIEW_MAX)
+        : "";
     return {
       content: JSON.stringify({
         runId,
         status: "running",
         ...(agentName ? { agentName } : {}),
+        ...(taskPreview ? { taskPreview } : {}),
       }),
       metadata: {
-        displayData: formatStartRunCard(displayName, "running", labels),
+        displayData: formatStartRunCard(displayName, "running", {
+          task: taskPreview,
+          runId,
+          labels,
+        }),
       },
     };
   };
@@ -199,7 +221,15 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
           ...(logLines ? { logLines } : {}),
         }),
         metadata: {
-          displayData: formatStatusRunCard(name, reconciled.status, { logLines, labels }),
+          displayData: formatStatusRunCard(name, reconciled.status, {
+            runId: reconciled.runId,
+            timing: {
+              startedAt: readTimestamp(reconciled.startedAt),
+              finishedAt: readTimestamp(reconciled.endedAt),
+            },
+            logLines,
+            labels,
+          }),
         },
       };
     }

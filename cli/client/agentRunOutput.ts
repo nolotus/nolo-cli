@@ -7,10 +7,7 @@ import {
   resolveToolDisplayMode,
   shouldEmitToolEvents,
 } from "./toolOutput";
-import {
-  isAgentNameFallback,
-  resolveRunLabel,
-} from "../../ai/tools/agent/agentRunDisplayHelpers";
+import { parseAgentRunEvent } from "./agentRunSnapshot";
 import { Spinner } from "./agentRunSpinner";
 import type { RunAgentTurnOptions } from "./agentRunTypes";
 
@@ -163,14 +160,15 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
       options.activityReporter?.(activeLabel);
     }
 
-    if (
-      event.type === "tool-result" &&
-      options.onAgentRunStatus &&
-      event.toolName === "startAgentRun"
-    ) {
-      const snapshot = extractAgentRunStatusSnapshot(event);
-      if (snapshot) {
-        options.onAgentRunStatus(snapshot);
+    // Feed the docked run panel. `controlAgentRun` matters as much as
+    // `startAgentRun` here: subscribing to the fork alone pinned the panel to
+    // the run's first status, so it kept showing `running` for the rest of the
+    // turn no matter what the polls reported. A run that the server no longer
+    // knows about clears the panel rather than lingering.
+    if (options.onAgentRunStatus) {
+      const parsed = parseAgentRunEvent(event);
+      if (parsed) {
+        options.onAgentRunStatus(parsed.kind === "gone" ? null : parsed.snapshot);
       }
     }
   };
@@ -242,39 +240,3 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
   };
 }
 
-function extractAgentRunStatusSnapshot(
-  event: LocalAgentToolEvent
-): import("../tui/activityIndicator").AgentRunStatusSnapshot | null {
-  if (event.type !== "tool-result") return null;
-  const content = typeof event.content === "string" ? event.content.trim() : "";
-  if (!content.startsWith("{")) return null;
-  try {
-    const parsed = JSON.parse(content) as Record<string, unknown>;
-    const runId = typeof parsed.runId === "string" ? parsed.runId : "";
-    const status = typeof parsed.status === "string" ? parsed.status : "running";
-    // Same fallback chain as the run cards, minus runId: the panel already
-    // renders a runId suffix, so resolving to one here would print it twice.
-    // Undefined is kept as the "nothing to show" signal — the panel supplies
-    // its own default ("sub-agent"), which deliberately differs from the
-    // cards' literal.
-    const label = resolveRunLabel({
-      agentName: parsed.agentName,
-      name: parsed.name,
-      agentKey: parsed.agentKey,
-    });
-    const agentName = isAgentNameFallback(label) ? undefined : label;
-    const logTail = typeof parsed.logTail === "string" ? parsed.logTail : undefined;
-    const logLines = Array.isArray(parsed.logLines) ? (parsed.logLines as string[]) : undefined;
-    const errorMessage = typeof parsed.errorMessage === "string" ? parsed.errorMessage : undefined;
-    return {
-      runId,
-      agentName,
-      status,
-      logTail,
-      logLines,
-      errorMessage,
-    };
-  } catch {
-    return null;
-  }
-}

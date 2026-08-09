@@ -12,13 +12,15 @@ import { formatAgentListCard } from "../ai/tools/noloWorkspaceReadTools";
 import {
   formatListRunsCard,
   formatNotFoundRunCard,
+  formatFinishedRunCard,
   formatStartRunCard,
   formatStatusRunCard,
   formatStopRunCard,
   isAgentRunTerminalStatus,
+  runShowsLogTail,
   type RunLabelFields,
-  resolveRunLabel,
 } from "../ai/tools/agent/agentRunDisplayHelpers";
+import { type AgentRunSnapshot, parseAgentRunEvent } from "./agentRunSnapshot";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
 import { type DiffLineKind, renderDiffLine, themeText } from "../tui/theme";
 import { displayWidth } from "../tui/tuiAnsi";
@@ -271,24 +273,6 @@ function isNeedsActionToolResult(event: LocalAgentToolEvent) {
 }
 
 /**
- * Field readers for a controlAgentRun status payload. Two callers parse the
- * same JSON — the display-recovery path and the fold path — so the shape is
- * read in one place; the payload comes over a bridge we do not control, which
- * is exactly the kind of contract that should not be spelled out twice.
- */
-function readRunLogLines(parsed: Record<string, unknown>): string[] | undefined {
-  if (Array.isArray(parsed.logLines)) return parsed.logLines as string[];
-  if (typeof parsed.logTail === "string" && parsed.logTail.trim()) {
-    return parsed.logTail.split("\n");
-  }
-  return undefined;
-}
-
-function readRunErrorMessage(parsed: Record<string, unknown>): string | undefined {
-  return typeof parsed.errorMessage === "string" ? parsed.errorMessage : undefined;
-}
-
-/**
  * Parse a ui_ask_choice tool result into a question + numbered option list
  * for CLI display. Returns null when the content is not a ui_ask_choice
  * payload (so non-choice tools fall through to the generic compact line).
@@ -440,84 +424,116 @@ function formatToolTraceLine(text: string, colorEnabled: boolean, accent: "none"
   return `${dimCliText(text, true)}\n`;
 }
 
-function recoverOrchestrationDisplayFromContent(toolName: string, content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return content;
+/**
+ * Render a run snapshot as a card body: the closing `Run finished` card once
+ * the run reached a terminal status, the in-progress `Run status` card until
+ * then. One entry point so both never disagree about which a run deserves.
+ */
+function renderRunCard(
+  snapshot: AgentRunSnapshot,
+  opts?: { includeLogTail?: boolean }
+): string {
   const labels = agentRunCardLabels();
-  try {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    if (toolName === "listAgents") {
+  const timing = { startedAt: snapshot.startedAt, finishedAt: snapshot.finishedAt };
+  const name = snapshot.agentName ?? "agent";
+  if (isAgentRunTerminalStatus(snapshot.status)) {
+    return formatFinishedRunCard(name, snapshot.status, {
+      runId: snapshot.runId,
+      toolCallCount: snapshot.toolCallCount,
+      lastToolNames: snapshot.lastToolNames,
+      lastAssistantText: snapshot.lastAssistantText,
+      errorMessage: snapshot.errorMessage,
+      logLines: snapshot.logLines,
+      timing,
+      ...(opts?.includeLogTail !== undefined ? { includeLogTail: opts.includeLogTail } : {}),
+      labels,
+    });
+  }
+  return formatStatusRunCard(name, snapshot.status, {
+    runId: snapshot.runId,
+    toolCallCount: snapshot.toolCallCount,
+    lastToolNames: snapshot.lastToolNames,
+    lastAssistantText: snapshot.lastAssistantText,
+    errorMessage: snapshot.errorMessage,
+    logLines: snapshot.logLines,
+    timing,
+    ...(opts?.includeLogTail !== undefined ? { includeLogTail: opts.includeLogTail } : {}),
+    labels,
+  });
+}
+
+/**
+ * Render an orchestration card from the event's structured payload, or null
+ * when this process cannot build one.
+ *
+ * Preferred over `metadata.displayData` wherever it succeeds. displayData is a
+ * card *string* baked by whichever server build answered the call, so this
+ * process can only grep it after the fact — which is why a `agent   agent` row
+ * from an old build has to be filtered out by regex below. Rendering from
+ * `rawData` instead means new fields (task, runId, progress) appear without the
+ * server needing to ship a matching renderer, and the string-patching stays a
+ * fallback rather than the main path.
+ */
+function recoverOrchestrationCard(
+  event: LocalAgentToolEvent,
+  toolName: string
+): string | null {
+  const content = typeof event.content === "string" ? event.content : "";
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  const labels = agentRunCardLabels();
+
+  if (toolName === "listAgents") {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
       const agents = Array.isArray(parsed.agents) ? parsed.agents : [];
       return formatAgentListCard(agents as Parameters<typeof formatAgentListCard>[0]);
+    } catch {
+      return null;
     }
-    if (toolName === "startAgentRun") {
-      const name = resolveRunLabel(parsed);
-      const status = typeof parsed.status === "string" ? parsed.status : "running";
-      return formatStartRunCard(name, status, labels);
-    }
-    if (toolName === "controlAgentRun") {
-      if (Array.isArray(parsed.runs)) {
-        const runs = parsed.runs as Array<RunLabelFields & { status?: string }>;
-        return formatListRunsCard(runs, labels);
-      }
-      const status = typeof parsed.status === "string" ? parsed.status : undefined;
-      if (parsed.found === false || status === "not_found") {
-        return formatNotFoundRunCard(labels);
-      }
-      if (status === "killed" || status === "cancelled" || status === "cancelling") {
-        return formatStopRunCard(status, labels);
-      }
-      return formatStatusRunCard(resolveRunLabel(parsed), status ?? "—", {
-        errorMessage: readRunErrorMessage(parsed),
-        logLines: readRunLogLines(parsed),
-        labels,
-      });
-    }
-  } catch {
-    // Not JSON / unexpected shape — fall through.
   }
-  return content;
+
+  // `list` is the one run payload the shared parser declines (a set of runs,
+  // not one run), so it is handled here before delegating.
+  if (toolName === "controlAgentRun") {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      if (Array.isArray(parsed.runs)) {
+        return formatListRunsCard(
+          parsed.runs as Array<RunLabelFields & { status?: string }>,
+          labels
+        );
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  const parsedEvent = parseAgentRunEvent(event);
+  if (!parsedEvent) return null;
+  const { kind, snapshot } = parsedEvent;
+
+  if (kind === "start") {
+    return formatStartRunCard(snapshot.agentName ?? "agent", snapshot.status, {
+      task: snapshot.taskPreview,
+      runId: snapshot.runId,
+      labels,
+    });
+  }
+  if (kind === "gone") return formatNotFoundRunCard(labels);
+  if (kind === "stop") return formatStopRunCard(snapshot.status, labels);
+  return renderRunCard(snapshot);
 }
 
 /**
  * Parse a controlAgentRun tool-result into a foldable status snapshot.
  * List/stop/not_found cards are not foldable status polls.
  */
-function parseControlAgentRunStatusEvent(event: LocalAgentToolEvent): {
-  runId: string;
-  status: string;
-  agentName: string;
-  errorMessage?: string;
-  logLines?: string[];
-  logKey: string;
-} | null {
-  const raw =
-    typeof event.content === "string" && event.content.trim()
-      ? event.content.trim()
-      : "";
-  if (!raw.startsWith("{")) return null;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (Array.isArray(parsed.runs)) return null;
-    const status = typeof parsed.status === "string" ? parsed.status : undefined;
-    if (parsed.found === false || status === "not_found") return null;
-    if (status === "killed" || status === "cancelled" || status === "cancelling") return null;
-    if (!status) return null;
-    const runId =
-      typeof parsed.runId === "string" && parsed.runId.trim()
-        ? parsed.runId.trim()
-        : typeof event.metadata?.runId === "string"
-          ? event.metadata.runId
-          : "";
-    if (!runId) return null;
-    const agentName = resolveRunLabel(parsed);
-    const errorMessage = readRunErrorMessage(parsed);
-    const logLines = readRunLogLines(parsed);
-    const logKey = logLines && logLines.length > 0 ? logLines.join("\n") : "";
-    return { runId, status, agentName, errorMessage, logLines, logKey };
-  } catch {
-    return null;
-  }
+function parseControlAgentRunStatusEvent(
+  event: LocalAgentToolEvent
+): AgentRunSnapshot | null {
+  const parsed = parseAgentRunEvent(event);
+  return parsed?.kind === "status" ? parsed.snapshot : null;
 }
 
 function formatOrchestrationCardBlock(
@@ -526,21 +542,16 @@ function formatOrchestrationCardBlock(
   colorEnabled: boolean
 ): string {
   const rawLabel = toolLabel(toolName);
-  let rawDataStr =
+  const bakedCard =
     typeof event.metadata?.displayData === "string" && event.metadata.displayData.trim()
       ? event.metadata.displayData
-      : typeof event.content === "string"
-        ? event.content
-        : "";
-  // Web → CLI bridge may only carry JSON content without metadata.displayData.
-  // Recover a readable card before dumping the raw JSON blob into the transcript.
-  if (
-    typeof event.metadata?.displayData !== "string" &&
-    typeof event.content === "string" &&
-    event.content.trim()
-  ) {
-    rawDataStr = recoverOrchestrationDisplayFromContent(toolName, event.content);
-  }
+      : "";
+  // Client render first (see recoverOrchestrationCard); the server-baked card
+  // and then the raw content are fallbacks for payloads we cannot rebuild.
+  const rawDataStr =
+    recoverOrchestrationCard(event, toolName) ||
+    bakedCard ||
+    (typeof event.content === "string" ? event.content : "");
   const failed =
     event.type === "tool-error" ||
     isFailedToolResult(event) ||
@@ -584,28 +595,33 @@ function formatOrchestrationCardBlock(
   return out;
 }
 
+/**
+ * Fold two polls of the same run. The later poll wins field by field, but a
+ * poll that omits a field must not erase what an earlier one reported — a
+ * status endpoint that stops echoing `lastToolNames` should not blank the
+ * progress row, and a terminal poll that reports only `status` should still be
+ * able to state the run's totals.
+ */
+function mergeRunSnapshot(previous: AgentRunSnapshot, next: AgentRunSnapshot): AgentRunSnapshot {
+  return {
+    ...previous,
+    ...next,
+    errorMessage: next.errorMessage ?? previous.errorMessage,
+    logLines: next.logLines ?? previous.logLines,
+    logKey: next.logKey || previous.logKey,
+    toolCallCount: next.toolCallCount ?? previous.toolCallCount,
+    lastToolNames: next.lastToolNames ?? previous.lastToolNames,
+    lastAssistantText: next.lastAssistantText ?? previous.lastAssistantText,
+    startedAt: next.startedAt ?? previous.startedAt,
+    finishedAt: next.finishedAt ?? previous.finishedAt,
+  };
+}
+
 function formatFoldedControlStatusCard(
-  snapshot: {
-    runId: string;
-    status: string;
-    agentName: string;
-    errorMessage?: string;
-    logLines?: string[];
-    pollCount: number;
-    elapsedMs?: number;
-    includeLogTail: boolean;
-  },
+  snapshot: AgentRunSnapshot & { includeLogTail: boolean },
   colorEnabled: boolean
 ): string {
-  const labels = agentRunCardLabels();
-  const body = formatStatusRunCard(snapshot.agentName, snapshot.status, {
-    errorMessage: snapshot.errorMessage,
-    logLines: snapshot.logLines,
-    pollCount: snapshot.pollCount,
-    elapsedMs: snapshot.elapsedMs,
-    includeLogTail: snapshot.includeLogTail,
-    labels,
-  });
+  const body = renderRunCard(snapshot, { includeLogTail: snapshot.includeLogTail });
   // Reuse the same ● card chrome as a normal orchestration result.
   return formatOrchestrationCardBlock(
     {
@@ -615,7 +631,6 @@ function formatFoldedControlStatusCard(
       toolName: "controlAgentRun",
       content: "",
       metadata: { displayData: body },
-      elapsedMs: snapshot.elapsedMs,
     },
     "controlAgentRun",
     colorEnabled
@@ -1028,16 +1043,7 @@ export function createToolEventFormatter(
   let fetchBuffer: LocalAgentToolEvent[] = [];
   let webSearchBuffer: LocalAgentToolEvent[] = [];
   /** Consecutive controlAgentRun(status) polls for one runId — updated in place. */
-  let statusFold: {
-    runId: string;
-    status: string;
-    agentName: string;
-    errorMessage?: string;
-    logLines?: string[];
-    logKey: string;
-    pollCount: number;
-    elapsedMs?: number;
-  } | null = null;
+  let statusFold: AgentRunSnapshot | null = null;
   /** Last log tail emitted per runId — identical tails are not redrawn. */
   const lastEmittedLogByRunId = new Map<string, string>();
 
@@ -1046,27 +1052,27 @@ export function createToolEventFormatter(
     const fold = statusFold;
     statusFold = null;
     const prevLog = lastEmittedLogByRunId.get(fold.runId);
-    const includeLogTail = Boolean(fold.logKey) && fold.logKey !== prevLog;
-    if (fold.logKey) {
+    const changed = Boolean(fold.logKey) && fold.logKey !== prevLog;
+    // Only remember a tail that was actually printed. Cards withhold the tail
+    // while a run is healthy, so banking the key on every poll would mark a
+    // never-shown tail as "already seen" and suppress it on the failure card —
+    // the one card that exists to show it.
+    if (changed && runShowsLogTail(fold.status)) {
       lastEmittedLogByRunId.set(fold.runId, fold.logKey);
     }
-    return formatFoldedControlStatusCard(
-      {
-        runId: fold.runId,
-        status: fold.status,
-        agentName: fold.agentName,
-        errorMessage: fold.errorMessage,
-        logLines: fold.logLines,
-        pollCount: fold.pollCount,
-        elapsedMs: fold.elapsedMs,
-        includeLogTail,
-      },
-      colorEnabled
-    );
+    return formatFoldedControlStatusCard({ ...fold, includeLogTail: changed }, colorEnabled);
   };
 
-  const flushBuffers = (): string => {
-    let out = flushStatusFold();
+  /**
+   * Drain every buffer except the run-status fold.
+   *
+   * Split out so the two deferred classes can flush *each other*: a status card
+   * and a read tree are both held back, and whichever class the next event does
+   * not belong to has to be emitted first or the transcript reports them out of
+   * the order they happened.
+   */
+  const flushToolBuffers = (): string => {
+    let out = "";
     if (readBuffer.length > 0) {
       const items = readBuffer.map((evt) => {
         const call = pending.get(evt.toolCallId);
@@ -1151,12 +1157,25 @@ export function createToolEventFormatter(
     return out;
   };
 
+  const flushBuffers = (): string => `${flushStatusFold()}${flushToolBuffers()}`;
+
+  /**
+   * A tool-result that is itself buffered still has to close an open run-status
+   * card first: the poll happened before this tool, so its card must be printed
+   * before this tool's tree.
+   */
+  const bufferToolResult = (buffer: LocalAgentToolEvent[], event: LocalAgentToolEvent): string => {
+    const flushed = flushStatusFold();
+    buffer.push(event);
+    return flushed;
+  };
+
   const formatter = (event: LocalAgentToolEvent): string => {
     if (mode === "hide") return "";
     if (mode === "verbose") return formatVerboseToolEvent(event, colorEnabled);
 
     // controlAgentRun(status) for the same runId folds like Read/Run trees:
-    // consecutive polls update one card (poll count + latest status/timing).
+    // consecutive polls collapse into one card carrying the latest state.
     if (event.toolName === "controlAgentRun") {
       if (event.type === "tool-call") {
         pending.set(event.toolCallId, {
@@ -1168,28 +1187,20 @@ export function createToolEventFormatter(
       if (event.type === "tool-result") {
         const snapshot = parseControlAgentRunStatusEvent(event);
         if (snapshot) {
-          let out = "";
-          if (statusFold && statusFold.runId !== snapshot.runId) {
+          // Mirror of bufferToolResult: tools that ran before this poll must be
+          // printed before the card this poll produces.
+          let out = flushToolBuffers();
+          const open = statusFold;
+          const sameRun = open?.runId === snapshot.runId;
+          // Folding collapses repetition, not change. A different run, or the
+          // same run reaching a different status, is the event the reader is
+          // waiting for — merging it into the open card would let a run go from
+          // `running` to `done` inside a single card that only ever shows the
+          // ending, hiding both the progress and the moment it stopped.
+          if (open && (!sameRun || open.status !== snapshot.status)) {
             out += flushStatusFold();
           }
-          if (!statusFold) {
-            statusFold = {
-              ...snapshot,
-              pollCount: 1,
-              elapsedMs: event.elapsedMs,
-            };
-          } else {
-            statusFold = {
-              runId: snapshot.runId,
-              status: snapshot.status,
-              agentName: snapshot.agentName,
-              errorMessage: snapshot.errorMessage ?? statusFold.errorMessage,
-              logLines: snapshot.logLines ?? statusFold.logLines,
-              logKey: snapshot.logKey || statusFold.logKey,
-              pollCount: statusFold.pollCount + 1,
-              elapsedMs: event.elapsedMs,
-            };
-          }
+          statusFold = open && sameRun ? mergeRunSnapshot(open, snapshot) : snapshot;
           pending.delete(event.toolCallId);
           // Terminal statuses must not sit hidden in the buffer.
           if (isAgentRunTerminalStatus(snapshot.status)) {
@@ -1214,8 +1225,7 @@ export function createToolEventFormatter(
         return "";
       }
       if (event.type === "tool-result") {
-        readBuffer.push(event);
-        return "";
+        return bufferToolResult(readBuffer, event);
       }
     }
 
@@ -1228,8 +1238,7 @@ export function createToolEventFormatter(
         return "";
       }
       if (event.type === "tool-result") {
-        searchBuffer.push(event);
-        return "";
+        return bufferToolResult(searchBuffer, event);
       }
     }
 
@@ -1253,8 +1262,7 @@ export function createToolEventFormatter(
         return "";
       }
       if (event.type === "tool-result") {
-        runBuffer.push(event);
-        return "";
+        return bufferToolResult(runBuffer, event);
       }
     }
 
@@ -1267,8 +1275,7 @@ export function createToolEventFormatter(
         return "";
       }
       if (event.type === "tool-result") {
-        fetchBuffer.push(event);
-        return "";
+        return bufferToolResult(fetchBuffer, event);
       }
     }
 
@@ -1281,8 +1288,7 @@ export function createToolEventFormatter(
         return "";
       }
       if (event.type === "tool-result") {
-        webSearchBuffer.push(event);
-        return "";
+        return bufferToolResult(webSearchBuffer, event);
       }
     }
 
@@ -1369,6 +1375,12 @@ export function createSseToolEventAdapter(
         type: "tool-result",
         toolCallId,
         toolName,
+        // The full payload, not just the clipped summary. Consumers that parse
+        // structured results — the agent-run snapshot parser feeding the dock
+        // panel, the orchestration card renderer, ui_ask_choice — all read
+        // `content`; dropping it here made every one of them silently inert on
+        // the HTTP/SSE path while working on the local path.
+        ...(rawContent ? { content: rawContent } : {}),
         summary,
         metadata: payload.metadata,
         round,

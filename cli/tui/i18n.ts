@@ -291,6 +291,10 @@ const STRINGS = {
     en: "Run stopped",
     zh: "运行已停止",
   },
+  runFinishedLabel: {
+    en: "Run finished",
+    zh: "运行已结束",
+  },
   runLogTailLabel: {
     en: "Log tail:",
     zh: "日志尾部：",
@@ -772,6 +776,7 @@ export function agentRunCardLabels(): {
   runStatus: string;
   runStarted: string;
   runStopped: string;
+  runFinished: string;
   logTail: string;
   runs: (count: number) => string;
 } {
@@ -779,6 +784,7 @@ export function agentRunCardLabels(): {
     runStatus: t("runStatusLabel"),
     runStarted: t("runStartedLabel"),
     runStopped: t("runStoppedLabel"),
+    runFinished: t("runFinishedLabel"),
     logTail: t("runLogTailLabel"),
     runs: (count: number) => t("runsListLabel", String(count)),
   };

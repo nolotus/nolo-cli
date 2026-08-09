@@ -581,6 +581,27 @@ export const sendOpenAIResponseRequest = async ({
         signal,
         token: token ?? "",
         dialogId,
+        onRetry: (info: {
+          attempt: number;
+          maxAttempts: number;
+          delayMs: number;
+        }) => {
+          // 把重试进度写进 streaming 消息，UI 据此展示「自动重试 N/M · Xs」。
+          dispatch(
+            messageStreaming({
+              id: messageId,
+              dialogId,
+              dbKey: msgKey,
+              content: "",
+              role: "assistant",
+              agentKey: agentConfig.dbKey,
+              cybotKey: agentConfig.dbKey,
+              ...(activeMessageMetadata ?? {}),
+              isStreaming: true,
+              retryProgress: info,
+            })
+          );
+        },
       } as any);
       logQuickChatPerfStage(quickChatPerfStartedAt, "openai-response-fetch-response", {
         ok: response.ok,

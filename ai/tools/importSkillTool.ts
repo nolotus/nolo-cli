@@ -47,7 +47,7 @@ export const importSkillFunctionSchema = {
   description: [
     "从外部 SKILL.md、GitHub 地址或原始 Markdown 文本导入一个 skill，并保存为当前空间中的普通文档。",
     "导入后会自动附加隐藏的 skill-config 协议块；无法映射的脚本环境会降级为说明型 skill。",
-    "导入成功后，如果用户还没说明下一步，优先调用 ui_ask_choice 继续询问：仅保存、挂到现有 Agent，还是新建一个 Agent 来使用它。",
+    "导入成功后，如果用户还没说明下一步，优先调用 ask_user 继续询问：仅保存、挂到现有 Agent，还是新建一个 Agent 来使用它。",
   ].join("\n"),
   parameters: {
     type: "object",

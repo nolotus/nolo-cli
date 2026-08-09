@@ -1,7 +1,7 @@
 // 文件: ai/tools/uiAskChoiceTool.ts
 
 export const uiAskChoiceFunctionSchema = {
-    name: "ui_ask_choice",
+    name: "ask_user",
     description: [
         "让用户在 2～5 个互斥选项之间做选择的通用“出选项”工具。适用场景：需求模糊时给方向候选、计划分支节点决策、出题/问卷、新会话功能导航。",
         "调用前须先在普通回复文本里解释背景与权衡（先解释，再调用）。",
@@ -11,6 +11,11 @@ export const uiAskChoiceFunctionSchema = {
         "- 每个 question 可以设置 multiSelect: true 允许多选。",
         "- 每个 question 可以设置 allowOther: false 隐藏“其他”输入框。",
         "- 每个 choice 可以加 detail 字段提供更长的描述。",
+        "- 每个 choice 可以加 recommended: true 标记你的推荐项（有明确推荐时用）。",
+        "",
+        "推荐 & 权衡说明：",
+        "- 若有明确推荐方向，把它放在 choices 的第一位，并给该选项标 recommended: true。",
+        "- 若没有明确推荐项，则在调用前的普通回复文本里简要说明每个选项的优缺点（或各选项的关键差异），帮助用户权衡，而不是列出选项就完事。",
         "",
         "何时调用 / 调用规范的完整行为规则由系统提示的「交互说明」块注入，不在此重复。"
     ].join("\n"),
@@ -43,6 +48,13 @@ export const uiAskChoiceFunctionSchema = {
                             type: "string",
                             description:
                                 "简短补充（建议一句话），长解释写进调用前的回复文本。"
+                        },
+                        recommended: {
+                            type: "boolean",
+                            description: [
+                                "标记这是你的推荐项。有明确推荐时把该选项放在 choices 第一位并置 true。",
+                                "没有明确推荐时不要设置（默认 false），并在调用前文本里说明各选项优缺点。"
+                            ].join(" ")
                         },
                         userMessage: {
                             type: "string",
@@ -82,6 +94,10 @@ export const uiAskChoiceFunctionSchema = {
                                     detail: {
                                         type: "string",
                                         description: "简短补充（建议一句话），长解释写进调用前的回复文本。"
+                                    },
+                                    recommended: {
+                                        type: "boolean",
+                                        description: "标记这是你的推荐项（有明确推荐时置 true，无则省略）。"
                                     },
                                     userMessage: { type: "string" }
                                 },
@@ -124,7 +140,7 @@ export async function uiAskChoiceFunc(
     _thunkApi: any
 ): Promise<{
     rawData: {
-        type: "ui_ask_choice";
+        type: "ask_user";
         question: string;
         choices: any[];
         blocking: boolean;
@@ -139,7 +155,7 @@ export async function uiAskChoiceFunc(
         const firstQ = args.questions[0];
         return {
             rawData: {
-                type: "ui_ask_choice",
+                type: "ask_user",
                 question: firstQ?.question ?? "",
                 choices: firstQ?.choices ?? [],
                 blocking,
@@ -154,12 +170,12 @@ export async function uiAskChoiceFunc(
     const choices = Array.isArray(args?.choices) ? args.choices : [];
 
     if (!question || choices.length === 0) {
-        throw new Error("ui_ask_choice 需要 question+choices 或 questions。");
+        throw new Error("ask_user 需要 question+choices 或 questions。");
     }
 
     return {
         rawData: {
-            type: "ui_ask_choice",
+            type: "ask_user",
             question,
             choices,
             blocking,
@@ -169,7 +185,7 @@ export async function uiAskChoiceFunc(
 }
 
 // ============================================================================
-// Shared ui_ask_choice payload contract — single source of truth.
+// Shared ask_user payload contract — single source of truth.
 // Consumed by: the executor above, the CLI local executor, the CLI tool-output
 // renderer, and the server saveDialog choice-selection lookup. Any change to
 // the wire shape (type / question / choices / blocking / selected / cancelled)
@@ -180,6 +196,8 @@ export type UiAskChoiceOption = {
     id?: string;
     label: string;
     detail?: string;
+    /** 推荐标记：有明确推荐时置 true，并建议把该选项放在第一位。 */
+    recommended?: boolean;
     userMessage?: string;
 };
 
@@ -193,7 +211,7 @@ export type UiAskChoiceQuestionPayload = {
 };
 
 export type UiAskChoicePayload = {
-    type: "ui_ask_choice";
+    type: "ask_user";
     question: string;
     choices: UiAskChoiceOption[];
     blocking: boolean;
@@ -220,7 +238,7 @@ export type UiAskChoicePayload = {
 
 /**
  * Parse a raw tool result into a typed UiAskChoicePayload, or null when the
- * content is not a ui_ask_choice payload. Accepts both a JSON string (the wire
+ * content is not a ask_user payload. Accepts both a JSON string (the wire
  * format stored on tool messages) and an already-parsed object.
  *
  * Does NOT trim/filter — callers validate question/choices for their own
@@ -241,6 +259,6 @@ export function parseUiAskChoiceContent(
               })()
             : rawContent;
     if (!parsed || typeof parsed !== "object") return null;
-    if ((parsed as any).type !== "ui_ask_choice") return null;
+    if ((parsed as any).type !== "ask_user") return null;
     return parsed as UiAskChoicePayload;
 }

@@ -1,5 +1,5 @@
 /**
- * Isomorphic state machine for `ui_ask_choice` interactive panels.
+ * Isomorphic state machine for `ask_user` interactive panels.
  *
  * Shared by TUI (packages/cli/tui/askChoiceDialog.ts) and Web
  * (packages/chat/messages/rn/AskChoicePanel.tsx) so that keyboard /

@@ -53,7 +53,7 @@ export const LOCAL_SERVER_MEMORY_TOOL_NAME_SET = new Set<string>(
 /** Tools whose schema is injected from the nolo tool registry (not workspace). */
 export const REGISTRY_INJECTED_TOOL_NAMES = new Set<string>([
   "callAgent",
-  "ui_ask_choice",
+  "ask_user",
   "read_x_post",
   "read_xhs_profile",
 ]);

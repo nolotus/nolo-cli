@@ -390,7 +390,7 @@ export const createDialogAction = async (
   notifyUserDataUpdated();
 
   // 4. 条件性地创建初始消息：
-  //    - greeting 带 menu => 仅发一条 ui_ask_choice 工具消息（不再额外发普通消息）
+  //    - greeting 带 menu => 仅发一条 ask_user 工具消息（不再额外发普通消息）
   //    - 只有 text => 沿用老逻辑，发一条普通 assistant 消息
   const rawGreeting = agentConfig?.greeting;
 
@@ -419,7 +419,7 @@ export const createDialogAction = async (
     const hasMenu = Array.isArray(effectiveCfg.menu) && effectiveCfg.menu.length > 0;
 
     if (hasMenu) {
-      // 带菜单：用 ui_ask_choice tool 来承载 greeting + 选项，只发这一条消息
+      // 带菜单：用 ask_user tool 来承载 greeting + 选项，只发这一条消息
       const question =
         asOptionalTrimmedString(effectiveCfg.text) ??
         "接下来你更希望我帮你做哪件事？";

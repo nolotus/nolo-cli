@@ -68,11 +68,11 @@ describe("CLI local runtime dry run", () => {
             for (const name of DEFAULT_LOCAL_TOOLS) {
               expect(sentToolNames).toContain(name);
             }
-            // ui_ask_choice is injected only when the runtime can actually
+            // ask_user is injected only when the runtime can actually
             // present choices (requestUserChoice wired). This dry run is
             // headless, so advertising it would offer a tool the model cannot
             // get an answer from.
-            expect(sentToolNames).not.toContain("ui_ask_choice");
+            expect(sentToolNames).not.toContain("ask_user");
             // Relaxing the exact-list assertion above lost the guard against
             // the surface silently growing, so keep an explicit deny side:
             // tools retired for being unsafe must never come back by default.

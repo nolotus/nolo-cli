@@ -86,8 +86,6 @@ export interface CliAutoRouteResult {
   /** LLM 分类是否成功；false 表示走了 regex 兜底。 */
   classified: boolean;
   confidence?: number;
-  /** 协议透传（与 web 分类器一致）：本轮是否需要工作区工具；CLI 下游暂未消费。 */
-  needsWorkspace?: boolean;
   /** 协议透传：命中的对象操作技能；CLI 下游暂未消费。 */
   skills?: QuickChatSkillKind[];
 }
@@ -203,7 +201,6 @@ export async function classifyCliAutoRoute(
       tier,
       classified: true,
       confidence: parsed.confidence,
-      needsWorkspace: parsed.needsWorkspace,
       skills: parsed.skills,
     };
   } catch {

@@ -708,6 +708,20 @@ export function buildLoadSkillExecutor(args: { cwd: string }) {
     const { resolveSkillByName } = await import("./skillDiscovery");
     const resolved = resolveSkillByName(args.cwd, name);
     if (!resolved) {
+      // 系统内置 coding skill 回退：本地 skill 目录找不到时，检查是否是系统
+      // 内置 coding skill（coding / coding-review / coding-review-*）。CLI 无
+      // DB 访问，直接返回内置内容，保证 agent 在对话中始终能 loadSkill("coding")
+      // 自主载入写代码能力。
+      const { resolveCodingBuiltinSlug, buildCodingSkillContentBySlug } =
+        await import("../ai/skills/codingSkills");
+      const builtinSlug = resolveCodingBuiltinSlug(name);
+      if (builtinSlug) {
+        const body = buildCodingSkillContentBySlug(builtinSlug);
+        return {
+          content: `Skill "${name}" loaded inline. Follow its instructions.\n\n${body}`,
+          metadata: { loadSkill: true, resolved: true, name, requestedName: name, builtin: true },
+        };
+      }
       return {
         content: await formatUnknownSkillMessage(args.cwd, name),
         metadata: { loadSkill: true, resolved: false, name, requestedName: name },

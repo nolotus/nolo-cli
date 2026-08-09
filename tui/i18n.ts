@@ -373,7 +373,7 @@ const STRINGS = {
     en: "abort the operation",
     zh: "中止操作",
   },
-  // --- Ask choice (ui_ask_choice) ------------------------------------------
+  // --- Ask choice (ask_user) ------------------------------------------
   askChoiceTitle: {
     en: "question",
     zh: "问题",

@@ -44,7 +44,7 @@ export type TodoStatus =
   | "abandoned";
 
 /**
- * review 结论常量。与 nolo-review 的 Verdict 对齐：BLOCK 是唯一
+ * review 结论常量。与 coding-review 的 Verdict 对齐：BLOCK 是唯一
  * 会把 todo 钉在 blocked 的结论，其余结论（PASS/APPROVE 等）不阻塞。
  */
 export const TODO_REVIEW_BLOCK = "BLOCK";

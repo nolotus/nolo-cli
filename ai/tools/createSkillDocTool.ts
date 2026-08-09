@@ -17,7 +17,7 @@ export const createSkillDocFunctionSchema = {
   description: [
     "创建一个本地 skill 文档，并自动写入隐藏的 skill-config / eval-config 协议块。",
     "适合把某个能力流程沉淀成可被 agent 引用的 skill，而不是手写协议注释。",
-    "创建成功后，如果用户还没说明下一步，优先调用 ui_ask_choice 继续询问：仅保存、挂到现有 Agent，还是新建一个 Agent 来使用它。",
+    "创建成功后，如果用户还没说明下一步，优先调用 ask_user 继续询问：仅保存、挂到现有 Agent，还是新建一个 Agent 来使用它。",
   ].join("\n"),
   parameters: {
     type: "object",

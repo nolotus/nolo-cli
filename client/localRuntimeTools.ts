@@ -80,8 +80,8 @@ export function buildOpenAiTools(args: {
   const callAgentTools = toolNameSet.has("callAgent")
     ? prepareTools(["callAgent"])
     : [];
-  const uiAskChoiceTools = toolNameSet.has("ui_ask_choice")
-    ? prepareTools(["ui_ask_choice"])
+  const uiAskChoiceTools = toolNameSet.has("ask_user")
+    ? prepareTools(["ask_user"])
     : [];
   const readPastedTextTools = toolNameSet.has("readPastedText")
     ? [
@@ -155,7 +155,7 @@ function addDefaultCliCoreTools(
   const forcedTools =
     options?.hasUserChoice === true
       ? FORCED_TOOLS
-      : FORCED_TOOLS.filter((name) => name !== "ui_ask_choice");
+      : FORCED_TOOLS.filter((name) => name !== "ask_user");
   const injected = declaredOnly
     ? [...forcedTools]
     : [...forcedTools, ...CLI_DEFAULT_TOOLS];
@@ -163,7 +163,7 @@ function addDefaultCliCoreTools(
   const filtered =
     options?.hasUserChoice === true
       ? combined
-      : combined.filter((name) => name !== "ui_ask_choice");
+      : combined.filter((name) => name !== "ask_user");
   return [...new Set(filtered)];
 }
 

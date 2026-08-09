@@ -25,7 +25,7 @@ const DEFAULT_CLI_PACKS = ["code", "agent-orchestration", "skills"] as const;
 
 /** Forced / default CLI interaction + light-web tools. */
 const DEFAULT_CLI_PLATFORM_TOOLS = [
-  "ui_ask_choice",
+  "ask_user",
   "exa_search",
   "fetchWebpage",
 ] as const;

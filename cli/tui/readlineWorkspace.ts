@@ -1241,7 +1241,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           scheduleRender();
         })
       : output;
-    // Interactive ui_ask_choice: dock an arrow-key select dialog above the
+    // Interactive ask_user: dock an arrow-key select dialog above the
     // composer (same dialogHost + runSelectDialog as the /agent picker) and
     // resolve the user's pick into the userMessage that continues the turn.
     // Only wired in interactive TUI mode; headless/CI falls back to text menu.

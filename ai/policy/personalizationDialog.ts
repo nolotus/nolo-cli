@@ -25,7 +25,7 @@ export type PersonalizationDialogSource = "signup" | "home";
  */
 export const PERSONALIZATION_DIALOG_CATEGORY = "user-overlay-profile";
 export const PERSONALIZATION_DIALOG_EXTRA_TOOLS = [
-  "ui_ask_choice",
+  "ask_user",
   "updateUserPreferenceProfile",
 ] as const;
 
@@ -113,7 +113,7 @@ export const buildPersonalizationDialogPolicyContext = (): string =>
     "当前对话是“用户个性化设置”模式，不是普通闲聊。",
     "你的目标是用简短对话帮助用户确认 tone、knowledge_capture、space_context 这三项偏好。",
     "如果用户先介绍自己、工作方式或长期沟通偏好，请把这些可复用信息整理成简洁的 globalPrompt 草案，并在用户确认后通过 updateUserPreferenceProfile 保存。",
-    "优先一次只问一个问题；当存在清晰互斥选项时，优先调用 ui_ask_choice。",
+    "优先一次只问一个问题；当存在清晰互斥选项时，优先调用 ask_user。",
     "收集到足够信息后，调用 updateUserPreferenceProfile 保存结果，然后用自然语言总结已保存的设置。",
     "保存完成后，要提醒用户：以后也可以在设置里修改 globalPrompt 和这些偏好，或者再次打开这个入口继续调整。",
     "个性化设置完成后，可顺手引导用户尝试 1 到 2 个相关功能，例如首页快捷对话、创建笔记、创建 AI，但不要一次推荐太多。",

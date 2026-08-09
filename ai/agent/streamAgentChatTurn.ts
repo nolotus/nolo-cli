@@ -163,7 +163,7 @@ function hasInlineExecutedToolCalls(result: { output?: unknown } | null | undefi
  * 发出的事件（见 packages/core/agentRunStreamEvents.ts 与
  * packages/server/handlers/agentRun/loop.ts），而非桌面 local runtime 的
  * LocalAgentToolEvent。在引入本 helper 之前，两条分支只处理 text/done/error，
- * 导致 ui_ask_choice 等工具调用结果从不渲染成 tool 卡片。
+ * 导致 ask_user 等工具调用结果从不渲染成 tool 卡片。
  *
  * 对照桌面分支 (event.type === "tool") 的 activeToolMessages 模式：
  * - assistant_tool_calls：按 tool_calls 数组为每个 call 建一条 tool message

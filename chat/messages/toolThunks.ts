@@ -213,7 +213,7 @@ const processToolData = createAsyncThunk(
       }
     }
 
-    // ========= 分支二：auto 工具（包括 ui_ask_choice / readFile / createWorkflow 等） =========
+    // ========= 分支二：auto 工具（包括 ask_user / readFile / createWorkflow 等） =========
     try {
       const toolResult = await found.executor(executionToolArgs, thunkApi, {
         parentMessageId,
@@ -243,8 +243,8 @@ const processToolData = createAsyncThunk(
         ...(activity ? { activity } : {}),
       };
 
-      // ✅ 关键：ui_ask_choice(blocking=true) 也视作“暂停点”
-      const isUiAskChoice = canonicalName === "ui_ask_choice";
+      // ✅ 关键：ask_user(blocking=true) 也视作“暂停点”
+      const isUiAskChoice = canonicalName === "ask_user";
       const blocking =
         typeof executionToolArgs?.blocking === "boolean"
           ? executionToolArgs.blocking

@@ -26,7 +26,7 @@ const DEFAULT_EXPANDED_TOOL_NAMES: Record<string, true> = {
   ziweiChart: true,
   runStreamingAgent: true,
   read_x_post: true,
-  ui_ask_choice: true,
+  ask_user: true,
   createTable: true,
 };
 

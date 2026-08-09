@@ -46,12 +46,6 @@ export interface QuickChatIntentResult {
   /** LLM 分类是否成功；false 表示走了 fallback */
   classified: boolean;
   /**
-   * 本轮用户消息是否表达「文件/代码/工作区」意图。
-   * 为 true 时，调用方应给 quick-chat 通用档注入只读工作区工具。
-   * 解析失败/超时走 fallback 时恒为 false（由 regex 兜底再判一次）。
-   */
-  needsWorkspace: boolean;
-  /**
    * 分类器自评的置信度(0-1)。仅供诊断展示/阈值判断参考，
    * 缺失或格式不对时不影响 agentKey 的判定(不会因此走 fallback)。
    */
@@ -117,23 +111,18 @@ export function buildQuickChatIntentSystemPrompt(tierAgents: TierAgentOption[]):
 可选 agent 列表（agentKey 与描述）：
 ${agentList}
 
-判断原则（默认偏向通用档位；专职 agent 在明确匹配时使用；**编码/本地仓库任务走通用档 + needsWorkspace=true**）：
+判断原则（默认偏向通用档位；专职 agent 在明确匹配时使用；**编码/本地仓库任务走通用档 balanced/quality**）：
 - 默认情况下，**除非用户明确表达要建应用/建 Agent/提交反馈/多 Agent 编排**，否则选通用档位（flash/balanced/quality）：
   - 简单问候、闲聊、快速问答、翻译、短文 → 选 flash 档
   - 需要推理、分析、中等长度写作、普通代码解释/架构问答 → 选 balanced 档
   - 复杂推理、长文、架构设计、深度分析 → 选 quality 档
-  - **明确编码任务（实现功能、修 bug、refactor、写/补测试、跑 build/tests/ci）或查看本机仓库/代码状态（git/分支/commit/本地与远程差距/未提交改动等）** → 选 balanced 或 quality 档（按复杂度；**不要选 flash**），且 needsWorkspace=true
+  - **明确编码任务（实现功能、修 bug、refactor、写/补测试、跑 build/tests/ci）或查看本机仓库/代码状态（git/分支/commit/本地与远程差距/未提交改动等）** → 选 balanced 或 quality 档（按复杂度；**不要选 flash**）
 - 专职 agent 路由规则（有明确匹配时使用）：
   - 要提交/记录 bug、体验问题、数据异常、产品建议，或口语如「想反馈一些问题」「反馈一下」→ 选意见反馈专职 agent
   - 要新建或定制 AI/Agent/智能体助手（含配置工具、知识、确认创建）→ 选创建 Agent 专职 agent
   - 要做/改/发布网站、网页、小应用、预约页、博客、看板 → 选应用构建专职 agent
   - 要派多个 agent、多 agent 并行、拆成任务后台执行、多个 agent review、让不同 agent 讨论/会商 → 选多 Agent 编排专职 agent（显式 multi-agent 优先）
-- **拿不准时**：纯闲聊选 flash；**若沾边本地仓库/当前代码状态，选 balanced/quality + needsWorkspace=true**。
-
-同时判断本轮是否需要注入「工作区只读工具」（listFiles/globFiles/searchFiles/readFile/execShell 等）：
-- needsWorkspace=true 的场景：用户要读/改/分析文件或代码、提到了文件路径/扩展名（.md/.csv/.ts 等）、提到工作区/代码库/仓库/目录/git/分支、要看当前代码或仓库状态、本地搜索/查看代码。
-- needsWorkspace=false 的场景：通用知识问答（如「广东经济数据」「写一首诗」）、纯闲聊问候、翻译、不涉及本地文件/仓库。
-- 漏判（用户要文件而没带工具）比误判（白搜几轮）代价更高，宁可偏宽判 true。
+- **拿不准时**：纯闲聊选 flash；**若沾边本地仓库/当前代码状态，选 balanced/quality**。
 
 在给出 agentKey 之前，先在心里区分候选档位的边界再给置信度：balanced 与 quality 的边界在于复杂度/篇幅/是否需要深度分析，拿不准就给低 confidence。
 
@@ -145,7 +134,7 @@ ${agentList}
 - 普通问答/纯闲聊/建应用 → skills 为 []
 
 只输出 JSON，不要输出其他内容：
-{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "needsWorkspace": <true 或 false>, "skills": <字符串数组，元素只能是 ${[...VALID_QUICK_CHAT_SKILLS].map((s) => `"${s}"`).join(" | ")}，未命中给 []>}`;
+{"confidence": <0到1之间的小数，表示你对这个分类判断的把握程度>, "agentKey": "<从列表中选择的 agentKey>", "skills": <字符串数组，元素只能是 ${[...VALID_QUICK_CHAT_SKILLS].map((s) => `"${s}"`).join(" | ")}，未命中给 []>}`;
 }
 
 /**
@@ -158,7 +147,6 @@ export function parseQuickChatIntentResult(
   tierAgents: TierAgentOption[],
 ): {
   agentKey: string;
-  needsWorkspace: boolean;
   confidence?: number;
   skills?: QuickChatSkillKind[];
 } | null {
@@ -168,9 +156,6 @@ export function parseQuickChatIntentResult(
     const key = (parsed as { agentKey?: unknown }).agentKey;
     if (typeof key !== "string") return null;
     if (!tierAgents.some((t) => t.agentKey === key)) return null;
-    const rawNeedsWorkspace = (parsed as { needsWorkspace?: unknown }).needsWorkspace;
-    // 解析 needsWorkspace；非布尔时默认 false（regex 兜底会再判一次）。
-    const needsWorkspace = rawNeedsWorkspace === true;
     const rawConfidence = (parsed as { confidence?: unknown }).confidence;
     const confidence =
       typeof rawConfidence === "number" &&
@@ -189,7 +174,7 @@ export function parseQuickChatIntentResult(
       );
       if (filtered.length > 0) skills = filtered;
     }
-    return { agentKey: key, needsWorkspace, confidence, skills };
+    return { agentKey: key, confidence, skills };
   } catch {
     return null;
   }

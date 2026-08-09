@@ -35,7 +35,7 @@ describe("classifyCliAutoRoute", () => {
   it("sends a non-streaming classifier request through the platform proxy", async () => {
     const { fetchImpl, calls } = captureFetch(() =>
       okResponse(
-        `{"confidence":0.9,"agentKey":"${CLI_AUTO_TIER_AGENT_KEYS.balanced}","needsWorkspace":false}`,
+        `{"confidence":0.9,"agentKey":"${CLI_AUTO_TIER_AGENT_KEYS.balanced}"}`,
       ),
     );
 
@@ -66,15 +66,14 @@ describe("classifyCliAutoRoute", () => {
       tier: "flash",
       classified: true,
       confidence: 0.9,
-      needsWorkspace: false,
       skills: undefined,
     });
   });
 
-  it("passes through needsWorkspace and skills from the classifier protocol", async () => {
+  it("passes through skills from the classifier protocol", async () => {
     const { fetchImpl } = captureFetch(() =>
       okResponse(
-        `{"confidence":0.7,"agentKey":"${CLI_AUTO_TIER_AGENT_KEYS.quality}","needsWorkspace":true,"skills":["table"]}`,
+        `{"confidence":0.7,"agentKey":"${CLI_AUTO_TIER_AGENT_KEYS.quality}","skills":["table"]}`,
       ),
     );
 
@@ -84,7 +83,6 @@ describe("classifyCliAutoRoute", () => {
       fetchImpl,
     });
 
-    expect(result.needsWorkspace).toBe(true);
     expect(result.skills).toEqual(["table"]);
   });
 

@@ -20,7 +20,7 @@ import type {
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
 
 /**
- * Interactive choice request surfaced by the local `ui_ask_choice` executor.
+ * Interactive choice request surfaced by the local `ask_user` executor.
  * When a `requestUserChoice` callback is wired (interactive TUI), the executor
  * calls it to show an arrow-key select dialog docked above the composer; the
  * resolved userMessage becomes the next user turn. When absent (headless / CI /

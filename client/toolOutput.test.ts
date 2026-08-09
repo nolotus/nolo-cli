@@ -276,13 +276,13 @@ describe("toolOutput", () => {
     ).toContain("! needs action: gh auth refresh -h github.com -s delete_repo");
   });
 
-  test("compact mode renders ui_ask_choice as a question + numbered choices", () => {
+  test("compact mode renders ask_user as a question + numbered choices", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
-        toolName: "ui_ask_choice",
+        toolName: "ask_user",
         content: JSON.stringify({
-          type: "ui_ask_choice",
+          type: "ask_user",
           question: "接下来你希望我帮你做哪件事？",
           choices: [
             { id: "a", label: "生成本周周报", userMessage: "帮我生成本周周报" },
@@ -303,13 +303,13 @@ describe("toolOutput", () => {
     expect(line).toContain("2. 整理待办事项");
   });
 
-  test("compact mode renders a resolved ui_ask_choice as question + selected", () => {
+  test("compact mode renders a resolved ask_user as question + selected", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
-        toolName: "ui_ask_choice",
+        toolName: "ask_user",
         content: JSON.stringify({
-          type: "ui_ask_choice",
+          type: "ask_user",
           question: "选哪个？",
           choices: [
             { id: "a", label: "选项 A", userMessage: "我选 A" },
@@ -331,13 +331,13 @@ describe("toolOutput", () => {
     expect(line).not.toContain("Type a number");
   });
 
-  test("compact mode keeps resolved ui_ask_choice out of the menu when selected label is empty", () => {
+  test("compact mode keeps resolved ask_user out of the menu when selected label is empty", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
-        toolName: "ui_ask_choice",
+        toolName: "ask_user",
         content: JSON.stringify({
-          type: "ui_ask_choice",
+          type: "ask_user",
           question: "选哪个？",
           choices: [
             { id: "a", label: "选项 A", userMessage: "我选 A" },
@@ -358,13 +358,13 @@ describe("toolOutput", () => {
     expect(line).not.toContain("Type a number");
   });
 
-  test("compact mode renders a cancelled ui_ask_choice without the menu", () => {
+  test("compact mode renders a cancelled ask_user without the menu", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
-        toolName: "ui_ask_choice",
+        toolName: "ask_user",
         content: JSON.stringify({
-          type: "ui_ask_choice",
+          type: "ask_user",
           question: "选哪个？",
           choices: [{ id: "a", label: "选项 A" }],
           blocking: true,
@@ -381,13 +381,13 @@ describe("toolOutput", () => {
     expect(line).not.toContain("请输入序号");
   });
 
-  test("verbose mode renders ui_ask_choice question + numbered choices", () => {
+  test("verbose mode renders ask_user question + numbered choices", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
-        toolName: "ui_ask_choice",
+        toolName: "ask_user",
         content: JSON.stringify({
-          type: "ui_ask_choice",
+          type: "ask_user",
           question: "Which plan?",
           choices: [{ id: "x", label: "Plan A" }, { id: "y", label: "Plan B" }],
           blocking: true,
@@ -403,11 +403,11 @@ describe("toolOutput", () => {
     expect(line).toContain("2. Plan B");
   });
 
-  test("compact mode falls back to generic line when ui_ask_choice content is missing", () => {
+  test("compact mode falls back to generic line when ask_user content is missing", () => {
     const line = formatToolEventForCli(
       toolEvent({
         type: "tool-result",
-        toolName: "ui_ask_choice",
+        toolName: "ask_user",
         content: "",
         metadata: { uiAskChoice: true },
       }),

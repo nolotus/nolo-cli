@@ -197,7 +197,7 @@ export type RunAgentTurnOptions = {
     gate: LocalAgentActionGate,
   ) => Promise<AgentRuntimeToolResult | void>;
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
-  /** Interactive ui_ask_choice dialog; absent in headless/CI mode. */
+  /** Interactive ask_user dialog; absent in headless/CI mode. */
   requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
   /** Cooperative stop (TUI Esc): aborted turns return exitCode 0 + streamInterrupted. */
   abortSignal?: AbortSignal;

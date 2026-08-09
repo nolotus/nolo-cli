@@ -1,5 +1,5 @@
 /**
- * TUI renderer for the isomorphic `ui_ask_choice` state machine.
+ * TUI renderer for the isomorphic `ask_user` state machine.
  *
  * Renders a multi-tab question panel with single/multi-select, an "Other"
  * free-text row, and a Submit action — matching the Web AskChoicePanel.

@@ -4165,13 +4165,13 @@ describe("CLI local runtime adapter", () => {
 
     const toolNames = toolNamesFromRequest(requests[0]);
     // declared-only mode skips default tools (fetchWebpage/exa_search), and
-    // without requestUserChoice (headless), ui_ask_choice is also excluded.
+    // without requestUserChoice (headless), ask_user is also excluded.
     expect(toolNames).not.toContain("fetchWebpage");
     expect(toolNames).not.toContain("exa_search");
-    expect(toolNames).not.toContain("ui_ask_choice");
+    expect(toolNames).not.toContain("ask_user");
   });
 
-  test("FORCED_TOOLS (ui_ask_choice) is injected when requestUserChoice is provided", async () => {
+  test("FORCED_TOOLS (ask_user) is injected when requestUserChoice is provided", async () => {
     const requests: Array<{ body: any }> = [];
     const adapter = createAdapter({
       env: {
@@ -4206,10 +4206,10 @@ describe("CLI local runtime adapter", () => {
     });
 
     const toolNames = toolNamesFromRequest(requests[0]);
-    expect(toolNames).toContain("ui_ask_choice");
+    expect(toolNames).toContain("ask_user");
   });
 
-  test("ui_ask_choice executor calls requestUserChoice and resolves the selected option", async () => {
+  test("ask_user executor calls requestUserChoice and resolves the selected option", async () => {
     const requests: Array<{ body: any }> = [];
     let choiceRequest: any = null;
     const adapter = createAdapter({
@@ -4222,7 +4222,7 @@ describe("CLI local runtime adapter", () => {
           dbKey: "agent-local-choice",
           prompt: "Ask the user.",
           model: "gpt-4.1-mini",
-          toolNames: ["ui_ask_choice"],
+          toolNames: ["ask_user"],
         }),
         put: async () => {},
         batch: async () => {},
@@ -4231,10 +4231,10 @@ describe("CLI local runtime adapter", () => {
       fetchImpl: async (_url, init) => {
         const body = JSON.parse(String(init?.body));
         requests.push({ body });
-        // First request: the model calls ui_ask_choice. We detect it by
-        // checking whether ui_ask_choice is in the advertised tools.
+        // First request: the model calls ask_user. We detect it by
+        // checking whether ask_user is in the advertised tools.
         const hasChoiceTool = (body.tools || []).some(
-          (t: any) => t.function?.name === "ui_ask_choice",
+          (t: any) => t.function?.name === "ask_user",
         );
         if (hasChoiceTool && requests.length === 1) {
           return Response.json({
@@ -4245,7 +4245,7 @@ describe("CLI local runtime adapter", () => {
                   id: "call-choice-1",
                   type: "function",
                   function: {
-                    name: "ui_ask_choice",
+                    name: "ask_user",
                     arguments: JSON.stringify({
                       question: "选哪个？",
                       choices: [
@@ -4962,25 +4962,25 @@ describe("resolveCliRequestedToolNames — systemBuiltinSkills 全局开关", ()
 });
 
 describe("resolveCliRequestedToolNames — hasUserChoice 交互通道门控", () => {
-  test("未提供 hasUserChoice 时默认不注入 ui_ask_choice", () => {
+  test("未提供 hasUserChoice 时默认不注入 ask_user", () => {
     const agentConfig = { key: "agent-headless", tools: [] } as any;
     const requested = resolveCliRequestedToolNames(agentConfig, {} as any);
-    expect(requested).not.toContain("ui_ask_choice");
+    expect(requested).not.toContain("ask_user");
   });
 
-  test("hasUserChoice: false 时不注入 ui_ask_choice", () => {
+  test("hasUserChoice: false 时不注入 ask_user", () => {
     const agentConfig = { key: "agent-headless", tools: [] } as any;
     const requested = resolveCliRequestedToolNames(agentConfig, {} as any, null, {
       hasUserChoice: false,
     });
-    expect(requested).not.toContain("ui_ask_choice");
+    expect(requested).not.toContain("ask_user");
   });
 
-  test("hasUserChoice: true 时包含 ui_ask_choice", () => {
+  test("hasUserChoice: true 时包含 ask_user", () => {
     const agentConfig = { key: "agent-interactive", tools: [] } as any;
     const requested = resolveCliRequestedToolNames(agentConfig, {} as any, null, {
       hasUserChoice: true,
     });
-    expect(requested).toContain("ui_ask_choice");
+    expect(requested).toContain("ask_user");
   });
 });

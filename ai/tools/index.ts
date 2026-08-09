@@ -642,7 +642,7 @@ const baseToolDefinitions: ToolDefinition[] = [
     schema: uiAskChoiceFunctionSchema,
     executor: uiAskChoiceFunc,
     description: {
-      name: "ui_ask_choice",
+      name: "ask_user",
       description:
         "向用户提出一个带多个选项的问题，让界面展示按钮供用户选择。",
       category: "交互 / UI",
@@ -2289,7 +2289,7 @@ const ALL_TOOL_FUNCTION_NAMES: string[] = toolDefinitions
   .map((tool) => tool.schema?.name)
   .filter((name): name is string => Boolean(name));
 
-// Agent 可用的工具名：保留 ui_ask_choice，排除 toolquery 和默认开启的浏览器/搜索工具
+// Agent 可用的工具名：保留 ask_user，排除 toolquery 和默认开启的浏览器/搜索工具
 const AGENT_AVAILABLE_TOOL_NAMES = ALL_TOOL_FUNCTION_NAMES.filter(
   (name) =>
     name !== "toolquery" &&

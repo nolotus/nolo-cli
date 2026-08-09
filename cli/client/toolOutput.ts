@@ -273,8 +273,8 @@ function isNeedsActionToolResult(event: LocalAgentToolEvent) {
 }
 
 /**
- * Parse a ui_ask_choice tool result into a question + numbered option list
- * for CLI display. Returns null when the content is not a ui_ask_choice
+ * Parse a ask_user tool result into a question + numbered option list
+ * for CLI display. Returns null when the content is not a ask_user
  * payload (so non-choice tools fall through to the generic compact line).
  * Delegates wire parsing to the shared parseUiAskChoiceContent source of
  * truth; keeps the display-specific trim/filter of choices here.
@@ -292,7 +292,7 @@ function parseUiAskChoiceForCli(event: LocalAgentToolEvent): {
   cancelled?: boolean;
   resolved: boolean;
 } | null {
-  if (event.toolName !== "ui_ask_choice" && !event.metadata?.uiAskChoice) {
+  if (event.toolName !== "ask_user" && !event.metadata?.uiAskChoice) {
     return null;
   }
   const parsed = parseUiAskChoiceContent(event.content);
@@ -652,8 +652,8 @@ function formatVerboseToolEvent(event: LocalAgentToolEvent, colorEnabled: boolea
     );
   }
   const elapsed = typeof event.elapsedMs === "number" ? ` ${event.elapsedMs}ms` : "";
-  // ui_ask_choice: render the question + numbered choices even in verbose mode.
-  if (event.type === "tool-result" && (event.toolName === "ui_ask_choice" || event.metadata?.uiAskChoice)) {
+  // ask_user: render the question + numbered choices even in verbose mode.
+  if (event.type === "tool-result" && (event.toolName === "ask_user" || event.metadata?.uiAskChoice)) {
     const block = formatUiAskChoiceBlock(event, colorEnabled);
     if (block) return `${formatToolTraceLine(`[nolo:tool] #${round} <- ${event.toolName}${elapsed}`, colorEnabled)}${block}`;
   }
@@ -972,10 +972,10 @@ function formatCompactToolLine(
     return formatOrchestrationCardBlock(event, toolName, colorEnabled);
   }
 
-  // ui_ask_choice: render question + numbered choices instead of a generic
+  // ask_user: render question + numbered choices instead of a generic
   // tool trace line, so CLI users get an interactive-looking menu they can
   // reply to by typing the number or their own answer.
-  if (event.type === "tool-result" && (event.toolName === "ui_ask_choice" || event.metadata?.uiAskChoice)) {
+  if (event.type === "tool-result" && (event.toolName === "ask_user" || event.metadata?.uiAskChoice)) {
     const block = formatUiAskChoiceBlock(event, colorEnabled);
     if (block) return block;
   }
@@ -1377,7 +1377,7 @@ export function createSseToolEventAdapter(
         toolName,
         // The full payload, not just the clipped summary. Consumers that parse
         // structured results — the agent-run snapshot parser feeding the dock
-        // panel, the orchestration card renderer, ui_ask_choice — all read
+        // panel, the orchestration card renderer, ask_user — all read
         // `content`; dropping it here made every one of them silently inert on
         // the HTTP/SSE path while working on the local path.
         ...(rawContent ? { content: rawContent } : {}),

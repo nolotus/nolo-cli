@@ -2,7 +2,7 @@
  * Local tool executor assembly for CLI local runtime.
  *
  * Extracted from localRuntimeAdapter.ts. Aggregates workspace tools, server
- * platform tools, CLI workspace tools, x-post/xhs bridges, and ui_ask_choice
+ * platform tools, CLI workspace tools, x-post/xhs bridges, and ask_user
  * into a single executor map.
  *
  * Direct imports replace lazy ensureHeavyCliLocalRuntimeModules indirection.
@@ -126,7 +126,7 @@ export function buildLocalToolExecutors(args: {
   commandOutputLimit?: number;
   /** Reused for external-file-access prompts (same PermissionRequest shape). */
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
-  /** Interactive choice dialog for ui_ask_choice; absent in headless/CI mode. */
+  /** Interactive choice dialog for ask_user; absent in headless/CI mode. */
   requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
   pastedTextStore?: CollapsedPasteStore;
   /** CLI entrypoint path (for re-launching workspace tools). */
@@ -193,7 +193,7 @@ export function buildLocalToolExecutors(args: {
         },
       };
     },
-    ui_ask_choice: async (call: any) => {
+    ask_user: async (call: any) => {
       const parsedArgs = (() => {
         try {
           return JSON.parse(call.arguments || "{}");
@@ -211,8 +211,8 @@ export function buildLocalToolExecutors(args: {
       if (!hasQuestions && (!question || choices.length === 0)) {
         return {
           content: JSON.stringify({
-            error: "ui_ask_choice",
-            detail: "ui_ask_choice 需要 question+choices 或 questions。",
+            error: "ask_user",
+            detail: "ask_user 需要 question+choices 或 questions。",
           }),
           metadata: { uiAskChoice: true, error: true },
         };
@@ -233,7 +233,7 @@ export function buildLocalToolExecutors(args: {
           if (result.kind === "multi-submitted") {
             return {
               content: JSON.stringify({
-                type: "ui_ask_choice",
+                type: "ask_user",
                 question,
                 choices,
                 blocking,
@@ -250,7 +250,7 @@ export function buildLocalToolExecutors(args: {
           if (result.kind === "selected") {
             return {
               content: JSON.stringify({
-                type: "ui_ask_choice",
+                type: "ask_user",
                 question,
                 choices,
                 blocking,
@@ -267,7 +267,7 @@ export function buildLocalToolExecutors(args: {
           // either ask differently or proceed with its own best judgement.
           return {
             content: JSON.stringify({
-              type: "ui_ask_choice",
+              type: "ask_user",
               question,
               choices,
               blocking,
@@ -284,7 +284,7 @@ export function buildLocalToolExecutors(args: {
       }
       return {
         content: JSON.stringify({
-          type: "ui_ask_choice",
+          type: "ask_user",
           question,
           choices,
           blocking,

@@ -1426,6 +1426,34 @@ export function createCliLocalRuntimeAdapter(
       const contextualCall = opts?.runtimeContext
         ? { ...call, runtimeContext: opts.runtimeContext }
         : call;
+      // Inject the current TUI conversation as the parent for local background
+      // run delegations. Without this, a child run spawned from inside a TUI
+      // turn carries no link to its orchestrating dialog, so the run-overlay
+      // cannot answer "which runs belong to this conversation?". We inject
+      // only when (a) this is a startAgentRun call and (b) we actually know
+      // the current dialog id — otherwise leave the call untouched.
+      let injectedCall = contextualCall;
+      if (
+        contextualCall.name === "startAgentRun" &&
+        deps.parentDialogId &&
+        typeof contextualCall.arguments === "string"
+      ) {
+        try {
+          const args = JSON.parse(contextualCall.arguments);
+          if (!args.parentDialogId) {
+            injectedCall = {
+              ...contextualCall,
+              arguments: JSON.stringify({
+                ...args,
+                parentDialogId: deps.parentDialogId,
+              }),
+            };
+          }
+        } catch {
+          // Malformed arguments: leave the call as-is; the executor will fail
+          // with a clear message if agentKey/task are missing.
+        }
+      }
       assertWithinLocalToolBudget({
         toolName: call.name,
         budgets: localToolBudgets,
@@ -1434,7 +1462,7 @@ export function createCliLocalRuntimeAdapter(
       const result = await executeLocalToolWithPolicy({
         env: deps.env,
         agentToolNames: activeAgentToolNames,
-        call: contextualCall,
+        call: injectedCall,
         executors: localToolExecutors,
         abortSignal: opts?.abortSignal,
         detachMs: resolveExecShellDetachMs(deps.env),

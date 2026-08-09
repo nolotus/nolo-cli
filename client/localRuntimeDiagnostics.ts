@@ -41,6 +41,13 @@ export type CliLocalRuntimeAdapterDeps = {
   confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
   requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
   pastedTextStore?: CollapsedPasteStore;
+  /**
+   * Current TUI conversation id. Injected so local `startAgentRun` delegations
+   * can stamp the spawned child run with this conversation as its
+   * parentDialogId, letting the TUI overlay filter "runs belonging to this
+   * dialog" the same way the web adapter filters by parentThreadId.
+   */
+  parentDialogId?: string;
 };
 
 export type PreparedAgentRuntime = {

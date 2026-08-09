@@ -35,6 +35,7 @@ import {
   visibleWidth,
   wrapTextToLines,
   wrapTranscriptLine,
+  buildTuiRunOverlay,
 } from "./readlineWorkspace";
 import { getCliLocale, setCliLocale, t } from "./i18n";
 import type { ListedDialog } from "../dialogCommands";
@@ -2506,3 +2507,60 @@ describe("readlineWorkspace paste store clearance contract", () => {
     expect(pickDialogBlock).toContain("clearCollapsedPasteStore(pasteStore)");
   });
 });
+
+describe("run-overlay TUI adapter (buildTuiRunOverlay)", () => {
+  test("returns null when no parentDialogId is given", () => {
+    expect(buildTuiRunOverlay(undefined)).toBeNull();
+  });
+
+  test("returns null when the dialog has no runs", async () => {
+    const { tmp, restore } = await withNoloHomeDir();
+    try {
+      expect(buildTuiRunOverlay("dlg-empty")).toBeNull();
+    } finally {
+      restore();
+      void tmp;
+    }
+  });
+
+  test("builds a grouped presentation for runs of the dialog", async () => {
+    const { dir, restore } = await withNoloHomeDir();
+    try {
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const runsDir = join(dir, "runs");
+      mkdirSync(runsDir, { recursive: true });
+      const base = "2025-01-01T00:00:00.000Z";
+      const recs = [
+        { runId: "r1", agentKey: "agent-a", parentDialogId: "dlg-1", startedAt: base, status: "running", logPath: join(runsDir, "r1.log") },
+        { runId: "r2", agentKey: "agent-b", parentDialogId: "dlg-1", startedAt: base, status: "done", logPath: join(runsDir, "r2.log") },
+        { runId: "other", agentKey: "agent-x", parentDialogId: "dlg-2", startedAt: base, status: "failed", logPath: join(runsDir, "other.log") },
+      ];
+      for (const rec of recs) {
+        writeFileSync(join(runsDir, `${rec.runId}.json`), JSON.stringify(rec));
+      }
+      const overlay = buildTuiRunOverlay("dlg-1");
+      expect(overlay).not.toBeNull();
+      expect(overlay).toContain("▶ 1 个正在运行");
+      expect(overlay).toContain("✅ 1 个已完成");
+      // Runs of other dialogs are excluded.
+      expect(overlay).not.toContain("agent-x");
+    } finally {
+      restore();
+      void dir;
+    }
+  });
+});
+
+/** Point NOLO_HOME at a fresh temp dir for the duration of the callback. */
+async function withNoloHomeDir(): Promise<{ dir: string; tmp: string; restore: () => void }> {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "nolo-overlay-test-"));
+  const prev = process.env.NOLO_HOME;
+  process.env.NOLO_HOME = dir;
+  const restore = () => {
+    if (prev === undefined) delete process.env.NOLO_HOME;
+    else process.env.NOLO_HOME = prev;
+  };
+  return { dir, tmp: dir, restore };
+}

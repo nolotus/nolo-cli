@@ -43,6 +43,14 @@ export type RunRecord = {
   endedAt?: string;
   logPath: string;
   dialogId?: string;
+  /**
+   * Parent dialog id that spawned this run (the orchestrator's own dialog,
+   * NOT the run's own dialog). Persisted at spawn time so a local TUI session
+   * can filter "runs belonging to this conversation" the same way the web
+   * adapter filters by parentThreadId. Optional — background runs spawned
+   * outside any dialog (e.g. `nolo agent run` from a shell) leave it unset.
+   */
+  parentDialogId?: string;
   note?: string;
   /** Batch id for grouping related runs; auto-generated when not supplied. */
   batchId?: string;
@@ -335,6 +343,8 @@ export const MAX_LIST_LIMIT = 200;
 export type ListRunsQuery = {
   /** Only return runs in this batch. */
   batchId?: string;
+  /** Only return runs spawned by this parent dialog id. */
+  parentDialogId?: string;
   /** One status, or a comma-separated list (e.g. "running,orphaned"). */
   status?: string;
   /** Max records to return; clamped to [1, MAX_LIST_LIMIT], default DEFAULT_LIST_LIMIT. */
@@ -394,9 +404,14 @@ export function queryRunRecords(
 
   const statusSet = parseStatusFilter(query.status);
   const batchId = typeof query.batchId === "string" && query.batchId.trim() !== "" ? query.batchId.trim() : undefined;
+  const parentDialogId =
+    typeof query.parentDialogId === "string" && query.parentDialogId.trim() !== ""
+      ? query.parentDialogId.trim()
+      : undefined;
 
   let filtered = records.filter((record) => {
     if (batchId && record.batchId !== batchId) return false;
+    if (parentDialogId && record.parentDialogId !== parentDialogId) return false;
     if (statusSet && !statusSet.has(record.status)) return false;
     return true;
   });
@@ -617,6 +632,11 @@ export async function spawnLocalBackgroundRun(
      * by batch on the read path. Persisted on the run record.
      */
     batchId?: string;
+    /**
+     * Parent dialog id (the orchestrator's dialog) that spawns this run.
+     * Persisted on the run record so TUI can filter runs by conversation.
+     */
+    parentDialogId?: string;
     output: OutputLike;
   },
   deps: AgentRunControlDeps = {}
@@ -653,6 +673,9 @@ export async function spawnLocalBackgroundRun(
     status: "running",
     logPath,
     batchId,
+    ...(typeof input.parentDialogId === "string" && input.parentDialogId.trim()
+      ? { parentDialogId: input.parentDialogId.trim() }
+      : {}),
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2));
 

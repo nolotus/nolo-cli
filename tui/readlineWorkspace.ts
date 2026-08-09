@@ -30,6 +30,13 @@ import type { PermissionRequest } from "../agent-runtime/actionGate";
 import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
 import { isBalanceExhaustedError, isQuotaExhaustedError } from "../agentRunCommand";
+import { queryRunRecords } from "../agentRunControl";
+import {
+  initialRunOverlayState,
+  reduceRunOverlay,
+  type RunInfo,
+} from "../core/chat/runOverlayMachine";
+import { buildOverlayPresentation } from "../core/chat/runOverlayPresentation";
 import { saveProfileAgentSelection } from "../client/profileConfig";
 import { runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
@@ -377,6 +384,68 @@ const autoRouteByDialog = new Map<
   { agentKey: string; agentName: string }
 >();
 
+/** Map a local RunRecord status to the overlay machine's RunStatus. */
+function toOverlayStatus(
+  status: string | undefined,
+): RunInfo["status"] {
+  // Local CLI run statuses: running/done/failed/timeout/killed/orphaned.
+  // Map to the overlay's shared vocabulary; timeout/killed surface as failed
+  // (they are terminal non-success outcomes).
+  switch (status) {
+    case "running":
+      return "running";
+    case "done":
+      return "done";
+    case "failed":
+    case "timeout":
+    case "killed":
+      return "failed";
+    case "orphaned":
+      return "orphaned";
+    default:
+      return "running";
+  }
+}
+
+/**
+ * Build the run-overlay presentation for the given parent dialog id by
+ * reading the local ~/.nolo/runs registry. Returns null when there are no
+ * runs for this dialog (nothing to render) or when the lookup is unavailable.
+ * Non-fatal: a read failure degrades to "no overlay" rather than breaking the
+ * turn.
+ */
+export function buildTuiRunOverlay(parentDialogId: string | undefined): string | null {
+  if (!parentDialogId) return null;
+  let runs;
+  try {
+    // Pass env explicitly so resolveNoloHome honors NOLO_HOME; queryRunRecords'
+    // default deps omit it and would silently read ~/.nolo even when the user
+    // pointed NOLO_HOME elsewhere.
+    runs = queryRunRecords({ parentDialogId }, { env: process.env }).runs;
+  } catch {
+    return null;
+  }
+  if (runs.length === 0) return null;
+
+  let overlay = initialRunOverlayState;
+  for (const run of runs) {
+    overlay = reduceRunOverlay(overlay, {
+      type: "run-state-chg",
+      runId: run.runId,
+      info: {
+        name: run.agentName ?? run.agentKey ?? run.runId,
+        status: toOverlayStatus(run.status),
+        batchId: run.batchId,
+        parentDialogId: run.parentDialogId,
+        ...(run.status === "failed" && run.note
+          ? { errorMessage: run.note }
+          : {}),
+      },
+    });
+  }
+  return buildOverlayPresentation(overlay);
+}
+
 async function runAgentChat(
   scriptDir: string,
   state: TuiState,
@@ -575,23 +644,31 @@ async function runAgentChat(
       ? { requestUserChoice: options.requestUserChoice }
       : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    // Always inject a local adapter factory so background run delegations from
+    // inside a TUI turn are stamped with the current conversation. Previously
+    // this factory only existed when pasted text was present, which meant a
+    // plain (no-paste) turn had no injection point for parentDialogId and the
+    // run-overlay could never see runs spawned this turn.
     ...(options.pastedTextStore?.items.size
-      ? {
-          pastedTextStore: options.pastedTextStore,
-          localRuntimeAdapterFactory: (
-            factoryEnv: Record<string, string | undefined>,
-            factoryOptions?: { cwd?: string },
-          ) =>
-            createCliLocalRuntimeAdapter({
-              env: factoryEnv,
-              cwd: factoryOptions?.cwd ?? state.cwd,
-              pastedTextStore: options.pastedTextStore,
-              ...(options.activityReporter
-                ? { activityReporter: options.activityReporter }
-                : {}),
-            }),
-        }
+      ? { pastedTextStore: options.pastedTextStore }
       : {}),
+    localRuntimeAdapterFactory: (
+      factoryEnv: Record<string, string | undefined>,
+      factoryOptions?: { cwd?: string },
+    ) =>
+      createCliLocalRuntimeAdapter({
+        env: factoryEnv,
+        cwd: factoryOptions?.cwd ?? state.cwd,
+        ...(options.pastedTextStore
+          ? { pastedTextStore: options.pastedTextStore }
+          : {}),
+        // Stamp spawned background runs with the current TUI dialog so the
+        // run-overlay can filter runs belonging to this conversation.
+        ...(state.dialogId ? { parentDialogId: state.dialogId } : {}),
+        ...(options.activityReporter
+          ? { activityReporter: options.activityReporter }
+          : {}),
+      }),
     ...(options.activityReporter ? { activityReporter: options.activityReporter } : {}),
     ...(skillAllowedTools !== undefined
       ? { allowedToolNames: skillAllowedTools }
@@ -1228,6 +1305,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     forcedStop = false;
     turnEpoch += 1;
     const myEpoch = turnEpoch;
+    // Capture the session id before this turn mutates it. The run-overlay
+    // query and the parentDialogId stamped on background runs spawned this
+    // turn must agree; both use this id, NOT the agent result dialogId that
+    // `state.dialogId` is reassigned to after the turn returns.
+    const turnParentDialogId = state.dialogId;
     history.followBottom = true;
     startTurn(history, "user");
     appendToCurrentTurn(history, message);
@@ -1392,6 +1474,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           emitCommandOutput(t("dialogPreservedHint"));
         } else {
           emitCommandOutput(t("dialogNotSavedHint"));
+        }
+      }
+      // Run-overlay presentation (TUI adapter): after a non-aborted turn ends,
+      // surface background runs spawned from this dialog. Pure presentation —
+      // does not trigger a new agent turn and does not block the return.
+      if (!wasAborted) {
+        const overlayText = buildTuiRunOverlay(turnParentDialogId);
+        if (overlayText) {
+          emitCommandOutput(`\n你的 run 进展：\n${overlayText}`);
         }
       }
       return { ok: !wasAborted, aborted: wasAborted };

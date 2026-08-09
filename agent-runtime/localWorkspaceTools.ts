@@ -1883,7 +1883,7 @@ async function searchFilesTool(args: {
   const literal = parsed.literal === true;
   const caseSensitive = parsed.caseSensitive === false ? false : true;
   const requestedPath = pickFirstAlias(parsed, PATH_FIELD_ALIASES) ?? ".";
-  const includeIgnored = parsed.includeIgnored === true;
+  const includeIgnored = parsed.includeIgnored === true || args.workspaceRoot.includes(".worktrees");
   const searchPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,
@@ -2236,7 +2236,7 @@ async function globFilesTool(args: {
   const exclude = readWorkspaceExcludeGlobs(parsed);
   const maxResults = readWorkspaceMaxResults(parsed, warnings);
   const requestedPath = pickFirstAlias(parsed, PATH_FIELD_ALIASES) ?? ".";
-  const includeIgnored = parsed.includeIgnored === true;
+  const includeIgnored = parsed.includeIgnored === true || args.workspaceRoot.includes(".worktrees");
   const searchPath = await resolveLocalWorkspaceToolPath({
     workspaceRoot: args.workspaceRoot,
     requestedPath,

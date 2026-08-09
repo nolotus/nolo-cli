@@ -33,7 +33,6 @@ export function buildServerPlatformToolExecutors(args: {
    * agent is resolved; the server then falls back to owner-level scoping.
    */
   agentKey?: string | null;
-  memorySubjectId?: string | null;
 }) {
   const postServer = async (
     path: string,
@@ -200,11 +199,6 @@ export function buildServerPlatformToolExecutors(args: {
     }
     const body: Record<string, unknown> = { userInput: query };
     if (args.agentKey) body.agentKey = args.agentKey;
-    const memorySubjectId =
-      typeof call.runtimeContext?.memorySubjectId === "string"
-        ? call.runtimeContext.memorySubjectId.trim()
-        : args.memorySubjectId?.trim();
-    if (memorySubjectId) body.memorySubjectId = memorySubjectId;
     const raw = await postServer("/api/memory/query", body, {
       retryTransient: true,
     });
@@ -237,11 +231,6 @@ export function buildServerPlatformToolExecutors(args: {
       source: "agent-inferred",
     };
     if (args.agentKey) body.agentKey = args.agentKey;
-    const memorySubjectId =
-      typeof call.runtimeContext?.memorySubjectId === "string"
-        ? call.runtimeContext.memorySubjectId.trim()
-        : args.memorySubjectId?.trim();
-    if (memorySubjectId) body.memorySubjectId = memorySubjectId;
     const raw = await postServer("/api/memory/remember", body, {
       retryTransient: true,
     });

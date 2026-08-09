@@ -2,7 +2,6 @@
 // Callers pass `messages` so this module does not import messageSlice (cycle).
 
 import type { DialogConfig } from "../../app/types";
-import { resolveDialogMemorySubjectId } from "../dialog/dialogAgentPolicy";
 import { selectById as selectDbRecordById } from "../../database/dbSlice";
 import { serializeMessageContent } from "./messageContent";
 import type { Message } from "./types";
@@ -95,7 +94,6 @@ export async function captureUnderstandingFromCompletedUiTurn(
       },
       body: JSON.stringify({
         agentKey: input.agentKey,
-        memorySubjectId: resolveDialogMemorySubjectId(dialog),
         dialogId: input.dialogId,
         userInput: latestUserInput,
         assistantText: input.assistantText,

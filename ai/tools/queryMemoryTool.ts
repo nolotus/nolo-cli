@@ -2,10 +2,7 @@ import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
 import { getActiveDialogKey } from "../../chat/dialog/dialogRuntimeStore";
 import { selectById } from "../../database/dbSlice";
 import type { DialogConfig } from "../../app/types";
-import {
-  resolveDialogMemorySubjectId,
-  resolveDialogRuntimeAgentKey,
-} from "../../chat/dialog/dialogAgentPolicy";
+import { resolveDialogRuntimeAgentKey } from "../../chat/dialog/dialogAgentPolicy";
 import { callToolApi } from "./toolApiClient";
 
 export { queryMemoryFunctionSchema } from "./queryMemoryToolSchema";
@@ -27,7 +24,6 @@ export async function queryMemoryFunc(
     "/api/memory/query",
     {
       agentKey: resolveDialogRuntimeAgentKey(dialog),
-      memorySubjectId: resolveDialogMemorySubjectId(dialog),
       userInput: query,
       ...(selectCurrentSpaceId(state)
         ? { spaceId: selectCurrentSpaceId(state) }

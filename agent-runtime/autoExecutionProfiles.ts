@@ -6,9 +6,6 @@ import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 
 export type AutoExecutionTier = "flash" | "balanced" | "quality" | "image";
 
-/** Stable relationship-memory subject for the product-level auto assistant. */
-export const AUTO_ASSISTANT_MEMORY_SUBJECT_ID = "builtin:auto";
-
 export type AutoExecutionProfile = AgentRuntimeAgentConfig & {
   id: string;
   tier: AutoExecutionTier;

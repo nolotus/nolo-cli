@@ -510,9 +510,6 @@ async function runHttpAgentTurn(
         ...(options.dialogAgentMode
           ? { dialogAgentMode: options.dialogAgentMode }
           : {}),
-        ...(options.memorySubjectId
-          ? { memorySubjectId: options.memorySubjectId }
-          : {}),
         ...(subjectRefs ? { subjectRefs } : {}),
         ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
         ...(blockedToolNames?.length ? { blockedToolNames } : {}),
@@ -707,9 +704,6 @@ async function runLocalAgentTurnForCli(
           ...(subjectRefs ? { subjectRefs } : {}),
           ...(options.dialogAgentMode
             ? { dialogAgentMode: options.dialogAgentMode }
-            : {}),
-          ...(options.memorySubjectId
-            ? { memorySubjectId: options.memorySubjectId }
             : {}),
           ...(allowedChildAgentKeys?.length ? { allowedChildAgentKeys } : {}),
           ...(allowedToolNames?.length ? { allowedToolNames } : {}),

@@ -150,8 +150,6 @@ export type RunAgentTurnOptions = {
   continueDialogId?: string;
   /** Preserve an auto Dialog while a concrete compatibility key executes this turn. */
   dialogAgentMode?: "auto" | "fixed";
-  /** Stable relationship-memory subject; auto uses builtin:auto. */
-  memorySubjectId?: string;
   spaceId?: string;
   category?: string;
   inheritedFromDialogKey?: string;

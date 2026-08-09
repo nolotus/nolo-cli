@@ -1651,9 +1651,6 @@ export const streamAgentChatTurnHandler = async (
                         ...(runtimeOptions?.memorySubjectId
                             ? { memorySubjectId: runtimeOptions.memorySubjectId }
                             : {}),
-                        ...(dialogConfig?.agentMode
-                            ? { dialogAgentMode: dialogConfig.agentMode }
-                            : {}),
                     },
                     ...(runtimeOptions?.quickChatReasoningEffort
                         ? {

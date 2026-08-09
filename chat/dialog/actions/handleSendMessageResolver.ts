@@ -4,10 +4,7 @@ import {
   buildPersonalizationRuntimeOptions,
 } from "../../../ai/policy/personalizationDialog";
 import type { DialogConfig } from "../../../app/types";
-import {
-  resolveDialogMemorySubjectId,
-  resolveDialogRuntimeAgentKey,
-} from "../dialogAgentPolicy";
+import { resolveDialogRuntimeAgentKey } from "../dialogAgentPolicy";
 
 export function resolveHandleSendMessageContext(input: {
   dialogConfig: DialogConfig;
@@ -19,16 +16,11 @@ export function resolveHandleSendMessageContext(input: {
 } {
   const { dialogConfig, targetAgentKey, runtimeOptions } = input;
 
-  const memoryRuntimeOptions = {
-    ...(runtimeOptions ?? {}),
-    memorySubjectId: resolveDialogMemorySubjectId(dialogConfig, targetAgentKey),
-  };
-
   return {
     agentKeyToUse: resolveDialogRuntimeAgentKey(dialogConfig, targetAgentKey),
     effectiveRuntimeOptions:
       dialogConfig.category === PERSONALIZATION_DIALOG_CATEGORY
-        ? buildPersonalizationRuntimeOptions(memoryRuntimeOptions)
-        : memoryRuntimeOptions,
+        ? buildPersonalizationRuntimeOptions(runtimeOptions ?? {})
+        : runtimeOptions,
   };
 }

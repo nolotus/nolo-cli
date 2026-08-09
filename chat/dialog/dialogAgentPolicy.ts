@@ -1,7 +1,6 @@
 import type { DialogConfig } from "../../app/types";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import {
-  AUTO_ASSISTANT_MEMORY_SUBJECT_ID,
   DEFAULT_AUTO_EXECUTION_PROFILE,
   resolveAutoExecutionProfile,
   type AutoExecutionTier,
@@ -41,18 +40,7 @@ export const resolveDialogAutoTier = (
     : undefined;
 };
 
-export const resolveDialogMemorySubjectId = (
-  dialog: Partial<DialogAgentPolicyShape> | null | undefined,
-  explicitAgentKey?: string | null,
-): string => {
-  const explicit = asOptionalTrimmedString(explicitAgentKey);
-  if (explicit) return explicit;
-  if (resolveDialogAgentMode(dialog) === "fixed") {
-    const fixed = getPrimaryDialogAgentId(dialog as any);
-    if (fixed) return fixed;
-  }
-  return AUTO_ASSISTANT_MEMORY_SUBJECT_ID;
-};
+
 
 /**
  * Compatibility runtime key for callers that have not yet accepted an

@@ -133,8 +133,6 @@ export function buildLocalToolExecutors(args: {
   cliEntrypoint?: string;
   /** Current executing agent key; used for memory policy. */
   agentKey?: string | null;
-  /** Stable relationship subject for memory read/write. */
-  memorySubjectId?: string | null;
 }) {
   return {
     ...createLocalWorkspaceToolExecutors({
@@ -149,7 +147,6 @@ export function buildLocalToolExecutors(args: {
       env: args.env,
       fetchImpl: args.fetchImpl,
       agentKey: args.agentKey,
-      memorySubjectId: args.memorySubjectId,
     }),
     ...buildCliWorkspaceToolExecutors({
       env: args.env,

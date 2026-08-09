@@ -511,7 +511,6 @@ export const fetchMemoryOverlayContext = async (
     agentConfig: Agent,
     userInput: string | any[],
     dialogConfig?: DialogConfig,
-    memorySubjectId?: string | null,
 ): Promise<string | null> => {
     const token = typeof (state as any)?.auth?.currentToken === "string"
         ? (state as any).auth.currentToken
@@ -543,9 +542,6 @@ export const fetchMemoryOverlayContext = async (
             },
             body: JSON.stringify({
                 agentKey,
-                ...(asOptionalTrimmedString(memorySubjectId)
-                    ? { memorySubjectId: asOptionalTrimmedString(memorySubjectId) }
-                    : {}),
                 userInput: inputText,
                 ...(spaceId ? { spaceId } : {}),
             }),
@@ -735,7 +731,6 @@ export const buildDynamicContexts = async (
         agentConfig,
         userInput,
         dialogConfig,
-        runtimeOptions?.memorySubjectId,
     );
 
     return {

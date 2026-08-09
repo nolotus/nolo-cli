@@ -91,6 +91,5 @@ export interface AgentRuntimeOptions {
     /** 默认自动挡 DeepSeek V4 Flash 使用的推理强度。 */
     quickChatReasoningEffort?: "max";
 
-    /** Stable relationship-memory subject; independent from the executing Agent/model. */
-    memorySubjectId?: string;
+
 }

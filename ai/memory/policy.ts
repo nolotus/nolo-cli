@@ -40,12 +40,16 @@ export function buildMemorySubjectsForAgent(input: {
   policy?: AgentMemoryPolicy;
 }): MemorySubjectRef[] {
   const policy = input.policy ?? resolveAgentMemoryPolicy({ agentKey: input.agentKey });
-  const subjectId = input.memorySubjectId?.trim() || input.agentKey;
-  return [
-    { subjectType: "agent" as const, subjectId },
-    policy.includeUserSubject && input.userId
-      ? { subjectType: "user" as const, subjectId: input.userId }
-      : null,
-    input.spaceId ? { subjectType: "space" as const, subjectId: input.spaceId } : null,
-  ].filter(Boolean) as MemorySubjectRef[];
+  const result: MemorySubjectRef[] = [];
+  const agentSubject = input.memorySubjectId?.trim();
+  if (agentSubject) {
+    result.push({ subjectType: "agent", subjectId: agentSubject });
+  }
+  if (policy.includeUserSubject && input.userId) {
+    result.push({ subjectType: "user", subjectId: input.userId });
+  }
+  if (input.spaceId) {
+    result.push({ subjectType: "space", subjectId: input.spaceId });
+  }
+  return result;
 }

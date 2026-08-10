@@ -30,11 +30,13 @@ export const PLATFORM_HOSTED_KIMI_PRICE = {
 } as const;
 
 /**
- * Kimi K3 官方 API $3/$15 per 1M，nolo 对外 8 折。
+ * Kimi K3 走 crof 上游，硬编码 crof 报价 ×8（不走通用 toPlatformCredits）。
+ * crof $2/$0.25/$8 per 1M ×8 = 16/2/64 credits。
  */
 export const PLATFORM_HOSTED_KIMI_K3_PRICE = {
-  input: toPlatformCredits(3),
-  output: toPlatformCredits(15),
+  input: 16, // crof $2 × 8，特殊价不走通用 0.8×7 换算
+  inputCacheHit: 2, // crof $0.25 × 8
+  output: 64, // crof $8 × 8
 } as const;
 
 /**

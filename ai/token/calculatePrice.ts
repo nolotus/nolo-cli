@@ -436,6 +436,15 @@ const calculateBasicCost = (
     case "deepinfra":
       return calculateCacheBasedCost(resolvedPrice, usage, externalPrice);
 
+    // nolo/crof: honor inputCacheHit only when the model defines it (K3 has
+    // inputCacheHit=2). Models without it (e.g. K2.6) keep simple full-price
+    // billing so cached tokens are not priced at 0.
+    case "nolo":
+    case "crof":
+      return typeof resolvedPrice.inputCacheHit === "number"
+        ? calculateCacheBasedCost(resolvedPrice, usage, externalPrice)
+        : calculateSimpleCost(resolvedPrice, usage, externalPrice);
+
     case "anthropic":
       return calculateAnthropicCost(resolvedPrice, usage, externalPrice);
     case "google":

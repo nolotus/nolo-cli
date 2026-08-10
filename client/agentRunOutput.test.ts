@@ -217,7 +217,10 @@ describe("createCliTurnOutput compact tool tree regression", () => {
     expect(updates[1]).toMatchObject({ runId: "run-1", status: "done", toolCallCount: 7 });
   });
 
-  test("a run the server no longer knows about clears the dock panel", () => {
+  // The dock holds several runs now, so a vanished run has to be named: it is
+  // forwarded as its own `not_found` snapshot (the dock drops that row) rather
+  // than as a blanket `null`, which would have wiped live sibling runs too.
+  test("a run the server no longer knows about is reported as not_found, by id", () => {
     const updates = collectPanelUpdates([
       {
         type: "tool-result",
@@ -228,7 +231,8 @@ describe("createCliTurnOutput compact tool tree regression", () => {
       },
     ] as LocalAgentToolEvent[]);
 
-    expect(updates).toEqual([null]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ runId: "run-gone", status: "not_found" });
   });
 
   test("controlAgentRun list results leave the dock panel untouched", () => {

@@ -185,6 +185,17 @@ function readTrimmedString(value: unknown): string | undefined {
   return asOptionalTrimmedString(value);
 }
 
+function readBoolean(parsed: Record<string, unknown>, key: string): boolean | undefined {
+  const val = parsed[key];
+  if (typeof val === "boolean") return val;
+  if (typeof val === "string") {
+    const lower = val.trim().toLowerCase();
+    if (lower === "true") return true;
+    if (lower === "false") return false;
+  }
+  return undefined;
+}
+
 function resolveExecShellTimeoutMs(override: number | undefined) {
   const fromOverride = asOptionalPositiveFiniteNumber(override);
   if (fromOverride !== undefined) return fromOverride;
@@ -2510,6 +2521,7 @@ async function launchProcessTool(args: {
 
   const labelArg = readTrimmedString((parsed as Record<string, unknown>).label);
   const label = labelArg || deriveLabel(command);
+  const persist = readBoolean(parsed as Record<string, unknown>, "persist");
 
   const fullCommand = buildWorkspaceShellCommand({
     toolName: args.call.name,
@@ -2539,7 +2551,7 @@ async function launchProcessTool(args: {
 
   const pgid = detached ? pid : pid;
   const registry = getProcessRegistry();
-  registry.add({ pid, pgid, command, label });
+  registry.add({ pid, pgid, command, label, persist });
 
   const cleanupChildOnHostSignal = (signal: NodeJS.Signals) => {
     try {

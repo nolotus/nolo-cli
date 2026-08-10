@@ -163,12 +163,16 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
     // Feed the docked run panel. `controlAgentRun` matters as much as
     // `startAgentRun` here: subscribing to the fork alone pinned the panel to
     // the run's first status, so it kept showing `running` for the rest of the
-    // turn no matter what the polls reported. A run that the server no longer
-    // knows about clears the panel rather than lingering.
+    // turn no matter what the polls reported.
+    //
+    // A `gone` run is forwarded as its `not_found` snapshot rather than as
+    // `null`: the dock holds several runs at once now, so "the server has never
+    // heard of run X" has to name X. Sending null would have wiped the panel —
+    // including the sibling runs that are still very much alive.
     if (options.onAgentRunStatus) {
       const parsed = parseAgentRunEvent(event);
       if (parsed) {
-        options.onAgentRunStatus(parsed.kind === "gone" ? null : parsed.snapshot);
+        options.onAgentRunStatus(parsed.snapshot);
       }
     }
   };

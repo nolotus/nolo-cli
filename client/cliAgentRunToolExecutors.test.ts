@@ -256,6 +256,69 @@ describe("cli controlAgentRun executor", () => {
     expect(data.dialogId).toBeUndefined();
   });
 
+  // Without progress, a tailLines:0 poll answers "running, pid 123" — which
+  // cannot distinguish a working run from a wedged one, so the only diagnosis
+  // left was pulling log lines, exactly what the orchestration prompt tells the
+  // model not to do. The registry has recorded this all along.
+  it("status reports progress so a cheap poll can tell working from wedged", async () => {
+    const nowMs = Date.parse("2026-07-31T00:05:00.000Z");
+    const deps = buildDeps({ kill: () => {}, nowMs: () => nowMs });
+    seedRun(deps, "run-1", {
+      activity: {
+        lastEventAt: "2026-07-31T00:04:30.000Z",
+        inFlight: { kind: "tool", name: "editFile", sinceMs: 30_000 },
+        counters: { llmCalls: 4, toolCalls: 12, fileEdits: 3 },
+        updatedAt: "2026-07-31T00:04:30.000Z",
+      },
+    });
+    const executor = createCliControlAgentRunExecutor(deps);
+
+    const result = await executor({
+      arguments: JSON.stringify({ action: "status", runId: "run-1" }),
+    });
+    const data = JSON.parse(result.content);
+    expect(data.progress).toEqual({
+      toolCalls: 12,
+      llmCalls: 4,
+      fileEdits: 3,
+      // Silence is measured from the last real event, not the last disk write.
+      idleMs: 30_000,
+      inFlight: "tool:editFile",
+      inFlightMs: 30_000,
+    });
+  });
+
+  it("status omits progress for a finished run", async () => {
+    const deps = buildDeps({ kill: () => {} });
+    seedRun(deps, "run-1", {
+      status: "done",
+      activity: {
+        lastEventAt: "2026-07-31T00:04:30.000Z",
+        inFlight: null,
+        counters: { llmCalls: 4, toolCalls: 12, fileEdits: 3 },
+        updatedAt: "2026-07-31T00:04:30.000Z",
+      },
+    });
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "status", runId: "run-1" }),
+    });
+    // A finished run has no progress — status and exitCode are the answer.
+    expect(JSON.parse(result.content).progress).toBeUndefined();
+  });
+
+  it("status reports progress for a run that has not recorded activity yet", async () => {
+    const deps = buildDeps({ kill: () => {} });
+    seedRun(deps, "run-1");
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "status", runId: "run-1" }),
+    });
+    // No activity section at all (old record / just spawned): say nothing
+    // rather than report a fabricated zero.
+    expect(JSON.parse(result.content).progress).toBeUndefined();
+  });
+
   it("status for unknown run returns found:false", async () => {
     const deps = buildDeps();
     const executor = createCliControlAgentRunExecutor(deps);

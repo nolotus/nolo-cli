@@ -55,8 +55,13 @@ const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run�
    - 换人、换候选、或上次 key 派发报 not found 时，重新用 listAgents / readAgent 拿最新 key，不得套用上一个 key 的拼接格式。
    - 失败症状：出现「agent not found」「Local agent config not found: …」时，先复核 key 是否照抄自 listAgents / readAgent（不要手工拼、不要传 name），禁止据此推断凭证缺失、本地配置文件丢失或通道全挂。
    - 不要索取 prompt、密钥或数据库 key 来选人。
-4. 派发后轻轮询。startAgentRun 拿到 runId 后，用 controlAgentRun(action:"status", runId, tailLines:0) 轮询——tailLines:0 只返回状态摘要（不拉日志），省 token。每次轮询 = 父 agent 多一个 turn = 全前缀重新计价，所以间隔不要太密（建议 10–15s），不要 5s 一次。多个独立子任务优先并行派发（一次 startAgentRun 多个），父 agent 1 个 turn 派发 + 1 个 turn 收集结果，而非串行等待 N 个 turn。
-5. 异常才拉日志。tailLines:0 显示 running 且进度正常 → 继续轻轮询；只有 status=failed/超时/疑似卡死才 controlAgentRun(action:"status", runId, tailLines:30) 拉日志诊断。正常完成的子 agent 看状态摘要即可，不必拉完整日志。
+4. **轮询是为你自己的下一步决策，不是为了让用户看见状态。** 用户的界面上有一块独立的实时面板，会自己显示每条 run 的状态、已用时长、工具调用数和此刻正在执行的动作——不需要你转述，你少轮询一次，用户看到的东西一点不少。
+   - 因此只在「答案会改变你下一步动作」时轮询：结果能不能开始汇总了、要不要叫停、要不要补派。为了「汇报进度」而轮询是纯浪费。
+   - 每次轮询 = 父 agent 多一个 turn = 全前缀重新计价。间隔不要太密（建议 10–15s 起步，多数任务可以更疏），不要 5s 一次，更不要在 run 明显还要跑很久时空转等待。
+   - 用 controlAgentRun(action:"status", runId, tailLines:0)：只返回状态摘要（含 progress：工具调用数、此刻在执行什么、静默了多久），不拉日志，省 token。
+   - 多个独立子任务优先并行派发（一次 startAgentRun 多个），父 agent 1 个 turn 派发 + 1 个 turn 收集结果，而非串行等待 N 个 turn。
+   - **不要把 status 的返回值复述给用户**（"run-xxx 仍在运行，已 7 秒"这类）。面板已经在显示了，复述只是把同一件事说第二遍。要说就说结论：这批派发完成了、某条失败了要怎么办。
+5. 异常才拉日志。status 的 progress 里若 inFlight 在动、工具数在涨，就是正常的，继续轻轮询；只有 status=failed/超时，或 progress 显示长时间没有任何动静（疑似卡死），才 controlAgentRun(action:"status", runId, tailLines:30) 拉日志诊断。正常完成的子 agent 看状态摘要即可，不必拉完整日志。
 6. **派发失败先分诊，再下结论**。顺序：
    ① 确认本次 agentKey 是照抄 listAgents / readAgent 返回的精确 dbKey（否则先修正 key，不算通道故障）；
    ② 报错像 not found / invalid ref / Local agent config not found → 一律先 readAgent 复核，禁止据此推断环境/凭证/通道全挂；

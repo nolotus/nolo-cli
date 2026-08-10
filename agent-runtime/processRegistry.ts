@@ -6,12 +6,13 @@ export type RegisteredProcess = {
   startedAt: number;
   status: "running" | "stopped" | "exited" | "failed";
   exitCode?: number;
+  persist: boolean;
 };
 
 export class ProcessRegistry {
   private processes = new Map<number, RegisteredProcess>();
 
-  add(proc: { pid: number; pgid: number; command: string; label: string }): void {
+  add(proc: { pid: number; pgid: number; command: string; label: string; persist?: boolean }): void {
     this.processes.set(proc.pid, {
       pid: proc.pid,
       pgid: proc.pgid,
@@ -19,6 +20,7 @@ export class ProcessRegistry {
       label: proc.label,
       startedAt: Date.now(),
       status: "running",
+      persist: proc.persist ?? false,
     });
   }
 
@@ -47,9 +49,9 @@ export class ProcessRegistry {
     return false;
   }
 
-  stopAll(signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): void {
+  stopAll(signal: "SIGTERM" | "SIGKILL" = "SIGTERM", opts?: { includePersist?: boolean }): void {
     for (const item of this.processes.values()) {
-      if (item.status === "running") {
+      if (item.status === "running" && (opts?.includePersist || !item.persist)) {
         try {
           process.kill(-item.pgid, signal);
         } catch {

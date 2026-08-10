@@ -45,6 +45,8 @@ import { runSelectDialog, type SelectDialogItem } from "./selectDialog";
 import { runAskChoiceDialog } from "./askChoiceDialog";
 import { createDialogHost } from "./dialogHost";
 import { createActivityIndicator } from "./activityIndicator";
+import { createRunRegistryPoller } from "./runRegistryPoller";
+import { checkStaleRun, readRunRecord } from "../agentRunControl";
 import { formatAgentSwitchMessage, runAgentPicker } from "./agentPicker";
 import { prefetchAgentCatalog } from "./agentCatalog";
 import { loadDialogHistoryForDisplay, runDialogPicker } from "./dialogPicker";
@@ -413,8 +415,22 @@ function toOverlayStatus(
  * runs for this dialog (nothing to render) or when the lookup is unavailable.
  * Non-fatal: a read failure degrades to "no overlay" rather than breaking the
  * turn.
+ *
+ * `reported` is the caller's memory of what this overlay has already said, and
+ * it is what keeps the block from becoming noise now that the composer dock
+ * shows run state live. The overlay is a snapshot builder by design — it has no
+ * notion of "new since last time" — so a run that finished twenty minutes ago
+ * was re-listed after every single turn, and a run still going was re-listed
+ * next to a dock that was already showing it, ticking. Filtering to runs whose
+ * status actually moved leaves exactly the thing the dock cannot deliver: the
+ * transition the user missed while reading something else.
+ *
+ * Pass no map to get the unfiltered snapshot (every run, every call).
  */
-export function buildTuiRunOverlay(parentDialogId: string | undefined): string | null {
+export function buildTuiRunOverlay(
+  parentDialogId: string | undefined,
+  reported?: Map<string, string>
+): string | null {
   if (!parentDialogId) return null;
   let runs;
   try {
@@ -426,6 +442,12 @@ export function buildTuiRunOverlay(parentDialogId: string | undefined): string |
     return null;
   }
   if (runs.length === 0) return null;
+
+  if (reported) {
+    runs = runs.filter((run) => reported.get(run.runId) !== run.status);
+    for (const run of runs) reported.set(run.runId, run.status);
+    if (runs.length === 0) return null;
+  }
 
   let overlay = initialRunOverlayState;
   for (const run of runs) {
@@ -1058,6 +1080,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   });
   const activityReporter = (label: string | null) =>
     activityIndicator.report(label);
+  // 停靠区的第二条数据来路：直接读 ~/.nolo/runs 的记录。不经过模型，所以
+  // 「面板要动」不再需要编排 agent 每隔几十秒调一次 controlAgentRun（那正是
+  // transcript 被状态卡片刷屏的根因）。跑在服务端的 run 本地读不到记录，
+  // 轮询器对它们视而不见，仍走模型那条路。
+  // 「你的 run 进展」这块 overlay 已经说过什么，用来只播状态真正变过的 run。
+  // 活着的 run 由停靠区实时显示，overlay 再列一遍纯属重复；它现在只负责报
+  // 「你没看着的时候，这几条起了/完了」。
+  const reportedRunStatuses = new Map<string, string>();
+  const runRegistryPoller = createRunRegistryPoller({
+    getDockedRuns: () => activityIndicator.getAgentRuns(),
+    update: (snapshot) => activityIndicator.updateAgentRun(snapshot),
+    readRecord: (runId) => readRunRecord(runId),
+    reconcile: (runId) => checkStaleRun(runId),
+  });
   // True after the user explicitly switches agent via /agent or /switch.
   // autoRouteByDialog caches the first-turn router decision per dialog and
   // would otherwise keep replaying the (possibly 429'd) original agent on
@@ -1379,6 +1415,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           onAgentRunStatus: (snapshot) => {
             if (snapshot) {
               activityIndicator.updateAgentRun(snapshot);
+              // run 进面板的唯一入口就在这里，所以轮询器也只在这里起表；
+              // 它自己在没有活跃 run 时会停。
+              runRegistryPoller.ensureRunning();
             } else {
               activityIndicator.clearAgentRun();
             }
@@ -1482,7 +1521,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       // surface background runs spawned from this dialog. Pure presentation —
       // does not trigger a new agent turn and does not block the return.
       if (!wasAborted) {
-        const overlayText = buildTuiRunOverlay(turnParentDialogId);
+        const overlayText = buildTuiRunOverlay(turnParentDialogId, reportedRunStatuses);
         if (overlayText) {
           emitCommandOutput(`\n你的 run 进展：\n${overlayText}`);
         }
@@ -2085,6 +2124,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         clearInterval(autoThemeTimer);
         autoThemeTimer = null;
       }
+      // run 停靠区的 timer 跨 turn 存活，只有会话退出才该停——否则 /exit 之后
+      // 它还在往一个已经不归自己管的终端上重绘。
+      runRegistryPoller.dispose();
+      activityIndicator.dispose();
       resolveDone?.();
       clearCollapsedPasteStore(pasteStore);
       resizeTarget.off?.("resize", onResize);
@@ -2604,7 +2647,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       rl.prompt();
     }
   } finally {
-    getProcessRegistry().stopAll();
+    const registry = getProcessRegistry();
+    const persistentCount = registry.list().filter((p) => p.persist && p.status === "running").length;
+    registry.stopAll();
+    if (persistentCount > 0) {
+      output.write(`[nolo] ${t("persistentProcessesLeft", String(persistentCount))}\n`);
+    }
     rl.close();
   }
 }

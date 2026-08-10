@@ -20,13 +20,7 @@
 
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 import type { AgentRunSnapshot } from "../client/agentRunSnapshot";
-import {
-  formatRunAge,
-  getAgentRunStatusIcon,
-  isAgentRunTerminalStatus,
-  runShowsLogTail,
-  shortRunId,
-} from "../ai/tools/agent/agentRunDisplayHelpers";
+import { createRunDock, type RunDock } from "./runDock";
 import { t } from "./i18n";
 import { themeText } from "./theme";
 
@@ -61,17 +55,19 @@ export type ActivityIndicatorDeps = {
   fallbackDelayMs?: number;
   setIntervalFn?: (cb: () => void, ms: number) => unknown;
   clearIntervalFn?: (handle: unknown) => void;
+  /** 注入停靠区（测试用）；默认自建一个，共用同一套 now/timer 依赖。 */
+  runDock?: RunDock;
 };
 
 export type ActivityIndicator = {
   /** 外部活动上报：非空 = 具体标签；null = 标签清空（文本/工具输出正在流动）。 */
   report(label: string | null): void;
-  /** 更新后台子 Agent 运行状态快照。 */
+  /** 合并一条后台 run 快照到停靠区（按 runId，多 run 并存）。 */
   updateAgentRun(snapshot: AgentRunStatusSnapshot): void;
-  /** 清除后台子 Agent 运行状态快照。 */
+  /** 清空停靠区的全部 run。 */
   clearAgentRun(): void;
-  /** 获取当前 Agent Run 快照。 */
-  getAgentRun(): AgentRunStatusSnapshot | null;
+  /** 停靠区里的全部 run，活跃在前。 */
+  getAgentRuns(): AgentRunStatusSnapshot[];
   /** 当前应渲染的活动行数据；explicit 优先，其次 fallback，都没有返回 null。 */
   getView(): ActivityIndicatorView | null;
   /** 获取全套活动 Panel 渲染行（含基础活动行及贴在输入区上方的 Agent Run 状态面板）。 */
@@ -80,8 +76,15 @@ export type ActivityIndicator = {
   markStopping(): void;
   /** 是否已处于停止中状态（第二次 Esc 判定用）。 */
   isStopping(): boolean;
-  /** turn 结束时调用：清 timer 与全部状态。 */
+  /**
+   * turn 结束时调用：清 timer 与活动行状态。
+   *
+   * 刻意不碰 run 停靠区——后台 run 活得比 turn 长，turn 结束恰恰是用户最需要
+   * 看到它们状态的时候。停靠区靠自己的 linger/stale 规则收尾。
+   */
   stop(): void;
+  /** 会话结束时调用：停掉停靠区的 timer 并清空。 */
+  dispose(): void;
 };
 
 export function createActivityIndicator(
@@ -198,19 +201,26 @@ export function createActivityIndicator(
     return null;
   };
 
-  let agentRunSnapshot: AgentRunStatusSnapshot | null = null;
+  // 停靠区自带 timer，和上面那个 turn-scoped 的 frame timer 各转各的：
+  // 活动行只在 turn 内有意义，后台 run 跨 turn 存在。
+  const runDock =
+    deps.runDock ??
+    createRunDock({
+      onRepaint: deps.onRepaint,
+      now,
+      setIntervalFn,
+      clearIntervalFn,
+    });
 
   const updateAgentRun = (snapshot: AgentRunStatusSnapshot) => {
-    agentRunSnapshot = snapshot;
-    deps.onRepaint();
+    runDock.update(snapshot);
   };
 
   const clearAgentRun = () => {
-    agentRunSnapshot = null;
-    deps.onRepaint();
+    runDock.clear();
   };
 
-  const getAgentRun = () => agentRunSnapshot;
+  const getAgentRuns = () => runDock.getRuns();
 
   const getActivityLines = (colorEnabled = resolveCliColorEnabled()): string[] | null => {
     const lines: string[] = [];
@@ -232,9 +242,7 @@ export function createActivityIndicator(
       }
     }
 
-    if (agentRunSnapshot) {
-      lines.push(...formatAgentRunPanelLines(agentRunSnapshot, colorEnabled, now()));
-    }
+    lines.push(...runDock.getLines(colorEnabled));
 
     return lines.length > 0 ? lines : null;
   };
@@ -250,111 +258,22 @@ export function createActivityIndicator(
     fallbackStartedAt = 0;
     lastActivityAt = 0;
     stopping = false;
-    agentRunSnapshot = null;
+    // runDock 不清：后台 run 不随 turn 结束而结束。
   };
 
   return {
     report,
     updateAgentRun,
     clearAgentRun,
-    getAgentRun,
+    getAgentRuns,
     getView,
     getActivityLines,
     markStopping,
     isStopping,
     stop,
+    dispose() {
+      stop();
+      runDock.dispose();
+    },
   };
-}
-
-/**
- * Progress suffix: ` · 12 tools · read, grep`. Empty when the run has not
- * reported any tool activity yet.
- */
-function formatPanelProgress(snapshot: AgentRunStatusSnapshot): string {
-  const parts: string[] = [];
-  if (typeof snapshot.toolCallCount === "number" && Number.isFinite(snapshot.toolCallCount)) {
-    parts.push(`${snapshot.toolCallCount} tools`);
-  }
-  if (snapshot.lastToolNames && snapshot.lastToolNames.length > 0) {
-    parts.push(snapshot.lastToolNames.join(", "));
-  }
-  return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
-}
-
-/**
- * The run's own words beat its stdout. `lastAssistantText` is a sentence the
- * sub-agent wrote; the log tail is whatever byte sequence happened to land last
- * and is regularly a truncated JSON fragment.
- */
-function formatPanelDetail(snapshot: AgentRunStatusSnapshot): string {
-  const note = snapshot.lastAssistantText?.trim();
-  if (note) return note;
-  // The log fallback obeys the same rule as the cards (`runShowsLogTail`)
-  // rather than a second one of its own: raw stdout is evidence on a failed run
-  // and noise on a healthy one. Falling back unconditionally here put the very
-  // `DATA_CLONE_ERR: 25,` fragments the cards now withhold straight back onto
-  // the dock.
-  if (!runShowsLogTail(snapshot.status)) return "";
-  const lines = snapshot.logLines;
-  if (!lines || lines.length === 0) return "";
-  return lines[lines.length - 1]?.trim() ?? "";
-}
-
-export function formatAgentRunPanelLines(
-  snapshot: AgentRunStatusSnapshot,
-  colorEnabled: boolean,
-  now: number = Date.now()
-): string[] {
-  const lines: string[] = [];
-  const name = snapshot.agentName || "sub-agent";
-  const short = shortRunId(snapshot.runId);
-  const runId = short ? ` (${short})` : "";
-  const status = snapshot.status || "running";
-
-  // Status vocabulary comes from the run store (`done`/`failed`/`timeout`/
-  // `killed`/`cancelled`), not from a guessed list — the previous local list
-  // checked for `completed`/`finished`/`success`, none of which the store ever
-  // emits, so a finished run kept rendering with the in-progress hourglass.
-  const statusSymbol = getAgentRunStatusIcon(status);
-  const statusColor: "warning" | "success" | "danger" = !isAgentRunTerminalStatus(status)
-    ? "warning"
-    : status === "done"
-      ? "success"
-      : "danger";
-
-  const errPart = snapshot.errorMessage ? ` · ${snapshot.errorMessage}` : "";
-  const progressPart = formatPanelProgress(snapshot);
-  // The panel repaints on a timer, so this ticks live — unlike the transcript
-  // cards, which freeze the age at the moment they were emitted.
-  const age = formatRunAge(snapshot, now);
-  const agePart = age ? ` · ${age}` : "";
-
-  if (!colorEnabled) {
-    lines.push(
-      `🤖 Sub-Agent: ${name}${runId} · ${statusSymbol} ${status}${agePart}${progressPart}${errPart}`
-    );
-  } else {
-    const botIcon = themeText("🤖", "accent", true);
-    const labelText = themeText(" Sub-Agent: ", "muted", true);
-    const nameText = themeText(`${name}${runId}`, "chrome", true);
-    // agePart belongs on the coloured branch too — the real TUI runs with
-    // colour on, so omitting it here made the live duration invisible in
-    // exactly the mode users see.
-    const statusText = themeText(` · ${statusSymbol} ${status}`, statusColor, true);
-    const ageText = agePart ? themeText(agePart, "chrome") : "";
-    const progressText = progressPart ? themeText(progressPart, "chrome") : "";
-    const errorText = errPart ? themeText(errPart, "danger") : "";
-    lines.push(`${botIcon}${labelText}${nameText}${statusText}${ageText}${progressText}${errorText}`);
-  }
-
-  const detail = formatPanelDetail(snapshot);
-  if (detail) {
-    if (!colorEnabled) {
-      lines.push(`   └ ${detail}`);
-    } else {
-      lines.push(`${themeText("   └ ", "muted")}${themeText(detail, "chrome")}`);
-    }
-  }
-
-  return lines;
 }

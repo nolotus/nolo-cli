@@ -2549,6 +2549,51 @@ describe("run-overlay TUI adapter (buildTuiRunOverlay)", () => {
       void dir;
     }
   });
+
+  // The composer dock now shows live run state, so re-listing the same runs
+  // after every turn is duplication. With a memory of what it already said, the
+  // overlay reports only the transitions the dock cannot deliver.
+  test("says nothing when no run's status has moved since last time", async () => {
+    const { dir, restore } = await withNoloHomeDir();
+    try {
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const runsDir = join(dir, "runs");
+      mkdirSync(runsDir, { recursive: true });
+      const base = "2025-01-01T00:00:00.000Z";
+      const write = (runId: string, status: string) =>
+        writeFileSync(
+          join(runsDir, `${runId}.json`),
+          JSON.stringify({
+            runId,
+            agentKey: "agent-a",
+            parentDialogId: "dlg-3",
+            startedAt: base,
+            status,
+            logPath: join(runsDir, `${runId}.log`),
+          })
+        );
+      write("r1", "running");
+      const reported = new Map<string, string>();
+
+      expect(buildTuiRunOverlay("dlg-3", reported)).toContain("▶ 1 个正在运行");
+      // Nothing moved: the dock is already showing this run, ticking.
+      expect(buildTuiRunOverlay("dlg-3", reported)).toBeNull();
+
+      // The transition is exactly what the user may have missed.
+      write("r1", "done");
+      expect(buildTuiRunOverlay("dlg-3", reported)).toContain("✅ 1 个已完成");
+      expect(buildTuiRunOverlay("dlg-3", reported)).toBeNull();
+
+      // A newly spawned run is news even while the old one sits unchanged.
+      write("r2", "running");
+      const third = buildTuiRunOverlay("dlg-3", reported);
+      expect(third).toContain("▶ 1 个正在运行");
+      expect(third).not.toContain("已完成");
+    } finally {
+      restore();
+      void dir;
+    }
+  });
 });
 
 /** Point NOLO_HOME at a fresh temp dir for the duration of the callback. */

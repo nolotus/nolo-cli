@@ -18,7 +18,9 @@ export const controlAgentRunFunctionSchema = {
         "list（列出 run，支持按批次/状态过滤与分页）、status（查单条 + 可选日志）、stop（取消 run）。" +
         "相当于 Unix 的 wait + signal + /proc。" +
         "用 startAgentRun 拿到 runId 后，用本工具跟进度或叫停。" +
-        "list 默认只返回最近 20 条，避免全量冲爆上下文；用 status/batchId/limit/offset 取所需分页。",
+        "list 默认只返回最近 20 条，避免全量冲爆上下文；用 status/batchId/limit/offset 取所需分页。" +
+        "注意：用户界面已经在独立实时显示每条 run 的状态，本工具是给你自己做决策用的，" +
+        "不是用来给用户汇报进度的——不必为了「让用户看到状态」而轮询，也不要把返回值复述给用户。",
     parameters: {
         type: "object",
         properties: {
@@ -38,7 +40,10 @@ export const controlAgentRunFunctionSchema = {
             tailLines: {
                 type: "number",
                 description:
-                    "可选。action=status 时：0=只返回状态摘要，>0=同时返回最近 N 行日志（默认 0）。",
+                    "可选。action=status 时：0=只返回状态摘要，>0=同时返回最近 N 行日志（默认 0）。" +
+                    "本地 run 的状态摘要里带 progress（toolCalls/llmCalls/fileEdits、inFlight=此刻在执行什么、" +
+                    "idleMs=距上次事件多久），足以判断「在干活」还是「卡住了」——先看它，" +
+                    "只有确实可疑或已失败时才 tailLines>0 拉日志。",
                 default: 0,
             },
             batchId: {

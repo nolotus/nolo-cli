@@ -15,6 +15,22 @@
 import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
 import { resolveRunLabel, isAgentNameFallback } from "../../ai/tools/agent/agentRunDisplayHelpers";
 
+/**
+ * 执行者此刻正在做的那一件事。
+ *
+ * 只有本地 run registry 提供得了——`~/.nolo/runs/<id>.json` 的 `activity`
+ * 里写着它，而服务端的 status payload 和 `controlAgentRun` 的返回值都不带。
+ * 所以这个字段只由 runRegistryPoller 填，解析器永远不产出它。
+ *
+ * `startedAt` 是绝对时刻而不是「已进行 N 毫秒」：面板每秒重绘一次，存了绝对
+ * 时刻才能自己把秒数走下去，不然每一帧都在重复显示采样瞬间的那个旧数字。
+ */
+export type AgentRunInFlight = {
+  kind: "llm" | "tool";
+  name: string;
+  startedAt: number;
+};
+
 export type AgentRunSnapshot = {
   runId: string;
   status: string;
@@ -30,6 +46,11 @@ export type AgentRunSnapshot = {
   /** Wall-clock bounds of the run, when the producer reports them. */
   startedAt?: number;
   finishedAt?: number;
+  /**
+   * 进行中的动作。`null` 是有意义的值——「我刚看过，它此刻空着」，用来把上一次
+   * 采样留下的动作清掉；`undefined` 则是「这个来源不知道」，不该覆盖已有的值。
+   */
+  inFlight?: AgentRunInFlight | null;
   /** Dedupe key for the log tail — identical tails are not redrawn. */
   logKey: string;
 };

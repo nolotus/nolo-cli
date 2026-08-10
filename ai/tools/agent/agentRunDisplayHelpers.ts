@@ -76,7 +76,8 @@ export function shortRunId(runId: string | undefined | null): string {
   return pick.length > 8 ? pick.slice(-8) : pick;
 }
 
-function clipText(text: string, max: number): string {
+/** 折叠空白并截断到 max（含省略号）。卡片和面板共用同一把尺子。 */
+export function clipText(text: string, max: number): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
   return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }

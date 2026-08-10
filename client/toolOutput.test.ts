@@ -1166,6 +1166,94 @@ describe("toolOutput", () => {
     expect(out).not.toContain("agent-xxx → working locally");
   });
 
+  // The fold only collapses *consecutive* polls. An orchestrator that sleeps
+  // between polls breaks the run, and every poll used to print its own card —
+  // the screenful of identical `running` blocks this dedupe exists to stop.
+  test("polls separated by another tool do not each print a card", () => {
+    const format = createToolEventFormatter("compact", false);
+    const poll = (toolCallId: string) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({
+            runId: "run-sleepy",
+            status: "running",
+            agentName: "Worker",
+          }),
+        })
+      );
+    const sleep = (toolCallId: string) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "run",
+          content: "done",
+        })
+      );
+
+    const first = poll("p1") + sleep("r1");
+    expect(first).toContain("Run status");
+
+    // Same run, same state, three more polls with sleeps in between.
+    const rest =
+      poll("p2") + sleep("r2") + poll("p3") + sleep("r3") + poll("p4") + (format.flush?.() ?? "");
+    expect(rest).not.toContain("Run status");
+  });
+
+  test("a status change still breaks through the dedupe", () => {
+    const format = createToolEventFormatter("compact", false);
+    const poll = (toolCallId: string, status: string) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({
+            runId: "run-moving",
+            status,
+            agentName: "Worker",
+          }),
+        })
+      );
+
+    // A poll parks its card in the fold; it reaches the transcript on the next
+    // flush, so drive the sequence and read the whole output.
+    const out = poll("p1", "running") + poll("p2", "done") + (format.flush?.() ?? "");
+    // Dropping the second would hide the moment the run ended — the single most
+    // important frame in the whole sequence.
+    expect(out.match(/● controlAgentRun/g)?.length ?? 0).toBe(2);
+    expect(out).toContain("⏳ running");
+    // The end of a run gets its own card header, not the polling one.
+    expect(out).toContain("✓ done");
+  });
+
+  test("progress moving on an unchanged status still prints", () => {
+    const format = createToolEventFormatter("compact", false);
+    const poll = (toolCallId: string, toolCallCount: number) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({
+            runId: "run-busy",
+            status: "running",
+            agentName: "Worker",
+            toolCallCount,
+          }),
+        })
+      );
+    const sleep = () =>
+      format(toolEvent({ type: "tool-result", toolCallId: "r1", toolName: "run", content: "ok" }));
+
+    expect(poll("p1", 2) + sleep()).toContain("2 tools");
+    // Same status, real progress — that is news.
+    expect(poll("p2", 9) + (format.flush?.() ?? "")).toContain("9 tools");
+  });
+
   // Log tails only reach a card once a run has failed, so the dedupe that keeps
   // an unchanged tail from being redrawn is exercised on a failed run.
   test("a repeated poll does not redraw an unchanged log tail", () => {
@@ -1186,15 +1274,33 @@ describe("toolOutput", () => {
         })
       );
 
-    // Terminal statuses flush immediately, so each poll emits its own card.
+    // Terminal statuses flush immediately, so the first poll emits its card.
     const first = failedPoll("s1");
     expect(first).toContain("Log tail:");
     expect(first).toContain("same-tail");
 
-    const second = failedPoll("s2");
-    expect(second).toContain("● controlAgentRun");
-    expect(second).not.toContain("Log tail:");
-    expect(second).not.toContain("same-tail");
+    // A second poll reporting the exact same thing is dropped whole. The tail
+    // dedupe used to leave a stripped-down card behind; now that the composer
+    // dock carries live run state, a card that repeats the previous one has no
+    // reader at all — only a change is worth the rows.
+    expect(failedPoll("s2")).toBe("");
+
+    // A poll that actually reports something new still prints.
+    const changed = format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "s3",
+        toolName: "controlAgentRun",
+        content: JSON.stringify({
+          runId: "run-fold-2",
+          status: "failed",
+          agentName: "Worker",
+          logLines: ["same-tail", "and-then-this"],
+        }),
+      })
+    );
+    expect(changed).toContain("● controlAgentRun");
+    expect(changed).toContain("and-then-this");
   });
 
   test("a tail withheld while the run was healthy still prints when it fails", () => {

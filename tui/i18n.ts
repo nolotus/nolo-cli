@@ -91,6 +91,10 @@ const STRINGS = {
     en: "Cleared current dialog messages.",
     zh: "已清除当前对话消息。",
   },
+  persistentProcessesLeft: {
+    en: "{0} persistent process(es) left running in the background.",
+    zh: "仍有 {0} 个常驻后台进程在后台继续运行。",
+  },
   clearNoDialog: {
     en: "No current dialog messages to clear.",
     zh: "当前没有可清除的对话消息。",

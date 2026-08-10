@@ -4,8 +4,8 @@ import {
   ACTIVITY_FALLBACK_DELAY_MS,
   ACTIVITY_FRAMES,
   createActivityIndicator,
-  formatAgentRunPanelLines,
 } from "./activityIndicator";
+import { formatAgentRunPanelLines } from "./agentRunPanelLines";
 
 /**
  * 确定性驱动：注入手动时钟 + 捕获 setInterval 回调，测试里手动 advance + tick，

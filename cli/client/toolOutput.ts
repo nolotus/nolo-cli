@@ -1046,11 +1046,36 @@ export function createToolEventFormatter(
   let statusFold: AgentRunSnapshot | null = null;
   /** Last log tail emitted per runId — identical tails are not redrawn. */
   const lastEmittedLogByRunId = new Map<string, string>();
+  /**
+   * Substance of the last card printed per runId — identical cards are dropped.
+   *
+   * The fold above only collapses *consecutive* polls: any other tool between
+   * two polls forces the open card out, and an orchestrator that alternates
+   * `sleep` with `controlAgentRun` therefore printed one full card per poll —
+   * six near-identical `Run status / ⏳ running` blocks saying nothing new. The
+   * composer dock now carries live run state, so a card that repeats what the
+   * last one said has no reader: the only thing worth the rows is a change.
+   */
+  const lastPrintedCardByRunId = new Map<string, string>();
+
+  /** Fields that make a card worth reprinting. Age is excluded: it always moves. */
+  const cardSubstance = (snapshot: AgentRunSnapshot): string =>
+    JSON.stringify([
+      snapshot.status,
+      snapshot.toolCallCount ?? -1,
+      snapshot.lastToolNames ?? [],
+      snapshot.lastAssistantText ?? "",
+      snapshot.errorMessage ?? "",
+      snapshot.logKey,
+    ]);
 
   const flushStatusFold = (): string => {
     if (!statusFold) return "";
     const fold = statusFold;
     statusFold = null;
+    const substance = cardSubstance(fold);
+    if (lastPrintedCardByRunId.get(fold.runId) === substance) return "";
+    lastPrintedCardByRunId.set(fold.runId, substance);
     const prevLog = lastEmittedLogByRunId.get(fold.runId);
     const changed = Boolean(fold.logKey) && fold.logKey !== prevLog;
     // Only remember a tail that was actually printed. Cards withhold the tail

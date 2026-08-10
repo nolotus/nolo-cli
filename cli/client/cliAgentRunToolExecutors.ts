@@ -15,12 +15,14 @@ import {
   formatStartRunCard,
   formatStatusRunCard,
   formatStopRunCard,
+  isAgentRunTerminalStatus,
   resolveRunLabel,
   TASK_PREVIEW_MAX,
 } from "../../ai/tools/agent/agentRunDisplayHelpers";
 import {
   type AgentRunControlDeps,
   type FsLike,
+  type RunRecord,
   checkStaleRun,
   finalizeRunRecord,
   findRunRecord,
@@ -134,6 +136,40 @@ const resolveNowMs = (deps: CliAgentRunToolExecutorDeps): number =>
 
 const resolveTarget = (deps: CliAgentRunToolExecutorDeps, agentKey: string): string =>
   typeof deps.resolveProviderTarget === "function" ? deps.resolveProviderTarget(agentKey) : agentKey;
+
+/**
+ * 给 `status` 的返回值补一段紧凑的进度，让 tailLines:0 真的能回答「它卡住了
+ * 吗」。
+ *
+ * 只有非终态 run 才有进度可言：跑完了就看 status 和 exitCode。字段刻意精简
+ * ——这段每次轮询都要进模型上下文，一条 run 的诊断信息不该比它的结果还长。
+ *
+ * - `idleMs` 是距上次真实事件（不是距上次写盘）多久：这是判定卡死的那个数。
+ * - `inFlight` 有值说明它此刻正卡在某个具体动作上，配合 `inFlightMs` 就能
+ *   区分「跑得好好的」和「同一个工具吊了两分钟」。
+ */
+function buildProgressField(
+  record: RunRecord,
+  nowMs: number
+): { progress?: Record<string, unknown> } {
+  const activity = record.activity;
+  if (!activity || isAgentRunTerminalStatus(record.status)) return {};
+  const lastEventAt = Date.parse(activity.lastEventAt ?? "");
+  const inFlight = activity.inFlight;
+  const progress: Record<string, unknown> = {
+    toolCalls: activity.counters?.toolCalls ?? 0,
+    llmCalls: activity.counters?.llmCalls ?? 0,
+    fileEdits: activity.counters?.fileEdits ?? 0,
+    ...(Number.isFinite(lastEventAt)
+      ? { idleMs: Math.max(0, nowMs - lastEventAt) }
+      : {}),
+  };
+  if (inFlight) {
+    progress.inFlight = inFlight.name ? `${inFlight.kind}:${inFlight.name}` : inFlight.kind;
+    if (Number.isFinite(inFlight.sinceMs)) progress.inFlightMs = Math.max(0, inFlight.sinceMs);
+  }
+  return { progress };
+}
 
 /** startAgentRun：本地 --bg 启动一个后台 run，返回 runId。 */
 export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps = {}) {
@@ -488,6 +524,13 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
           // indistinguishable from a hung run without this field. Surfacing
           // dialogId gives the caller a reliable way to fetch the result.
           ...(reconciled.dialogId ? { dialogId: reconciled.dialogId } : {}),
+          // Progress is what makes tailLines:0 an actual answer to "is it
+          // stuck?". Without it a poll returns `running` and a pid, so the only
+          // way to tell a working run from a wedged one was to pull 30 lines of
+          // log — the exact thing the orchestration prompt tells the model not
+          // to do. The registry has been recording this all along and `nolo
+          // agent status` has been printing it; only the tool was blind.
+          ...buildProgressField(reconciled, resolveNowMs(deps)),
           ...(logTail !== undefined ? { logTail } : {}),
           ...(logLines ? { logLines } : {}),
         }),

@@ -499,6 +499,11 @@ function buildLaunchProcessTool(): OpenAiCompatibleTool {
             type: "string",
             description: "Optional friendly label for the process.",
           },
+          persist: {
+            type: "boolean",
+            description:
+              "Mark the process as persistent so it survives the current TUI/session exit (kept running in the background when the conversation closes). Defaults to false. Use for long-lived services (e.g. a desktop dev server) you want to keep alive after the session ends.",
+          },
         },
         required: ["command"],
       },
@@ -512,7 +517,7 @@ function buildListProcessesTool(): OpenAiCompatibleTool {
     function: {
       name: "listProcesses",
       description:
-        "List currently registered background processes launched via launchProcess. Returns array of {pid, label, command, status, startedAt}.",
+        "List currently registered background processes launched via launchProcess. Returns array of {pid, label, command, status, startedAt, persist}.",
       parameters: {
         type: "object",
         properties: {},

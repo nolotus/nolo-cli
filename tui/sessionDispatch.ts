@@ -336,7 +336,7 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       }
       if (argText === "all") {
         const before = registry.list().filter(p => p.status === "running").length;
-        registry.stopAll();
+        registry.stopAll(undefined, { includePersist: true });
         return { nextState: state, output: t("stopAllDone", String(before)) };
       }
       if (/^\d+$/.test(argText)) {

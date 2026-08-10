@@ -22,6 +22,7 @@ import { DataType } from "../../create/types";
 import { resolveReplicationServers, scheduleWriteReplication } from "../../database/actions/replication";
 import { fetchAndCacheTableRows } from "./fetchAndCacheTableRows";
 import {
+  addColumnOptionInMeta,
   addColumnToMeta,
   deleteColumnFromMeta,
   renameColumnInMeta,
@@ -156,6 +157,13 @@ interface UpdateColumnWidthArgs {
   tableId: string;
   columnId: string;
   width: number;
+}
+
+interface AddColumnOptionArgs {
+  tenantId: string;
+  tableId: string;
+  columnId: string;
+  option: string;
 }
 
 /* --------------------------------------------------------------------------
@@ -764,6 +772,66 @@ export const tableSlice = createSliceWithThunks({
     ),
 
     /* --------------------------------------
+     * 4.2-quater 新增 select 选项：addColumnOption
+     * 说明：把新选项追加到 columns[].options（select 弹层「+ 新建选项」入口），
+     * 重复选项为 no-op：跳过 patch 直接返回原 meta，fulfilled 照常刷新 currentTable。
+     * ------------------------------------*/
+    addColumnOption: create.asyncThunk(
+      async (
+        args: AddColumnOptionArgs,
+        { dispatch, getState, rejectWithValue }
+      ) => {
+        const { tenantId, tableId, columnId, option } = args;
+
+        const state = (getState() as any).table;
+        const meta = state.currentTable;
+
+        if (!meta || meta.tenantId !== tenantId || meta.tableId !== tableId) {
+          return rejectWithValue("当前没有加载对应的表定义");
+        }
+
+        const result = addColumnOptionInMeta(
+          meta,
+          { columnId, option },
+          { nowIso: formatISO(new Date()) }
+        );
+        if (!result.ok) {
+          return rejectWithValue(result.error);
+        }
+        if (result.value.noop) {
+          // 已有同值选项：直接返回原 meta，避免无意义写库
+          return meta;
+        }
+        const { meta: nextMeta, metaChanges } = result.value;
+
+        try {
+          await dispatch(
+            patch({ dbKey: meta.dbKey, changes: metaChanges })
+          ).unwrap();
+
+          return nextMeta;
+        } catch (e: any) {
+          return rejectWithValue(e.message || "新增选项失败");
+        }
+      },
+      {
+        pending: (state) => {
+          state.error = null;
+        },
+        fulfilled: (state, action: PayloadAction<TableMeta>) => {
+          state.currentTable = action.payload;
+          state.isInitialized = true;
+        },
+        rejected: (state, action) => {
+          state.error =
+            (action.payload as string) ||
+            action.error.message ||
+            "新增选项时发生未知错误";
+        },
+      }
+    ),
+
+    /* --------------------------------------
      * 4.3 重命名表：renameTable（仅修改显示名称）
      * ------------------------------------*/
     renameTable: create.asyncThunk(
@@ -991,6 +1059,7 @@ export const {
   updateCell,
   reorderColumn,
   updateColumnWidth,
+  addColumnOption,
   setTableFocusContext,
 } = tableSlice.actions as any;
 

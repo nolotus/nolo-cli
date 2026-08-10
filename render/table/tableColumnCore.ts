@@ -369,3 +369,52 @@ export function updateColumnWidthInMeta(
 
   return ok(buildMeta(meta, newColumns, deps.nowIso));
 }
+
+/* --------------------------------------------------------------------------
+ * 7. 新增 select 选项（回写 columns[].options）
+ * ------------------------------------------------------------------------*/
+
+export interface AddColumnOptionInput {
+  columnId: string;
+  option: string;
+}
+
+/**
+ * 把新选项追加到列 options 末尾（select 弹层「+ 新建选项」入口）。
+ * - option 先 trim，空值报错；
+ * - 该列 options 已有同值（trim 后精确匹配）时为 no-op：
+ *   返回 ok 且 meta 原样不变（不 bump updatedAt），调用方照常走流程即可。
+ */
+export function addColumnOptionInMeta(
+  meta: TableMeta,
+  input: AddColumnOptionInput,
+  deps: { nowIso: string }
+): ColumnCoreResult<ColumnMetaChange> {
+  const { columnId } = input;
+  const option = input.option.trim();
+
+  if (!option) {
+    return err("选项名不能为空");
+  }
+
+  const column = meta.columns.find((c) => c.id === columnId);
+  if (!column) {
+    return err("要新增选项的字段不存在");
+  }
+
+  // no-op：已有同值选项时 meta 原样返回，metaChanges 与现状一致，
+  // 调用方即使照常 patch 也只是写入相同值，无副作用。
+  if ((column.options ?? []).some((o) => o.trim() === option)) {
+    return ok({
+      meta,
+      metaChanges: { columns: meta.columns, updatedAt: meta.updatedAt },
+      noop: true,
+    });
+  }
+
+  const newColumns = meta.columns.map((c) =>
+    c.id === columnId ? { ...c, options: [...(c.options ?? []), option] } : c
+  );
+
+  return ok(buildMeta(meta, newColumns, deps.nowIso));
+}

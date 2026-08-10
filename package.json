@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.17.0",
+  "version": "0.16.0-alpha.19",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -466,6 +466,7 @@
     "agent-runtime/agentCallPlan.ts",
     "agent-runtime/responsesConversationState.ts",
     "agent-runtime/memoryUseGuidance.ts",
+    "agent-runtime/menuUsage.ts",
     "agent-runtime/staleReplayGuard.ts",
     "agent-runtime/desktopRequestSnapshot.ts",
     "agent-runtime/toolCallTextParser.ts",

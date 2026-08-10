@@ -457,6 +457,7 @@ function applyDelta(
   const reasoningChunk: string = delta.reasoning_content ?? delta.reasoning ?? "";
   if (reasoningChunk) {
     next.reasoningBuffer = (next.reasoningBuffer || "") + reasoningChunk;
+    hasNewVisibleContent = true;
   }
 
   // tool_calls 累积 + 映射为 OpenAI 标准格式
@@ -514,6 +515,7 @@ function applyDelta(
     next.thinkState = parsed.state;
     if (parsed.reasoning) {
       next.reasoningBuffer = (next.reasoningBuffer || "") + parsed.reasoning;
+      hasNewVisibleContent = true;
     }
     if (parsed.content) {
       next = {
@@ -560,6 +562,81 @@ function emitStreamingUpdate(
       ...(ctx.messageMetadata ?? {}),
     })
   );
+}
+
+export interface StreamThrottlerOptions {
+  schedule?: (cb: () => void) => any;
+  cancel?: (id: any) => void;
+}
+
+export interface StreamThrottler {
+  push: (state: StreamState) => void;
+  flush: () => void;
+  cancel: () => void;
+}
+
+/**
+ * 流式文本/推理渲染节流器
+ * 累积同一个 UI 渲染周期（或定时周期）内的连续 delta，仅在周期末派发一次最新 state
+ */
+export function createStreamThrottler(
+  emitUpdate: (state: StreamState) => void,
+  options?: StreamThrottlerOptions
+): StreamThrottler {
+  let pendingState: StreamState | null = null;
+  let timerId: any = null;
+
+  const defaultSchedule = (cb: () => void) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(cb);
+    }
+    return setTimeout(cb, 16);
+  };
+
+  const defaultCancel = (id: any) => {
+    if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(id);
+      return;
+    }
+    clearTimeout(id);
+  };
+
+  const scheduleFn = options?.schedule ?? defaultSchedule;
+  const cancelFn = options?.cancel ?? defaultCancel;
+
+  return {
+    push(state: StreamState) {
+      pendingState = state;
+      if (timerId === null) {
+        timerId = scheduleFn(() => {
+          timerId = null;
+          if (pendingState !== null) {
+            const stateToEmit = pendingState;
+            pendingState = null;
+            emitUpdate(stateToEmit);
+          }
+        });
+      }
+    },
+    flush() {
+      if (timerId !== null) {
+        cancelFn(timerId);
+        timerId = null;
+      }
+      if (pendingState !== null) {
+        const stateToEmit = pendingState;
+        pendingState = null;
+        emitUpdate(stateToEmit);
+      }
+    },
+    cancel() {
+      if (timerId !== null) {
+        cancelFn(timerId);
+        timerId = null;
+      }
+      pendingState = null;
+    },
+  };
 }
 
 /**
@@ -893,6 +970,7 @@ export const sendOpenAICompletionsRequest = async ({
   messageMetadata,
   disableToolsForThisRequest = false,
   quickChatPerfStartedAt,
+  streamThrottlerOptions,
 }: {
   bodyData: any;
   agentConfig: any;
@@ -902,6 +980,7 @@ export const sendOpenAICompletionsRequest = async ({
   messageMetadata?: Partial<Message>;
   disableToolsForThisRequest?: boolean;
   quickChatPerfStartedAt?: number;
+  streamThrottlerOptions?: StreamThrottlerOptions;
 }): Promise<CompletionMeta> => {
   const { dispatch, getState, signal: thunkSignal } = thunkApi;
 
@@ -957,6 +1036,17 @@ export const sendOpenAICompletionsRequest = async ({
   let activeMessageMetadata = messageMetadata;
   // 空轮自动重试只放行一次(与 agent-runtime localLoop / server loop 语义对齐)。
   let emptyCompletionRetryUsed = false;
+
+  const throttler = createStreamThrottler((latestState) => {
+    emitStreamingUpdate(true, latestState, {
+      dispatch,
+      agentConfig,
+      messageId,
+      msgKey,
+      dialogId,
+      messageMetadata: activeMessageMetadata,
+    });
+  }, streamThrottlerOptions);
 
   const buildMeta = (): CompletionMeta => ({
     hasToolCalls:
@@ -1079,6 +1169,7 @@ export const sendOpenAICompletionsRequest = async ({
       const { done, value } = await readStreamChunkWithTimeout(reader, signal);
 
       if (done) {
+        throttler.flush();
         // 空轮自动重试:流正常结束但零产出(content/reasoning/tool_calls 全空)
         // 时,把 repair prompt 追加到请求消息末尾重发一次;第二次仍空则落入
         // 既有 markEmptyCompletionAsError 错误路径,不再重试。网络/HTTP 错误、
@@ -1114,6 +1205,7 @@ export const sendOpenAICompletionsRequest = async ({
             // 首轮零产出,直接重置流状态读新流;UI 上的流式消息尚无内容。
             // parser/decoder 的闭包缓冲一并重置:首轮若在干净 close 前残留了
             // 半截 SSE 报文或多字节字符,不能拼接到第二轮的首个 chunk 上。
+            throttler.cancel();
             streamState = createInitialStreamState();
             parseSSE = createSSEParser();
             decoder = new TextDecoder();
@@ -1175,6 +1267,7 @@ export const sendOpenAICompletionsRequest = async ({
           }
 
           if (data.error) {
+            throttler.flush();
             const errorMsg = `Error: ${formatStreamErrorMessage(data)}`;
             streamState = {
               ...streamState,
@@ -1206,14 +1299,13 @@ export const sendOpenAICompletionsRequest = async ({
             );
           }
 
-          emitStreamingUpdate(hasNewVisibleContent, streamState, {
-            dispatch,
-            agentConfig,
-            messageId,
-            msgKey,
-            dialogId,
-            messageMetadata: activeMessageMetadata,
-          });
+          if (hasNewVisibleContent) {
+            throttler.push(streamState);
+          }
+
+          if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
+            throttler.flush();
+          }
 
           const finishReason = choice.finish_reason;
           if (finishReason) {
@@ -1221,6 +1313,7 @@ export const sendOpenAICompletionsRequest = async ({
             streamState.finishReason = finishReason;
 
             if (finishReason === "tool_calls") {
+              throttler.flush();
               // Tool 开始前先更新 TopBar token 显示
               if (streamState.totalUsage) {
                 dispatch(tokenUsageLiveUpdate({
@@ -1270,6 +1363,7 @@ export const sendOpenAICompletionsRequest = async ({
       }
     }
   } catch (error: any) {
+    throttler.flush();
     let errorText: string;
     const isAbort = isAbortError(error);
     if (isAbort) {
@@ -1296,6 +1390,7 @@ export const sendOpenAICompletionsRequest = async ({
     }
     streamState = await finalizeStream(streamState, finalizeCtx);
   } finally {
+    throttler.cancel();
     logQuickChatPerfStage(quickChatPerfStartedAt, "openai-completions-stream-finished", {
       dialogKey,
     });

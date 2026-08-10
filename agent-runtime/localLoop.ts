@@ -20,6 +20,7 @@ import { summarizeToolArguments } from "./summarizeToolArguments";
 import { buildIdentityBlock } from "./identityBlock";
 import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
 import { buildRuntimeGuidanceBlocks } from "./runtimeGuidance";
+import { MENU_USAGE_INSTRUCTIONS } from "./menuUsage";
 import { canonicalizeToolNames } from "./toolNameAliases";
 import { buildCurrentTimeBlock } from "./currentTimeContext";
 import type { ContextBlockScope } from "./contextBlockScope";
@@ -1243,12 +1244,16 @@ export async function runLocalAgentTurn(
     agentConfig.exposedToolNames ?? agentConfig.toolNames ?? []
   );
   const guidanceBlocks = buildRuntimeGuidanceBlocks(agentTools);
+  // 与 web/server 对齐：ask_user 交互说明由本地宿主注入（单一真值 menuUsage.ts）。
+  // 仅当本地确实暴露 ask_user 工具时注入，避免白占稳定前缀。
+  const menuUsageBlock = agentTools.includes("ask_user") ? MENU_USAGE_INSTRUCTIONS : "";
   const guidanceScopes: ContextBlockScope[] =
     [
       guidanceBlocks.startupProtocol,
       guidanceBlocks.contextLayerContract,
       guidanceBlocks.emailRegistrationWorkflow,
       guidanceBlocks.webResearchToolPolicy,
+      menuUsageBlock,
     ]
       .map((content) => content.trim())
       .filter((content): content is string => content.length > 0)

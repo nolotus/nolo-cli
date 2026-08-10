@@ -8,6 +8,8 @@ const translatedFunctionCache = new Map<string, any>();
 /** Per (language, provider, disabled, toolNames) full prepareTools result. */
 const prepareToolsResultCache = new Map<string, any[]>();
 const PREPARE_TOOLS_CACHE_LIMIT = 128;
+/** 已 warn 过的未知工具名——prepareTools 每 turn 都会调用，去重避免刷屏。 */
+const warnedUnknownToolNames = new Set<string>();
 
 function getTranslation(keys: string[], defaultVal: string): string {
   for (const key of keys) {
@@ -150,7 +152,17 @@ export const prepareTools = (
   const prepared = canonicalNames
     .map((toolName: string) => {
       const regTool = toolRegistry[toolName];
-      if (!regTool) return regTool;
+      if (!regTool) {
+        // 未知/已废弃工具名（如改名后的历史遗留配置）被静默忽略。
+        // 每名字只 warn 一次，让这类配置问题可见而不刷屏。
+        if (!warnedUnknownToolNames.has(toolName)) {
+          warnedUnknownToolNames.add(toolName);
+          console.warn(
+            `[prepareTools] unknown tool name "${toolName}" ignored (not in toolRegistry); likely stale agent config from a renamed/deprecated tool.`,
+          );
+        }
+        return regTool;
+      }
       return {
         ...regTool,
         function: translateSchemaCached(regTool.function),

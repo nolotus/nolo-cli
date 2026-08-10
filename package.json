@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.17.0",
+  "version": "0.16.0-alpha.21",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -191,6 +191,7 @@
     "tui/theme.ts",
     "tui/askChoiceDialog.test.ts",
     "tui/readlineWorkspace.ts",
+    "tui/tuiAnsi.test.ts",
     "tui/gitStatus.ts",
     "tui/selectDialog.ts",
     "tui/agentRunPanelLines.ts",

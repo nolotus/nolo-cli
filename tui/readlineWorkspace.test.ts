@@ -2596,6 +2596,61 @@ describe("run-overlay TUI adapter (buildTuiRunOverlay)", () => {
   });
 });
 
+describe("terminal window title sync", () => {
+  test("emits OSC window title sequences when output is TTY and NOLO_TUI_TITLE is not 0/false", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    (output as any).isTTY = true;
+    (output as any).rows = TERM_ROWS;
+    (output as any).columns = TERM_COLS;
+
+    const chunks: string[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(chunk.toString());
+    });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+    });
+
+    input.write("/exit\r");
+    await workspacePromise;
+
+    const fullOutput = chunks.join("");
+    expect(fullOutput).toContain("\x1b]0;new\x07\x1b]2;new\x07");
+  });
+
+  test("does not emit OSC window title sequences when NOLO_TUI_TITLE is set to 0 or false", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    (output as any).isTTY = true;
+    (output as any).rows = TERM_ROWS;
+    (output as any).columns = TERM_COLS;
+
+    const chunks: string[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(chunk.toString());
+    });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: { NOLO_TUI_TITLE: "0" },
+    });
+
+    input.write("/exit\r");
+    await workspacePromise;
+
+    const fullOutput = chunks.join("");
+    expect(fullOutput).not.toContain("\x1b]0;");
+    expect(fullOutput).not.toContain("\x1b]2;");
+  });
+});
+
 /** Point NOLO_HOME at a fresh temp dir for the duration of the callback. */
 async function withNoloHomeDir(): Promise<{ dir: string; tmp: string; restore: () => void }> {
   const { mkdtemp } = await import("node:fs/promises");

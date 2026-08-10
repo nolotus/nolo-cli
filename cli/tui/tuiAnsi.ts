@@ -353,6 +353,28 @@ export function wrapTranscriptLine(
   return result.length > 0 ? result : [""];
 }
 
+/**
+ * Build terminal window/tab title OSC escape sequences.
+ * Strips ANSI codes, converts newlines to spaces, truncates to 80 display columns,
+ * and emits both OSC 0 and OSC 2 using BEL (\x07) as string terminator.
+ */
+export function buildWindowTitle(title: string): string {
+  // Strip ANSI first, then replace all C0/C1 control chars (including BEL \x07
+  // and ESC \x1b) with spaces so they can't prematurely terminate the OSC 0/2
+  // sequence or leak raw escapes into the terminal.
+  const plain = stripAnsi(title).replace(/[\x00-\x1f\x7f]+/g, " ");
+  let truncated = "";
+  let width = 0;
+  const maxCols = 80;
+  for (const char of plain) {
+    const charWidth = displayWidth(char);
+    if (width + charWidth > maxCols) break;
+    truncated += char;
+    width += charWidth;
+  }
+  return `\x1b]0;${truncated}\x07\x1b]2;${truncated}\x07`;
+}
+
 export function wrapTextToLines(text: string, columns: number): string[] {
   const result: string[] = [];
   for (const logicalLine of text.split("\n")) {

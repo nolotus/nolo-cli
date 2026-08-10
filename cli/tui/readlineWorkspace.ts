@@ -112,6 +112,7 @@ export {
   padOrTruncateToWidth,
   wrapTranscriptLine,
   wrapTextToLines,
+  buildWindowTitle,
 } from "./tuiAnsi";
 export {
   type Turn,
@@ -128,6 +129,7 @@ export {
 export { type ScrollAction, parseScrollAction } from "./tuiScrollbar";
 import {
   applyTerminalOutputToText,
+  buildWindowTitle,
   displayWidth,
   fitAnsiLine,
   padOrTruncateToWidth,
@@ -1026,6 +1028,21 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // art on narrow terminals instead of letting it wrap.
   const bannerColumns = (output as { columns?: number }).columns;
   output.write(renderWelcome(state, 0, 0, bannerColumns));
+
+  let lastSentTitle: string | null = null;
+  const syncWindowTitle = () => {
+    if (!(output as { isTTY?: boolean }).isTTY) return;
+    const env = options.env ?? process.env;
+    const rawSetting = (env.NOLO_TUI_TITLE ?? "").trim().toLowerCase();
+    if (rawSetting === "0" || rawSetting === "false") return;
+
+    const currentTitle = state.dialogLabel?.trim() ?? "";
+    if (currentTitle === lastSentTitle) return;
+    lastSentTitle = currentTitle;
+    output.write(buildWindowTitle(currentTitle));
+  };
+
+  syncWindowTitle();
 
   let fixedInput: FixedInputController = createNoopFixedInput();
   // Composer draft buffer. Hoisted to this scope (rather than the
@@ -2032,13 +2049,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // which stayed "" forever — so during a loop the composer kept snapping
     // back to the placeholder and hid what the user was typing (the submit
     // path still read the inner buffer, so input "worked" but was invisible).
-    fixedInput = createFixedInput(output, {
-      getTitleLine: () => {
-        const title = state.dialogLabel?.trim();
-        return title
-          ? themeText(`💬 ${title}`, "accent", resolveCliColorEnabled())
-          : null;
-      },
+    const baseFixedInput = createFixedInput(output, {
       getStatusLine: () => {
         let base = renderStatusLine(state);
         // Show the queued-input count while a turn is running so the user can
@@ -2082,6 +2093,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         renderHistoryToOutput();
       },
     });
+    fixedInput = {
+      ...baseFixedInput,
+      repaint(draft, cursorPos) {
+        syncWindowTitle();
+        return baseFixedInput.repaint(draft, cursorPos);
+      },
+    };
     fixedInput.init();
     const paintFrame = (draft: string) => {
       renderHistoryToOutput();

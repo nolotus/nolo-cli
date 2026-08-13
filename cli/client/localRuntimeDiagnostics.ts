@@ -1,12 +1,11 @@
 import type { AgentRuntimeAgentConfig } from "../agentRuntimeLocal";
 import type { HybridRecordStore } from "./hybridRecordStore";
-import { getDefaultCliLocalRuntimeDb } from "../localRuntimeDb";
-import type { CliLocalRuntimeDb } from "./localRuntimeAdapterTypes";
+import { getDefaultCliLocalRuntimeDb, type CliLocalRuntimeDb } from "../localRuntimeDb";
 import { ulid } from "ulid";
 import type { EnvLike } from "./localRuntimeHelpers";
 import type { CliFetchImpl } from "../cliFetch";
 import type { ReadToolFn } from "./cliLocalToolExecutors";
-import type { LocalCliExecutor } from "../agentCommandSupport";
+import type { LocalCliExecutor } from "./localRuntimeAdapterTypes";
 import type { FetchInput, FetchInit } from "./localRuntimeFetchRetry";
 import type { buildOpenAiTools } from "./localRuntimeTools";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";

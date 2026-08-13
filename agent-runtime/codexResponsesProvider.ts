@@ -6,7 +6,6 @@ import type { AgentRuntimeToolCall } from "./types";
 import {
   convertMessagesToResponsesInput,
   toResponsesTools,
-  type ResponseInputItem,
 } from "../integrations/openai/responsesHelpers";
 import { parseSseDataLineObject } from "./sseDataLine";
 import { readSseDataValues } from "./sseFrames";
@@ -220,7 +219,7 @@ export function convertMessagesToCodexInput(
         type: "summary_text",
         text: part.text,
       })),
-    } as unknown as ResponseInputItem;
+    } as ResponseInputItem;
   });
 }
 

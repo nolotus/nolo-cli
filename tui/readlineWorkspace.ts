@@ -81,7 +81,6 @@ import { toErrorMessage } from "../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
 import { createChatQueueTuiBinding, type ChatQueueTuiBinding } from "./chatQueueTuiBinding";
-import { emitTerminalBell, shouldEmitTerminalBell } from "./terminalNotification";
 
 // Ctrl+S (0x13): flush all queued follow-ups as one merged message. Named so
 // the raw byte is greppable by intent ("Ctrl+S" / "flush") rather than only by
@@ -1401,16 +1400,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
       const wasAborted = activeTurnAbort.signal.aborted;
       activeTurnAbort = null;
-      if (
-        shouldEmitTerminalBell({
-          wasAborted,
-          streamInterrupted: runResult.streamInterrupted,
-          exitCode: runResult.exitCode,
-          interactive: isInteractiveInput(input),
-        })
-      ) {
-        emitTerminalBell(output);
-      }
       // An explicit switch only needs to suppress the cached route for the
       // turn it was issued on; once run, normal per-dialog caching resumes.
       explicitAgentSwitch = false;

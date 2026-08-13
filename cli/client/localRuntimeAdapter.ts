@@ -665,23 +665,7 @@ export function createCliLocalRuntimeAdapter(
       const serverUrl = asOptionalTrimmedString(deps.env.NOLO_SERVER) ?? "https://us.nolo.chat";
       const authToken = asOptionalTrimmedString(deps.env.AUTH_TOKEN);
       const syncFetcher = authToken
-        ? async (ref: string) => {
-            try {
-              return await fetchServerSyncedCredential(
-                { currentServer: serverUrl, authToken },
-                ref,
-              );
-            } catch (error) {
-              // Local OAuth/API-key execution must survive a server deploy or
-              // transient 502. A missing synced copy is not a failed turn;
-              // the local resolver/broker may still have the credential.
-              logLocalRuntimeDiagnostic("credential.sync.unavailable", {
-                ref,
-                error: toErrorMessage(error),
-              });
-              return null;
-            }
-          }
+        ? (ref: string) => fetchServerSyncedCredential({ currentServer: serverUrl, authToken }, ref)
         : undefined;
 
       // Antigravity (Google Cloud Code Assist) is not OpenAI-compatible: local

@@ -31,7 +31,6 @@ export interface TurnContextLayer {
     | "skill-content"
     | "user-global-prompt"
     | "memory-overlay"
-    | "memory-use-guidance"
     | "dialog-summary";
   owner: "runtime";
   /** session = stable across turns in the same dialog; turn = may change each turn. */

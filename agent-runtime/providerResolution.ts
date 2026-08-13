@@ -319,13 +319,7 @@ export async function buildProviderExecutionPlan(args: {
 
     // broker miss → server sync fallback (only when opted in)
     if (!apiKey && agentConfig.credentialSynced && args.syncFetcher && credentialRef) {
-      let synced: string | null = null;
-      try {
-        synced = await args.syncFetcher(credentialRef);
-      } catch {
-        // Local execution must survive a transient server deployment; a
-        // missing synced copy is handled by the normal local credential hint.
-      }
+      const synced = await args.syncFetcher(credentialRef);
       const trimmed = asTrimmedString(synced);
       if (trimmed) {
         try { await args.credentialBroker?.put(credentialRef, trimmed); } catch {}
@@ -405,7 +399,14 @@ export async function buildProviderExecutionPlan(args: {
       ...(agentConfig.apiSource ? { apiSource: agentConfig.apiSource } : {}),
       // Platform agents use the server-managed provider credential. Never
       // forward a raw credential from a stale/local agent record through the
-      // platform proxy; credentials are resolved by the platform server.
+      // platform proxy. Custom proxy-backed agents retain their explicit key
+      // for the proxy's configured upstream.
+      ...(mode === "custom" && agentConfig.apiKey?.trim()
+        ? { apiKey: agentConfig.apiKey.trim() }
+        : {}),
+      ...(mode === "custom" && agentConfig.apiKeyHeader?.trim()
+        ? { apiKeyHeader: agentConfig.apiKeyHeader.trim() }
+        : {}),
     };
   }
   // Platform direct: prefer brokered credentialRef (migrated keys) before env.
@@ -419,13 +420,7 @@ export async function buildProviderExecutionPlan(args: {
   }
   // broker miss → server sync fallback (only when opted in)
   if (!apiKey && agentConfig.credentialSynced && args.syncFetcher && credentialRef) {
-    let synced: string | null = null;
-    try {
-      synced = await args.syncFetcher(credentialRef);
-    } catch {
-      // Local execution must survive a transient server deployment; a
-      // missing synced copy is handled by the normal local credential hint.
-    }
+    const synced = await args.syncFetcher(credentialRef);
     const trimmed = asTrimmedString(synced);
     if (trimmed) {
       try { await args.credentialBroker?.put(credentialRef, trimmed); } catch {}

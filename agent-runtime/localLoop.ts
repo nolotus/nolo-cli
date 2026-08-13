@@ -5,7 +5,6 @@ import type {
   AgentRuntimeHostAdapter,
   AgentRuntimeProvider,
   AgentRuntimeToolResult,
-  AgentRuntimeSaveTurnInput,
 } from "./hostAdapter";
 import type { ActionGate } from "./actionGate";
 import { readActionGate, readCommandActionGatePayload } from "./actionGate";

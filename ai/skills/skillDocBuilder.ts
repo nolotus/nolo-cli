@@ -1,9 +1,7 @@
 import {
   buildSkillDocMarkdown,
-  normalizeSkillBudgetTier,
   normalizeSkillModalities,
   normalizeStringArray,
-  type SkillBudgetTier,
   type SkillDocConfig,
   type SkillEvalCase,
   type SkillEvalConfig,
@@ -22,12 +20,7 @@ export interface CreateSkillDocArgs {
   requiredSkills?: string[];
   recommendedSkills?: string[];
   promptPatch?: string;
-  budgetTier?: SkillBudgetTier;
-  dispatchPreferred?: boolean;
   modalities?: SkillModality[];
-  preferredAgents?: string[];
-  discoverKeywords?: string[];
-  discoverExamples?: string[];
   evalCases?: SkillEvalCase[];
 }
 
@@ -80,18 +73,7 @@ export const buildSkillDocFromArgs = (
     requiredSkills: normalizeStringArray(args.requiredSkills),
     recommendedSkills: normalizeStringArray(args.recommendedSkills),
     promptPatch: asOptionalTrimmedString(args.promptPatch),
-    budgetTier: normalizeSkillBudgetTier(args.budgetTier) ?? "medium",
-    dispatchPreferred: args.dispatchPreferred === true,
     modalities: normalizeSkillModalities(args.modalities) ?? ["text"],
-    preferredAgents: normalizeStringArray(args.preferredAgents),
-    discover:
-      normalizeStringArray(args.discoverKeywords)?.length ||
-      normalizeStringArray(args.discoverExamples)?.length
-        ? {
-            keywords: normalizeStringArray(args.discoverKeywords),
-            examples: normalizeStringArray(args.discoverExamples),
-          }
-        : undefined,
   };
 
   const evalCases = normalizeEvalCases(args.evalCases);

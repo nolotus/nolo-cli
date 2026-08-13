@@ -270,6 +270,9 @@ describe("i18n", () => {
     expect(toolLabel("fetchWebpage")).toBe("Fetch");
     expect(toolLabel("fetchWebpage")).toBe("Fetch");
     expect(toolLabel("exa_search")).toBe("Web search");
+    expect(toolLabel("search_workspace")).toBe("Search workspace");
+    expect(toolLabel("search_all_spaces")).toBe("Search all spaces");
+    expect(toolLabel("loadSkill")).toBe("Used Skill");
     expect(agentRunCardLabels().runStatus).toBe("Run status");
     expect(agentRunCardLabels().runs(3)).toBe("Runs (3)");
 
@@ -280,6 +283,9 @@ describe("i18n", () => {
     expect(toolLabel("fetchWebpage")).toBe("抓取网页");
     expect(toolLabel("fetchWebpage")).toBe("抓取网页");
     expect(toolLabel("exa_search")).toBe("联网搜索");
+    expect(toolLabel("search_workspace")).toBe("搜索工作区");
+    expect(toolLabel("search_all_spaces")).toBe("搜索全部空间");
+    expect(toolLabel("loadSkill")).toBe("使用技能");
     expect(agentRunCardLabels().runStatus).toBe("运行状态");
     expect(agentRunCardLabels().logTail).toBe("日志尾部：");
     expect(agentRunCardLabels().runs(3)).toBe("运行 (3)");

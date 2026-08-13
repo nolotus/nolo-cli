@@ -71,6 +71,7 @@ export interface DialogConfig {
   /** auto=代码内置执行策略；fixed=显式绑定 Agent。历史有 agent 的对话按 fixed 解释。 */
   agentMode?: "auto" | "fixed";
   primaryAgentKey?: string;
+  activeAgentKey?: string;
   /** auto 对话可持久化稳定档位，不持久化具体 Agent 实体依赖。 */
   autoRoute?: {
     stickyTier?: "flash" | "balanced" | "quality" | "image";
@@ -255,10 +256,22 @@ export interface Agent {
    * enabledPacks 展开后的工具 + tools 里的散装工具合并为最终工具集。
    */
   enabledPacks?: string[];
+  /**
+   * 三态能力配置：slug → "required"（完整启用，工具常驻）/ "recommended"
+   * （启用，模型按需 loadSkill 取用）。**缺席即禁用**。
+   *
+   * 取代 enabledPacks 的布尔两档。读取一律走
+   * `ai/tools/agentSkillConfig` 的 resolveAgentSkillConfig——它在本字段缺失时
+   * 从 enabledPacks 派生，存量记录不需要迁移。写入期间双写两个字段，等所有端
+   * 都读 skills 之后再单写。
+   */
+  skills?: Record<string, "required" | "recommended">;
   userId: string;
   useServerProxy: boolean;
   apiKey?: string;
   apiKeyRef?: string;
+  /** Epoch ms when a provider quota/rate-limit is expected to recover. */
+  nextAvailableAt?: number;
   apiKeyHeader?: string;
   apiKeyFromAgentKey?: string;
   /** Whether the custom api-key is synced to the user's server account (optional sync opt-in). */

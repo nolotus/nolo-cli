@@ -45,6 +45,12 @@ export interface CompletionUsage {
   /** Platform billing identity when usage is rated into credits. */
   billing_provider?: string;
   billing_model?: string;
+  // Responses API (OpenAI / DeepSeek 官方) usage 命名；updateTotalUsage
+  // 会归一化到 prompt_tokens / completion_tokens，原始字段保留用于消费点回退。
+  input_tokens?: number;
+  output_tokens?: number;
+  input_tokens_details?: Record<string, any>;
+  output_tokens_details?: Record<string, any>;
 }
 
 export type Content = string | MessageContentPart[];
@@ -138,7 +144,7 @@ export interface ToolPayload {
   llmContext?: string;
 
   /**
-   * callAgent 子任务完成后产生的独立 dialog ID
+   * startAgentRun 子任务完成后产生的独立 dialog ID
    * 供 UI 渲染「查看完整对话 →」跳转链接
    */
   subDialogId?: string;

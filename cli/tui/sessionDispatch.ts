@@ -372,7 +372,16 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         };
       }
       return {
-        nextState: state,
+        nextState: {
+          ...state,
+          dialogId: undefined,
+          dialogKey: undefined,
+          dialogLabel: t("newDialog"),
+          attachedDocs: [],
+          attachedSkills: [],
+          attachedImages: [],
+          turnTokens: undefined,
+        },
         output: t("clearingDialog"),
         action: { type: "clear", dialogId: state.dialogId },
       };

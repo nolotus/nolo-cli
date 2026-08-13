@@ -1,6 +1,6 @@
 import { TokenUsageData } from "../../../ai/token/types";
 import { DataType } from "../../../create/types";
-import { createTokenStatsKey } from "../../../database/keys";
+import { createTokenKey, createTokenStatsKey } from "../../../database/keys";
 import { ulid } from "ulid";
 import { format } from "date-fns";
 import { patch, read, selectById, write } from "../../../database/dbSlice";
@@ -130,7 +130,7 @@ export const saveTokenUsage = async (data: TokenUsageData, thunkApi: any) => {
 };
 
 export const updateTokensAction = async (
-  { dialogId, dialogKey, usage: usageRaw, agentConfig }: any,
+  { dialogId, dialogKey, usage: legacyUsage, usageRecord, agentConfig }: any,
   thunkApi: any
 ) => {
   const state = thunkApi.getState();
@@ -149,9 +149,21 @@ export const updateTokensAction = async (
     currentAccountUserId: currentUser?.userId ?? null,
   });
   const timestamp = Date.now();
+  const callId = typeof usageRecord?.callId === "string" && usageRecord.callId
+    ? usageRecord.callId
+    : undefined;
+  const usageRaw = usageRecord?.usage ?? legacyUsage;
+  const usageWithStableCallId = callId && !usageRaw?.provider_call_id
+    ? { ...usageRaw, provider_call_id: callId }
+    : usageRaw;
+  const callAgentConfig = {
+    ...agentConfig,
+    ...(typeof usageRecord?.model === "string" ? { model: usageRecord.model } : {}),
+    ...(typeof usageRecord?.provider === "string" ? { provider: usageRecord.provider } : {}),
+  };
   const prepared = prepareTokenUsageData({
-    rawUsage: usageRaw,
-    agentConfig,
+    rawUsage: usageWithStableCallId,
+    agentConfig: callAgentConfig,
     userId: ownerUserId,
     username: currentUser?.username,
     agentId: agentConfig.id,
@@ -171,6 +183,12 @@ export const updateTokensAction = async (
     // undefined when a prepare helper omits timestamp.
     timestamp,
   } as TokenUsageData;
+  const stableTokenKey = callId
+    ? createTokenKey.recordForStableCall(ownerUserId, callId)
+    : null;
+  const accountingAlreadyProjected = stableTokenKey
+    ? Boolean(selectById(state, stableTokenKey))
+    : false;
 
   // Display unit prices for the actually billed provider/model (e.g. Flash
   // fallback → official DeepSeek 1/2), not the agent snapshot that may still
@@ -183,7 +201,16 @@ export const updateTokensAction = async (
   });
 
 
-  await saveTokenRecord(persistedTokenData, record as any, thunkApi);
+  await saveTokenRecord(persistedTokenData, record as any, thunkApi, callId);
+  // Always retry the detail write: its server handler owns ledger retry.
+  // Local day/dialog/live projections, however, are exactly-once per call.
+  if (accountingAlreadyProjected) {
+    return {
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      cost: result.cost,
+    };
+  }
   await saveTokenUsage(persistedTokenData, thunkApi);
 
   if (persistedTokenData.billable === true ||

@@ -4,6 +4,8 @@
 // 复用 agentRunControl.ts 的 ~/.nolo/runs/ 注册表机制（spawnLocalBackgroundRun /
 // findRunRecord / listRunRecords / checkStaleRun / finalizeRunRecord），把能力包
 // 的两个编排工具接到 CLI 本地 --bg 路径上。
+// controlAgentRun 支持 list / status / wait / stop / todo：wait 轮询本地 run 记录
+// 直到终态（复用 checkStaleRun 惰性对账），超时返回 status="timeout"（非失败）。
 //
 // 返回格式与 web 端 executor 一致：{ content: JSON(rawData), metadata.displayData }，
 // 由 localToolExecutors 分发（host adapter executeTool）。
@@ -24,6 +26,7 @@ import {
   type FsLike,
   type RunRecord,
   checkStaleRun,
+  ackRunRecord,
   finalizeRunRecord,
   findRunRecord,
   gcRunRecords,
@@ -33,27 +36,16 @@ import {
 import { readTimestamp } from "./agentRunSnapshot";
 import { agentRunCardLabels } from "../tui/i18n";
 import {
-  type CircuitBreakerEntry,
-  type CircuitBreakerStore,
-  buildBreakerEntry,
-  classifyRunFailure,
-  findActiveBreaker,
-  shouldRejectDispatch,
-} from "../../ai/tools/agent/quotaCircuitBreaker";
-import {
   aggregateBatch,
   type BatchRunSummary,
 } from "../../ai/tools/agent/batchAggregation";
 import {
-  deriveTodoStatus,
-  type TodoRecord,
-  type TodoRunSummary,
-  type TodoStore,
-} from "../../ai/tools/agent/runtimeTodo";
-import {
-  createFileSystemCircuitBreakerStore,
-  createFileSystemTodoStore,
-} from "./fileSystemStores";
+  deriveAgentRunTodoStatus,
+  type AgentRunTodoRecord,
+  type AgentRunTodoRunSummary,
+  type AgentRunTodoStore,
+} from "../../ai/tools/agent/agentRunTodo";
+import { createFileSystemTodoStore } from "./fileSystemStores";
 
 type EnvLike = Record<string, string | undefined>;
 type OutputLike = { write(chunk: string): unknown };
@@ -62,12 +54,8 @@ type OutputLike = { write(chunk: string): unknown };
  * CLI executor 接线所需的依赖。所有新增字段可选，不破坏现有调用方
  * （入参只增不改）。
  *
- - breakerStore / todoStore：缺省时惰性创建文件实现（~/.nolo/breakers.json、
- *   ~/.nolo/todos.json）；测试可注入内存实现。
- - now：缺省 Date.now()。共享层禁止取时钟，但 CLI 适配层允许。
- - resolveProviderTarget：把 agentKey 映射成熔断 target。CLI 本地 run 不携带
- *   provider 字段（run 记录只有 agentKey），用一个 agentKey 对应一份 provider
- *   配置，故以 agentKey 作 target，粒度等价于 provider。
+ - todoStore：缺省时惰性创建文件实现（~/.nolo/todos.json）；测试可注入内存实现。
+ - now：缺省 Date.now()。CLI 适配层允许取时钟。
  */
 export type CliAgentRunToolExecutorDeps = {
   env?: EnvLike;
@@ -75,17 +63,10 @@ export type CliAgentRunToolExecutorDeps = {
   cliEntrypoint?: string;
   /** run 的工作目录；缺省用 process.cwd()。 */
   cwd?: string;
-  /** Q 熔断表适配；缺省惰性建文件实现。 */
-  breakerStore?: CircuitBreakerStore;
   /** T todo 存储适配；缺省惰性建文件实现。 */
-  todoStore?: TodoStore;
+  todoStore?: AgentRunTodoStore;
   /** 时钟（epoch ms）；缺省 Date.now()。共享层禁止取，适配层允许。 */
   nowMs?: () => number;
-  /**
-   * 把 agentKey 解析成熔断 target（Q）。CLI 本地 run 无 provider 字段，
-   * 缺省直接返回 agentKey。测试可注入别的映射。
-   */
-  resolveProviderTarget?: (agentKey: string) => string;
 } & AgentRunControlDeps;
 
 const noopOutput: OutputLike = { write: () => {} };
@@ -123,19 +104,11 @@ const tailFile = (
 // 以下 helpers 把共享层（零 I/O）的纯函数接到 CLI 本地执行路径上。
 // 共享层契约缺省时惰性创建文件实现，测试可注入内存实现。
 
-const resolveBreakerStore = (
-  deps: CliAgentRunToolExecutorDeps,
-): CircuitBreakerStore =>
-  deps.breakerStore ?? createFileSystemCircuitBreakerStore({ env: deps.env, homedir: deps.homedir, fs: deps.fs as any });
-
-const resolveTodoStore = (deps: CliAgentRunToolExecutorDeps): TodoStore =>
+const resolveTodoStore = (deps: CliAgentRunToolExecutorDeps): AgentRunTodoStore =>
   deps.todoStore ?? createFileSystemTodoStore({ env: deps.env, homedir: deps.homedir, fs: deps.fs as any });
 
 const resolveNowMs = (deps: CliAgentRunToolExecutorDeps): number =>
   typeof deps.nowMs === "function" ? deps.nowMs() : Date.now();
-
-const resolveTarget = (deps: CliAgentRunToolExecutorDeps, agentKey: string): string =>
-  typeof deps.resolveProviderTarget === "function" ? deps.resolveProviderTarget(agentKey) : agentKey;
 
 /**
  * 给 `status` 的返回值补一段紧凑的进度，让 tailLines:0 真的能回答「它卡住了
@@ -171,6 +144,64 @@ function buildProgressField(
   return { progress };
 }
 
+/** action="wait" 的轮询间隔（ms）。 */
+const WAIT_POLL_INTERVAL_MS = 500;
+/** action="wait" 的默认等待上限（ms），与 web 端 controlAgentRun 的 timeoutMs 默认一致。 */
+const DEFAULT_WAIT_TIMEOUT_MS = 100000;
+
+/** status/wait 共用的 run 结果载荷（含 dialogId/exitCode/progress；日志可选）。 */
+function buildRunStatusPayload(
+  reconciled: RunRecord,
+  deps: CliAgentRunToolExecutorDeps,
+  opts: { logTail?: string } = {},
+): { content: string; metadata?: Record<string, unknown> } {
+  const logLines = opts.logTail ? opts.logTail.split("\n") : undefined;
+  const name = resolveRunLabel(reconciled);
+  const labels = agentRunCardLabels();
+  return {
+    content: JSON.stringify({
+      runId: reconciled.runId,
+      found: true,
+      status: reconciled.status,
+      pid: reconciled.pid ?? null,
+      agentKey: reconciled.agentKey,
+      ...(reconciled.agentName ? { agentName: reconciled.agentName } : {}),
+      startedAt: reconciled.startedAt,
+      endedAt: reconciled.endedAt ?? null,
+      exitCode: reconciled.exitCode ?? null,
+      // Expose dialogId so the caller can read the agent's actual output
+      // via `nolo dialog read <dialogId>`. The dialog is the authoritative
+      // result store; the run log is the child process stdout/stderr,
+      // whose contents vary by provider (some stream tokens to stdout,
+      // some only emit startup + stderr). Because status does not carry
+      // logTail by default, a "done" run with an empty logTail is
+      // indistinguishable from a hung run without this field. Surfacing
+      // dialogId gives the caller a reliable way to fetch the result.
+      ...(reconciled.dialogId ? { dialogId: reconciled.dialogId } : {}),
+      // Progress is what makes tailLines:0 an actual answer to "is it
+      // stuck?". Without it a poll returns `running` and a pid, so the only
+      // way to tell a working run from a wedged one was to pull 30 lines of
+      // log — the exact thing the orchestration prompt tells the model not
+      // to do. The registry has been recording this all along and `nolo
+      // agent status` has been printing it; only the tool was blind.
+      ...buildProgressField(reconciled, resolveNowMs(deps)),
+      ...(opts.logTail !== undefined ? { logTail: opts.logTail } : {}),
+      ...(logLines ? { logLines } : {}),
+    }),
+    metadata: {
+      displayData: formatStatusRunCard(name, reconciled.status, {
+        runId: reconciled.runId,
+        timing: {
+          startedAt: readTimestamp(reconciled.startedAt),
+          finishedAt: readTimestamp(reconciled.endedAt),
+        },
+        logLines,
+        labels,
+      }),
+    },
+  };
+}
+
 /** startAgentRun：本地 --bg 启动一个后台 run，返回 runId。 */
 export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps = {}) {
   return async (call: any): Promise<{ content: string; metadata?: Record<string, unknown> }> => {
@@ -179,33 +210,7 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
     const task = typeof args.task === "string" ? args.task.trim() : "";
     if (!agentKey) throw new Error("startAgentRun: 缺少 agentKey 参数。");
     if (!task) throw new Error("startAgentRun: 缺少有效的 task 文本描述。");
-
-    // ── Q 接线：派发前熔断检查 ──────────────────────────────────────
-    // 熔断期内直接返回结构化错误，不发起远程调用（不 spawn 子进程）。
-    // 调用方（编排者）收到 reason="quota" 后可立即决策换人。
-    const breakerStore = resolveBreakerStore(deps);
-    const target = resolveTarget(deps, agentKey);
     const nowMs = resolveNowMs(deps);
-    const activeBreaker = findActiveBreaker(
-      nowMs,
-      [breakerStore.get(target)].filter(Boolean) as CircuitBreakerEntry[],
-      target,
-    );
-    if (activeBreaker) {
-      const resetsAt = activeBreaker.resetsAt;
-      return {
-        content: JSON.stringify({
-          rejected: true,
-          reason: "quota",
-          provider: target,
-          ...(resetsAt !== undefined ? { resetsAt } : {}),
-          message: `provider ${target} 处于熔断期（配额耗尽），建议改派其它 provider。`,
-        }),
-        metadata: {
-          displayData: `Run rejected · quota breaker active on ${target}`,
-        },
-      };
-    }
 
     const message =
       typeof args.input === "undefined"
@@ -280,20 +285,19 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
         const nowIso = new Date(nowMs).toISOString();
         const runIds = existing?.runIds ?? [];
         if (!runIds.includes(runId)) runIds.push(runId);
-        const todo: TodoRecord = {
+        const todo: any = {
           id: todoId,
           title: taskPreview || task.slice(0, 100),
           status: existing?.status ?? "pending",
-          ...(existing?.specPath ? { specPath: existing.specPath } : {}),
-          ...(existing?.worktree ? { worktree: existing.worktree } : {}),
-          ...(existing?.branch ? { branch: existing.branch } : {}),
-          ...(deps.cwd ? { worktree: deps.cwd } : {}),
           runIds,
-          deps: existing?.deps ?? [],
           createdAt: existing?.createdAt ?? nowIso,
           updatedAt: nowIso,
         };
-        await todoStore.putTodo(todo);
+        if (typeof todoStore.saveTodo === "function") {
+          await todoStore.saveTodo(todo);
+        } else {
+          await (todoStore as any).putTodo(todo);
+        }
       } catch {
         // todo 写入失败不应阻塞派发（run 已 spawn）。编排者可后续重建。
       }
@@ -320,7 +324,7 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
   };
 }
 
-/** controlAgentRun：list / status / stop，映射到本地 ~/.nolo/runs/ 注册表。 */
+/** controlAgentRun：list / status / wait / stop / todo，映射到本地 ~/.nolo/runs/ 注册表。wait 轮询记录直到终态。 */
 export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDeps = {}) {
   return async (call: any): Promise<{ content: string; metadata?: Record<string, unknown> }> => {
     const args = parseCallArgs(call);
@@ -399,46 +403,47 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
       };
     }
 
-    // ── T 接线：action="todo" 查询 todo 列表 ──────────────────────────
-    // 把持久化 todo + 关联 run 映射成 TodoRunSummary，调 deriveTodoStatus
-    // 刷新状态后返回。statusFilter 可选。
-    if (action === "todo") {
+    // ── T 接线：action="todo" / "agentRunTodo" 查询 AgentRunTodo 列表 ──────
+    if (action === "todo" || action === "agentRunTodo" || action === "agent_run_todo") {
       const todoStore = resolveTodoStore(deps);
-      const statusesRaw = typeof args.status === "string" ? args.status.trim() : undefined;
-      const filter = statusesRaw && statusesRaw !== "all"
-        ? { statuses: statusesRaw.split(",").map((s) => s.trim()).filter(Boolean) as any }
-        : undefined;
-      const todos = await todoStore.listTodos(filter);
+      const todos = await todoStore.listTodos();
+      const statusFilter = typeof args.status === "string" ? args.status.trim().toLowerCase() : undefined;
       // 为每个 todo 喂关联 run 摘要（从 runs 注册表读，复用 queryRunRecords）。
-      const enriched = await Promise.all(
+      let enriched = await Promise.all(
         todos.map(async (todo) => {
-          const runSummaries: TodoRunSummary[] = [];
+          const runSummaries: AgentRunTodoRunSummary[] = [];
           for (const rid of todo.runIds) {
             const rec = findRunRecord(rid, deps);
             if (!rec) continue;
             runSummaries.push({
               runId: rec.runId,
               status: rec.status,
-              startedAt: rec.startedAt,
+              startedAt: readTimestamp(rec.startedAt)?.toString(),
+              finishedAt: readTimestamp(rec.endedAt)?.toString(),
               ...(rec.agentName ? { agentName: rec.agentName } : {}),
             });
           }
-          const derived = deriveTodoStatus({
+          const derived = deriveAgentRunTodoStatus({
             todo: { id: todo.id, status: todo.status },
             runs: runSummaries,
-            now: new Date(resolveNowMs(deps)).toISOString(),
           });
           return {
             id: todo.id,
             title: todo.title,
             status: derived.status,
             runIds: todo.runIds,
-            ...(derived.blockedReason ? { blockedReason: derived.blockedReason } : {}),
             ...(derived.latestRun ? { latestRunId: derived.latestRun.runId, latestRunStatus: derived.latestRun.status } : {}),
             updatedAt: todo.updatedAt,
           };
         }),
       );
+
+      // 支持 status 过滤（兼容 status="running" / status="done,failed" 等）
+      if (statusFilter && statusFilter !== "all") {
+        const wanted = new Set(statusFilter.split(",").map((s) => s.trim()).filter(Boolean));
+        enriched = enriched.filter((t) => wanted.has(t.status.toLowerCase()));
+      }
+
       return {
         content: JSON.stringify({ todos: enriched, count: enriched.length }),
         metadata: {
@@ -453,7 +458,7 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
       };
     }
 
-    if (action !== "status" && action !== "stop") {
+    if (action !== "status" && action !== "stop" && action !== "wait") {
       throw new Error(`controlAgentRun: 未知 action "${action}"。`);
     }
     if (!args.runId) throw new Error(`controlAgentRun(action:"${action}"): 缺少 runId。`);
@@ -473,79 +478,59 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
         tailLines > 0
           ? tailFile(record.logPath, tailLines, resolveFs(deps))
           : undefined;
-      const name = resolveRunLabel(reconciled);
-      const logLines = logTail ? logTail.split("\n") : undefined;
-      const labels = agentRunCardLabels();
+      // Q 接线：读到失败终态时回填熔断表（幂等；status/wait 共用同一实现）。
+      return buildRunStatusPayload(reconciled, deps, { logTail });
+    }
 
-      // ── Q 接线：读到失败终态时回填熔断表 ───────────────────────────
-      // run 进入 failed/orphaned 等终态时，从日志/错误信息分类失败原因；
-      // 若是 quota，把 provider target 写进熔断表，下次 startAgentRun 会被
-      // 前置检查拦截。非 quota 失败不写熔断（classifyRunFailure 返回 other）。
-      // 只在首次见到该终态时写一次（幂等：重复 status 查询会重复写，但
-      // buildBreakerEntry 用 now+TTL 覆盖，不会无限延长——这是可接受的）。
-      if (reconciled.status === "failed" || reconciled.status === "orphaned") {
-        try {
-          const failureSource = logTail ?? reconciled.note ?? "";
-          const failureInfo = classifyRunFailure(
-            failureSource || reconciled.status,
-          );
-          if (failureInfo.reason === "quota") {
-            const t = resolveTarget(deps, reconciled.agentKey);
-            const entry = buildBreakerEntry(
-              resolveNowMs(deps),
-              t,
-              "quota",
-              failureInfo.retryAfterMs,
-            );
-            resolveBreakerStore(deps).set(entry);
-          }
-        } catch {
-          // 熔断回填失败不影响 status 返回。
-        }
-      }
-
-      return {
-        content: JSON.stringify({
-          runId: reconciled.runId,
-          found: true,
-          status: reconciled.status,
-          pid: reconciled.pid ?? null,
-          agentKey: reconciled.agentKey,
-          ...(reconciled.agentName ? { agentName: reconciled.agentName } : {}),
-          startedAt: reconciled.startedAt,
-          endedAt: reconciled.endedAt ?? null,
-          exitCode: reconciled.exitCode ?? null,
-          // Expose dialogId so the caller can read the agent's actual output
-          // via `nolo dialog read <dialogId>`. The dialog is the authoritative
-          // result store; the run log is the child process stdout/stderr,
-          // whose contents vary by provider (some stream tokens to stdout,
-          // some only emit startup + stderr). Because status does not carry
-          // logTail by default, a "done" run with an empty logTail is
-          // indistinguishable from a hung run without this field. Surfacing
-          // dialogId gives the caller a reliable way to fetch the result.
-          ...(reconciled.dialogId ? { dialogId: reconciled.dialogId } : {}),
-          // Progress is what makes tailLines:0 an actual answer to "is it
-          // stuck?". Without it a poll returns `running` and a pid, so the only
-          // way to tell a working run from a wedged one was to pull 30 lines of
-          // log — the exact thing the orchestration prompt tells the model not
-          // to do. The registry has been recording this all along and `nolo
-          // agent status` has been printing it; only the tool was blind.
-          ...buildProgressField(reconciled, resolveNowMs(deps)),
-          ...(logTail !== undefined ? { logTail } : {}),
-          ...(logLines ? { logLines } : {}),
-        }),
-        metadata: {
-          displayData: formatStatusRunCard(name, reconciled.status, {
-            runId: reconciled.runId,
-            timing: {
-              startedAt: readTimestamp(reconciled.startedAt),
-              finishedAt: readTimestamp(reconciled.endedAt),
+    // ── W 接线：action="wait" 轮询本地 run 记录直到终态 ───────────────
+    // 本地 --bg 的 run 是本地子进程，wait 语义 = 轮询 ~/.nolo/runs/ 记录直到
+    // 终态（done/failed/timeout/killed/cancelled/orphaned）。每次轮询复用 status
+    // 的 checkStaleRun 惰性对账：子进程写了终态直接读到；子进程静默退出（没来得
+    // 及写终态）会被对账成 orphaned——两条收敛路径都覆盖。超时返回 status="timeout"
+    // （不是失败，run 记录不被改写），可稍后再 wait 或改用 status/stop。
+    if (action === "wait") {
+      const timeoutMs =
+        typeof args.timeoutMs === "number" && args.timeoutMs > 0
+          ? args.timeoutMs
+          : DEFAULT_WAIT_TIMEOUT_MS;
+      const startMs = resolveNowMs(deps);
+      const deadline = startMs + timeoutMs;
+      const sleep =
+        deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+      let reconciled = record;
+      for (;;) {
+        reconciled = checkStaleRun(record.runId, deps) ?? record;
+        if (isAgentRunTerminalStatus(reconciled.status)) break;
+        const nowMs = resolveNowMs(deps);
+        const waitedMs = nowMs - startMs;
+        if (nowMs >= deadline) {
+          // 超时：run 仍未终态。返回 status="timeout" 标记（非失败），附带真实
+          // runStatus + progress 让调用方判断它是否还在干活。
+          return {
+            content: JSON.stringify({
+              runId: reconciled.runId,
+              found: true,
+              status: "timeout",
+              runStatus: reconciled.status,
+              pid: reconciled.pid ?? null,
+              agentKey: reconciled.agentKey,
+              ...(reconciled.agentName ? { agentName: reconciled.agentName } : {}),
+              startedAt: reconciled.startedAt,
+              waitedMs,
+              timeoutMs,
+              ...buildProgressField(reconciled, nowMs),
+            }),
+            metadata: {
+              displayData: `⏳ wait 超时（${Math.round(waitedMs / 1000)}s），run 仍在运行：可稍后再 wait，或改用 status/stop`,
             },
-            logLines,
-            labels,
-          }),
-        },
-      };
+          };
+        }
+        await sleep(WAIT_POLL_INTERVAL_MS);
+      }
+      // 到达终态：失败终态同样回填熔断表（Q 接线，与 status 一致）；返回与
+      // status 相同形状的结果（含 dialogId/exitCode/progress，不带日志）。
+      ackRunRecord(reconciled.runId, deps);
+      return buildRunStatusPayload(reconciled, deps);
     }
 
     // action === "stop"

@@ -24,6 +24,24 @@ export const SYSTEM_AGENT_CAPABILITIES = [
     icon: "🌐",
   },
   {
+    id: "web-scrape",
+    label: "深度网页抓取",
+    description:
+      "在普通联网搜索之外，用 Firecrawl 做结构化搜索与整页抓取，适合需要完整正文、文档站点或站内检索的场景。",
+    tools: ["firecrawl_search", "firecrawl_scrape"],
+    defaultEnabled: true,
+    icon: "🕸️",
+  },
+  {
+    id: "conversation-todo",
+    label: "对话 Todo",
+    description:
+      "在多步骤对话中显示和更新任务进度。关闭后，Agent 不会使用对话内 Todo 工具。",
+    tools: ["setTodoList"],
+    defaultEnabled: true,
+    icon: "☑️",
+  },
+  {
     id: "agent-orchestration",
     label: "多 agent 编排",
     description:

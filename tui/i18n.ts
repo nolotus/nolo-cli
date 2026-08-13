@@ -596,6 +596,18 @@ const STRINGS = {
     en: "Forked dialog {0} → {1} (no summary needed).",
     zh: "已分叉对话 {0} → {1}（无需压缩）。",
   },
+  compactSuccess: {
+    en: "✓ Compacted dialog {0} → {1} in {2}.",
+    zh: "✓ 已压缩对话 {0} → {1}，耗时 {2}。",
+  },
+  compactSuccessWithCount: {
+    en: "✓ Compacted dialog {0} → {1} in {2} ({3} messages compressed).",
+    zh: "✓ 已压缩对话 {0} → {1}，耗时 {2}（压缩 {3} 条消息）。",
+  },
+  compactForked: {
+    en: "✓ Forked dialog {0} → {1} in {2} (no summary needed).",
+    zh: "✓ 已分叉对话 {0} → {1}，耗时 {2}（无需压缩）。",
+  },
   agentCurrent: { en: "Current agent: {0} ({1})", zh: "当前 agent：{0}（{1}）" },
   agentUnknown: {
     en: "I don't know agent \"{0}\" yet.\nUse /switch, /switch list, /switch minimax-m3, or a full agent key.",
@@ -742,6 +754,11 @@ const TOOL_LABELS: Record<string, { en: string; zh: string }> = {
   captureVisualState: { en: "Capture", zh: "截屏" },
   // Workspace / diagnostics
   searchWorkspace: { en: "Search workspace", zh: "搜索工作区" },
+  // 同一工具在 web/server 工具面用 snake_case 命名（packages/ai/tools/index.ts）。
+  search_workspace: { en: "Search workspace", zh: "搜索工作区" },
+  // 全空间搜索：内置 skill search-all-spaces 声明的工作区工具，loadSkill 后进入
+  // 工具面；同样需要中英文标签，避免回退成裸工具名。
+  search_all_spaces: { en: "Search all spaces", zh: "搜索全部空间" },
   cliDoctor: { en: "Doctor", zh: "自检" },
   cliWhoami: { en: "Whoami", zh: "查看身份" },
   checkEnv: { en: "Check env", zh: "检查环境" },

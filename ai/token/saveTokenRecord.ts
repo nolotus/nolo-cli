@@ -36,12 +36,15 @@ export const createTokenRecord = (
 export const saveTokenRecord = async (
   tokenData: TokenUsageData,
   record: TokenRecord,
-  thunkApi: { dispatch: (action: unknown) => unknown }
+  thunkApi: { dispatch: (action: unknown) => unknown },
+  callId?: string,
 ) => {
   const ownerUserId = tokenData.userId || record.userId;
   const eventTime =
     tokenData.timestamp ?? record.createdAt ?? Date.now();
-  const key = createTokenKey.record(ownerUserId, eventTime);
+  const key = callId
+    ? createTokenKey.recordForStableCall(ownerUserId, callId)
+    : createTokenKey.record(ownerUserId, eventTime);
   try {
     await (thunkApi.dispatch(
       write({

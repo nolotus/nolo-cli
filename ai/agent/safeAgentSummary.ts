@@ -1,4 +1,5 @@
 import { getModelAbility, type ModelAbility } from "../llm/modelAbility";
+import { isOAuthApiKeyRef } from "../../agent-runtime/serverProxyPolicy";
 
 export interface SafeAgentSummary {
   id: string | null;
@@ -25,11 +26,12 @@ export interface SafeAgentSummary {
   isFavorite: boolean;
   favoritedAt: number | string | null;
   isPublic: boolean;
-  /** True when the agent is owned by the current user (record.userId matches).
-   *  Self-owned agents that use the user's own API key (apiSource "custom") or
-   *  the user's own OAuth run on the user's own quota — they do not consume
-   *  platform credits, so delegation should prefer them. */
+  /** True when the agent is owned by the current user (record.userId matches). */
   isOwned: boolean;
+  /** True when the agent uses one of the supported user OAuth subscriptions. */
+  isOAuth: boolean;
+  /** Epoch ms at which a provider quota/rate-limit is expected to recover. */
+  nextAvailableAt?: number;
   updatedAt: string | number | null;
 }
 
@@ -191,6 +193,10 @@ export function toSafeAgentSummary(
   const favStatus = resolveFavoriteStatus(record, options);
   const isPublic = record?.isPublic === true || record?.isPublicFlag === true || record?.publicRecordExists === true;
   const updatedAt = safeTimestamp(record?.updatedAt ?? record?.createdAt ?? record?.created);
+  const nextAvailableAt =
+    typeof record?.nextAvailableAt === "number" && Number.isFinite(record.nextAvailableAt)
+      ? record.nextAvailableAt
+      : undefined;
 
   // 自建判断：record.userId / ownerId 任一等于当前用户，或 dbKey 以完整前缀
   // `agent-<currentUserId>-` 开头（不解析分段——userId 本身可能含连字符，
@@ -207,6 +213,7 @@ export function toSafeAgentSummary(
     typeof record?.dbKey === "string" &&
     record.dbKey.startsWith(`agent-${currentUserId}-`);
   const isOwned = isOwnedByRecord || isOwnedByDbKey;
+  const isOAuth = isOAuthApiKeyRef(record?.apiKeyRef);
 
   // Runnable agentKey for delegation: owned agents → agent-<userId>-<id> (the
   // current user can always resolve these); confirmed public agents → their
@@ -240,6 +247,8 @@ export function toSafeAgentSummary(
     favoritedAt: favStatus.favoritedAt,
     isPublic,
     isOwned,
+    isOAuth,
+    ...(nextAvailableAt !== undefined ? { nextAvailableAt } : {}),
     updatedAt,
   };
 }
@@ -247,6 +256,8 @@ export function toSafeAgentSummary(
 export function sortSafeAgentSummaries<
   T extends {
     isOwned?: boolean;
+    isOAuth?: boolean;
+    apiSource?: string | null;
     isFavorite?: boolean;
     favoritedAt?: number | string | null;
     updatedAt?: number | string | null;
@@ -254,18 +265,24 @@ export function sortSafeAgentSummaries<
   }
 >(agents: T[]): T[] {
   return [...agents].sort((left, right) => {
-    // 自建（自己的 API/OAuth，不消耗平台配额）优先 → 收藏 → 时间。
-    const leftOwned = left.isOwned === true;
-    const rightOwned = right.isOwned === true;
-
-    if (leftOwned && !rightOwned) return -1;
-    if (!leftOwned && rightOwned) return 1;
+    // 用户选择优先：收藏 > 收藏内 OAuth/自定义 > 其他 OAuth/自定义 > 其他。
+    // 收藏优先于 owned，避免用户明确收藏的 agent 被未收藏的自建 agent 挡住。
+    const isUserConfigured = (agent: typeof left) =>
+      agent.isOAuth === true || (agent.isOwned === true && agent.apiSource === "custom");
+    const priority = (agent: typeof left) => {
+      const favorite = agent.isFavorite === true;
+      const configured = isUserConfigured(agent);
+      if (favorite && configured) return 0;
+      if (favorite) return 1;
+      if (configured) return 2;
+      if (agent.isOwned === true) return 3;
+      return 4;
+    };
+    const priorityDiff = priority(left) - priority(right);
+    if (priorityDiff !== 0) return priorityDiff;
 
     const leftFav = left.isFavorite === true;
     const rightFav = right.isFavorite === true;
-
-    if (leftFav && !rightFav) return -1;
-    if (!leftFav && rightFav) return 1;
 
     if (leftFav && rightFav) {
       const leftFavAt = parseTimestamp(left.favoritedAt);

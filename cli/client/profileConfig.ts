@@ -21,7 +21,10 @@ export type NoloProfileConfig = {
 export const normalizeProfileServerUrl = canonicalizeNoloServerUrl;
 
 export function getDefaultProfileConfigPath() {
-  return join(homedir(), ".nolo", "config.json");
+  const noloHome = process.env.NOLO_HOME?.trim();
+  return noloHome
+    ? join(noloHome, "config.json")
+    : join(homedir(), ".nolo", "config.json");
 }
 
 export function loadProfileConfig(path = getDefaultProfileConfigPath()): NoloProfileConfig | null {
@@ -98,8 +101,8 @@ export function buildCliRuntimeEnv(
   const explicitServerUrl =
     processEnv.NOLO_SERVER || processEnv.NOLO_SERVER_URL || processEnv.BASE_URL;
   return {
-    ...processEnv,
     ...profileEnv,
+    ...processEnv,
     ...(explicitAuthToken
       ? { AUTH_TOKEN: explicitAuthToken }
       : {}),

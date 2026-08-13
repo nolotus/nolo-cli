@@ -1,10 +1,6 @@
 // 文件路径: ai/tools/agent/agentTools.ts
 
 import {
-    callAgentFunctionSchema,
-    callAgentFunc,
-} from "./callAgentTool";
-import {
     createAgentToolFunctionSchema,
     createAgentToolFunc,
 } from "./createAgentTool";
@@ -44,6 +40,10 @@ import {
     controlAgentRunFunctionSchema,
     controlAgentRunFunc,
 } from "./controlAgentRunTool";
+import {
+    setTodoListFunctionSchema,
+    setTodoListFunc,
+} from "./setTodoListTool";
 
 import type { ToolDefinition } from "../index";
 
@@ -134,19 +134,6 @@ export const agentToolDefinitions: ToolDefinition[] = [
         defaultConsent: "ask",
     },
     {
-        id: "callAgent",
-        schema: callAgentFunctionSchema,
-        executor: callAgentFunc,
-        description: {
-            name: "callAgent",
-            description:
-                "调用一个指定的 Agent 执行一次子任务，可用于多 Agent 编排、自动评测、自动对比等场景。",
-            category: "计划与编排",
-        },
-        behavior: "orchestrator",
-        uiGroup: "agent",
-    },
-    {
         id: "runStreamingAgent",
         schema: runStreamingAgentFunctionSchema,
         executor: runStreamingAgentFunc,
@@ -214,6 +201,22 @@ export const agentToolDefinitions: ToolDefinition[] = [
         behavior: "data",
         uiGroup: "agent",
         riskLevel: "medium",
+        costLevel: "low",
+        defaultConsent: "auto",
+    },
+    {
+        id: "setTodoList",
+        schema: setTodoListFunctionSchema,
+        executor: setTodoListFunc,
+        description: {
+            name: "setTodoList",
+            description:
+                "设置/整体更新当前对话的任务列表（Kimi 式 Todo 列表）。用于多步骤任务进度追踪与展示。",
+            category: "计划与编排",
+        },
+        behavior: "data",
+        uiGroup: "agent",
+        riskLevel: "low",
         costLevel: "low",
         defaultConsent: "auto",
     },

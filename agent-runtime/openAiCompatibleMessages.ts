@@ -138,8 +138,10 @@ export function shouldStripReasoningContentForOutbound(
   const p = provider?.trim().toLowerCase();
   const m = model?.trim().toLowerCase();
   if (!p || !m) return false;
-  // DeepSeek-V4-flash rejects string reasoning_content on history replay.
+  // DeepSeek V4 rejects string reasoning_content on history replay.
   // Applies to both legacy "deepseek" provider and current "nolo" provider.
-  if (p === "deepseek" || p === "nolo") return m === "deepseek-v4-flash";
+  if (p === "deepseek" || p === "nolo") {
+    return m === "deepseek-v4-flash" || m === "deepseek-v4-pro";
+  }
   return false;
 }

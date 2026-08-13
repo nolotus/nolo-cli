@@ -46,7 +46,7 @@ export interface RunAgentBackgroundArgs {
     onFailed?: (error: string) => void;
     /** 外部取消信号 */
     signal?: AbortSignal;
-    /** 是否等待 SSE 完成事件；false 时拿到 dialogId 立即返回（用于 callAgent background 模式） */
+    /** 是否等待 SSE 完成事件；false 时拿到 dialogId 立即返回（startAgentRun wait:false 异步派发） */
     waitForCompletion?: boolean;
     /**
      * 父对话 id。非空时透传给服务端 /api/agent/run 的 parentDialogId，
@@ -59,6 +59,19 @@ export interface RunAgentBackgroundArgs {
      * handler skips createPendingDialog/finalizeDialog when this is true.
      */
     ephemeral?: boolean;
+    /**
+     * Run kind. "subtask" (default for this background dispatch) = agent-run
+     * isolation: zero project context, no orchestration tools, no git-write
+     * tools. Omit to keep the legacy interactive behavior.
+     */
+    runKind?: "interactive" | "subtask";
+    /**
+     * 幂等键：同一次逻辑 run 的所有 POST 重试共用同一个 key。服务端识别后，
+     * 若该 key 已创建过 run，直接返回已存在的 dialogId，不重复创建后台任务。
+     * 缺省时按本次 dispatch 自动生成一个（重试循环内保持稳定）。调用方传入
+     * 稳定 key（如 tool_call_id）可让跨 dispatch 的重放也被去重。
+     */
+    idempotencyKey?: string;
 }
 
 const MAX_SSE_RETRIES = 3;
@@ -87,6 +100,11 @@ function createRetryableError(message: string, retryAfterMs?: number): Retryable
         retryAfterMs,
     });
 }
+
+// 幂等键生成：一次 runAgentBackground dispatch 内所有 POST 重试共享同一个 key，
+// 服务端据此对 run-start 去重（响应丢失后的重试不会创建多个相同后台任务）。
+const createAgentRunIdempotencyKey = () =>
+    `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
 function createSubscriptionError(
     status: number,
@@ -127,9 +145,10 @@ function parseRetryableJson(text: string) {
 
 /**
  * 订阅单次 dialog 事件流，收到 done/failed 则 resolve/reject，
- * 流意外关闭时 reject 并标记 retryable=true 供上层重试。
+ * 流意外关闭时 reject 并标记 retryable=true 供上层重试，
+ * abort/中断（用户取消、超时清理）时 reject AbortError，绝不 resolve 伪装成 done。
  */
-async function listenToDialogEvents(
+export async function listenToDialogEvents(
     dialogId: string,
     currentServer: string,
     authHeader: string,
@@ -214,11 +233,11 @@ async function listenToDialogEvents(
                 const err = createRetryableError("事件流意外关闭");
                 reject(err);
             } catch (e: unknown) {
-                if (isAbortError(e)) {
-                    resolve({ dialogId });
-                } else {
-                    reject(e);
-                }
+                // abort/中断（用户取消、超时清理、SSE 连接被外部关闭）必须向上抛，
+                // 不能 resolve({dialogId}) 伪装成「已 done」——否则调用方会把取消
+                // 误报为成功。上层（runAgentBackground 重试循环 / controlAgentRun
+                // 的 handleWait）已按 isAbortError 识别并直接向上传播。
+                reject(e);
             }
         };
 
@@ -231,7 +250,7 @@ export const runAgentBackground = createAsyncThunk<
     RunAgentBackgroundArgs,
     { state: RootState }
 >("agent/runBackground", async (args, { getState, signal: thunkSignal }) => {
-    const { agentKey, userInput, serverBase, spaceId, parentDialogId, ephemeral, onStatusChange, onDone, onFailed } = args;
+    const { agentKey, userInput, serverBase, spaceId, parentDialogId, ephemeral, runKind, onStatusChange, onDone, onFailed } = args;
 
     const state = getState();
     const currentServer = normalizeServerOrigin(serverBase) || selectCurrentServer(state);
@@ -254,31 +273,57 @@ export const runAgentBackground = createAsyncThunk<
     // 预算在每次失败响应后按类型裁决，循环上限也按预算走。
     let maxRunStartRetries = MAX_RUN_START_RETRIES;
 
+    // 幂等键：本次 dispatch 内所有 POST 重试共用。服务端据此去重，响应丢失后
+    // 的重试不会创建多个相同后台任务。
+    const idempotencyKey = args.idempotencyKey?.trim() || createAgentRunIdempotencyKey();
+
     for (let attempt = 0; attempt <= maxRunStartRetries; attempt++) {
-        const runRes = await fetch(`${currentServer}/api/agent/run`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                ...(authHeader && { Authorization: authHeader }),
-            },
-            body: JSON.stringify({
-                agentKey,
-                userInput,
-                spaceId,
-                background: true,
-                ...(parentDialogId ? { parentDialogId } : {}),
-                ...(ephemeral ? { ephemeral: true } : {}),
-                runtimeContext: {
-                    surface: "web",
-                    host: "browser",
-                    runtime: "react",
-                    entrypoint: "background-agent-run",
-                    capabilities: ["background", "sse-events"],
-                    ...(parentDialogId ? { parentThreadId: parentDialogId } : {}),
+        let runRes: Response;
+        try {
+            runRes = await fetch(`${currentServer}/api/agent/run`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(authHeader && { Authorization: authHeader }),
                 },
-            }),
-            signal: effectiveSignal,
-        });
+                body: JSON.stringify({
+                    agentKey,
+                    userInput,
+                    spaceId,
+                    background: true,
+                    idempotencyKey,
+                    ...(parentDialogId ? { parentDialogId } : {}),
+                    ...(ephemeral ? { ephemeral: true } : {}),
+                    ...(runKind ? { runKind } : {}),
+                    runtimeContext: {
+                        surface: "web",
+                        host: "browser",
+                        runtime: "react",
+                        entrypoint: "background-agent-run",
+                        capabilities: ["background", "sse-events"],
+                        ...(parentDialogId
+                            ? {
+                                  parentThreadId: parentDialogId,
+                                  // 标记为 background_handoff：子 run 到达终态时，
+                                  // 服务端会向父对话注入 terminal wake 消息，父 agent
+                                  // 下一 turn 自然看到结果并继续——无需轮询。
+                                  presentationIntent: "background_handoff",
+                              }
+                            : {}),
+                    },
+                }),
+                signal: effectiveSignal,
+            });
+        } catch (e: any) {
+            if (isAbortError(e)) throw e;
+            // 网络瞬断：响应可能在服务端创建 run 之后丢失。POST 已携带幂等键，
+            // 重试是安全的——服务端会返回已创建的 dialogId，不会重复建 run。
+            if (attempt < maxRunStartRetries) {
+                await waitForRetryDelay(SSE_RETRY_DELAY_MS, effectiveSignal);
+                continue;
+            }
+            throw new Error(`启动后台任务失败: ${e?.message ?? String(e)}`);
+        }
 
         if (runRes.ok) {
             runResponse = (await runRes.json()) as {

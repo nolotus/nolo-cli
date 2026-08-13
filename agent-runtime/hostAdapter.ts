@@ -126,6 +126,32 @@ export type AgentRuntimeSaveTurnInput = {
   agentKey: string;
   messages: AgentRuntimeChatMessage[];
   result: AgentRuntimeResult;
+  /**
+   * Individual provider calls made during the turn. Billing must consume
+   * these records instead of the aggregate result usage because a tool loop
+   * can contain several independently billed/idempotent upstream calls.
+   */
+  usageRecords?: Array<{
+    /** Stable for retries of this saved turn; provider_call_id when available. */
+    callId: string;
+    usage: Record<string, unknown>;
+    model: string;
+    provider?: string;
+  }>;
+  /** Full token consumption across tool-loop and compaction provider calls. */
+  accountingUsage?: Record<string, unknown>;
+  /** Billing identity resolved from the agent record (never includes secrets). */
+  billingConfig?: {
+    model: string;
+    provider?: string;
+    apiSource?: string;
+    apiKeyRef?: string | null;
+    inputPrice?: number;
+    outputPrice?: number;
+    sharingLevel?: "default" | "split" | "full";
+    id?: string;
+    userId?: string;
+  };
   runtimeContext?: Record<string, any> | null;
   continueDialogId?: string;
   spaceId?: string;

@@ -8,6 +8,12 @@ export type TuiState = {
   agentKey: string;
   agentName: string;
   dialogId?: string;
+  /**
+   * dialogLabel 是状态/窗口标题用的显示名（title 优先、回退 id）；
+   * dialogTitle 只在服务端真的产出标题时才有值，供状态栏独立标题段使用
+   * （无标题时该段不渲染）。
+   */
+  dialogTitle?: string;
   dialogKey?: string;
   dialogOwnerId?: string;
   dialogLabel: string;

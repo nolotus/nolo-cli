@@ -251,6 +251,10 @@ export async function runAgentListCommand(
       const credentialLine = agent.credentialConfigured
         ? `credentialConfigured=true${agent.credentialRef ? ` credentialRef=${agent.credentialRef}` : ""}${agent.apiKeyRef ? ` apiKeyRef=${agent.apiKeyRef}` : ""}`
         : "credentialConfigured=false";
+      const availabilityLine =
+        typeof agent.nextAvailableAt === "number" && agent.nextAvailableAt > Date.now()
+          ? `nextAvailableAt=${new Date(agent.nextAvailableAt).toISOString()}`
+          : "nextAvailableAt=now";
       output.write(
         [
           `\n[${status}] ${agent.name}`,
@@ -265,6 +269,7 @@ export async function runAgentListCommand(
           `publicKey=${agent.publicRecordExists ? agent.publicKey : "-"}${flagMismatch}`,
           `tools=${agent.tools.join(", ") || "-"}`,
           credentialLine,
+          availabilityLine,
         ].join("\n")
       );
       output.write("\n");

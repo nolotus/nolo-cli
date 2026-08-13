@@ -12,6 +12,7 @@ import type {
 } from "../agent-runtime";
 import { resolveRuntimeToolSurfaceForAgent } from "../agent-runtime/runtimeToolSurface";
 import { asOptionalTrimmedString } from "../core/optionalString";
+import { isSystemBuiltinTrustedAgentKey } from "../core/builtinAgents";
 import type { EnvLike } from "./localRuntimeHelpers";
 import { NOLO_DEFAULT_AGENT_ID, NOLO_DEFAULT_AGENT_KEY } from "../agentAliases";
 import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
@@ -63,18 +64,21 @@ export function withResolvedRuntimeToolSurface(
   const currentUserId = resolveLocalUserId(env);
   const rawRecord = (agentConfig as any).rawRecord ?? {};
   const ownerId = asOptionalTrimmedString(rawRecord.userId) ?? null;
+  const agentKey = rawRecord.dbKey ?? agentConfig.key;
   const toolSurface = resolveRuntimeToolSurfaceForAgent({
     explicitToolNames: agentConfig.toolNames,
     currentUserId,
     agentOwnerId: ownerId,
-    agentKey: rawRecord.dbKey ?? agentConfig.key,
+    agentKey,
     isPublic:
       !isBuiltinNoloAgentConfig(agentConfig) && rawRecord.isPublic === true,
     sharingLevel:
       typeof rawRecord.sharingLevel === "string"
         ? rawRecord.sharingLevel
         : null,
-    trustedPrivateInvocation: isBuiltinNoloAgentConfig(agentConfig),
+    trustedPrivateInvocation:
+      isBuiltinNoloAgentConfig(agentConfig) ||
+      isSystemBuiltinTrustedAgentKey(agentKey),
     runtimeHost: "cli",
   });
   return {

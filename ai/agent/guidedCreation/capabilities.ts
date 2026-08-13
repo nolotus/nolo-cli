@@ -51,7 +51,7 @@ export const GUIDED_AGENT_CAPABILITIES: Record<
       zhCN: "需要多 Agent 协作、评审或分工时使用。",
       en: "Use when the agent should collaborate with other agents.",
     },
-    toolIds: ["callAgent"],
+    toolIds: ["startAgentRun"],
   },
   apps: {
     id: "apps",

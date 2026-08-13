@@ -105,6 +105,9 @@ describe("compactDialog", () => {
     expect(result.dialogId).not.toBe(OLD_DIALOG_ID);
     expect(result.dialogKey).toMatch(/^dialog-user01-/);
     expect(result.spaceId).toBe("myspace");
+    // No summaryLlmCaller wired → no compression ran
+    expect(result.summaryGenerated).toBe(false);
+    expect(result.compactedMessageCount).toBe(0);
   });
 
   test("does not patch space when the dialog has no spaceId", async () => {
@@ -292,6 +295,8 @@ describe("compactDialog with summary compression", () => {
 
     // Summary was generated
     expect(result.summaryGenerated).toBe(true);
+    // Compression folded some messages into the summary
+    expect(result.compactedMessageCount).toBeGreaterThan(0);
 
     // PATCH was called to write summary back to old dialog
     const patchCall = calls.find(c => c.method === "PATCH");
@@ -331,7 +336,7 @@ describe("compactDialog with summary compression", () => {
         if (url.includes("dialog-read")) {
           return new Response(JSON.stringify({
             ok: true,
-            msgs: Array.from({ length: 120 }, (_, i) => ({
+            msgs: Array.from({ length: 140 }, (_, i) => ({
               id: `m${i + 1}`,
               role: i % 2 === 0 ? "user" : "assistant",
               content: `message ${i + 1}`,
@@ -355,6 +360,7 @@ describe("compactDialog with summary compression", () => {
 
     // No summary generated, but fork still succeeds
     expect(result.summaryGenerated).toBe(false);
+    expect(result.compactedMessageCount).toBe(0);
 
     // No PATCH to dialog record (no summary to write back).
     // addDialogToSpaceIfNeeded also PATCHes, so filter by URL.

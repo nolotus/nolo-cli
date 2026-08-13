@@ -9,13 +9,11 @@ import {
 } from "../agent-runtime/modelLayerOverride";
 import type { AgentRuntimeHostAdapter } from "../agentRuntimeLocal";
 import {
-  createCliCallAgentToolExecutor,
   createCliLocalRuntimeAdapter,
   isBuiltinNoloAgentRef,
 } from "./localRuntimeAdapter";
 import type {
   LocalAgentTurnInput,
-  LocalAgentTurnResult,
 } from "../agent-runtime/localLoop";
 import { buildTurnTokenUsage, formatUsage, shouldShowUsage } from "./tokenUsage";
 
@@ -149,7 +147,7 @@ function applyEphemeralIfRequested(
 /**
  * quick-chat 自动路由的 model 层覆盖（local 模式）：tier agent 的配置从
  * adapter 读出后，用覆盖包替换其 model 层再交给 local loop；
- * 其余 agentRef 透传，不影响 callAgent 子代理。
+ * 其余 agentRef 透传，不影响 startAgentRun 子代理。
  */
 function wrapLoadAgentConfigWithModelOverride(
   adapter: AgentRuntimeHostAdapter,
@@ -718,66 +716,7 @@ async function runLocalAgentTurnForCli(
       : undefined;
   const currentDialogId = options.continueDialogId ?? ulid();
 
-  const runChildTurn = async (
-    input: LocalAgentTurnInput,
-  ): Promise<LocalAgentTurnResult> => {
-    const { runLocalAgentTurn } = await import("../agentRuntimeLocal");
-    return runLocalAgentTurn(input);
-  };
-
-  const createFreshChildBaseAdapter = () => {
-    const fresh =
-      options.localRuntimeAdapterFactory?.(options.env, {
-        cwd: options.localRuntimeCwd,
-      }) ?? buildDefaultLocalRuntimeAdapter(options);
-    return applyEphemeralIfRequested(options, fresh);
-  };
-
-  const withLocalDelegation = (args: {
-    base: AgentRuntimeHostAdapter;
-    dialogId: string;
-    spaceId?: string;
-    runtimeContext?: Record<string, any>;
-  }): AgentRuntimeHostAdapter => {
-    let adapter: AgentRuntimeHostAdapter;
-    const callAgentExecutor = createCliCallAgentToolExecutor(
-      {
-        env: options.env,
-        fetchImpl: options.fetchImpl,
-        cwd: options.localRuntimeCwd,
-        output: options.output,
-      },
-      {
-        createChildAdapter: (child) =>
-          withLocalDelegation({
-            base: createFreshChildBaseAdapter(),
-            dialogId: child.dialogId,
-            spaceId: child.spaceId,
-            runtimeContext: child.runtimeContext,
-          }),
-        runChildTurn,
-        dialogId: args.dialogId,
-        spaceId: args.spaceId,
-        runtimeContext: args.runtimeContext,
-      },
-    );
-    adapter = {
-      ...args.base,
-      executeTool: async (call) => {
-        if (call.name === "callAgent") {
-          return callAgentExecutor(call);
-        }
-        return args.base.executeTool(call);
-      },
-    };
-    return adapter;
-  };
-  const adapter = withLocalDelegation({
-    base: baseAdapter,
-    dialogId: currentDialogId,
-    spaceId: options.spaceId,
-    runtimeContext,
-  });
+  const adapter = baseAdapter;
   const expandedMessage = options.pastedTextStore?.items.size
     ? expandCollapsedPastes(options.message, options.pastedTextStore)
     : options.message;

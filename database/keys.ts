@@ -451,6 +451,9 @@ export const createTokenKey = {
   record: curry((userId: string, timestamp: number) =>
     createKey("token", userId, timestamp.toString())
   ),
+  /** Server provider-call record: retry-stable even when the retry clock changes. */
+  recordForStableCall: (userId: string, callId: string) =>
+    createKey("token", userId, "call", encodeURIComponent(callId)),
   range: (userId: string, timestamp: number) => ({
     start: createKey("token", userId, timestamp.toString()),
     end: createKey("token", userId, (timestamp + 86_400_000).toString()),

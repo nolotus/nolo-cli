@@ -1,8 +1,3 @@
-// Contract compatibility comment for callAgentLocal.test.ts source checks:
-// toolNameSet.has("callAgent") ? prepareTools(["callAgent"])
-// createChildAdapter:
-// adapter: childAdapter
-
 import type {
   AgentRuntimeAgentConfig,
   AgentRuntimeHostAdapter,
@@ -131,10 +126,6 @@ import {
 // Keep 502/504 terminal: they are ambiguous without durable turn idempotency.
 // The long drain budget is now handled inside `fetchWithTransientRetry`
 // (core_draining responses only), so no platform-specific constant is needed.
-import {
-  persistCliPendingChildDialog,
-  persistCliFailedChildDialog,
-} from "./cliChildDialogPersist";
 import {
   parseLocalToolBudgets,
   resolveExecShellDetachMs,
@@ -265,7 +256,6 @@ import {
   buildLocalDialogWritePlan,
   localDialogMessageRecordToRuntimeMessage,
 } from "./localDialogRecords";
-import { generateLocalDialogTitle } from "../agent-runtime/dialogTitleLlm";
 import {
   buildLocalAgentLookupKeys,
   shouldReadAgentKeyRemotely,
@@ -286,10 +276,12 @@ import {
 import { prepareTools } from "../ai/tools/prepareTools";
 import { canonicalizeToolNames } from "../ai/tools/toolNameAliases";
 import {
-  buildNoloWorkspaceCliToolExecutors,
   buildNoloWorkspaceOpenAiTools,
   parseNoloWorkspaceToolArguments,
 } from "../agent-runtime/noloWorkspaceTools";
+import {
+  buildNoloWorkspaceCliToolExecutors,
+} from "../agent-runtime/noloWorkspaceTools.node";
 import {
   executeCli as defaultExecuteCli,
   CliProviderQuotaError,
@@ -370,18 +362,15 @@ export {
   resolveCliEffectiveEnabledPacks,
   resolveCliRequestedToolNames,
   buildLocalPolicyToolNames,
-  createCliCallAgentToolExecutor,
   resolveProviderOpenAiToolBundle,
   buildLocalWorkspaceToolsetForEnv,
   buildServerPlatformOpenAiTools,
   withRuntimeEnabledPacksAndPrompt,
-  type CliCallAgentToolExecutorContext,
 } from "./localRuntimeTools";
 import {
   buildOpenAiTools,
   resolveCliRequestedToolNames,
   buildLocalPolicyToolNames,
-  createCliCallAgentToolExecutor,
   resolveProviderOpenAiToolBundle,
   withRuntimeEnabledPacksAndPrompt,
 } from "./localRuntimeTools";
@@ -676,7 +665,23 @@ export function createCliLocalRuntimeAdapter(
       const serverUrl = asOptionalTrimmedString(deps.env.NOLO_SERVER) ?? "https://us.nolo.chat";
       const authToken = asOptionalTrimmedString(deps.env.AUTH_TOKEN);
       const syncFetcher = authToken
-        ? (ref: string) => fetchServerSyncedCredential({ currentServer: serverUrl, authToken }, ref)
+        ? async (ref: string) => {
+            try {
+              return await fetchServerSyncedCredential(
+                { currentServer: serverUrl, authToken },
+                ref,
+              );
+            } catch (error) {
+              // Local OAuth/API-key execution must survive a server deploy or
+              // transient 502. A missing synced copy is not a failed turn;
+              // the local resolver/broker may still have the credential.
+              logLocalRuntimeDiagnostic("credential.sync.unavailable", {
+                ref,
+                error: toErrorMessage(error),
+              });
+              return null;
+            }
+          }
         : undefined;
 
       // Antigravity (Google Cloud Code Assist) is not OpenAI-compatible: local
@@ -950,6 +955,14 @@ export function createCliLocalRuntimeAdapter(
             return {
               content,
               ...(tool_calls ? { tool_calls } : {}),
+              // fetchCodexResponsesCompletion 已把 codex responses 流聚合完毕并归一化成
+              // OpenAI chat.completions 形状：choices[0].finish_reason（"stop"/"tool_calls"）
+              // + usage（prompt/completion/total_tokens）。必须透传，否则 localLoop 把正常走完
+              // 的空轮误判成 stream_truncated、TUI context chip 也拿不到 token 数更新。
+              finish_reason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined,
+              stream_complete: true,
+              // body 类型是 Record<string, unknown>，透传 usage 需 cast 到 AgentRuntimeResult.usage。
+              usage: result.body?.usage as Record<string, any> | undefined,
               trace: messages,
             };
           },

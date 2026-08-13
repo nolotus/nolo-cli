@@ -87,7 +87,7 @@ describe("dialog frame primitives", () => {
     try {
       const row = renderDialogRow({ label: "alpha", focused: true }, true);
       expect(row).toContain("\x1b[48;2;"); // surface fill behind the row
-      expect(row).toContain("\x1b[1m"); // bold
+      expect(row).not.toContain("\x1b[1m"); // bold yields to history user turns
       expect(row).toContain("❯ alpha");
       expect(row.endsWith("\x1b[0m")).toBe(true);
     } finally {

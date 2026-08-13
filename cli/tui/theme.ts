@@ -1,5 +1,5 @@
 import { resolveCliColorEnabled } from "../client/terminalStyles";
-import { displayWidth } from "./tuiAnsi";
+import { displayWidth, visibleWidth } from "./tuiAnsi";
 
 /**
  * TUI color tokens mirroring the app theme system.
@@ -53,12 +53,12 @@ export const THEME_PALETTES: Record<string, Record<TuiBrightness, TuiThemeColors
       muted: { hex: "5E6A78", ansiFallback: "\x1b[90m" }, // denser slate — 687584 read too blue in dense prose (inline code/tool labels); 5E6A78 pulls blue down while staying darker than the old value
     },
     dark: {
-      accent: { hex: "89B4FA", ansiFallback: "\x1b[34m" }, // blue
+      accent: { hex: "5BA3D9", ansiFallback: "\x1b[34m" }, // trail dark primary (was wrongly copied from catppuccin 89B4FA)
       chrome: { hex: "6C7086", ansiFallback: "\x1b[90m" },
-      success: { hex: "A6E3A1", ansiFallback: "\x1b[32m" },
-      warning: { hex: "F9E2AF", ansiFallback: "\x1b[33m" },
-      info: { hex: "94E2D5", ansiFallback: "\x1b[36m" },
-      danger: { hex: "F38BA8", ansiFallback: "\x1b[31m" },
+      success: { hex: "5CB87A", ansiFallback: "\x1b[32m" }, // trail dark success (was A6E3A1)
+      warning: { hex: "E6B35C", ansiFallback: "\x1b[33m" }, // trail dark warning (was F9E2AF)
+      info: { hex: "6BB8E8", ansiFallback: "\x1b[36m" }, // trail dark info (was 94E2D5)
+      danger: { hex: "E07060", ansiFallback: "\x1b[31m" }, // trail dark error (was F38BA8)
       muted: { hex: "9AA3B8", ansiFallback: "\x1b[90m" }, // dimmed from A6ADC8 so secondary text sits a step below body text
     },
   },
@@ -476,8 +476,7 @@ export function diffLineSequences(
 }
 
 /**
- * Render one diff line as a Zed-style band: left color bar + tinted full-width
- * background + colored text.
+ * Render one diff line as a simple tinted surface row with semantic text color.
  *
  * `padTo` is the block's widest line, NOT the terminal width. Padding to the
  * terminal width fights wrapTranscriptLine (which wraps at columns-1, so every
@@ -485,6 +484,24 @@ export function diffLineSequences(
  * already fixed, and leaves trailing spaces when the user copies the output.
  * A block-local rectangle reads the same and stays resize-safe.
  */
+
+/**
+ * Render a padded surface row shared by transcript bubbles and tool details.
+ * The caller owns the semantic foreground color; this helper only handles the
+ * common surface geometry and keeps ANSI backgrounds from leaking.
+ */
+export function renderSurfaceLine(args: {
+  text: string;
+  surface: string;
+  padTo: number;
+}): string {
+  const { text, surface, padTo } = args;
+  if (!surface) return text;
+  const reopened = text.split("\x1b[0m").join(`\x1b[0m${surface}`);
+  const padding = " ".repeat(Math.max(0, padTo - visibleWidth(text)));
+  return `${surface}${reopened}${padding}\x1b[0m`;
+}
+
 export function renderDiffLine(args: {
   kind: DiffLineKind;
   /** Full line text INCLUDING its +/-/@@ prefix. */
@@ -509,12 +526,12 @@ export function renderDiffLine(args: {
   }
 
   const seq = seqs[kind];
-  const padding =
-    args.padTo === undefined
-      ? ""
-      : " ".repeat(Math.max(0, args.padTo - displayWidth(text)));
   // \x1b[0m resets both fg and bg so the tint never leaks to the next line.
-  return `${seq.bar}${seq.bg}${seq.fg}${text}${padding}\x1b[0m`;
+  return renderSurfaceLine({
+    text: `${seq.fg}${text}`,
+    surface: seq.bg,
+    padTo: args.padTo ?? visibleWidth(text),
+  });
 }
 
 /**
@@ -529,6 +546,32 @@ export function surfaceBackgroundSequence(
 ): string {
   if (!supportsTruecolor(env)) return "";
   return hexToBgSgr((SURFACE_HEX[activeThemeName] ?? SURFACE_HEX.trail)[brightness]);
+}
+
+/**
+ * Background wash for user turns in the history area.
+ *
+ * User messages must stay findable while scrolling back through a long
+ * transcript, and accent+bold alone is not unique (the composer chevron,
+ * dialog titles and pickers all use accent). This tints the accent hue into
+ * the terminal base so a user turn reads as a solid bubble.
+ *
+ * Weight is deliberately above the diff bands (0.18/0.12) so a user bubble is
+ * not mistaken for a `+`/`-` diff row, and the hue is accent rather than
+ * success/danger/info so it never collides with them.
+ *
+ * Returns "" without truecolor: ANSI-16 has no subtle background, and a
+ * half-applied block would be worse than the gutter alone.
+ */
+export function userSurfaceBackgroundSequence(
+  env: Record<string, string | undefined> = process.env,
+  brightness: TuiBrightness = resolveTuiBrightness(env),
+): string {
+  if (!supportsTruecolor(env)) return "";
+  const palette = THEME_PALETTES[activeThemeName] ?? THEME_PALETTES.trail;
+  const accentHex = palette[brightness].accent.hex;
+  const weight = brightness === "dark" ? 0.24 : 0.16;
+  return hexToBgSgr(blendHex(accentHex, resolveTerminalBaseHex(brightness), weight));
 }
 
 export function themeColorSequence(

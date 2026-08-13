@@ -241,6 +241,7 @@ export const handleSendMessageAction = async (
             runtimeOptions: args.runtimeOptions,
         });
         agentKeyToUse = resolvedContext.agentKeyToUse;
+        const agentConfigToUse = resolvedContext.agentConfigToUse;
         const effectiveRuntimeOptions = resolvedContext.effectiveRuntimeOptions;
 
         // 没有可用 Agent 时，只保存用户消息，不触发 Agent 回复
@@ -265,6 +266,7 @@ export const handleSendMessageAction = async (
         const streamResult = await dispatch(
             streamAgentChatTurn({
                 agentKey: agentKeyToUse,
+                ...(agentConfigToUse ? { agentConfig: agentConfigToUse } : {}),
                 userInput: effectiveUserInput,
                 dialogKey: dialogConfig.dbKey,
                 parentMessageId: undefined,

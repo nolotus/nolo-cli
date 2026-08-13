@@ -66,9 +66,7 @@ Options:
   --tools '["readDoc"]'                 Replace tool names this skill expects.
   --required-skills '["skill-a"]'       Replace required skill references.
   --recommended-skills '["skill-b"]'    Replace recommended skill references.
-  --preferred-agents '["agent-key"]'    Replace preferred agent keys.
   --trigger-mode explicit|required|recommended
-  --budget-tier low|medium|high
   --prompt-patch <text>
   --sync local,main,us                  Choose write targets. Values may also be full URLs.
   --local-only                          Write only to the local server target.
@@ -220,14 +218,8 @@ async function runUpdateCommand(
       ...(parseJsonArg<string[]>(readOption(args, "--recommended-skills"), currentConfig.recommendedSkills ?? []).length
         ? { recommendedSkills: parseJsonArg<string[]>(readOption(args, "--recommended-skills"), currentConfig.recommendedSkills ?? []) }
         : {}),
-      ...(parseJsonArg<string[]>(readOption(args, "--preferred-agents"), currentConfig.preferredAgents ?? []).length
-        ? { preferredAgents: parseJsonArg<string[]>(readOption(args, "--preferred-agents"), currentConfig.preferredAgents ?? []) }
-        : {}),
       ...(readOption(args, "--trigger-mode")
         ? { triggerMode: readOption(args, "--trigger-mode") as "explicit" | "required" | "recommended" }
-        : {}),
-      ...(readOption(args, "--budget-tier")
-        ? { budgetTier: readOption(args, "--budget-tier") as "low" | "medium" | "high" }
         : {}),
       ...(readOption(args, "--prompt-patch") !== undefined
         ? { promptPatch: readOption(args, "--prompt-patch") }

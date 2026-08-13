@@ -5,13 +5,14 @@ import {
   resolveAutoExecutionProfile,
   type AutoExecutionTier,
 } from "../../agent-runtime/autoExecutionProfiles";
-import { getPrimaryDialogAgentId } from "./dialogAgents";
+import { resolveBuiltinPlatformAgentRecord } from "../../agent-runtime/builtinPlatformAgentConfigs";
+import { getActiveDialogAgentId } from "./dialogAgents";
 
 export type DialogAgentMode = "auto" | "fixed";
 
 export type DialogAgentPolicyShape = Pick<
   DialogConfig,
-  "agentMode" | "autoRoute" | "primaryAgentKey" | "cybots"
+  "agentMode" | "autoRoute" | "primaryAgentKey" | "activeAgentKey" | "cybots"
 > & {
   llmId?: string;
 };
@@ -21,7 +22,9 @@ export const resolveDialogAgentMode = (
 ): DialogAgentMode => {
   if (dialog?.agentMode === "auto") return "auto";
   if (dialog?.agentMode === "fixed") return "fixed";
-  return getPrimaryDialogAgentId(dialog as any) ? "fixed" : "auto";
+  // activeAgentKey（对话内切换）与 primaryAgentKey 都算 fixed：
+  // 只切了 active 而未设 primary 的 dialog 不能被误判为 auto。
+  return getActiveDialogAgentId(dialog as any) ? "fixed" : "auto";
 };
 
 export const isAutoDialog = (
@@ -69,10 +72,31 @@ export const resolveDialogRuntimeAgentKey = (
   const explicit = asOptionalTrimmedString(explicitAgentKey);
   if (explicit) return explicit;
   if (resolveDialogAgentMode(dialog) === "fixed") {
-    const fixed = getPrimaryDialogAgentId(dialog as any);
+    const fixed = getActiveDialogAgentId(dialog as any);
     if (fixed) return fixed;
   }
   return resolveAutoExecutionProfile(
     resolveDialogAutoTier(dialog) ?? DEFAULT_AUTO_EXECUTION_PROFILE.tier,
   ).legacyAgentKey;
+};
+
+/**
+ * Execution config for this turn when it can be answered from code alone.
+ *
+ * auto 对话按设计不绑定 Agent 实体，`resolveDialogRuntimeAgentKey` 返回的
+ * legacyAgentKey 只是兼容标识，对应的 `agent-pub-*` 记录可以不存在。发送路径
+ * 拿到这份配置就不必去读那条记录——读不到会让整轮直接失败（线上就从没 seed
+ * 过 flash/pro/glm/image 四条记录）。
+ *
+ * 返回 null 表示「这轮需要真实 Agent 记录」，调用方照常去库里读。
+ */
+export const resolveDialogRuntimeAgentConfig = (
+  dialog: Partial<DialogAgentPolicyShape> | null | undefined,
+  explicitAgentKey?: string | null,
+): Agent | null => {
+  // fixed 对话指向真实 Agent 实体，必须读记录，不能被内置配置遮蔽。
+  if (!isAutoDialog(dialog)) return null;
+  const key = resolveDialogRuntimeAgentKey(dialog, explicitAgentKey);
+  // 只认内置平台档位 key；auto 对话若显式指向其它 Agent，仍走正常读取。
+  return (resolveBuiltinPlatformAgentRecord(key) as Agent | null) ?? null;
 };

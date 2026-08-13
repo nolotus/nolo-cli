@@ -7,6 +7,7 @@
 // resolveRuntimeToolSurfaceForAgent、identity selectors、getIsDesktopApp。
 
 import { isRecord } from "../../core/isRecord";
+import { isSystemBuiltinTrustedAgentKey } from "../../core/builtinAgents";
 import { asOptionalTrimmedString } from "../../core/optionalString";
 import { asTrimmedString } from "../../core/trimmedString";
 import { asRecordOrEmpty } from "../../core/recordOrEmpty";
@@ -162,6 +163,7 @@ export const resolveWebAgentRuntimeToolSurface = (
     agentConfig: Agent,
     state: RootState,
 ): Agent => {
+    const agentKey = (agentConfig as any).dbKey ?? (agentConfig as any).agentKey;
     const toolSurface = resolveRuntimeToolSurfaceForAgent({
         explicitToolNames: Array.isArray((agentConfig as any).tools)
             ? (agentConfig as any).tools
@@ -170,11 +172,12 @@ export const resolveWebAgentRuntimeToolSurface = (
         agentOwnerId: typeof (agentConfig as any).userId === "string"
             ? (agentConfig as any).userId
             : null,
-        agentKey: (agentConfig as any).dbKey ?? (agentConfig as any).agentKey,
+        agentKey,
         isPublic: (agentConfig as any).isPublic === true,
         sharingLevel: typeof (agentConfig as any).sharingLevel === "string"
             ? (agentConfig as any).sharingLevel
             : null,
+        trustedPrivateInvocation: isSystemBuiltinTrustedAgentKey(agentKey),
         runtimeHost: "web",
     });
     return {

@@ -623,9 +623,20 @@ async function tryHttpDialogCandidates(args: {
   throw Object.assign(new Error("All HTTP dialog reads failed"), { attempts });
 }
 
-async function readDialogFromLocalDb(dialogKey: string, dialogId: string, limit: number) {
-  const { readDialogFromLocalDb: readLocalDialog } = await import("../agent-runtime/localDialogRead");
-  const result = await readLocalDialog({ dialogKey, dialogId, limit });
+type LocalDialogRead = (args: {
+  dialogKey: string;
+  dialogId: string;
+  limit: number;
+}) => Promise<{ meta: any; msgs: any[] }>;
+
+async function readDialogFromLocalDb(
+  dialogKey: string,
+  dialogId: string,
+  limit: number,
+  readLocalDialog?: LocalDialogRead,
+) {
+  const reader = readLocalDialog ?? (await import("../agent-runtime/localDialogRead")).readDialogFromLocalDb;
+  const result = await reader({ dialogKey, dialogId, limit });
   return {
     ...result,
     source: "local-db-fallback" as ReadSource,
@@ -639,6 +650,7 @@ export async function readDialogSnapshot(args: {
   dialogKey: string;
   fetchImpl: CliFetchImpl;
   limit: number;
+  readLocalDialog?: LocalDialogRead;
 }) {
   const candidateBases = resolveServerCandidates({ NOLO_SERVER: args.base }, args.base);
   let attempts: HttpAttempt[] = [];
@@ -660,20 +672,41 @@ export async function readDialogSnapshot(args: {
     const statuses = attempts.map((attempt) => attempt.status).filter((status): status is number => typeof status === "number");
     const all404 = attempts.length > 0 && statuses.length === attempts.length && statuses.every((status) => status === 404);
     const localhostCandidate = candidateBases.find(isLocalBaseUrl);
-    if (!localhostCandidate || all404) {
-      throw Object.assign(new Error(
-        all404
-          ? `dialog not found on tried servers: ${candidateBases.join(", ")}`
-          : `read dialog failed across candidates: ${attempts.map((attempt) => `${attempt.base} -> ${attempt.status ?? attempt.message}`).join("; ")}`
-      ), { attempts });
+    const remoteError = Object.assign(new Error(
+      all404
+        ? `dialog not found on tried servers: ${candidateBases.join(", ")}`
+        : `read dialog failed across candidates: ${attempts.map((attempt) => `${attempt.base} -> ${attempt.status ?? attempt.message}`).join("; ")}`
+    ), { attempts });
+
+    // The TUI can run an agent locally while its configured server still
+    // points at the hosted API. Local runs are persisted in the local dialog
+    // store, so an HTTP 404 is not proof that the dialog is absent. Try the
+    // local authority after an all-404 response as well as for the historical
+    // localhost fallback case. Keep the original HTTP error when the local
+    // store does not contain the dialog (or cannot be opened), so remote-only
+    // reads retain their existing diagnostics.
+    if (all404 || localhostCandidate) {
+      try {
+        const fallback = await readDialogFromLocalDb(
+          args.dialogKey,
+          args.dialogId,
+          args.limit,
+          args.readLocalDialog,
+        );
+        return {
+          ...fallback,
+          // Keep the configured base stable for callers that render it; the
+          // source field identifies that the payload came from local storage.
+          resolvedBase: localhostCandidate ?? args.base,
+          attempts,
+          candidateBases,
+        };
+      } catch {
+        // Fall through to the HTTP error below. In particular, do not expose a
+        // LevelDB lock/not-found error as the primary cause of a remote read.
+      }
     }
-    const fallback = await readDialogFromLocalDb(args.dialogKey, args.dialogId, args.limit);
-    return {
-      ...fallback,
-      resolvedBase: localhostCandidate,
-      attempts,
-      candidateBases,
-    };
+    throw remoteError;
   }
 }
 

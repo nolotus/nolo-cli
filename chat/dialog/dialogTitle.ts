@@ -1,15 +1,58 @@
 import { compactWhitespace } from "../../core/compactWhitespace";
 
-const GENERATED_DIALOG_TITLE_MAX_CHARS = 36;
+const GENERATED_DIALOG_TITLE_MAX_CHARS = 28;
 const FALLBACK_DIALOG_TITLE_MAX_CHARS = 24;
 
 const WRAPPING_QUOTES_RE = /^[`"'“”‘’「」『』《》]+|[`"'“”‘’「」『』《》]+$/gu;
-const TRAILING_TITLE_PUNCTUATION_RE = /[。！？!?；;，,、：:]+$/u;
+const TRAILING_TITLE_PUNCTUATION_RE = /[\s。！？!?；;，,、：:\-—–_…/\\|&]+$/u;
+const HAS_CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\uac00-\ud7af]/u;
 
-const clip = (text: string, maxChars: number): string =>
-  text.length <= maxChars
-    ? text
-    : `${text.slice(0, maxChars - 1).trimEnd()}…`;
+const cleanTrailingPunctuation = (text: string): string => {
+  let cleaned = text.trim();
+  while (TRAILING_TITLE_PUNCTUATION_RE.test(cleaned)) {
+    cleaned = cleaned.replace(TRAILING_TITLE_PUNCTUATION_RE, "").trim();
+  }
+  return cleaned;
+};
+
+const clip = (text: string, maxChars: number): string => {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+
+  const isCjk = HAS_CJK_RE.test(trimmed);
+
+  if (isCjk) {
+    const chars = Array.from(trimmed);
+    if (chars.length <= maxChars) {
+      return cleanTrailingPunctuation(trimmed);
+    }
+    const truncated = chars.slice(0, Math.max(1, maxChars - 1)).join("");
+    const cleaned = cleanTrailingPunctuation(truncated);
+    return cleaned ? `${cleaned}…` : "…";
+  }
+
+  const words = trimmed.split(/\s+/);
+  let isTruncated = false;
+  let textToClip = trimmed;
+
+  if (words.length > 6) {
+    textToClip = words.slice(0, 6).join(" ");
+    isTruncated = true;
+  }
+
+  const chars = Array.from(textToClip);
+  if (chars.length > maxChars) {
+    textToClip = chars.slice(0, Math.max(1, maxChars - 1)).join("");
+    isTruncated = true;
+  }
+
+  if (isTruncated) {
+    const cleaned = cleanTrailingPunctuation(textToClip);
+    return cleaned ? `${cleaned}…` : "…";
+  }
+
+  return cleanTrailingPunctuation(trimmed);
+};
 
 const toSingleLine = (value: string): string =>
   value

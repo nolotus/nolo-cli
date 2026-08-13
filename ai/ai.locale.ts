@@ -369,7 +369,7 @@ export default {
             isPublic: "Whether to publish to the app market. true means public, false means private.",
             allowFork: "Whether to allow other users to copy this AI to their space (can be set independently of whether it is public).",
             tags: "Array of tags for the Agent, e.g., ['Summary', 'Writing'].",
-            tools: "Array of tool names allowed for this Agent, e.g., ['fetchWebpage', 'callAgent'].",
+            tools: "Array of tool names allowed for this Agent, e.g., ['fetchWebpage', 'startAgentRun'].",
             linkedSpaces: "List of associated Space IDs or Names. The Agent can access the directory structure of these Spaces as rough context. You MUST call 'listUserSpaces' tool first to get valid IDs/Names.",
             references: {
               desc: "Knowledge references injected into this Agent's system prompt at every call. Supports: page (PAGE-xxx), dialog (dialog-xxx), agent (agent-xxx), table (table-xxx). Content is fully expanded and prepended as context — the more precise the reference, the smarter the Agent. Use 'knowledge' type for most cases.",
@@ -782,7 +782,7 @@ export default {
             isPublic: "是否公开到应用市场。true 表示公开，false 表示仅自己可见。",
             allowFork: "是否允许其他用户把这个 AI 复制一份到自己的空间（可与是否公开独立设置）。",
             tags: "给 Agent 打上的标签数组，例如 ['总结', '写作']。",
-            tools: "允许此 Agent 调用的工具名称数组，例如 ['fetchWebpage', 'callAgent']。",
+            tools: "允许此 Agent 调用的工具名称数组，例如 ['fetchWebpage', 'startAgentRun']。",
             linkedSpaces: "关联的其他 Space ID 或名称列表。Agent 可以访问这些 Space 的目录结构作为粗略上下文。你必须先调用 'listUserSpaces' 工具获取有效的 Space ID 或名称。",
             references: {
               desc: "每次调用时注入 Agent system prompt 的知识引用。支持：page(PAGE-xxx)、dialog(dialog-xxx)、agent(agent-xxx)、table(table-xxx)。内容会完整展开并作为上下文前置——引用越精准，Agent 越智能。大多数情况用 'knowledge' 类型即可。",

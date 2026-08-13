@@ -35,7 +35,7 @@ const buildMemFs = () => {
 const buildDeps = (overrides: Partial<CliAgentRunToolExecutorDeps> = {}) => {
   const mem = buildMemFs();
   const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
-  const killCalls: Array<{ pid: number; signal: string }> = [];
+  const killCalls: Array<{ pid: number; signal: string | number }> = [];
   const deps: CliAgentRunToolExecutorDeps & { mem: typeof mem; spawnCalls: typeof spawnCalls; killCalls: typeof killCalls } = {
     env: {},
     cliEntrypoint: "/cli/entrypoint",
@@ -47,7 +47,7 @@ const buildDeps = (overrides: Partial<CliAgentRunToolExecutorDeps> = {}) => {
       spawnCalls.push({ cmd, args });
       return { pid: 123, unref: () => {} };
     }) as SpawnLike,
-    kill: (pid: number, signal: string) => {
+    kill: (pid: number, signal: string | number) => {
       killCalls.push({ pid, signal });
     },
     fs: mem.fs,
@@ -370,6 +370,95 @@ describe("cli controlAgentRun executor", () => {
     ).rejects.toThrow("未知 action");
   });
 
+  // ── W 接线：action="wait" 轮询直到终态 / 超时 ──────────────────────
+  it("wait returns immediately for an already-terminal run", async () => {
+    let sleepCalls = 0;
+    const deps = buildDeps({ sleep: async () => { sleepCalls += 1; } });
+    seedRun(deps, "run-1", {
+      status: "done",
+      exitCode: 0,
+      dialogId: "dialog-9",
+      endedAt: "2026-07-31T00:01:00.000Z",
+    });
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "wait", runId: "run-1" }),
+    });
+    const data = JSON.parse(result.content);
+    expect(data.found).toBe(true);
+    expect(data.status).toBe("done");
+    expect(data.exitCode).toBe(0);
+    // 终态 run 暴露 dialogId，调用方可 `nolo dialog read` 读实际输出。
+    expect(data.dialogId).toBe("dialog-9");
+    // 已终态立即返回，不应触发任何轮询等待。
+    expect(sleepCalls).toBe(0);
+  });
+
+  it("wait polls until the run reaches a terminal state", async () => {
+    let polls = 0;
+    let deps!: ReturnType<typeof buildDeps>;
+    deps = buildDeps({
+      sleep: async () => {
+        polls += 1;
+        if (polls >= 2) {
+          // 模拟子进程在第 2 次轮询前写好终态（done + exitCode + dialogId）。
+          const rec = JSON.parse(
+            deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!,
+          );
+          rec.status = "done";
+          rec.exitCode = 0;
+          rec.dialogId = "dialog-9";
+          rec.endedAt = "2026-07-31T00:01:00.000Z";
+          deps.mem.files.set("/home/test/.nolo/runs/run-1.json", JSON.stringify(rec));
+        }
+      },
+    });
+    seedRun(deps, "run-1"); // running
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "wait", runId: "run-1" }),
+    });
+    const data = JSON.parse(result.content);
+    expect(data.found).toBe(true);
+    expect(data.status).toBe("done");
+    expect(data.dialogId).toBe("dialog-9");
+    // 首轮 running → sleep → 第二轮读到 done：至少轮询了 2 次。
+    expect(polls).toBeGreaterThanOrEqual(1);
+  });
+
+  it("wait returns status=timeout when the run stays non-terminal past timeoutMs", async () => {
+    // 注入可控时钟：每次 sleep 推进 60s，使第一次轮询后即越过 timeoutMs=1000。
+    let clock = 0;
+    const deps = buildDeps({
+      nowMs: () => clock,
+      sleep: async () => { clock += 60000; },
+    });
+    seedRun(deps, "run-1"); // running，且一直 running
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "wait", runId: "run-1", timeoutMs: 1000 }),
+    });
+    const data = JSON.parse(result.content);
+    expect(data.found).toBe(true);
+    // 超时是 wait 动作的标记（不是失败），run 记录不被改写。
+    expect(data.status).toBe("timeout");
+    expect(data.runStatus).toBe("running");
+    expect(data.timeoutMs).toBe(1000);
+    expect(typeof data.waitedMs).toBe("number");
+    // run 记录仍是 running，wait 超时不应触碰它。
+    const record = JSON.parse(deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!);
+    expect(record.status).toBe("running");
+  });
+
+  it("wait for unknown run returns found:false", async () => {
+    const deps = buildDeps();
+    const executor = createCliControlAgentRunExecutor(deps);
+    const result = await executor({
+      arguments: JSON.stringify({ action: "wait", runId: "run-missing" }),
+    });
+    expect(JSON.parse(result.content)).toEqual({ runId: "run-missing", found: false });
+  });
+
   // ── D1 接线：list + batchId 附加 batchSummary ──────────────────────
   it("list with batchId attaches batchSummary when the batch converged", async () => {
     const deps = buildDeps({ kill: () => {} });
@@ -419,5 +508,14 @@ describe("cli controlAgentRun executor", () => {
     expect(data.count).toBe(1);
     expect(data.todos[0].id).toBe("todo-batch-t1");
     expect(data.todos[0].status).toBe("running");
+
+    // action=todo 支持 status 过滤（匹配 running，排除 done）
+    const resRunning = await controlExec({ arguments: JSON.stringify({ action: "todo", status: "running" }) });
+    const dataRunning = JSON.parse(resRunning.content);
+    expect(dataRunning.count).toBe(1);
+
+    const resDone = await controlExec({ arguments: JSON.stringify({ action: "todo", status: "done" }) });
+    const dataDone = JSON.parse(resDone.content);
+    expect(dataDone.count).toBe(0);
   });
 });

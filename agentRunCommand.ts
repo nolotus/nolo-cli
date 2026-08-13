@@ -62,6 +62,7 @@ import { buildMemoryOverlayLayer, buildMemoryUseGuidanceLayer } from "./agent-ru
 import { resolveMemoryRuntime } from "./ai/memory/runtime";
 import { getDefaultCliLocalRuntimeDb } from "./localRuntimeDb";
 import { resolveMachineId } from "./connector-experimental/machineInfo";
+import { isSubtaskRun } from "./agent-runtime/agentRunIsolation";
 
 // Re-export the public surface so existing callers that import from
 // `./agentRunCommand` keep working without changes.
@@ -271,7 +272,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // If fallbacks suggested, augment the message so the agent sees the options and is instructed to decide.
   let effectiveMessage = parsed.message;
   if (wantsFallbackSuggestions) {
-    effectiveMessage = `${parsed.message}\n\n[Quota fallback context for agent decision: If this execution for ${parsed.agentKey} hits subscription quota, YOU (the agent) must decide the next agent to use. Do not rely on automatic wrapper. Reason based on the specific task (complexity, length, domain), agent strengths, cost, previous attempt results. Suggested alternatives: ${parsed.fallbackAgentKeys!.join(', ')}. Update the task row with attempt history and dispatch the chosen next (via new agent run or callAgent({ background: true })).]`;
+    effectiveMessage = `${parsed.message}\n\n[Quota fallback context for agent decision: If this execution for ${parsed.agentKey} hits subscription quota, YOU (the agent) must decide the next agent to use. Do not rely on automatic wrapper. Reason based on the specific task (complexity, length, domain), agent strengths, cost, previous attempt results. Suggested alternatives: ${parsed.fallbackAgentKeys!.join(', ')}. Update the task row with attempt history and dispatch the chosen next (via startAgentRun 异步派发)).]`;
   }
 
   // Resolve handle/name -> agent key for any run that may reach the server
@@ -307,6 +308,8 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     const route = await classifyCliAutoRoute(effectiveMessage, {
       serverUrl,
       authToken,
+      // 有图 → kimi vision 档；无图 → flash 档。漏传会永远走 flash。
+      hasImages: parsed.imageUrls.length > 0,
     });
     if (hasExplicitAgent) {
       modelOverride = buildModelLayerOverride(
@@ -430,7 +433,19 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // content (turn-scope). Placed in the system message via contextBlockScopes
  // instead of prepending to the user message, preserving LLM prefix-cache.
   const cliCwd = parsed.cwd ?? process.cwd();
+  // Agent-run isolation: a dispatched subtask (NOLO_AGENT_RUN_CHILD=1, set by
+  // agentRunControl.spawnLocalBackgroundRun) gets ZERO project context — no
+  // AGENTS.md, no skill-discovery, no skill content, no memory-overlay, no
+  // memory-use-guidance. Its context comes entirely from the caller's task/input
+  // payload. Interactive foreground `nolo agent run` keeps the full stack.
+  // See packages/agent-runtime/agentRunIsolation.ts for the runKind contract.
+  const isSubtask = isSubtaskRun(env);
   const extraContextBlocks: string[] = [];
+  const contextBlockScopes: ContextBlockScope[] = [];
+  let memoryPromptBlock: string | null = null;
+  let memoryOverlayLayer: ReturnType<typeof buildMemoryOverlayLayer> = null;
+  let memoryUseGuidanceLayer: ReturnType<typeof buildMemoryUseGuidanceLayer> = null;
+  if (!isSubtask) {
   // AGENTS.md project instructions
   const AGENTS_MD_MAX = 8192;
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
@@ -461,22 +476,29 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
 
   // T3456 — Memory injection route (CLI analogue of desktop T14).
-  // Logged-in state (authToken present): HTTP POST {serverUrl}/api/memory/query
-  //   to fetch the promptBlock from the server memory service.
-  // Anonymous state (no authToken): resolveMemoryRuntime local direct read
-  //   using the CLI local LevelDB (~/.nolo/data/leveldb) keyed by machineId.
+  // Local-first runs must not touch the configured server just to recall memory:
+  // a deployment/restart of nolo.chat must not produce a 502 before a local
+  // OAuth/API-key turn even starts. Only an explicit --server run uses the
+  // remote memory endpoint; local/auto runs use the local runtime store.
   // Network/local failures are visible-but-non-fatal: we warn and omit the
   // memory layer rather than failing the whole turn (same contract as desktop).
   // Tests with tight watchdog budgets inject `memoryRecallDisabled: true`.
-  let memoryPromptBlock: string | null = null;
   if (!deps.memoryRecallDisabled) {
   const memoryServerUrl = resolveServerUrl(env);
   const memoryAuthToken = resolveAuthToken(args, env);
   const memoryAgentKey = effectiveAgentKey;
   const memorySpaceId = parsed.spaceId ?? undefined;
   try {
-    if (memoryAuthToken && memoryServerUrl) {
-      // Logged-in: HTTP memory query (mirrors desktop :1204-1239).
+    const resolvedRuntimeMode =
+      parsed.runtimeMode ??
+      (env.NOLO_RUNTIME_MODE === "local" ||
+      env.NOLO_RUNTIME_MODE === "server" ||
+      env.NOLO_RUNTIME_MODE === "auto"
+        ? env.NOLO_RUNTIME_MODE
+        : "auto");
+    const usesExplicitServerRuntime = resolvedRuntimeMode === "server";
+    if (usesExplicitServerRuntime && memoryAuthToken && memoryServerUrl) {
+      // Explicit --server: HTTP memory query (mirrors desktop :1204-1239).
       const memoryResponse = await fetch(`${memoryServerUrl}/api/memory/query`, {
         method: "POST",
         headers: {
@@ -503,7 +525,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         console.warn("[cli-memory] memory query returned non-ok status:", memoryResponse.status);
       }
     } else {
-      // Anonymous: local direct read via resolveMemoryRuntime.
+      // Local/auto (and anonymous server) runs: local direct read via resolveMemoryRuntime.
       const localDb = await getDefaultCliLocalRuntimeDb({ env });
       const machineId = resolveMachineId();
       const resolution = await resolveMemoryRuntime({
@@ -520,14 +542,13 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
   } // end if (!deps.memoryRecallDisabled)
 
-  const memoryOverlayLayer = buildMemoryOverlayLayer({ promptBlock: memoryPromptBlock });
-  const memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });
+  memoryOverlayLayer = buildMemoryOverlayLayer({ promptBlock: memoryPromptBlock });
+  memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });
 
   // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
   // Scope assignment mirrors desktopAgentRuntimeTurnService.ts:1272:
   //   AGENTS.md / memory-use-guidance = session (stable prefix for cache hits)
   //   skill content / skill discovery / memory-overlay = turn (dynamic suffix)
-  const contextBlockScopes: ContextBlockScope[] = [];
   // session-scope: AGENTS.md (first N entries of extraContextBlocks are
   // AGENTS.md content pushed before skill blocks — find it by marker).
   const agentsMdMarker = "--- 项目指令（";
@@ -550,6 +571,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   if (memoryOverlayLayer?.content?.trim()) {
     contextBlockScopes.push({ content: memoryOverlayLayer.content, cacheScope: "turn" });
   }
+  } // end if (!isSubtask) — subtask keeps extraContextBlocks/contextBlockScopes empty
 
   // Build the runner options once; the same options (message, cwd,
   // subjectRefs, runtime mode, etc.) are reused for any quota fallback retry

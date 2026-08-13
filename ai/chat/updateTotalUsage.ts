@@ -20,12 +20,14 @@ export function updateTotalUsage(
 
   // 如果是第一次接收，直接克隆新数据块
   if (!currentUsage) {
-    return {
+    const first: CompletionUsage = {
       completion_tokens: 0,
       prompt_tokens: 0,
       total_tokens: 0,
       ...newUsageChunk,
     } as CompletionUsage;
+    applyResponsesUsageFields(first, newUsageChunk);
+    return first;
   }
 
   // 否则，在现有基础上进行累加或更新
@@ -44,6 +46,11 @@ export function updateTotalUsage(
   if (newUsageChunk.completion_tokens !== undefined) updatedUsage.completion_tokens = newUsageChunk.completion_tokens;
   if (newUsageChunk.prompt_tokens !== undefined) updatedUsage.prompt_tokens = newUsageChunk.prompt_tokens;
   if (newUsageChunk.total_tokens !== undefined) updatedUsage.total_tokens = newUsageChunk.total_tokens;
+
+  // Responses API（OpenAI / DeepSeek 官方 /v1/responses）使用 input_tokens /
+  // output_tokens 命名，归一化到内部 prompt_tokens / completion_tokens，
+  // 否则 token 用量会显示为 0/0（消费点的 `??` fallback 不会救 0）。
+  applyResponsesUsageFields(updatedUsage, newUsageChunk);
 
 
   if (newUsageChunk.prompt_tokens_details) {
@@ -83,4 +90,34 @@ export function updateTotalUsage(
   }
 
   return updatedUsage;
+}
+
+/**
+ * 把 Responses API 的 usage 命名（input_tokens / output_tokens 及其 details）
+ * 归一化到内部 Chat Completions 命名（prompt_tokens / completion_tokens）。
+ * 见 sendOpenAIResponseRequest 消费点：`prompt_tokens ?? input_tokens`，
+ * 若 prompt_tokens 是 0（首次初始化占位），?? 不会回退，必须在这里归一。
+ */
+function applyResponsesUsageFields(
+  target: CompletionUsage,
+  chunk: Partial<CompletionUsage>,
+): void {
+  if (chunk.input_tokens !== undefined) {
+    target.prompt_tokens = chunk.input_tokens;
+  }
+  if (chunk.output_tokens !== undefined) {
+    target.completion_tokens = chunk.output_tokens;
+  }
+  if (chunk.input_tokens_details) {
+    target.prompt_tokens_details = {
+      ...(target.prompt_tokens_details || {}),
+      ...chunk.input_tokens_details,
+    };
+  }
+  if (chunk.output_tokens_details) {
+    target.completion_tokens_details = {
+      ...(target.completion_tokens_details || {}),
+      ...chunk.output_tokens_details,
+    };
+  }
 }

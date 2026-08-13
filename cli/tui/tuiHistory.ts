@@ -12,6 +12,8 @@ import {
   applyTerminalOutputToText,
   padOrTruncateToWidth,
   stripAnsi,
+  truncateAnsi,
+  visibleWidth,
   wrapTranscriptLine,
 } from "./tuiAnsi";
 import {
@@ -21,8 +23,10 @@ import {
 } from "./tuiScrollbar";
 import {
   getActiveDensity,
+  renderSurfaceLine,
   themeColorSequence,
   themeText,
+  userSurfaceBackgroundSequence,
 } from "./theme";
 import { formatAssistantDisplay } from "../client/assistantOutput";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
@@ -50,11 +54,38 @@ type TurnLineCacheEntry = {
   width: number;
   color: boolean;
   density: string;
+  /**
+   * Theme fingerprint. `/theme` and the background auto-follow poller change
+   * both the accent foreground and the user-bubble wash; without this the
+   * cache would keep replaying rows painted in the previous theme's colors.
+   */
+  surface: string;
   lines: string[];
 };
 
 /** Finalized turns are immutable; cache entries GC when truncation drops them. */
 const turnLineCache = new WeakMap<Turn, TurnLineCacheEntry>();
+
+/**
+ * Line-count cache: how many terminal rows a finalized turn occupies at a
+ * given width. Deliberately keyed by width ONLY — ANSI styling, bubble surface
+ * and density never change wrap counts (styles are zero-width and spacious
+ * separators live outside the cache). This is what lets renderHistory rebuild
+ * its row-offset index without re-running markdown when /theme, density or the
+ * background auto-follow poller invalidate the render cache: counts survive,
+ * so only the visible window needs repainting instead of all 400 turns.
+ */
+type TurnLineCountEntry = { width: number; count: number };
+
+const turnLineCountCache = new WeakMap<Turn, TurnLineCountEntry>();
+
+// Test-only: finalized-turn render-cache misses in renderHistory's window
+// loop. Lets tests assert virtualization — a theme/width invalidation must
+// repaint at most the visible window, not every turn.
+let renderCacheMissCount = 0;
+export function getRenderCacheMissCount(): number {
+  return renderCacheMissCount;
+}
 
 export function createTurnHistory(): TurnHistory {
   return {
@@ -75,6 +106,7 @@ export function startTurn(history: TurnHistory, role: TurnRole) {
   }
   history.currentRole = role;
   history.currentContent = "";
+  resetStreamingTurnCache();
 }
 
 export function appendToCurrentTurn(history: TurnHistory, chunk: string) {
@@ -89,6 +121,7 @@ export function finalizeCurrentTurn(history: TurnHistory) {
     });
     history.currentRole = null;
     history.currentContent = "";
+    resetStreamingTurnCache();
     if (history.turns.length > MAX_TUI_HISTORY_TURNS) {
       history.turns = history.turns.slice(history.turns.length - MAX_TUI_HISTORY_TURNS);
     }
@@ -124,39 +157,69 @@ function styleAssistantTurn(content: string, colorEnabled: boolean): string {
   return styledLines.join("\n");
 }
 
+/**
+ * Paint one already-wrapped user row as a full-width bubble row.
+ *
+ * The row is padded to exactly `contentWidth` *inside* the background so the
+ * bubble's right edge is straight instead of ragged, then closed with a reset
+ * so the tint never bleeds into the scrollbar column or the next row.
+ *
+ * Padding uses visibleWidth (ANSI-aware, CJK/emoji-aware), never `length`.
+ * Any interior reset emitted by wrapTranscriptLine re-opens the background,
+ * otherwise the tail of a styled row would drop back to the terminal base.
+ */
+function fillUserBubbleRow(row: string, surfaceSeq: string, contentWidth: number): string {
+  const visible = visibleWidth(row);
+  // Guard: if the row already exceeds contentWidth (e.g. a narrow terminal
+  // where gutter+indent itself is wider than the viewport), truncate the
+  // content so the bubble never spills into the scrollbar column.
+  if (visible > contentWidth) {
+    const truncated = truncateAnsi(row, contentWidth);
+    const padAfter = Math.max(0, contentWidth - visibleWidth(truncated));
+    return `${surfaceSeq}${truncated}${" ".repeat(padAfter)}\x1b[0m`;
+  }
+  return renderSurfaceLine({ text: row, surface: surfaceSeq, padTo: contentWidth });
+}
+
 /** Decorate + wrap one turn; separators stay outside so position can vary. */
-function renderTurnBlock(
+export function renderTurnBlock(
   role: TurnRole,
   content: string,
   contentWidth: number,
   colorEnabled: boolean,
 ): string[] {
+  // Normalize line endings before splitting: CRLF (\r\n) and lone CR (\r,
+  // legacy Mac) both collapse to LF. Without this, a stray \r survives the
+  // split and is emitted into the terminal frame — displayWidth treats it as
+  // zero-width so it isn't stripped, and the terminal rewinds to the start of
+  // the row, corrupting the transcript layout on Windows (CRLF) and any
+  // platform that feeds CR-terminated content. Mirrors buildCopyViewLines.
+  content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines: string[] = [];
   if (role === "user") {
     const logicalLines = content.split("\n");
     const accentSeq = colorEnabled ? themeColorSequence("accent") : "";
-    const chromeSeq = colorEnabled ? themeColorSequence("chrome") : "";
+    // User turns carry a dedicated solid vertical gutter `┃` (U+2503) on every line
+    // (first line, explicit multiline, and soft wrapping) so user messages are
+    // structurally distinct in history even in NO_COLOR / plain mode.
+    const firstPrefix = colorEnabled ? `${accentSeq}\x1b[1m┃  ` : "┃  ";
+    const multilinePrefix = colorEnabled ? `${accentSeq}\x1b[1m┃  ` : "┃  ";
+    const hangingIndent = colorEnabled ? `${accentSeq}\x1b[1m┃  ` : "┃  ";
+
+    // Truecolor only: an accent-tinted wash makes the user turn read as one
+    // solid bubble, which is what the eye actually catches while scrolling.
+    // Empty without truecolor — the ┃ gutter alone carries the distinction
+    // there, and a half-applied block would look broken.
+    const surfaceSeq = colorEnabled ? userSurfaceBackgroundSequence() : "";
 
     for (let i = 0; i < logicalLines.length; i++) {
       const line = logicalLines[i];
-      let styledLine: string;
-      if (colorEnabled) {
-        // No `\x1b[39m` after the marker: the body's own accentSeq below
-        // overrides the foreground immediately, and wrapTranscriptLine only
-        // treats `\x1b[0m` as a style reset — an extra `39` would just pile up
-        // in its activeStyles and get re-emitted on every wrapped row.
-        const prefix = i === 0 ? `${accentSeq}❯ ` : `${chromeSeq}│ `;
-        // Body text is accent + bold so user turns stand out when scrolling
-        // back through a long transcript. No explicit closer here:
-        // wrapTranscriptLine terminates every styled row with `\x1b[0m`, which
-        // both stops the color bleeding into the scrollbar column and re-opens
-        // bold + accent on each soft-wrapped continuation row.
-        styledLine = `${prefix}\x1b[1m${accentSeq}${line}`;
-      } else {
-        const prefix = i === 0 ? "❯ " : "  ";
-        styledLine = `${prefix}${line}`;
-      }
-      lines.push(...wrapTranscriptLine(styledLine, contentWidth, "  "));
+      const prefix = i === 0 ? firstPrefix : multilinePrefix;
+      const styledLine = `${prefix}${line}`;
+      const rows = wrapTranscriptLine(styledLine, contentWidth, hangingIndent);
+      lines.push(
+        ...(surfaceSeq ? rows.map((row) => fillUserBubbleRow(row, surfaceSeq, contentWidth)) : rows),
+      );
     }
   } else {
     const styledEntry = styleAssistantTurn(content, colorEnabled);
@@ -165,6 +228,293 @@ function renderTurnBlock(
     }
   }
   return lines;
+}
+
+type StreamingTurnCache = {
+  role: TurnRole;
+  contentWidth: number;
+  colorEnabled: boolean;
+  density: string;
+  surface: string;
+  fullContent: string;
+  prefixLength: number;
+  prefixLines: string[];
+};
+
+let streamingTurnCache: StreamingTurnCache | null = null;
+
+export function resetStreamingTurnCache(): void {
+  streamingTurnCache = null;
+}
+
+function renderPrefixTurnBlock(
+  role: TurnRole,
+  content: string,
+  contentWidth: number,
+  colorEnabled: boolean,
+): string[] {
+  content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (role === "user") {
+    return renderTurnBlock(role, content, contentWidth, colorEnabled);
+  }
+  const highlighted = colorEnabled
+    ? formatAssistantDisplay(content, { trimEdges: false })
+    : stripAnsi(formatAssistantDisplay(content, { trimEdges: false }));
+  const rawLines = highlighted.split("\n");
+  const styledLines = rawLines.map((line, idx) => {
+    if (idx === 0 && !line.startsWith("[nolo]")) {
+      const anchorPrefix = colorEnabled
+        ? `${themeColorSequence("chrome")}◈\x1b[39m `
+        : "◈ ";
+      return `${anchorPrefix}${line}`;
+    }
+    return line.startsWith("[nolo]") && colorEnabled
+      ? themeText(line, "chrome", true)
+      : line;
+  });
+  const lines: string[] = [];
+  for (const logicalLine of styledLines) {
+    lines.push(...wrapTranscriptLine(logicalLine, contentWidth));
+  }
+  return lines;
+}
+
+function renderTailTurnBlock(
+  role: TurnRole,
+  content: string,
+  contentWidth: number,
+  colorEnabled: boolean,
+): string[] {
+  content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines: string[] = [];
+  if (role === "user") {
+    const surfaceSeq = colorEnabled ? userSurfaceBackgroundSequence() : "";
+    const accentSeq = colorEnabled ? themeColorSequence("accent") : "";
+    const multilinePrefix = colorEnabled ? `${accentSeq}\x1b[1m┃  ` : "┃  ";
+    const hangingIndent = colorEnabled ? `${accentSeq}\x1b[1m┃  ` : "┃  ";
+    for (const rawLine of content.split("\n")) {
+      const styledLine = `${multilinePrefix}${rawLine}`;
+      const rows = wrapTranscriptLine(styledLine, contentWidth, hangingIndent);
+      lines.push(
+        ...(surfaceSeq ? rows.map((row) => fillUserBubbleRow(row, surfaceSeq, contentWidth)) : rows),
+      );
+    }
+  } else {
+    const highlighted = colorEnabled
+      ? formatAssistantDisplay(content)
+      : stripAnsi(formatAssistantDisplay(content));
+    const rawLines = highlighted.split("\n");
+    const styledLines = rawLines.map((line) => {
+      return line.startsWith("[nolo]") && colorEnabled
+        ? themeText(line, "chrome", true)
+        : line;
+    });
+    for (const logicalLine of styledLines) {
+      lines.push(...wrapTranscriptLine(logicalLine, contentWidth));
+    }
+  }
+  return lines;
+}
+
+function getStreamingTurnLines(
+  role: TurnRole,
+  content: string,
+  contentWidth: number,
+  colorEnabled: boolean,
+  density: string,
+  surface: string,
+): string[] {
+  if (
+    streamingTurnCache &&
+    (streamingTurnCache.role !== role ||
+      streamingTurnCache.contentWidth !== contentWidth ||
+      streamingTurnCache.colorEnabled !== colorEnabled ||
+      streamingTurnCache.density !== density ||
+      streamingTurnCache.surface !== surface ||
+      !content.startsWith(streamingTurnCache.fullContent.slice(0, streamingTurnCache.prefixLength)))
+  ) {
+    streamingTurnCache = null;
+  }
+
+  if (!streamingTurnCache) {
+    streamingTurnCache = {
+      role,
+      contentWidth,
+      colorEnabled,
+      density,
+      surface,
+      fullContent: content,
+      prefixLength: 0,
+      prefixLines: [],
+    };
+  }
+
+  if (content.length > streamingTurnCache.fullContent.length) {
+    let searchPos = streamingTurnCache.prefixLength;
+    let candidateCut = -1;
+
+    while (true) {
+      const idx = content.indexOf("\n\n", searchPos);
+      if (idx === -1) break;
+      const cut = idx + 1;
+      searchPos = idx + 2;
+
+      const prefixSub = content.slice(0, cut);
+      const fenceCount = (prefixSub.match(/^```/gm) || []).length;
+      if (fenceCount % 2 === 0) {
+        candidateCut = cut;
+        break;
+      }
+    }
+
+    if (candidateCut > streamingTurnCache.prefixLength) {
+      const candidatePrefix = content.slice(0, candidateCut);
+      const candidateTail = content.slice(candidateCut);
+
+      const candPrefixLines = renderPrefixTurnBlock(role, candidatePrefix, contentWidth, colorEnabled);
+      const candTailLines = renderTailTurnBlock(role, candidateTail, contentWidth, colorEnabled);
+      const candCombined = [...candPrefixLines, ...candTailLines];
+      const fullCheckLines = renderTurnBlock(role, content, contentWidth, colorEnabled);
+
+      if (JSON.stringify(candCombined) === JSON.stringify(fullCheckLines)) {
+        streamingTurnCache.prefixLength = candidateCut;
+        streamingTurnCache.prefixLines = candPrefixLines;
+        streamingTurnCache.fullContent = content;
+      } else {
+        streamingTurnCache.fullContent = content;
+      }
+    } else {
+      streamingTurnCache.fullContent = content;
+    }
+  }
+
+  if (streamingTurnCache.prefixLength === 0) {
+    return renderTurnBlock(role, content, contentWidth, colorEnabled);
+  }
+
+  const tailContent = content.slice(streamingTurnCache.prefixLength);
+  const tailLines = renderTailTurnBlock(role, tailContent, contentWidth, colorEnabled);
+  return [...streamingTurnCache.prefixLines, ...tailLines];
+}
+
+/**
+ * Exact cheap row count for one turn at a width, without materializing styled
+ * rows. A turn's row count is a pure function of (visible text, width): ANSI
+ * styling is zero-width, so the wrapped count equals the count of the same
+ * text with the anchor prefixes applied. We reuse the real assistantOutput
+ * pipeline for the line structure (no markdown state machine reimplementation)
+ * but throw the styling away, so a cold render / resize costs O(rows) instead
+ * of a full re-render of every turn.
+ *
+ * Must mirror renderTurnBlock exactly:
+ * - CRLF / CR collapse to LF before splitting
+ * - user turns: first-line `┃  ` and continuation `┃  ` prefixes both occupy
+ *   3 cells and hangingIndent `┃  ` is applied to every row, so a single form
+ *   yields identical wrap counts
+ * - assistant turns: `◈ ` anchor on the first line unless it starts with
+ *   [nolo]; chrome theming of [nolo] lines is zero-width
+ */
+const assistantPlainLinesCache = new Map<string, string[]>();
+
+function getAssistantPlainLines(content: string): string[] {
+  let plainLines = assistantPlainLinesCache.get(content);
+  if (plainLines !== undefined) {
+    return plainLines;
+  }
+
+  // Fast path: plain text without markdown structural or inline syntax
+  // formatAssistantDisplay only trims and leaves pure text unmodified.
+  if (!/[\r\x00#|\-*_~`>+\[\]()•☐☑]|\b\d+\./.test(content)) {
+    plainLines = content.trim().split("\n");
+  } else {
+    plainLines = stripAnsi(formatAssistantDisplay(content)).split("\n");
+  }
+
+  if (assistantPlainLinesCache.size > 2000) {
+    const firstKey = assistantPlainLinesCache.keys().next().value;
+    if (firstKey !== undefined) assistantPlainLinesCache.delete(firstKey);
+  }
+  assistantPlainLinesCache.set(content, plainLines);
+  return plainLines;
+}
+
+export function countTurnLines(
+  role: TurnRole,
+  content: string,
+  contentWidth: number
+): number {
+  content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  let count = 0;
+  if (role === "user") {
+    for (const line of content.split("\n")) {
+      count += wrapTranscriptLine(`┃  ${line}`, contentWidth, "┃  ").length;
+    }
+  } else {
+    const plainLines = getAssistantPlainLines(content);
+    for (let i = 0; i < plainLines.length; i++) {
+      const line = plainLines[i]!;
+      const wrapped =
+        i === 0 && !line.startsWith("[nolo]")
+          ? wrapTranscriptLine(`◈ ${line}`, contentWidth)
+          : wrapTranscriptLine(line, contentWidth);
+      count += wrapped.length;
+    }
+  }
+  return count;
+}
+
+export type TurnOffsetEntry = {
+  /** Row of this turn's first line (after any separator above it). */
+  startRow: number;
+  /** Rows this turn's content occupies (separator excluded). */
+  lineCount: number;
+  /** 1 when density=spacious inserts a blank row above this turn. */
+  separatorAbove: number;
+};
+
+export type TurnOffsets = {
+  entries: TurnOffsetEntry[];
+  totalLines: number;
+};
+
+/**
+ * Row-offset index: turn → start row. O(n) but reads only the line-count
+ * cache — no markdown re-rendering; on a miss the count comes from the cheap
+ * countTurnLines pass and is recorded for later frames. Spacious separators
+ * depend on position, so they are indexed here rather than cached.
+ */
+export function buildTurnOffsets(
+  history: TurnHistory,
+  contentWidth: number
+): TurnOffsets {
+  const density = getActiveDensity();
+  const entries: TurnOffsetEntry[] = [];
+  let offset = 0;
+  for (let i = 0; i < history.turns.length; i++) {
+    const turn = history.turns[i]!;
+    const separatorAbove =
+      density === "spacious" && (i > 0 || turn.role === "user") ? 1 : 0;
+    offset += separatorAbove;
+    const cached = turnLineCountCache.get(turn);
+    let lineCount: number;
+    if (cached && cached.width === contentWidth) {
+      lineCount = cached.count;
+    } else {
+      lineCount = countTurnLines(turn.role, turn.content, contentWidth);
+      turnLineCountCache.set(turn, { width: contentWidth, count: lineCount });
+    }
+    entries.push({ startRow: offset, lineCount, separatorAbove });
+    offset += lineCount;
+  }
+  return { entries, totalLines: offset };
+}
+
+/** Row index of the blank separator above the current streaming turn, if any. */
+function currentTurnSeparator(history: TurnHistory, density: string): number {
+  return density === "spacious" &&
+    (history.turns.length > 0 || history.currentRole === "user")
+    ? 1
+    : 0;
 }
 
 export function buildCopyViewLines(history: TurnHistory): string[] {
@@ -187,14 +537,17 @@ export function buildCopyViewLines(history: TurnHistory): string[] {
 
 export function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
   const colorEnabled = resolveCliColorEnabled();
-  // Visual rhythm: every turn is separated by a blank line, user turns carry an
-  // accent ❯ marker on the first line and chrome │ markers on explicit multiline
-  // continuations (two spaces when no-color), and render their body text in
-  // accent + bold so they stay easy to spot when scrolling back.
+  // Visual rhythm: every turn is separated by a blank line. User turns carry a
+  // unique ┃ gutter on every line with an accent ❯ marker on the first line (and
+  // two spaces on continuation rows), rendering body text in accent + bold so
+  // they are structurally and visually unique when scrolling back.
   //
   // Colors use theme tokens (tui/theme.ts) so the history area stays in the
   // same hue family as the status line.
   const density = getActiveDensity();
+  // Cheap theme fingerprint: the wash is derived from accent + terminal base,
+  // so it changes exactly when a cached user bubble would need repainting.
+  const surface = colorEnabled ? userSurfaceBackgroundSequence() : "";
   const wrapped: string[] = [];
 
   for (let i = 0; i < history.turns.length; i++) {
@@ -208,7 +561,8 @@ export function buildHistoryLines(history: TurnHistory, contentWidth: number): s
       cached &&
       cached.width === contentWidth &&
       cached.color === colorEnabled &&
-      cached.density === density
+      cached.density === density &&
+      cached.surface === surface
     ) {
       wrapped.push(...cached.lines);
     } else {
@@ -217,24 +571,27 @@ export function buildHistoryLines(history: TurnHistory, contentWidth: number): s
         width: contentWidth,
         color: colorEnabled,
         density,
+        surface,
         lines,
       });
       wrapped.push(...lines);
     }
   }
 
-  // Streaming turn mutates per chunk — always compute fresh (never cached).
+  // Streaming turn mutates per chunk — incremental prefix cache.
   if (history.currentRole !== null && history.currentContent) {
     const i = history.turns.length;
     if (density === "spacious" && (i > 0 || history.currentRole === "user")) {
       wrapped.push("");
     }
     wrapped.push(
-      ...renderTurnBlock(
+      ...getStreamingTurnLines(
         history.currentRole,
         history.currentContent,
         contentWidth,
         colorEnabled,
+        density,
+        surface,
       ),
     );
   }
@@ -254,8 +611,35 @@ export function renderHistory(
   const visibleHeight = Math.max(1, rows - inputLines);
   const contentWidth = Math.max(1, columns - 1);
 
-  const lines = buildHistoryLines(history, contentWidth);
-  const totalLines = lines.length;
+  const colorEnabled = resolveCliColorEnabled();
+  const density = getActiveDensity();
+  const surface = colorEnabled ? userSurfaceBackgroundSequence() : "";
+
+  // Row-offset index: O(turns), reads only cached line counts. A cold render
+  // or resize pays the cheap count pass here instead of re-rendering every
+  // turn just to slice the visible window.
+  const { entries, totalLines: finalizedLines } = buildTurnOffsets(
+    history,
+    contentWidth,
+  );
+
+  // Streaming turn mutates per chunk — incremental prefix cache.
+  // Rendered once per frame; the rows are reused for painting when visible.
+  let totalLines = finalizedLines;
+  let currentStart = -1;
+  let currentLines: string[] = [];
+  if (history.currentRole !== null && history.currentContent) {
+    currentLines = getStreamingTurnLines(
+      history.currentRole,
+      history.currentContent,
+      contentWidth,
+      colorEnabled,
+      density,
+      surface,
+    );
+    currentStart = finalizedLines + currentTurnSeparator(history, density);
+    totalLines = currentStart + currentLines.length;
+  }
 
   if (history.followBottom) {
     history.scrollTop = Math.max(0, totalLines - visibleHeight);
@@ -269,9 +653,70 @@ export function renderHistory(
   history.hasMoreAbove = history.scrollTop > 0;
   history.hasMoreBelow = history.scrollTop + visibleHeight < totalLines;
 
-  const visibleStart = history.scrollTop;
-  const visibleEnd = Math.min(totalLines, visibleStart + visibleHeight);
-  const visibleLines = lines.slice(visibleStart, visibleEnd);
+  const winStart = history.scrollTop;
+  const winEnd = Math.min(totalLines, winStart + visibleHeight);
+  const visibleLines: string[] = new Array(visibleHeight).fill("");
+
+  // Paint ONLY the turns overlapping the visible window. Off-screen turns are
+  // never re-rendered — cache invalidation (theme/density/width) repaints at
+  // most one screenful instead of the whole transcript.
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!;
+    if (entry.separatorAbove > 0) {
+      const sepRow = entry.startRow - 1;
+      if (sepRow >= winStart && sepRow < winEnd) {
+        visibleLines[sepRow - winStart] = "";
+      }
+    }
+    const turnStart = entry.startRow;
+    const turnEnd = turnStart + entry.lineCount;
+    if (turnEnd <= winStart || turnStart >= winEnd) continue;
+
+    const turn = history.turns[i]!;
+    const cached = turnLineCache.get(turn);
+    let lines: string[];
+    if (
+      cached &&
+      cached.width === contentWidth &&
+      cached.color === colorEnabled &&
+      cached.density === density &&
+      cached.surface === surface
+    ) {
+      lines = cached.lines;
+    } else {
+      renderCacheMissCount += 1;
+      lines = renderTurnBlock(turn.role, turn.content, contentWidth, colorEnabled);
+      turnLineCache.set(turn, {
+        width: contentWidth,
+        color: colorEnabled,
+        density,
+        surface,
+        lines,
+      });
+    }
+    const interStart = Math.max(turnStart, winStart);
+    const interEnd = Math.min(turnEnd, winEnd);
+    for (let r = interStart; r < interEnd; r++) {
+      visibleLines[r - winStart] = lines[r - turnStart] ?? "";
+    }
+  }
+  if (currentStart >= 0) {
+    const separatorAbove = currentTurnSeparator(history, density);
+    if (separatorAbove > 0) {
+      const sepRow = currentStart - 1;
+      if (sepRow >= winStart && sepRow < winEnd) {
+        visibleLines[sepRow - winStart] = "";
+      }
+    }
+    const currentEnd = currentStart + currentLines.length;
+    if (currentEnd > winStart && currentStart < winEnd) {
+      const interStart = Math.max(currentStart, winStart);
+      const interEnd = Math.min(currentEnd, winEnd);
+      for (let r = interStart; r < interEnd; r++) {
+        visibleLines[r - winStart] = currentLines[r - currentStart] ?? "";
+      }
+    }
+  }
 
   // Clear + paint ONLY the main transcript rows. Never use ED (\x1b[J) from
   // the top of the screen — many terminals wipe the docked composer below
@@ -284,11 +729,13 @@ export function renderHistory(
     const line = visibleLines[i] ?? "";
     const padded = padOrTruncateToWidth(line, contentWidth);
     const thumb = renderScrollbarRow(i, visibleHeight, totalLines, history.scrollTop);
+    const scrollbarPrefix = colorEnabled ? themeColorSequence("chrome") : "";
+    const scrollbarSuffix = colorEnabled ? "\x1b[39m" : "";
     frame += `\x1b[${i + 1};1H`;
     frame += "\x1b[2K";
     frame += padded;
     frame += `\x1b[${columns}G`;
-    frame += thumb;
+    frame += `${scrollbarPrefix}${thumb}${scrollbarSuffix}`;
   }
 
   const mainBottom = Math.max(1, rows - inputLines);
@@ -326,7 +773,13 @@ export function applyScrollAction(
   const columns = tty.columns ?? 80;
   const visibleHeight = Math.max(1, rows - inputLines);
   const contentWidth = Math.max(1, columns - 1);
-  const totalLines = buildHistoryLines(history, contentWidth).length;
+  const { totalLines: finalizedLines } = buildTurnOffsets(history, contentWidth);
+  let totalLines = finalizedLines;
+  if (history.currentRole !== null && history.currentContent) {
+    totalLines +=
+      currentTurnSeparator(history, getActiveDensity()) +
+      countTurnLines(history.currentRole, history.currentContent, contentWidth);
+  }
   const maxScrollTop = Math.max(0, totalLines - visibleHeight);
 
   history.followBottom = false;

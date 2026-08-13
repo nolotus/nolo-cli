@@ -3,7 +3,6 @@ import { asOptionalFiniteNumber } from "../core/optionalNumber";
 import { asOptionalTrimmedString } from "../core/optionalString";
 import { asRecordOrEmpty } from "../core/recordOrEmpty";
 import { asNonEmptyStringArray } from "../core/stringArray";
-import { spawnToWebStreams } from "./runtimeCompat";
 
 export const NOLO_WORKSPACE_TOOL_NAMES = [
   "listDialogs",
@@ -67,8 +66,11 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
     limit: { type: "integer", description: "Maximum dialogs to return." },
     space: stringToolParam("Optional space id or URL."),
   });
-  add("readDialog", "Read one persisted dialog in the Nolo workspace.", {
-    dialog: stringToolParam("Dialog id, dialog db key, or dialog URL."),
+  add("readDialog", [
+    "Read one persisted dialog in the Nolo workspace.",
+    "Prefer the full dialog dbKey (dialog-<userId>-<id>) or a dialog URL; a bare id only resolves for the currently logged-in user and cannot reliably read other users' or cross-server dialogs. Use listDialogs first when the target dialog is unclear.",
+  ].join("\n"), {
+    dialog: stringToolParam("Dialog dbKey (dialog-<userId>-<id>), dialog URL, or bare id (current user only)."),
     limit: { type: "integer", description: "Optional message limit." },
   }, ["dialog"]);
   add("queryDialogsBySubjectRef", "Query persisted dialog evidence by a generic dialog.subjectRefs target.", {
@@ -584,177 +586,3 @@ export function buildNoloWorkspaceCommandArgs(call: { name: string; arguments: s
       throw new Error(`Unsupported Nolo workspace tool: ${call.name}`);
   }
 }
-
-async function readNoloProcessStream(readable: ReadableStream<Uint8Array> | null) {
-  if (!readable) return "";
-  return new Response(readable).text();
-}
-
-type NoloSpawnProcess = {
-  stdout: ReadableStream<Uint8Array> | null;
-  stderr: ReadableStream<Uint8Array> | null;
-  exited: Promise<number>;
-};
-
-type NoloSpawn = (options: {
-  cmd: string[];
-  stdout: "pipe";
-  stderr: "pipe";
-  env?: Record<string, string | undefined>;
-}) => NoloSpawnProcess;
-
-export async function runNoloWorkspaceCliTool(call: {
-  name: string;
-  arguments: string;
-}, args: {
-  cliEntrypoint?: string;
-  env?: Record<string, string | undefined>;
-  metadataKind?: string;
-  processExecPath?: string;
-  spawn?: NoloSpawn;
-}) {
-  const cliArgs = buildNoloWorkspaceCommandArgs(call);
-  const bunSpawn = (globalThis as { Bun?: { spawn?: unknown } }).Bun?.spawn;
-  const spawn: NoloSpawn = args.spawn
-    ?? (typeof bunSpawn === "function"
-      ? (bunSpawn as NoloSpawn)
-      : nodeSpawnFallback);
-  const execPath = args.processExecPath ?? process.execPath;
-  const entrypoint = args.cliEntrypoint;
-  // When the CLI is a standalone compiled binary, the executable itself is the
-  // entrypoint; passing it again would make the binary interpret its own path
-  // as a subcommand.
-  const cmd = entrypoint && entrypoint !== execPath
-    ? [execPath, entrypoint, ...cliArgs]
-    : [execPath, ...cliArgs];
-  const proc = spawn({
-    cmd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: args.env,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    readNoloProcessStream(proc.stdout),
-    readNoloProcessStream(proc.stderr),
-    proc.exited,
-  ]);
-  const content = `${stdout}${stderr}`;
-  if (exitCode !== 0) {
-    throw new Error(content.trim() || `nolo ${cliArgs.join(" ")} exited ${exitCode}`);
-  }
-  return {
-    content,
-    metadata: {
-      [args.metadataKind ?? "noloWorkspaceTool"]: true,
-      command: ["nolo", ...cliArgs].join(" "),
-      exitCode,
-    },
-  };
-}
-
-export function buildNoloWorkspaceCliToolExecutors(args: {
-  cliEntrypoint?: string;
-  env?: Record<string, string | undefined>;
-  metadataKind?: string;
-  processExecPath?: string;
-  spawn?: NoloSpawn;
-}) {
-  const executors: Record<string, (call: { name: string; arguments: string }) => Promise<{
-    content: string;
-    metadata?: Record<string, unknown>;
-  }>> = {};
-  for (const toolName of NOLO_WORKSPACE_TOOL_NAMES) {
-    // loadSkill is a local-fs tool (resolves SKILL.md from the agent's bound
-    // workspace and reads it inline). It has no `nolo` CLI subcommand, so the
-    // CLI-bridge executor must not register it — hosts wire
-    // buildLoadSkillExecutor separately. Registering it here would route the
-    // call into buildNoloWorkspaceCommandArgs, which throws "no CLI mapping".
-    if (toolName === "loadSkill") continue;
-    executors[toolName] = (call) => runNoloWorkspaceCliTool(call, args);
-  }
-  return executors;
-}
-
-/**
- * Build the local executor for the `loadSkill` tool. Resolves `<name>` against
- * the same skill scan sources as discovery (`.agents/skills/<name>/SKILL.md`
- * → `.agents/skills/<name>/SKILL.md`) via `resolveSkillByName`, reads the file inline,
- * and returns the contract content:
- *   `Skill "<name>" loaded inline. Follow its instructions.\n\n<SKILL.md 全文>`
- *
- * On an unknown name the contract forbids throwing: this returns a plain text
- * tool result listing the discovered skill names (reusing `discoverSkills` so
- * there is a single scan source of truth). On a read failure it also returns
- * a plain text result rather than throwing, so a malformed SKILL.md can never
- * crash the agent loop.
- *
- * Hosts (CLI localRuntimeAdapter, desktop turn service) spread this into their
- * executor map alongside `buildNoloWorkspaceCliToolExecutors` — that wiring
- * lives outside this package per the agent-runtime boundary.
- */
-export function buildLoadSkillExecutor(args: { cwd: string }) {
-  return async (call: { name: string; arguments: string }): Promise<{
-    content: string;
-    metadata?: Record<string, unknown>;
-  }> => {
-    const parsed = parseNoloWorkspaceToolArguments(call.arguments);
-    const name = noloStringArg(parsed.name ?? parsed.skillName ?? parsed.skill);
-    if (!name) {
-      return {
-        content: await formatUnknownSkillMessage(args.cwd, "(no name provided)"),
-        metadata: { loadSkill: true, resolved: false },
-      };
-    }
-    const { resolveSkillByName } = await import("./skillDiscovery");
-    const resolved = resolveSkillByName(args.cwd, name);
-    if (!resolved) {
-      // 系统内置 coding skill 回退：本地 skill 目录找不到时，检查是否是系统
-      // 内置 coding skill（coding / coding-review / coding-review-*）。CLI 无
-      // DB 访问，直接返回内置内容，保证 agent 在对话中始终能 loadSkill("coding")
-      // 自主载入写代码能力。
-      const { resolveCodingBuiltinSlug, buildCodingSkillContentBySlug } =
-        await import("../ai/skills/codingSkills");
-      const builtinSlug = resolveCodingBuiltinSlug(name);
-      if (builtinSlug) {
-        const body = buildCodingSkillContentBySlug(builtinSlug);
-        return {
-          content: `Skill "${name}" loaded inline. Follow its instructions.\n\n${body}`,
-          metadata: { loadSkill: true, resolved: true, name, requestedName: name, builtin: true },
-        };
-      }
-      return {
-        content: await formatUnknownSkillMessage(args.cwd, name),
-        metadata: { loadSkill: true, resolved: false, name, requestedName: name },
-      };
-    }
-    try {
-      const { readFileSync } = await import("node:fs");
-      const body = readFileSync(resolved, "utf8");
-      return {
-        content: `Skill "${name}" loaded inline. Follow its instructions.\n\n${body}`,
-        metadata: { loadSkill: true, resolved: true, name, requestedName: name, path: resolved },
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: `Skill "${name}" could not be read: ${message}`,
-        metadata: { loadSkill: true, resolved: true, name, requestedName: name, path: resolved, readError: message },
-      };
-    }
-  };
-}
-
-async function formatUnknownSkillMessage(cwd: string, requestedName: string): Promise<string> {
-  const { discoverSkills } = await import("./skillDiscovery");
-  let available: string[] = [];
-  try {
-    available = discoverSkills(cwd).map((s) => s.name);
-  } catch { /* best-effort, mirror buildSkillDiscoveryContextBlock */ }
-  const header = `Skill "${requestedName}" not found in this workspace's skill directory (.agents/skills/<name>/SKILL.md).`;
-  if (available.length === 0) return `${header}\n\nNo skills were discovered in this workspace.`;
-  return `${header}\n\nAvailable skills: ${available.join(", ")}`;
-}
-
-const nodeSpawnFallback: NoloSpawn = (options) => {
-  return spawnToWebStreams({ cmd: options.cmd, env: options.env });
-};

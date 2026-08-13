@@ -141,6 +141,7 @@ export const prepareTokenUsageData = ({
         }
       : undefined,
     sharingLevel: agentConfig.sharingLevel,
+    nowMs: timestamp,
   });
 
   const billable = resolveBillable({

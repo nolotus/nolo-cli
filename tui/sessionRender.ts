@@ -86,6 +86,8 @@ export function renderStatusLine(state: TuiState) {
 
   const cwdSegment = themeText(`📁 ${formatCwd(state.cwd)}`, "info", colorEnabled);
 
+  // 标题已由终端窗口标题区（syncWindowTitle 用 dialogLabel）显示，这里不再
+  // 重复渲染 dialogTitle 段，避免输入区上方出现冗余标题。
   const parts: string[] = [agentSegment, cwdSegment];
 
   if (state.gitStatus) {
@@ -253,7 +255,7 @@ export function renderWelcome(
   }
 
   const versionLine = colorEnabled
-    ? `\x1b[1m${themeColorSequence("accent")}nolo\x1b[0m ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |")
+    ? `${themeColorSequence("accent")}nolo\x1b[0m ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |")
     : `nolo ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |");
 
   const body = sceneArt

@@ -30,6 +30,7 @@ import {
   getPendingUserInputQueue,
 } from "../dialog/dialogRuntimeStore";
 import { createChatQueueRuntime, type ChatQueueRuntime } from "../../core/chat/chatQueueRuntime";
+import { createTurnRequest } from "../../core/chat/internalTurnEvent";
 import type { ChatQueueState } from "../../core/chat/chatQueueMachine";
 
 export type ChatQueueReduxAdapterOptions = {
@@ -74,7 +75,9 @@ export class ChatQueueReduxAdapter {
     const legacyQueue = getPendingUserInputQueue(dialogKey);
     const seed: ChatQueueState = {
       running: false,
-      queue: Array.isArray(legacyQueue) ? [...legacyQueue] : [],
+      queue: Array.isArray(legacyQueue)
+        ? legacyQueue.map((t) => createTurnRequest(t))
+        : [],
       drainPaused: getLoopStopReason(dialogKey) === "pending",
       lastDrainError: null,
     };
@@ -188,7 +191,7 @@ export class ChatQueueReduxAdapter {
 
   /** Current queue snapshot (from the core runtime). */
   getQueue(dialogKey: string): string[] {
-    return this.getRuntime(dialogKey).getState().queue;
+    return this.getRuntime(dialogKey).getState().queue.map((req) => req.text);
   }
 
   /** Reflect `loopStopReason === "pending"` into the runtime's pause flag. */

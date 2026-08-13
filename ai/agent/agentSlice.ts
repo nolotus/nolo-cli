@@ -538,8 +538,8 @@ export const slice = createSliceWithThunks({
                 credentialRef,
                 createRawApiKey,
               );
-            } catch {
-              // Non-fatal: agent is created; key stays local, can re-push later.
+            } catch (error) {
+              console.error("[agent-credential-sync] push failed", error instanceof Error ? error.message : "unknown error");
             }
           }
         }

@@ -34,6 +34,19 @@ import {
 import type { ThinkParseState } from "./thinkTagParser";
 import { createToolCallTextParserState } from "./toolCallTextParser";
 import {
+  createDsmlParserState,
+  finishDsml,
+  parseDsml,
+  pushDsmlChunk,
+  type DsmlParserState,
+} from "./deepseekDsmlParser";
+import {
+  addResponsesToolCall,
+  applyResponsesToolEvent,
+  createResponsesToolAccumulator,
+  finalizeResponsesToolCalls,
+} from "./responsesToolCallAccumulator";
+import {
   applyChatCompletionDelta,
   extractChatCompletionStreamError,
   flushChatCompletionStream,
@@ -46,8 +59,8 @@ import {
   createToolCallAccumulator,
   finalizeAccumulatedToolCalls,
 } from "./toolCallAccumulator";
-// resolvePlatformChatCompletionsEndpoint no longer needed —
-// DeepSeek legacy fallback retired with the official provider.
+// Platform endpoint selection is resolved before this adapter; this module
+// handles both chat.completions and Responses wire formats.
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -77,6 +90,10 @@ function shouldDisableThinking(providerConfig: PlatformChatProviderConfig) {
 
 function isResponsesEndpoint(endpoint: string) {
   return /\/responses$/i.test(endpoint.trim());
+}
+
+function buildDsmlToolCallId(baseCount: number, index: number): string {
+  return `dsml-${baseCount + index + 1}`;
 }
 
 function toResponsesRequestOptions(options: Record<string, number | string>) {
@@ -158,9 +175,7 @@ export function buildPlatformChatCompletionRequest(args: {
     model: args.providerConfig.model,
     ...(usesResponsesApi
       ? {
-          input: convertMessagesToResponsesInput(args.messages as any, {
-            stripReasoningContent: shouldStripReasoning,
-          }),
+          input: convertMessagesToResponsesInput(args.messages as any),
         }
       : {
           messages: toOpenAiCompatibleMessages(args.messages, {
@@ -264,13 +279,21 @@ export function parsePlatformChatCompletionResponse(args: {
   trace: AgentRuntimeChatMessage[];
 }): AgentRuntimeResult {
   if (isResponsesEndpoint(args.providerConfig.endpoint)) {
-    const content = extractTextFromResponseOutput(args.data);
+    const rawContent = extractTextFromResponseOutput(args.data);
+    const dsml = parseDsml(rawContent);
     const tool_calls = extractToolCallsFromResponseOutput(args.data);
+    const normalizedToolCalls = tool_calls.length > 0
+      ? tool_calls
+      : dsml.toolCalls.map((call, index) => ({
+          id: buildDsmlToolCallId(tool_calls.length, index),
+          type: "function" as const,
+          function: { name: call.name, arguments: call.arguments },
+        }));
     return {
-      content,
+      content: dsml.content,
       model: args.providerConfig.model,
       provider: args.providerConfig.provider,
-      ...(tool_calls.length > 0 ? { tool_calls } : {}),
+      ...(normalizedToolCalls.length > 0 ? { tool_calls: normalizedToolCalls } : {}),
       stream_complete: true,
       usage: args.data?.usage,
       trace: args.trace,
@@ -312,6 +335,8 @@ function processPlatformChatSseEvent(
   state: ChatCompletionStreamState & {
     usesResponsesApi: boolean;
     completedResponsesPayload?: any;
+    responsesToolCalls: ReturnType<typeof createResponsesToolAccumulator>;
+    dsmlToolCallState: DsmlParserState;
   },
 ) {
   for (const line of event.split("\n")) {
@@ -345,8 +370,19 @@ function processPlatformChatSseEvent(
     // Responses API streaming events
     const eventType = typeof parsed?.type === "string" ? parsed.type : "";
     if (eventType === "response.output_text.delta" && typeof parsed?.delta === "string") {
-      state.content += parsed.delta;
-      state.onTextDelta?.(parsed.delta);
+      const dsml = pushDsmlChunk(parsed.delta, state.dsmlToolCallState);
+      for (const [index, call] of dsml.toolCalls.entries()) {
+        const id = buildDsmlToolCallId(state.responsesToolCalls.size, index);
+        addResponsesToolCall(state.responsesToolCalls, {
+          id,
+          type: "function",
+          function: { name: call.name, arguments: call.arguments },
+        });
+      }
+      if (dsml.content) {
+        state.content += dsml.content;
+        state.onTextDelta?.(dsml.content);
+      }
       continue;
     }
     if (
@@ -355,6 +391,15 @@ function processPlatformChatSseEvent(
     ) {
       state.reasoning += parsed.delta;
       state.onReasoningDelta?.(parsed.delta);
+      continue;
+    }
+    if (
+      eventType === "response.output_item.added" ||
+      eventType === "response.output_item.done" ||
+      eventType === "response.function_call_arguments.delta" ||
+      eventType === "response.function_call_arguments.done"
+    ) {
+      applyResponsesToolEvent(state.responsesToolCalls, parsed);
       continue;
     }
     if (eventType === "response.completed" && parsed?.response) {
@@ -380,6 +425,8 @@ export async function readPlatformChatSseCompletion(args: {
     onTextDelta: args.onTextDelta,
     onReasoningDelta: args.onReasoningDelta,
     completedResponsesPayload: undefined as any,
+    responsesToolCalls: createResponsesToolAccumulator(),
+    dsmlToolCallState: createDsmlParserState(),
     streamError: undefined as ChatCompletionStreamError | undefined,
     accumulatedToolCalls: createToolCallAccumulator(),
     thinkState: createThinkParserState(),
@@ -394,15 +441,43 @@ export async function readPlatformChatSseCompletion(args: {
   // readOpenAiCompatibleSseCompletion). No-op for the Responses-API branch
   // since its events carry complete text deltas, not inline <think> tags.
   flushChatCompletionStream(state);
+  if (state.usesResponsesApi) {
+    const dsml = finishDsml(state.dsmlToolCallState);
+    for (const [index, call] of dsml.toolCalls.entries()) {
+      const id = buildDsmlToolCallId(state.responsesToolCalls.size, index);
+      addResponsesToolCall(state.responsesToolCalls, {
+        id,
+        type: "function",
+        function: { name: call.name, arguments: call.arguments },
+      });
+    }
+    if (dsml.content) state.content += dsml.content;
+  }
   // 代理把上游故障编成 HTTP 200 + 错误帧；不抛就会伪装成空回答落进对话历史。
   throwIfChatCompletionStreamFailed(state);
 
-  if (state.usesResponsesApi && state.completedResponsesPayload) {
+  if (state.usesResponsesApi) {
     const response = state.completedResponsesPayload;
-    const tool_calls = extractToolCallsFromResponseOutput(response);
-    const finalContent = extractTextFromResponseOutput(response);
+    const completedToolCalls = response
+      ? extractToolCallsFromResponseOutput(response)
+      : [];
+    const finalContent = response ? extractTextFromResponseOutput(response) : "";
+    const normalizedFinal = finalContent
+      ? parseDsml(finalContent)
+      : { content: "", toolCalls: [] };
+    const normalizedDsmlCalls = normalizedFinal.toolCalls.map((call, index) => ({
+      id: buildDsmlToolCallId(completedToolCalls.length, index),
+      type: "function" as const,
+      function: { name: call.name, arguments: call.arguments },
+    }));
+    const tool_calls =
+      completedToolCalls.length > 0
+        ? completedToolCalls
+        : normalizedDsmlCalls.length > 0
+          ? normalizedDsmlCalls
+          : finalizeResponsesToolCalls(state.responsesToolCalls);
     return {
-      content: finalContent || state.content,
+      content: normalizedFinal.content || state.content,
       ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
       ...(tool_calls.length > 0 ? { tool_calls } : {}),
       ...(state.usage ? { usage: state.usage, stream_complete: true } : {}),

@@ -6,8 +6,8 @@ import { APP_BUILDER_PUBLIC_AGENT_KEY } from "../../app/constants/appEditor";
 import { buildBuiltinObjectSkillReference, type BuiltinObjectSkillKind } from "../../ai/skills/builtinObjectSkills";
 
 import {
-  PLATFORM_HOSTED_GLM_52_MODEL,
-  PLATFORM_HOSTED_GLM_PRICE,
+  PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL,
+  PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE,
 } from "../../ai/llm/platformHosted";
 import { PLATFORM_HOSTED_KIMI_PROVIDER } from "../../ai/llm/kimi";
 
@@ -125,11 +125,11 @@ export const buildBuiltinObjectAssistantAgent = (
     userId,
     isPublic: false,
     provider: PLATFORM_HOSTED_KIMI_PROVIDER,
-    model: PLATFORM_HOSTED_GLM_52_MODEL,
+    model: PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL,
     apiSource: "platform" as const,
     useServerProxy: true,
-    inputPrice: PLATFORM_HOSTED_GLM_PRICE.input,
-    outputPrice: PLATFORM_HOSTED_GLM_PRICE.output,
+    inputPrice: PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE.input,
+    outputPrice: PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE.output,
     createdAt: now,
     updatedAt: String(now),
     dialogCount: 0,

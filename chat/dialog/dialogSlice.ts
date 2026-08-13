@@ -16,7 +16,7 @@ import { clearWorkflow } from "../../ai/workflow/workflowStore";
 import { updateTokensAction } from "./actions/updateTokensAction";
 
 import { mergeDialogTokenStats } from "./dialogTokenStats";
-import { getDialogAgentIds, getPrimaryDialogAgentId } from "./dialogAgents";
+import { getDialogAgentIds, getPrimaryDialogAgentId, getActiveDialogAgentId } from "./dialogAgents";
 import { deleteDialogThunk } from "./deleteDialogOrchestration";
 import type { CreatePagePayload, PendingFile } from "./dialogRuntimeTypes";
 import {
@@ -106,6 +106,13 @@ const runSetPrimaryDialogAgentAction = async (args: any, thunkApi: any) => {
     "./actions/setPrimaryDialogAgentAction"
   );
   return setPrimaryDialogAgentAction(args, thunkApi);
+};
+
+const runSwitchDialogAgentAction = async (args: any, thunkApi: any) => {
+  const { switchDialogAgentAction } = await import(
+    "./actions/switchDialogAgentAction"
+  );
+  return switchDialogAgentAction(args, thunkApi);
 };
 
 const runSetDialogExtraReferencesAction = async (args: any, thunkApi: any) => {
@@ -278,6 +285,10 @@ export const setPrimaryDialogAgent = createAsyncThunk(
   "dialog/setPrimaryDialogAgent",
   runSetPrimaryDialogAgentAction
 );
+export const switchDialogAgent = createAsyncThunk(
+  "dialog/switchDialogAgent",
+  runSwitchDialogAgentAction
+);
 export const setDialogExtraReferences = createAsyncThunk(
   "dialog/setDialogExtraReferences",
   runSetDialogExtraReferencesAction
@@ -305,6 +316,8 @@ export const selectCurrentPrimaryAgentId = createSelector(
   (state: any) => selectCurrentDialogConfig(state),
   (dialogConfig) => getPrimaryDialogAgentId(dialogConfig)
 );
+
+export { getActiveDialogAgentId } from "./dialogAgents";
 
 export const selectDialogConfigByKey = createSelector(
   (state: any) => state,

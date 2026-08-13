@@ -112,6 +112,13 @@ export function projectDesktopToolUiContent(
           ? args.message
           : "";
 
+  if (toolName === "setTodoList") {
+    const existing = tryParseJsonRecord(rawContent);
+    if (existing && Array.isArray(existing.todos)) {
+      return clipUiText(JSON.stringify({ todos: existing.todos }));
+    }
+  }
+
   if (toolName === "execShell") {
     const existing = tryParseJsonRecord(rawContent);
     if (

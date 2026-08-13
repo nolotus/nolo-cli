@@ -34,6 +34,8 @@ export type ListedAgent = {
   apiSource?: string;
   /** apiSource=cli 时的具体 CLI（copilot/codex/claude 等订阅）。 */
   cliProvider?: string;
+  /** Epoch ms when the provider is expected to become available again. */
+  nextAvailableAt?: number;
 };
 
 function parseAgentRecordId(privateKey: string, explicitId?: string) {
@@ -108,6 +110,9 @@ export function normalizeListedAgent(record: any): ListedAgent | null {
       : {}),
     ...(typeof record?.cliProvider === "string" && record.cliProvider
       ? { cliProvider: record.cliProvider }
+      : {}),
+    ...(typeof record?.nextAvailableAt === "number" && Number.isFinite(record.nextAvailableAt)
+      ? { nextAvailableAt: record.nextAvailableAt }
       : {}),
   };
 }

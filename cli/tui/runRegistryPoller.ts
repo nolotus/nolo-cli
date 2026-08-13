@@ -47,6 +47,12 @@ export type RunRegistryPollerDeps = {
   readRecord: (runId: string) => RunRecord | null | undefined;
   /** 孤儿回收：pid 没了就把记录落成终态。返回 null 表示记录不存在。 */
   reconcile?: (runId: string) => RunRecord | null | undefined;
+  /**
+   * 每 tick 把成功读到的记录（含刚变成终态的）广播出去。终态唤醒观察器
+   * （runCompletionWatcher）挂在上面。读不到记录的 run 不在其列（可能跑在
+   * 服务端，本地 registry 里根本没有）。
+   */
+  onRecordsPolled?: (records: RunRecord[]) => void;
   now?: () => number;
   intervalMs?: number;
   reconcileSilenceMs?: number;
@@ -173,6 +179,9 @@ export function createRunRegistryPoller(deps: RunRegistryPollerDeps): RunRegistr
     }
 
     const alive = new Set<string>();
+    // 本 tick 成功读到的记录：去重跳过（fingerprint 没变）不等于没读到，
+    // 观察者（终态唤醒）需要看到每一条读到的记录来做自己的转变检测。
+    const polled: RunRecord[] = [];
     for (const run of active) {
       alive.add(run.runId);
       // 轮询器跑在 TUI 的主循环上，任何一条 run 的读取出岔子都不该把整个界面
@@ -201,6 +210,7 @@ export function createRunRegistryPoller(deps: RunRegistryPollerDeps): RunRegistr
       // 读不到记录不代表 run 没了：这条 run 可能跑在服务端、根本不在本地
       // registry 里。本地读不到就交给原来那条路（模型轮询），不动面板。
       if (!record) continue;
+      polled.push(record);
 
       const snapshot = snapshotFromRunRecord(record, at);
       const mark = fingerprint(snapshot);
@@ -215,6 +225,15 @@ export function createRunRegistryPoller(deps: RunRegistryPollerDeps): RunRegistr
     }
     for (const runId of [...lastReconciledAt.keys()]) {
       if (!alive.has(runId)) lastReconciledAt.delete(runId);
+    }
+
+    // 观察者出岔子不该带走轮询器——它跑在 TUI 主循环上。
+    if (polled.length > 0 && deps.onRecordsPolled) {
+      try {
+        deps.onRecordsPolled(polled);
+      } catch {
+        /* observer errors must not take down the poll loop */
+      }
     }
   };
 

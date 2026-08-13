@@ -6,6 +6,7 @@ import type { AgentRuntimeToolCall } from "./types";
 import {
   convertMessagesToResponsesInput,
   toResponsesTools,
+  type ResponseInputItem,
 } from "../integrations/openai/responsesHelpers";
 import { parseSseDataLineObject } from "./sseDataLine";
 import { readSseDataValues } from "./sseFrames";
@@ -69,6 +70,10 @@ export type CodexResponsesCallArgs = {
   openAiBody: Record<string, unknown>;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  /** 流内 503（server_is_overloaded）的总尝试次数，默认 3（首次 + 2 次重试）。 */
+  maxAttempts?: number;
+  /** 注入退避等待，便于测试。 */
+  sleep?: (ms: number) => Promise<unknown>;
 };
 
 type CodexRequestIdentity = {
@@ -198,6 +203,27 @@ function stablePromptCacheKey(parts: unknown[]): string {
   return `nolo-codex-${hash.toString(16).padStart(8, "0")}`;
 }
 
+/**
+ * Codex OAuth has a private Responses wire format. Unlike the public OpenAI /
+ * DeepSeek Responses APIs, historical reasoning items use `summary` blocks.
+ * Keep this conversion at the Codex boundary so the canonical message model
+ * and the public Responses adapter remain provider-neutral.
+ */
+export function convertMessagesToCodexInput(
+  messages: Parameters<typeof convertMessagesToResponsesInput>[0],
+): ResponseInputItem[] {
+  return convertMessagesToResponsesInput(messages).map((item) => {
+    if (item.type !== "reasoning") return item;
+    return {
+      type: "reasoning",
+      summary: item.content.map((part) => ({
+        type: "summary_text",
+        text: part.text,
+      })),
+    } as unknown as ResponseInputItem;
+  });
+}
+
 export function buildCodexRequestBody(
   args: CodexResponsesCallArgs,
   identity: CodexRequestIdentity = createCodexRequestIdentity(),
@@ -210,7 +236,7 @@ export function buildCodexRequestBody(
     const role = m && typeof m === "object" ? String((m as { role?: unknown }).role) : "";
     return role !== "system" && role !== "developer";
   });
-  const input = convertMessagesToResponsesInput(nonSystem as any);
+  const input = convertMessagesToCodexInput(nonSystem as any);
   const instructions = collectInstructions(rawMessages, args.agentConfig.prompt);
   const stableInstructions = collectStableInstructions(rawMessages, args.agentConfig.prompt);
   const model =
@@ -240,13 +266,78 @@ export function buildCodexRequestBody(
   return body;
 }
 
+/**
+ * 上游在流内报告的失败。Codex backend 对 `server_is_overloaded` 这类容量错误
+ * **仍然回 HTTP 200**，把故障塞进 SSE 的 `error` / `response.failed` 帧里。
+ * 不识别它就会聚合出一条空 assistant 消息 + 伪造的 finish_reason "stop"，
+ * 下游 localLoop 只能把它当空轮，最后以「本轮输出不完整」之类的文案收场，
+ * 真正的原因（上游过载）全丢了，传输层重试也因为 200 而完全不触发。
+ */
+export type CodexStreamFailure = {
+  code?: string;
+  type?: string;
+  message: string;
+};
+
+/** 流内失败 → HTTP 状态码。503/429 才允许重试，其余按 502 终局失败。 */
+export function codexStreamFailureStatus(failure: CodexStreamFailure): number {
+  const marker = `${failure.code ?? ""} ${failure.type ?? ""}`.toLowerCase();
+  if (marker.includes("overload") || marker.includes("service_unavailable")) return 503;
+  if (marker.includes("rate_limit") || marker.includes("usage_limit")) return 429;
+  return 502;
+}
+
+/** 只有容量抖动值得重试；鉴权/配额/参数错误重试只会浪费一轮。 */
+const RETRYABLE_CODEX_STREAM_STATUSES = new Set([503]);
+
+/** 与 localRuntimeFetchRetry 的通用预算一致：首次 + 2 次重试。 */
+const CODEX_STREAM_MAX_ATTEMPTS = 3;
+
+const CODEX_STREAM_RETRY_BASE_DELAY_MS = 500;
+
+function toStreamFailure(raw: unknown): CodexStreamFailure | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const err = raw as Record<string, unknown>;
+  // incomplete_details 只有 { reason }，没有 message/code——统一归一化到同一形状。
+  const reason = typeof err.reason === "string" ? err.reason : undefined;
+  const message =
+    typeof err.message === "string" && err.message
+      ? err.message
+      : reason
+        ? `Codex upstream ended incomplete: ${reason}.`
+        : "";
+  if (!message) return undefined;
+  const code = typeof err.code === "string" ? err.code : reason;
+  return {
+    ...(code ? { code } : {}),
+    ...(typeof err.type === "string" ? { type: err.type } : {}),
+    message,
+  };
+}
+
 function aggregateResponsesStream(events: Record<string, unknown>[]) {
   let text = "";
   const toolCalls: AgentRuntimeToolCall[] = [];
   let usage: Record<string, unknown> | undefined;
+  let failure: CodexStreamFailure | undefined;
 
   for (const ev of events) {
     const type = String(ev.type ?? "");
+    if (type === "error") {
+      failure = failure ?? toStreamFailure(ev.error);
+      continue;
+    }
+    if (type === "response.failed" || type === "response.incomplete") {
+      const response = ev.response as Record<string, unknown> | undefined;
+      failure =
+        failure ??
+        toStreamFailure(response?.error) ??
+        toStreamFailure(response?.incomplete_details) ?? {
+          code: type === "response.incomplete" ? "response_incomplete" : "response_failed",
+          message: `Codex upstream ended with ${type}.`,
+        };
+      continue;
+    }
     if (type === "response.output_text.delta" && typeof ev.delta === "string") {
       text += ev.delta;
       continue;
@@ -287,7 +378,7 @@ function aggregateResponsesStream(events: Record<string, unknown>[]) {
       }
     }
   }
-  return { text, toolCalls, usage };
+  return { text, toolCalls, usage, failure };
 }
 
 async function readSseEvents(response: Response): Promise<Record<string, unknown>[]> {
@@ -297,24 +388,14 @@ async function readSseEvents(response: Response): Promise<Record<string, unknown
   });
 }
 
-/** Call the Codex Responses endpoint and return an OpenAI chat.completion body. */
-export async function fetchCodexResponsesCompletion(
+const defaultSleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 单次 Codex 请求：不含重试，失败以 { status, body.error } 形式返回。 */
+async function callCodexResponsesOnce(
   args: CodexResponsesCallArgs,
+  accountId: string,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const fetchImpl = args.fetchImpl ?? fetch;
-  const accountId = args.accountId?.trim() || decodeCodexAccountId(args.accessToken);
-  if (!accountId) {
-    return {
-      status: 401,
-      body: {
-        error: {
-          message:
-            "ChatGPT Codex credential is missing chatgpt_account_id. Re-run `nolo auth chatgpt`.",
-        },
-      },
-    };
-  }
-
   const identity = createCodexRequestIdentity();
   const body = buildCodexRequestBody(args, identity);
   const headers = buildCodexCompatibilityHeaders(identity, accountId);
@@ -335,7 +416,23 @@ export async function fetchCodexResponsesCompletion(
   }
 
   const events = await readSseEvents(response);
-  const { text, toolCalls, usage } = aggregateResponsesStream(events);
+  const { text, toolCalls, usage, failure } = aggregateResponsesStream(events);
+
+  // 流内失败一律当失败上报，即使已经收到部分 text：半条被上游掐断的回复不该
+  // 被当成完整回合喂回循环。调用方拿到的是真实状态码 + 上游原文。
+  if (failure) {
+    return {
+      status: codexStreamFailureStatus(failure),
+      body: {
+        error: {
+          message: failure.message,
+          ...(failure.code ? { code: failure.code } : {}),
+          ...(failure.type ? { type: failure.type } : {}),
+        },
+      },
+    };
+  }
+
   const message: Record<string, unknown> = {
     role: "assistant",
     content: text || null,
@@ -355,6 +452,44 @@ export async function fetchCodexResponsesCompletion(
       ...(usage ? { usage } : {}),
     },
   };
+}
+
+/**
+ * Call the Codex Responses endpoint and return an OpenAI chat.completion body.
+ *
+ * 容量抖动（`server_is_overloaded`）在这里就地重试：它藏在 HTTP 200 的 SSE 帧里，
+ * 传输层的 fetchWithTransientRetry 看不见，只能由本函数负责。
+ */
+export async function fetchCodexResponsesCompletion(
+  args: CodexResponsesCallArgs,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const accountId = args.accountId?.trim() || decodeCodexAccountId(args.accessToken);
+  if (!accountId) {
+    return {
+      status: 401,
+      body: {
+        error: {
+          message:
+            "ChatGPT Codex credential is missing chatgpt_account_id. Re-run `nolo auth chatgpt`.",
+        },
+      },
+    };
+  }
+
+  const sleep = args.sleep ?? defaultSleep;
+  const requestedMaxAttempts = Number(args.maxAttempts);
+  const maxAttempts = Number.isFinite(requestedMaxAttempts)
+    ? Math.min(10, Math.max(1, Math.floor(requestedMaxAttempts)))
+    : CODEX_STREAM_MAX_ATTEMPTS;
+
+  let result = await callCodexResponsesOnce(args, accountId);
+  for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
+    if (!RETRYABLE_CODEX_STREAM_STATUSES.has(result.status)) break;
+    if (args.signal?.aborted) break;
+    await sleep(CODEX_STREAM_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+    result = await callCodexResponsesOnce(args, accountId);
+  }
+  return result;
 }
 
 /** Detects a ChatGPT Codex OAuth agent (apiKeyRef "chatgpt"). */

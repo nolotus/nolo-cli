@@ -501,7 +501,7 @@ describe("cli agent run client", () => {
       agentKey: NOLO_PROJECT_MANAGER_AGENT_KEY,
       serverUrl: "https://nolo.chat",
       message: "Supervise child dispatch",
-      allowedToolNames: ["callAgent"],
+      allowedToolNames: ["startAgentRun"],
       scriptDir: "C:/missing/scripts",
       env: { AUTH_TOKEN: "token-123" },
       output,
@@ -513,7 +513,7 @@ describe("cli agent run client", () => {
     });
 
     expect(requests[0]?.body.runtimeContext.allowedToolNames).toEqual([
-      "callAgent",
+      "startAgentRun",
     ]);
   });
   test("sends blocked tool guard names over HTTP runtime context", async () => {
@@ -1581,6 +1581,65 @@ describe("cli agent run client", () => {
     expect(result).toEqual({ exitCode: 0, dialogId: "dialog-auto-local" });
     expect(httpCalls).toEqual([]);
     expect(output.text()).toContain("frontend -> working locally");
+  });
+
+  test("auto mode turnTokens uses the final context snapshot, not summed provider-call input", async () => {
+    const output = new CaptureOutput();
+    let completions = 0;
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "inspect",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-tools"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          model: "gpt-5.5",
+          provider: "openai",
+          apiSource: "cli",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-context-snapshot" }),
+        resolveProvider: async () => ({
+          model: "gpt-5.5",
+          complete: async () => {
+            completions += 1;
+            if (completions === 1) {
+              return {
+                content: "",
+                model: "gpt-5.5",
+                usage: { input_tokens: 100, output_tokens: 10 },
+                tool_calls: [{
+                  id: "call-1",
+                  type: "function",
+                  function: { name: "execShell", arguments: "{}" },
+                }],
+              } as any;
+            }
+            return {
+              content: "done",
+              model: "gpt-5.5",
+              usage: { input_tokens: 140, output_tokens: 20 },
+            };
+          },
+        }),
+        executeTool: async () => ({ content: "ok" }),
+      },
+      fetchImpl: async () => {
+        throw new Error("HTTP should not be called");
+      },
+    });
+
+    expect(result.turnTokens?.input).toBe(140);
+    expect(result.turnTokens?.remaining).toBe(
+      (result.turnTokens?.contextWindow ?? 0) - 140,
+    );
   });
 
   test("auto mode refreshes missing local agent config and retries local once before HTTP", async () => {

@@ -171,9 +171,9 @@ export type RunAgentTurnOptions = {
    * carries `ephemeral: true`, which the server honors).
    *
    * Note: this covers `adapter.saveTurn` (dialog + messages) and
-   * `adapter.loadDialogHistory`. The `callAgent` sub-agent path writes its
-   * own pending/failed child-dialog records directly to the store and is NOT
-   * suppressed — but a liveness probe (a single short reply, no tool calls)
+   * `adapter.loadDialogHistory`. The `startAgentRun` local --bg sub-agent
+   * path persists its own run records to ~/.nolo/runs/ and is NOT suppressed
+   * by ephemeral — but a liveness probe (a single short reply, no tool calls)
    * never reaches that path, so in practice nothing is persisted.
    */
   ephemeral?: boolean;

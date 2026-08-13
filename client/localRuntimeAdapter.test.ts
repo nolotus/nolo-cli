@@ -427,13 +427,18 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(result.dialogId).toBe("01LOCAL");
+    // 标题生成（saveTurn 无标题时先走平台 chat proxy）位于 evidence 写入之前。
     expect(remoteWrites.map((write) => write.url)).toEqual([
+      "https://us.nolo.chat/api/v1/chat",
       "https://us.nolo.chat/api/v1/db/write/",
       "https://us.nolo.chat/api/v1/db/write/",
       "https://us.nolo.chat/api/v1/db/write/",
     ]);
-    expect(remoteWrites.every((write) => write.auth === "Bearer token-1")).toBe(true);
-    expect(remoteWrites[0].body).toMatchObject({
+    const dbWrites = remoteWrites.filter((write) =>
+      write.url.endsWith("/api/v1/db/write/"),
+    );
+    expect(dbWrites.every((write) => write.auth === "Bearer token-1")).toBe(true);
+    expect(dbWrites[0].body).toMatchObject({
       customKey: "dialog-01LOCAL-msg-1710000000000-001",
       userId: "user-1",
       data: {
@@ -443,7 +448,7 @@ describe("CLI local runtime adapter", () => {
         content: "fix tabs",
       },
     });
-    expect(remoteWrites[1].body).toMatchObject({
+    expect(dbWrites[1].body).toMatchObject({
       customKey: "dialog-01LOCAL-msg-1710000000000-002",
       userId: "user-1",
       data: {
@@ -453,7 +458,7 @@ describe("CLI local runtime adapter", () => {
         content: "cli ok",
       },
     });
-    expect(remoteWrites[2].body).toMatchObject({
+    expect(dbWrites[2].body).toMatchObject({
       customKey: "dialog-user-1-01LOCAL",
       userId: "user-1",
       data: {
@@ -734,9 +739,14 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(result.dialogId).toBe("01NORMAL");
-    // All plan.ops should be POSTed to /api/v1/db/write/
-    expect(remoteWrites.length).toBeGreaterThan(0);
-    for (const write of remoteWrites) {
+    // 标题生成（saveTurn 无标题时先走平台 chat proxy）位于 evidence 写入之前；
+    // plan.ops 仍全部 POST 到 /api/v1/db/write/。
+    expect(remoteWrites[0].url).toBe("https://us.nolo.chat/api/v1/chat");
+    const dbWrites = remoteWrites.filter((write) =>
+      write.url.endsWith("/api/v1/db/write/"),
+    );
+    expect(dbWrites.length).toBeGreaterThan(0);
+    for (const write of dbWrites) {
       expect(write.url).toBe("https://us.nolo.chat/api/v1/db/write/");
     }
   });
@@ -1255,6 +1265,9 @@ describe("CLI local runtime adapter", () => {
       "http://127.0.0.1:38123/api/v1/db/read/agent-user-1-cluster",
       "https://nolo.chat/api/v1/db/read/agent-user-1-cluster",
       "http://127.0.0.1:11434/v1/chat/completions",
+      // 标题生成：平台 proxy 不可达（404）→ fallback 本地 OpenAI-compatible
+      "http://127.0.0.1:38123/api/v1/chat",
+      "http://127.0.0.1:11434/v1/chat/completions",
       "http://127.0.0.1:38123/api/v1/db/write/",
       "http://127.0.0.1:38123/api/v1/db/write/",
       "http://127.0.0.1:38123/api/v1/db/write/",
@@ -1570,6 +1583,8 @@ describe("CLI local runtime adapter", () => {
         provider: "nolo",
         apiSource: "platform",
         useServerProxy: true,
+        apiKey: "stale-local-key",
+        apiKeyHeader: "x-api-key",
         tools: ["readFile"],
       }],
     ]);
@@ -1599,8 +1614,14 @@ describe("CLI local runtime adapter", () => {
           url: String(url),
           body: JSON.parse(String(init?.body)),
         });
+        // nolo/deepseek-v4-flash 走 Responses wire format（api.deepseek.com/responses）
         return Response.json({
-          choices: [{ message: { content: "PONG" } }],
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "PONG" }],
+            },
+          ],
         });
       },
     });
@@ -1617,19 +1638,21 @@ describe("CLI local runtime adapter", () => {
     );
     expect(turnRequests).toHaveLength(1);
     expect(turnRequests[0].body).toMatchObject({
-      url: "https://ollama.com/v1/chat/completions",
+      url: "https://api.deepseek.com/responses",
       provider: "nolo",
-      messages: expect.any(Array),
+      input: expect.any(Array),
     });
     expect(turnRequests[0].body.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "function",
-          function: expect.objectContaining({ name: "readFile" }),
+          name: "readFile",
         }),
       ]),
     );
-    expect(turnRequests[0].body.input).toBeUndefined();
+    expect(turnRequests[0].body.messages).toBeUndefined();
+    expect(turnRequests[0].body.KEY).toBeUndefined();
+    expect(turnRequests[0].body.apiKeyHeader).toBeUndefined();
   });
 
   test("retries transient certificate failures from the platform chat proxy", async () => {
@@ -1666,8 +1689,12 @@ describe("CLI local runtime adapter", () => {
         },
         iterator: () => (async function* () {})(),
       },
-      fetchImpl: async (url) => {
+      fetchImpl: async (url, init) => {
         const target = String(url);
+        // 标题生成请求（builtin-dialog-title-llm）与主循环隔离：不参与重试计数
+        if (JSON.parse(String(init?.body ?? "{}")).agentKey === "builtin-dialog-title-llm") {
+          return Response.json({ choices: [{ message: { content: "title" } }] });
+        }
         if (target.includes("/api/v1/db/write/")) {
           return Response.json({ ok: true });
         }
@@ -1732,8 +1759,12 @@ describe("CLI local runtime adapter", () => {
         },
         iterator: () => (async function* () {})(),
       },
-      fetchImpl: async (url) => {
+      fetchImpl: async (url, init) => {
         const target = String(url);
+        // 标题生成请求（builtin-dialog-title-llm）与主循环隔离：不参与重试计数
+        if (JSON.parse(String(init?.body ?? "{}")).agentKey === "builtin-dialog-title-llm") {
+          return Response.json({ choices: [{ message: { content: "title" } }] });
+        }
         if (target.includes("/api/v1/db/write/")) {
           return Response.json({ ok: true });
         }
@@ -1809,8 +1840,12 @@ describe("CLI local runtime adapter", () => {
         },
         iterator: () => (async function* () {})(),
       },
-      fetchImpl: async (url) => {
+      fetchImpl: async (url, init) => {
         const target = String(url);
+        // 标题生成请求（builtin-dialog-title-llm）与主循环隔离：不参与重试计数
+        if (JSON.parse(String(init?.body ?? "{}")).agentKey === "builtin-dialog-title-llm") {
+          return Response.json({ choices: [{ message: { content: "title" } }] });
+        }
         if (target.includes("/api/v1/db/write/")) {
           return Response.json({ ok: true });
         }
@@ -4732,6 +4767,130 @@ describe("CLI local runtime adapter OAuth per-request wiring (real credential st
   });
 });
 
+describe("CLI local runtime adapter Codex OAuth branch (codex-responses) result fields", () => {
+  // 回归护栏：chatgpt 走 fetchCodexResponsesCompletion（/backend-api/codex/responses），
+  // provider 返回的 body 已含 choices[0].finish_reason（"stop"/"tool_calls"）与 usage，
+  // 但 adapter 的 codex 分支一度只回 content/tool_calls，丢掉了这三个字段，导致：
+  //   1. localLoop 把正常走完的空轮误判成 stream_truncated（误报「流在收尾前被中断」）；
+  //   2. TUI context chip 拿不到 usage，estimatedContextTokens 不更新。
+  // 本组从 adapter 入口驱动（loadAgentConfig → resolveProvider → complete），断言
+  // AgentRuntimeResult 必须带上 finish_reason / stream_complete / usage。
+  //
+  // 与上方 xai 组同样的可测性约束：adapter 硬构造 createOAuthApiKeyRefResolver()，
+  // os.homedir() 缓存导致无法重定向凭证目录，故退而用真实 homeDir 凭证文件——
+  // beforeEach 备份 chatgpt 凭证、写入伪造凭证，afterEach 逐字节恢复，全程不碰用户真实 token。
+  const CODEX_REF = "chatgpt";
+  const credentialPath = getCredentialPath(CODEX_REF);
+  let originalRaw: string | null = null;
+  let originalExisted = false;
+
+  beforeEach(() => {
+    clearCliLocalRuntimePreparedAgentCache();
+    originalExisted = existsSync(credentialPath);
+    originalRaw = originalExisted ? readFileSync(credentialPath, "utf8") : null;
+  });
+
+  afterEach(() => {
+    if (originalExisted && originalRaw !== null) {
+      writeFileSync(credentialPath, originalRaw, { encoding: "utf8", mode: 0o600 });
+    } else if (existsSync(credentialPath)) {
+      unlinkSync(credentialPath);
+    }
+    originalRaw = null;
+    originalExisted = false;
+  });
+
+  function writeFakeChatgptCredential(accessToken: string, accountId: string) {
+    writeOAuthCredential(CODEX_REF, {
+      provider: CODEX_REF,
+      accessToken,
+      accountId,
+      // 远期 expiresAt 让 token 始终「新鲜」（越过 5min skew），非 force 路径直接返回文件值。
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      obtainedAt: Date.now(),
+    });
+  }
+
+  function createCodexOAuthAdapter(opts: {
+    agentRecord: Record<string, unknown>;
+    fetchImpl: (url: unknown, init?: { headers?: unknown }) => Promise<Response>;
+  }) {
+    const dbKey = String(opts.agentRecord.dbKey);
+    const store = new Map<string, unknown>([[dbKey, opts.agentRecord]]);
+    return createAdapter({
+      env: { NOLO_LOCAL_USER_ID: "user-1" },
+      db: {
+        get: async (key: string) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key: string, value: unknown) => {
+          store.set(key, value);
+        },
+        batch: async (ops: Array<{ type: string; key: string; value: unknown }>) => {
+          for (const op of ops) if (op.type === "put") store.set(op.key, op.value);
+        },
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: opts.fetchImpl,
+      sleep: async () => {},
+    });
+  }
+
+  const CODEX_OAUTH_AGENT_RECORD = {
+    dbKey: "agent-user-1-codex-oauth",
+    id: "codex-oauth",
+    prompt: "Use Codex OAuth provider.",
+    model: "gpt-5.6-luna",
+    provider: "openai",
+    apiSource: "custom",
+    apiKeyRef: "chatgpt",
+  };
+
+  test("codex branch surfaces finish_reason / stream_complete / usage on the AgentRuntimeResult", async () => {
+    writeFakeChatgptCredential("token-codex-A", "account-codex-1");
+    const requests: Array<{ url: string; auth: string | null; accountId: string | null }> = [];
+    const adapter = createCodexOAuthAdapter({
+      agentRecord: CODEX_OAUTH_AGENT_RECORD,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes("/backend-api/codex/responses")) {
+          requests.push({
+            url: String(url),
+            auth: new Headers(init?.headers as HeadersInit).get("Authorization"),
+            accountId: new Headers(init?.headers as HeadersInit).get("chatgpt-account-id"),
+          });
+          // fetchCodexResponsesCompletion 恒按 codex responses SSE 聚合，mock 用
+          // 真实事件帧：output_text.delta 累积正文，response.completed 带 usage。
+          return new Response(
+            'data: {"type":"response.output_text.delta","delta":"codex ok"}\n\n' +
+              'data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}}\n\n',
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        }
+        // loadAgentConfig 阶段的远端 record 读取等非 provider 请求：给无害响应。
+        return Response.json({ choices: [{ message: { content: "unused" } }] });
+      },
+    });
+
+    const agentConfig = await adapter.loadAgentConfig("codex-oauth");
+    const provider = await adapter.resolveProvider(agentConfig);
+    const result = await provider.complete([{ role: "user", content: "hi" }], {});
+
+    expect(result).toMatchObject({
+      content: "codex ok",
+      finish_reason: "stop",
+      stream_complete: true,
+      usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      url: "https://chatgpt.com/backend-api/codex/responses",
+      auth: "Bearer token-codex-A",
+      accountId: "account-codex-1",
+    });
+  });
+});
+
 /**
  * Policy 名单派生自 schema 侧：buildLocalPolicyToolNames 不再按类别独立收集，
  * 直接取 buildOpenAiTools 输出的 function.name。覆盖 startAgentRun/controlAgentRun
@@ -4876,6 +5035,39 @@ describe("CLI local policy tool names 派生自 schema", () => {
       toolName: "startAgentRun",
     });
     expect(decision.allowed).toBe(true);
+  });
+
+  test("subtask run (NOLO_AGENT_RUN_CHILD=1) strips orchestration + git-write tools", () => {
+    const agentConfig = {
+      key: "agent-subtask",
+      tools: [
+        "readFile",
+        "writeFile",
+        "startAgentRun",
+        "controlAgentRun",
+        "listAgents",
+        "readAgent",
+        "gitAdd",
+        "gitCommit",
+      ],
+    } as any;
+    const env = { NOLO_AGENT_RUN_CHILD: "1" };
+    const requested = resolveCliRequestedToolNames(agentConfig, env as any);
+    // 干活工具保留
+    expect(requested).toContain("readFile");
+    expect(requested).toContain("writeFile");
+    // 编排工具裁剪
+    expect(requested).not.toContain("startAgentRun");
+    expect(requested).not.toContain("controlAgentRun");
+    expect(requested).not.toContain("listAgents");
+    expect(requested).not.toContain("readAgent");
+    // git 写工具裁剪
+    expect(requested).not.toContain("gitAdd");
+    expect(requested).not.toContain("gitCommit");
+    // 交互 run（无 NOLO_AGENT_RUN_CHILD）不受影响
+    const interactive = resolveCliRequestedToolNames(agentConfig, {} as any);
+    expect(interactive).toContain("startAgentRun");
+    expect(interactive).toContain("controlAgentRun");
   });
 });
 

@@ -293,7 +293,7 @@ export function wrapTranscriptLine(
     }
     const openingStyles = [...activeStyles];
     const isContinuation = result.length > 0 && hangingIndent.length > 0;
-    const indentWidth = isContinuation ? displayWidth(hangingIndent) : 0;
+    const indentWidth = isContinuation ? visibleWidth(hangingIndent) : 0;
     const maxSegmentWidth = Math.max(1, columns - indentWidth);
 
     let width = 0;

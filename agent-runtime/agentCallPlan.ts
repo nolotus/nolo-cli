@@ -265,7 +265,7 @@ export function resolveAgentCallPlan(
   // Compute endpoint for platform providers
   const endpoint = useResponses
     ? resolvePlatformResponsesEndpoint(provider) ?? ""
-    : resolvePlatformChatCompletionsEndpoint(provider) ?? "";
+    : resolvePlatformChatCompletionsEndpoint(provider, agentConfig.model) ?? "";
 
   return {
     authMethod: { kind: "platform-key" },

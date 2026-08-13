@@ -6,9 +6,9 @@
  * 单轮 LLM 调用，不加载 Agent 的 references（知识库），不触发多轮 tool loop。
  * 工具列表和系统提示均可在调用时覆盖 Agent 的默认配置。
  *
- * 与 callAgent 的区别：
+ * 与 startAgentRun（同步 wait:true）的区别：
  * - runLlm：1 轮回复，不加载知识库；可携带工具但不会循环调用，更快且可预期
- * - callAgent：可能多轮（agent 内部有 tool loop），带完整 agent 上下文
+ * - startAgentRun：启动独立 Agent run，可能多轮（agent 内部有 tool loop），带完整 agent 上下文
  */
 
 import { runLlm } from "../../agent/agentSlice";

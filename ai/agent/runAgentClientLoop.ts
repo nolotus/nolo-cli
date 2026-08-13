@@ -39,7 +39,7 @@ export interface RunAgentClientLoopResult {
 /**
  * 客户端多轮 Agent 执行循环。
  *
- * 使用场景：callAgentTool 的 client 模式、runAgent thunk。
+ * 使用场景：startAgentRun（同步 wait:true）的 client 模式、runAgent thunk。
  * 不适合需要流式输出的场景（请用 runStreamingAgent）。
  */
 export async function runAgentClientLoop(
@@ -139,10 +139,16 @@ export async function runAgentClientLoop(
     // 5. 执行工具调用
     for (const tc of assistantMsg.tool_calls) {
       toolCallCount++;
+      const toolStartTime = Date.now();
       const toolResultContent = await executeToolCall(tc, thunkApi, {
         parentMessageId,
         agentKey,
       });
+      const toolExecutionMs = Date.now() - toolStartTime;
+      if (process.env.NOLO_CACHE_OPT_DEBUG) {
+        console.log(`[cache-opt] toolExecutionMs=${toolExecutionMs}`);
+      }
+
       const stopReason = recordConsecutiveToolFailure(
         toolFailureGuard,
         tc,

@@ -33,6 +33,23 @@ interface BillingUsageMetadata {
   image_generation_count?: number;
   provider_response_ids?: string[];
   provider_request_ids?: string[];
+  /**
+   * Set by the chat proxy server (chatHandler usage payload) when this provider
+   * call's usage was already billed server-side by recordChatProxyTokenUsage.
+   * The client treats this as a stats-only hint: when true, prepareTokenUsageData
+   * forces billable=false so updateTokensAction does not deductBalance locally
+   * (the server already charged). This is a hint only — the authoritative
+   * double-charge guard is server-side in handleToken (provider-call marker +
+   * ledger idempotency key), which does NOT trust this flag.
+   */
+  server_billed?: boolean;
+  /**
+   * First provider-call id for this chat proxy request (server truth anchor).
+   * Echoed back to the server in the token record so handleToken can locate the
+   * provider-call marker written by recordChatProxyTokenUsage for independent
+   * server-side verification that this provider call was already billed.
+   */
+  provider_call_id?: string;
 }
 
 // 原始用量类型
@@ -69,7 +86,12 @@ export interface NormalizedUsage extends BillingUsageMetadata {
 }
 
 /** 请求入口路径，用于按调用面切片缓存命中率。 */
-export type EntryPath = "web-chat" | "quick-chat" | "agent-run" | "cli-local";
+export type EntryPath =
+  | "web-chat"
+  | "quick-chat"
+  | "agent-run"
+  | "cli-local"
+  | "desktop-local";
 
 // Token使用数据
 export interface TokenUsageData extends NormalizedUsage {

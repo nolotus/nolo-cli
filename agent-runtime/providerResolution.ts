@@ -30,7 +30,10 @@ function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
   })) {
     return resolvePlatformResponsesEndpoint(provider) ?? "";
   }
-  const endpoint = resolvePlatformChatCompletionsEndpoint(provider);
+  const endpoint = resolvePlatformChatCompletionsEndpoint(
+    provider,
+    agentConfig.model,
+  );
   if (!endpoint) {
     throw new Error(`Platform chat provider does not support provider "${provider}".`);
   }
@@ -316,7 +319,13 @@ export async function buildProviderExecutionPlan(args: {
 
     // broker miss → server sync fallback (only when opted in)
     if (!apiKey && agentConfig.credentialSynced && args.syncFetcher && credentialRef) {
-      const synced = await args.syncFetcher(credentialRef);
+      let synced: string | null = null;
+      try {
+        synced = await args.syncFetcher(credentialRef);
+      } catch {
+        // Local execution must survive a transient server deployment; a
+        // missing synced copy is handled by the normal local credential hint.
+      }
       const trimmed = asTrimmedString(synced);
       if (trimmed) {
         try { await args.credentialBroker?.put(credentialRef, trimmed); } catch {}
@@ -394,8 +403,9 @@ export async function buildProviderExecutionPlan(args: {
       authToken: resolvePlatformAuthToken(env),
       agentKey: agentConfig.key,
       ...(agentConfig.apiSource ? { apiSource: agentConfig.apiSource } : {}),
-      ...(agentConfig.apiKey?.trim() ? { apiKey: agentConfig.apiKey.trim() } : {}),
-      ...(agentConfig.apiKeyHeader?.trim() ? { apiKeyHeader: agentConfig.apiKeyHeader.trim() } : {}),
+      // Platform agents use the server-managed provider credential. Never
+      // forward a raw credential from a stale/local agent record through the
+      // platform proxy; credentials are resolved by the platform server.
     };
   }
   // Platform direct: prefer brokered credentialRef (migrated keys) before env.
@@ -409,7 +419,13 @@ export async function buildProviderExecutionPlan(args: {
   }
   // broker miss → server sync fallback (only when opted in)
   if (!apiKey && agentConfig.credentialSynced && args.syncFetcher && credentialRef) {
-    const synced = await args.syncFetcher(credentialRef);
+    let synced: string | null = null;
+    try {
+      synced = await args.syncFetcher(credentialRef);
+    } catch {
+      // Local execution must survive a transient server deployment; a
+      // missing synced copy is handled by the normal local credential hint.
+    }
     const trimmed = asTrimmedString(synced);
     if (trimmed) {
       try { await args.credentialBroker?.put(credentialRef, trimmed); } catch {}

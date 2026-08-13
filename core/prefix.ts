@@ -36,3 +36,22 @@ export const extractCustomId = (key: string): string => {
   }
   return extractKeyPart(key, 2);
 };
+
+/* ── agent key 前缀工具（唯一真相源，避免各层手拼 "agent-pub-"）── */
+
+export const PUBLIC_AGENT_KEY_PREFIX = "agent-pub-";
+export const SYSTEM_AGENT_KEY_PREFIX = "agent-system-";
+
+/** 构造公开 agent key：`agent-pub-{id}` */
+export const publicAgentKey = (id: string): string =>
+  `${PUBLIC_AGENT_KEY_PREFIX}${id}`;
+
+/** 构造平台 system agent key：`agent-system-{id}` */
+export const systemAgentKey = (id: string): string =>
+  `${SYSTEM_AGENT_KEY_PREFIX}${id}`;
+
+/** 从公开 agent key 解析出 id；非 agent-pub-* 返回 null */
+export const parsePublicAgentId = (key: string): string | null =>
+  key.startsWith(PUBLIC_AGENT_KEY_PREFIX)
+    ? key.slice(PUBLIC_AGENT_KEY_PREFIX.length)
+    : null;

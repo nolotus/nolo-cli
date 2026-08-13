@@ -59,6 +59,10 @@ export type RunRecord = {
   /** OS-reported start time of the spawned process, when the platform exposes it. */
   processStartedAt?: string;
   activity?: RunActivity;
+  /** True when the run output has been acknowledged/consumed (e.g. via wait:true). */
+  ack?: boolean;
+  /** True when run does not persist a child dialog. */
+  ephemeral?: boolean;
 };
 
 /**
@@ -91,6 +95,10 @@ export type FsLike = {
   existsSync: typeof nodeFs.existsSync;
   openSync: typeof nodeFs.openSync;
   unlinkSync: typeof nodeFs.unlinkSync;
+  /** Optional: enables atomic tmp+rename record publishing when present. */
+  renameSync?: typeof nodeFs.renameSync;
+  /** Optional: enables stale lock/temporary detection when present. */
+  statSync?: typeof nodeFs.statSync;
 };
 
 export type SpawnLike = (
@@ -99,7 +107,12 @@ export type SpawnLike = (
   options: SpawnOptions
 ) => ChildProcess;
 
-export type KillLike = (pid: number, signal: string) => void;
+/**
+ * Signal is `string | number` because liveness probing requires the *numeric*
+ * 0: Node resolves a string signal by name, and "0" is not a signal name, so
+ * `kill(pid, "0")` throws ERR_UNKNOWN_SIGNAL without ever probing the process.
+ */
+export type KillLike = (pid: number, signal: string | number) => void;
 
 export type SleepLike = (ms: number) => Promise<void>;
 export type AgentRunControlDeps = {
@@ -160,11 +173,96 @@ export function defaultGenerateBatchId(): string {
   return `batch-${timestamp}-${random}`;
 }
 
+/**
+ * Best-effort exclusive lock around a record's read-modify-write.
+ *
+ * tmp+rename makes a single publish atomic, but it does not arbitrate between
+ * two writers: the child finalizing itself and a reconciler orphaning it can
+ * both read, then both publish, and the later rename silently wins. That is
+ * exactly how a record ended up with `status:orphaned` next to `exitCode:0`.
+ *
+ * `wx` (O_CREAT|O_EXCL) is atomic on POSIX, so only one holder exists at a
+ * time. A stale lock (holder crashed mid-section) is broken after
+ * LOCK_STALE_MS so a dead process can never wedge the registry permanently.
+ *
+ * Returns the callback's value. If the lock cannot be taken the callback still
+ * runs unlocked: losing an arbitration is strictly better than dropping a
+ * status update entirely.
+ */
+const LOCK_STALE_MS = 5_000;
+
+/**
+ * Age past which an unclaimed publish temporary is considered abandoned.
+ * Generous relative to a write (microseconds) so a live publish is never
+ * swept out from under its own rename.
+ */
+const TMP_STALE_MS = 60_000;
+
+function withRunRecordLock<T>(runId: string, deps: AgentRunControlDeps, fn: () => T): T {
+  const fs = deps.fs ?? nodeFs;
+  const now = deps.now ?? (() => new Date());
+  const lockPath = `${resolveRunRecordPath(runId, deps.env, deps.homedir)}.lock`;
+  let held = false;
+  try {
+    try {
+      fs.writeFileSync(lockPath, String(process.pid), { flag: "wx" });
+      held = true;
+    } catch {
+      // Contended, or stale from a crashed holder. Break it only when clearly
+      // stale, so a live holder's section is never cut short.
+      try {
+        const stat = fs.statSync?.(lockPath);
+        const ageMs = stat ? now().getTime() - stat.mtimeMs : Number.POSITIVE_INFINITY;
+        if (ageMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockPath);
+          fs.writeFileSync(lockPath, String(process.pid), { flag: "wx" });
+          held = true;
+        }
+      } catch {
+        // Someone else won the race; proceed unlocked.
+      }
+    }
+    return fn();
+  } finally {
+    if (held) {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // best effort
+      }
+    }
+  }
+}
+
 export function writeRunRecord(record: RunRecord, deps: AgentRunControlDeps = {}): void {
   const fs = deps.fs ?? nodeFs;
   const path = resolveRunRecordPath(record.runId, deps.env, deps.homedir);
   fs.mkdirSync(resolveRunsDir(deps.env, deps.homedir), { recursive: true });
-  fs.writeFileSync(path, JSON.stringify(record, null, 2));
+  const payload = JSON.stringify(record, null, 2);
+  // Atomic publish: a run record has two concurrent writers (the child's
+  // activity heartbeat every ~2s, and any reconciler/finalizer in a TUI or
+  // tool process). A plain writeFileSync is not atomic, so a reader could
+  // observe a truncated file and JSON.parse would fail — readRunRecord
+  // swallows that as `null`, which upstream reads as "record gone".
+  // tmp + rename makes every read see either the old or the new record.
+  if (typeof fs.renameSync === "function") {
+    // Unique per write: two writes to the same runId from one process (the
+    // heartbeat and a finalize) would otherwise share a tmp path and clobber
+    // each other. The rename stays atomic either way.
+    const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    try {
+      fs.writeFileSync(tmp, payload);
+      fs.renameSync(tmp, path);
+      return;
+    } catch {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        // best effort
+      }
+    }
+  }
+  fs.writeFileSync(path, payload);
 }
 
 const FILE_EDIT_TOOL_NAMES = new Set(["writeFile", "editFile"]);
@@ -277,11 +375,17 @@ export function createRunActivityTracker(
 export function readRunRecord(runId: string, deps: AgentRunControlDeps = {}): RunRecord | null {
   const fs = deps.fs ?? nodeFs;
   const path = resolveRunRecordPath(runId, deps.env, deps.homedir);
-  try {
-    return JSON.parse(fs.readFileSync(path, "utf8")) as RunRecord;
-  } catch {
-    return null;
+  // One retry on parse failure: with a concurrent writer, a read can land on a
+  // partially written file. Callers treat `null` as "no such run", so silently
+  // swallowing that would turn a torn read into a phantom disappearance.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return JSON.parse(fs.readFileSync(path, "utf8")) as RunRecord;
+    } catch {
+      if (attempt === 1) return null;
+    }
   }
+  return null;
 }
 
 export function listRunRecords(deps: AgentRunControlDeps = {}): RunRecord[] {
@@ -524,6 +628,28 @@ export function gcRunRecords(
     }
   }
 
+  // Sweep abandoned publish temporaries. A crash between writeFileSync(tmp)
+  // and renameSync leaves an orphan `.tmp` that nothing else ever removes, so
+  // without this the runs dir grows unbounded. Only clearly-stale ones are
+  // touched, so an in-flight publish from another process is never disturbed.
+  try {
+    const dir = resolveRunsDir(deps.env, deps.homedir);
+    const statSync = fs.statSync;
+    for (const entry of fs.readdirSync(dir)) {
+      if (typeof entry !== "string" || !entry.endsWith(".tmp")) continue;
+      const tmpPath = join(dir, entry);
+      try {
+        const stat = statSync?.(tmpPath);
+        if (stat && nowMs - stat.mtimeMs <= TMP_STALE_MS) continue;
+      } catch {
+        continue;
+      }
+      tryUnlinkFile(fs, tmpPath);
+    }
+  } catch {
+    // Sweeping temporaries is opportunistic; never fail a GC pass over it.
+  }
+
   return { swept: sweptIds.length, sweptIds, failedIds };
 }
 
@@ -705,10 +831,25 @@ export async function spawnLocalBackgroundRun(
     record.pid = proc.pid;
     const processStartedAt = (deps.getProcessStartTime ?? defaultGetProcessStartTime)(proc.pid);
     if (processStartedAt) record.processStartedAt = processStartedAt.toISOString();
-    fs.writeFileSync(recordPath, JSON.stringify(record, null, 2));
+    // Atomic: the child is already running and a poller may read this record
+    // concurrently, so this publish must not be observable half-written.
+    writeRunRecord(record, deps);
   }
 
   return { runId, pid: proc.pid, logPath, batchId };
+}
+
+export function ackRunRecord(
+  runId: string,
+  deps: AgentRunControlDeps = {}
+): void {
+  withRunRecordLock(runId, deps, () => {
+    const record = readRunRecord(runId, deps);
+    if (!record) return;
+    if (record.ack) return;
+    record.ack = true;
+    writeRunRecord(record, deps);
+  });
 }
 
 export function finalizeRunRecord(
@@ -722,14 +863,21 @@ export function finalizeRunRecord(
   },
   deps: AgentRunControlDeps = {}
 ): void {
-  const record = readRunRecord(runId, deps);
-  if (!record) return;
-  const now = deps.now ?? (() => new Date());
-  record.status = update.status;
-  if (typeof update.exitCode === "number") record.exitCode = update.exitCode;
-  if (update.dialogId) record.dialogId = update.dialogId;
-  record.endedAt = now().toISOString();
-  writeRunRecord(record, deps);
+  // Same critical section as reconciliation: a real terminal status must not
+  // race a concurrent orphan verdict, in either direction.
+  withRunRecordLock(runId, deps, () => {
+    const record = readRunRecord(runId, deps);
+    if (!record) return;
+    const now = deps.now ?? (() => new Date());
+    record.status = update.status;
+    if (typeof update.exitCode === "number") record.exitCode = update.exitCode;
+    if (update.dialogId) record.dialogId = update.dialogId;
+    record.endedAt = now().toISOString();
+    // A self-reported terminal status is ground truth; drop any orphan verdict
+    // an earlier reconciler pass may have written.
+    if (record.note?.startsWith("orphaned:")) record.note = undefined;
+    writeRunRecord(record, deps);
+  });
 }
 
 /**
@@ -738,13 +886,17 @@ export function finalizeRunRecord(
  * exists but is owned by another user) is treated as "still running".
  */
 export function isPidGone(pid: number, deps: AgentRunControlDeps = {}): boolean {
+  // Signal 0 must be passed as the *number* 0. Node treats a string signal as
+  // a name lookup, and "0" is not a signal name: `process.kill(pid, "0")`
+  // throws ERR_UNKNOWN_SIGNAL before it ever probes the process. That error is
+  // not ESRCH, so this function used to report every pid — dead or alive — as
+  // "not gone", making liveness detection inert.
   const kill = deps.kill ?? ((p, s) => process.kill(p, s as NodeJS.Signals));
   try {
-    kill(pid, "0");
+    kill(pid, 0);
     return false;
   } catch (error) {
-    const code = (error as { code?: string }).code;
-    return code === "ESRCH";
+    return (error as { code?: string }).code === "ESRCH";
   }
 }
 
@@ -768,7 +920,34 @@ export function defaultGetProcessStartTime(pid: number): Date | null {
 }
 
 export const MAX_PROCESS_START_TIME_DIFF_MS = 30_000;
-const MAX_PERSISTED_PROCESS_START_TIME_DIFF_MS = 1_000;
+// macOS `ps -o lstart` 只精确到秒（不含毫秒），四舍五入可能造成 ±1s 偏差；
+// 加上进程 spawn 到记录写入之间的调度延迟，1s 容差会把「刚启动的活进程」
+// 误判为 pid reused → orphaned（活进程被提前判死）。放宽到 2s 覆盖最坏情况：
+// 秒级四舍五入（±1s）+ 记录写入延迟（<1s）。宁可多容忍 1s 的 pid 复用误判
+// （概率极低），也绝不把活进程误判为孤儿。
+const MAX_PERSISTED_PROCESS_START_TIME_DIFF_MS = 2_000;
+
+/**
+ * How long a run must be silent before a dead-pid inference may orphan it.
+ *
+ * The child writes `activity.updatedAt` at least every
+ * DEFAULT_ACTIVITY_WRITE_INTERVAL_MS (2s) while it works. A heartbeat newer
+ * than this window proves the process was alive far more recently than any
+ * `ps`/`kill` inference, so the inference is treated as a transient probe
+ * failure rather than evidence of death.
+ *
+ * Deliberately several multiples of the write interval: a genuinely dead
+ * process stops writing and is still reclaimed a few seconds later, while a
+ * busy-but-alive one is never falsely reclaimed.
+ */
+export const ORPHAN_HEARTBEAT_GRACE_MS = 10_000;
+
+/** Parse an ISO timestamp to epoch ms; null when absent or unparseable. */
+function readTimestampMs(value: string | undefined): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
 
 /**
  * Validates process start time against the run record's `startedAt` timestamp.
@@ -829,18 +1008,50 @@ export function checkStaleRun(
   if (!pidGone && !pidReused) return record;
 
   const now = deps.now ?? (() => new Date());
-  record.status = "orphaned";
-  record.note = pidReused
-    ? "orphaned: process gone (pid reused by another process)"
-    : "orphaned: process gone without writing terminal status";
-  record.endedAt = now().toISOString();
-  record.reconciledAt = now().toISOString();
-  // Clear pid: once dead, it can be reused by the OS for an unrelated process.
-  // Keeping it would let a future read-path reconcile mistake the recycled pid
-  // for a still-alive run (false "running"). Clearing pins the terminal status.
-  record.pid = undefined;
-  writeRunRecord(record, deps);
-  return record;
+
+  // Liveness beats forensics. `pidGone`/`pidReused` are indirect inferences
+  // from `kill(pid,0)` and `ps -o lstart`, both of which can transiently fail
+  // (fork under load, EINTR, ps timeout, a truncated record read losing the
+  // pid). The activity heartbeat is *direct* evidence: only the run's own
+  // process writes it, so a recent heartbeat means the process was alive more
+  // recently than this inference. Trusting the inference over the heartbeat is
+  // what let live runs be marked orphaned while they kept working for minutes.
+  const heartbeatAt = readTimestampMs(record.activity?.updatedAt);
+  if (heartbeatAt !== null) {
+    const silentMs = now().getTime() - heartbeatAt;
+    if (silentMs < ORPHAN_HEARTBEAT_GRACE_MS) return record;
+  }
+
+  // Re-read immediately before the destructive write. The record may have been
+  // finalized by its own process (done/failed) between our first read and now;
+  // writing our stale copy would resurrect it as `orphaned` and clobber the
+  // real exit status. This is why records existed with both `status:orphaned`
+  // and a live `endedAt`/`exitCode:0`.
+  // The re-read and the write must be one critical section. Without the lock,
+  // the child could publish `done`/`exitCode:0` between them and this stale
+  // copy would rename right over it — reproducing the very corruption this
+  // change exists to fix.
+  return withRunRecordLock(runId, deps, () => {
+    const latest = readRunRecord(runId, deps);
+    if (!latest) return record;
+    if (latest.status !== "running") return latest;
+    if (latest.activity?.updatedAt !== record.activity?.updatedAt) return latest;
+
+    const at = now().toISOString();
+    latest.status = "orphaned";
+    latest.note = pidReused
+      ? "orphaned: process gone (pid reused by another process)"
+      : "orphaned: process gone without writing terminal status";
+    latest.endedAt = at;
+    latest.reconciledAt = at;
+    // Clear pid: once dead, it can be reused by the OS for an unrelated
+    // process. Keeping it would let a future read-path reconcile mistake the
+    // recycled pid for a still-alive run (false "running"). Clearing pins the
+    // terminal status.
+    latest.pid = undefined;
+    writeRunRecord(latest, deps);
+    return latest;
+  });
 }
 
 function formatDuration(startedAt: string, endedAt?: string): string {

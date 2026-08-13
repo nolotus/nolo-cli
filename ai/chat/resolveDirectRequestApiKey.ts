@@ -74,6 +74,8 @@ export async function resolveDirectRequestApiKey(
     brokerFactory?: BrokerFactory;
     /** Server sync fallback; only invoked when credentialSynced is true and broker misses. */
     syncFetcher?: CredentialSyncFetcher;
+    /** User-secret lookup for provider-level refs. */
+    providerSecretFetcher?: CredentialSyncFetcher;
   },
 ): Promise<string | undefined> {
   const rawKey = readNonEmpty(agentConfig.apiKey);
@@ -82,12 +84,18 @@ export async function resolveDirectRequestApiKey(
   const credentialRef = readNonEmpty(agentConfig.credentialRef);
   if (!credentialRef) return undefined;
 
- const factory = options?.brokerFactory ?? createDirectCredentialBroker;
+  const factory = options?.brokerFactory ?? createDirectCredentialBroker;
   const broker = factory();
 
   // Priority 1: local broker
   const local = await safeBrokerGet(broker, credentialRef);
   if (local) return local;
+
+  // Provider-level remembered secret is a fallback after the broker's latest value.
+  if (credentialRef.startsWith("provider-key:") && options?.providerSecretFetcher) {
+    const providerSecret = await options.providerSecretFetcher(credentialRef);
+    if (providerSecret) return providerSecret;
+  }
 
   // Priority 2: server sync fallback (only when opted in)
   if (agentConfig.credentialSynced && options?.syncFetcher) {

@@ -44,12 +44,18 @@ export const membershipBelongsToUser = (
   userId: string
 ): boolean => !membership.userId || membership.userId === userId;
 
-export const fetchRemoteUserSpaceMemberships = async (
+// in-flight 去重 + 短期缓存：页面加载时多个空间权限检查组件会并发调用本函数
+// （实测 getUserSpaceMemberships ×3），同一 server+userId 只发一次请求。
+// 只读数据 + 30s TTL，副作用低。
+const membershipFetchCache = new Map<string, Promise<RemoteMembershipFetchResult>>();
+const MEMBERSHIP_FETCH_CACHE_TTL_MS = 30_000;
+
+async function fetchMembershipsFromServer(
   server: string,
   token: string | null,
   userId: string,
-  timeoutMs = 5000
-): Promise<RemoteMembershipFetchResult> => {
+  timeoutMs: number
+): Promise<RemoteMembershipFetchResult> {
   if (!token) return { ok: false, memberships: [] };
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -81,6 +87,29 @@ export const fetchRemoteUserSpaceMemberships = async (
     console.error(`Error fetching memberships from ${server}:`, error);
     return { ok: false, memberships: [] };
   }
+}
+
+export const fetchRemoteUserSpaceMemberships = (
+  server: string,
+  token: string | null,
+  userId: string,
+  timeoutMs = 5000
+): Promise<RemoteMembershipFetchResult> => {
+  const cacheKey = `${server}|${userId}`;
+  const cached = membershipFetchCache.get(cacheKey);
+  if (cached) return cached;
+  const promise = fetchMembershipsFromServer(server, token, userId, timeoutMs);
+  membershipFetchCache.set(cacheKey, promise);
+  promise
+    .catch(() => {})
+    .finally(() => {
+      setTimeout(() => {
+        if (membershipFetchCache.get(cacheKey) === promise) {
+          membershipFetchCache.delete(cacheKey);
+        }
+      }, MEMBERSHIP_FETCH_CACHE_TTL_MS);
+    });
+  return promise;
 };
 
 export const fetchRemoteSpace = async (

@@ -1,3 +1,19 @@
+/**
+ * 组装委托任务的 content：统一用「指令 + 输入」的简单文本协议。
+ * 曾属于已删除的旧委托工具模块，现为 startAgentRun（及 CLI 端独立副本）
+ * 共用的公共协议。
+ */
+export function buildDelegatedTaskContent(task: string, input?: any): string {
+  if (input === undefined || input === null) {
+    return task;
+  }
+  if (typeof input === "string") {
+    return `${task}\n\n--- INPUT (text) ---\n${input}`;
+  }
+  const jsonStr = JSON.stringify(input, null, 2);
+  return `${task}\n\n--- INPUT (json) ---\n${jsonStr}`;
+}
+
 export function getAgentRunStatusIcon(status: string): string {
   switch (status) {
     case "running":

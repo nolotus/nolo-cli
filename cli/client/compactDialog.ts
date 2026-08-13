@@ -223,6 +223,8 @@ export type CompactDialogResult = {
   spaceId?: string;
   /** Whether a summary was generated and written back to the old dialog. */
   summaryGenerated: boolean;
+  /** Number of messages folded into the summary (0 when no compression ran). */
+  compactedMessageCount: number;
 };
 
 /**
@@ -306,6 +308,7 @@ export async function compactDialog(options: {
 
   // --- Compression phase ---
   let summaryGenerated = false;
+  let compactedMessageCount = 0;
 
   if (options.summaryLlmCaller) {
     const allMsgs = await readDialogMessages(
@@ -381,6 +384,7 @@ export async function compactDialog(options: {
             current.referenceKeys = Array.from(extractedKeys);
 
             summaryGenerated = true;
+            compactedMessageCount = plan.compressCount;
             console.log(
               `[nolo] compact: compressed ${plan.compressCount} messages into summary (len: ${newSummary.trim().length})`
             );
@@ -408,5 +412,6 @@ export async function compactDialog(options: {
     dialogKey: next.dbKey,
     spaceId: typeof next.spaceId === "string" ? next.spaceId : undefined,
     summaryGenerated,
+    compactedMessageCount,
   };
 }

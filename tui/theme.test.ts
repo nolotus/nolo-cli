@@ -27,6 +27,15 @@ describe("tui theme", () => {
     );
   });
 
+  test("trail dark accent is its own ocean blue 5BA3D9, distinct from catppuccin", () => {
+    // Regression: trail dark was wrongly copied from catppuccin (89B4FA), so
+    // switching trail↔catppuccin in dark mode showed no change.
+    setActiveThemeName("trail");
+    expect(themeColorSequence("accent", { COLORTERM: "truecolor" })).toBe(
+      "\x1b[38;2;91;163;217m", // trail dark primary #5BA3D9
+    );
+  });
+
   test("non-truecolor terminals fall back to ANSI-16", () => {
     expect(themeColorSequence("accent", {})).toBe("\x1b[34m");
     expect(themeColorSequence("chrome", {})).toBe("\x1b[90m");

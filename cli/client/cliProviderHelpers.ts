@@ -17,7 +17,7 @@ import { asRecordOrEmpty } from "../../core/recordOrEmpty";
 /**
  * Build the unified task+input content for delegated agent calls.
  *
- * This is the CLI-side copy. The AI tool layer (ai/tools/agent/callAgentTool.ts)
+ * This is the CLI-side copy. The AI tool layer (ai/tools/agent/agentRunDisplayHelpers.ts)
  * has its own identical copy because importing from packages/cli would create
  * a cross-package circular dependency. To fully dedup, this function should be
  * hoisted to packages/core — tracked as follow-up.

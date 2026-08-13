@@ -58,7 +58,8 @@ export function projectChatQueueStatus({
 }: ProjectChatQueueStatusInput): ChatQueueStatus {
   const preview: string[] = [];
   for (let i = 0; i < Math.min(maxPreview, state.queue.length); i++) {
-    const text = state.queue[i] ?? "";
+    const item = state.queue[i] as any;
+    const text = typeof item === "string" ? item : (item?.text ?? "");
     preview.push(text.length > previewCharLimit ? text.slice(0, previewCharLimit) + "…" : text);
   }
 

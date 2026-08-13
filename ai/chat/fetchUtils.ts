@@ -9,6 +9,7 @@ import { performServerProxyFetchWithRetry } from "./serverProxyRetry";
 import { resolveAgentCallPlan } from "../../agent-runtime/agentCallPlan";
 import { resolveDirectRequestApiKey } from "./resolveDirectRequestApiKey";
 import { fetchServerSyncedCredential as fetchSyncedCredential } from "./agentCredentialSyncClient";
+import { getLocalProviderSecret } from "../agent/providerSecrets";
 
 interface BodyData {
   model: string;
@@ -72,6 +73,18 @@ const fetchDirectly = async (params: FetchParams): Promise<Response> => {
     const apiKey = await resolveDirectRequestApiKey(agentConfig, {
       syncFetcher: currentServer && token
         ? (ref) => fetchSyncedCredential({ currentServer, authToken: token }, ref)
+        : undefined,
+      providerSecretFetcher: currentServer && token
+        ? async (ref) => {
+            const presetId = ref.startsWith("provider-key:") ? ref.slice("provider-key:".length) : ref;
+            const local = getLocalProviderSecret(presetId);
+            if (local) return local;
+            try {
+              const response = await fetch(`${currentServer}/api/user-secrets/get?presetId=${encodeURIComponent(presetId)}`, { headers: { Authorization: `Bearer ${token}` } });
+              if (!response.ok) return null;
+              return ((await response.json()) as { value?: string }).value ?? null;
+            } catch { return null; }
+          }
         : undefined,
     });
     const authHeaders = buildProviderAuthHeaders({

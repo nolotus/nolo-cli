@@ -288,6 +288,22 @@ export const selectCurrentSpace = createSelector(
   }
 );
 
+/**
+ * Resolve a space entity by explicit id (e.g. a route-authoritative spaceId that
+ * may differ from Redux currentSpaceId). Returns null when the id is absent or
+ * the entity is not yet loaded.
+ */
+export const selectSpaceById = createSelector(
+  [
+    selectEntities,
+    (_state: any, spaceId: string | null | undefined) => spaceId,
+  ],
+  (entities, spaceId) => {
+    if (!spaceId) return null;
+    return entities[createSpaceKey.space(spaceId)] || null;
+  }
+);
+
 export const selectAllMemberSpaces = createSelector(
   selectSpaceState,
   (space): SpaceMemberWithSpaceInfo[] => {

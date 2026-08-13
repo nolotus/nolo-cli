@@ -199,31 +199,35 @@ export const generateOpenAIRequestBody = (
       : agentConfig.model ?? "";
 
   // 1. 处理 stableMessages 的缓存点 (仅针对 Claude)
-  //    在最后一条 stable message 上打 cache_control，使其之前的内容
-  //    （system prompt + 稳定历史消息）命中前缀缓存。
+  //    在倒数第二条和最后一条 stable message 上各打 cache_control，
+  //    使其之前的内容（system prompt + 稳定历史消息）命中前缀缓存。
   let processedStable = [...stableMessages];
   if (isClaudeModel(resolvedModel) && processedStable.length > 0) {
-    const lastStableIdx = processedStable.length - 1;
-    const lastContent = processedStable[lastStableIdx].content;
-    // stableMessages 的 content 是 string 或已有的 content parts，
-    // 只需在末尾打一个 cache_control 断点。
-    if (typeof lastContent === "string") {
-      processedStable[lastStableIdx] = {
-        ...processedStable[lastStableIdx],
-        content: [
-          { type: "text", text: lastContent, cache_control: { type: "ephemeral" } },
-        ],
-      };
-    } else if (Array.isArray(lastContent)) {
-      const lastPartIdx = lastContent.length - 1;
-      processedStable[lastStableIdx] = {
-        ...processedStable[lastStableIdx],
-        content: lastContent.map((part, idx) =>
-          idx === lastPartIdx && typeof part === "object"
-            ? { ...part, cache_control: { type: "ephemeral" } }
-            : part
-        ),
-      };
+    const indicesToCache =
+      processedStable.length >= 2
+        ? [processedStable.length - 2, processedStable.length - 1]
+        : [processedStable.length - 1];
+
+    for (const idx of indicesToCache) {
+      const targetContent = processedStable[idx].content;
+      if (typeof targetContent === "string" && targetContent.trim().length > 0) {
+        processedStable[idx] = {
+          ...processedStable[idx],
+          content: [
+            { type: "text", text: targetContent, cache_control: { type: "ephemeral" } },
+          ],
+        };
+      } else if (Array.isArray(targetContent) && targetContent.length > 0) {
+        const lastPartIdx = targetContent.length - 1;
+        processedStable[idx] = {
+          ...processedStable[idx],
+          content: targetContent.map((part, pIdx) =>
+            pIdx === lastPartIdx && typeof part === "object" && part !== null
+              ? { ...part, cache_control: { type: "ephemeral" } }
+              : part
+          ),
+        };
+      }
     }
   }
 

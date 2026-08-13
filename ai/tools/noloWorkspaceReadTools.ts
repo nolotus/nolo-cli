@@ -169,11 +169,18 @@ export async function listDialogsFunc(args: any, thunkApi: any): Promise<ToolRes
 
 export const readDialogFunctionSchema = {
   name: "readDialog",
-  description: "Read one persisted Nolo dialog, including metadata and recent messages.",
+  description: [
+    "Read one persisted Nolo dialog, including metadata and recent messages.",
+    "Prefer the full dialog dbKey (dialog-<userId>-<id>) or a dialog URL; a bare id only resolves for the currently logged-in user and cannot reliably read other users' or cross-server dialogs. Use listDialogs first when the target dialog is unclear.",
+  ].join("\n"),
   parameters: {
     type: "object",
     properties: {
-      dialog: { type: "string", description: "Dialog id, dialog dbKey, or dialog URL." },
+      dialog: {
+        type: "string",
+        description:
+          "Dialog dbKey (dialog-<userId>-<id>), dialog URL, or bare id (current user only).",
+      },
       limit: { type: "integer", description: "Message limit. Default 120, max 1000." },
     },
     required: ["dialog"],
@@ -491,7 +498,7 @@ export interface SafeAgentSummaryForCard {
   id?: string | null;
 }
 
-export function formatAgentListCard(agents: SafeAgentSummaryForCard[], maxDisplay = 20): string {
+export function formatAgentListCard(agents: SafeAgentSummaryForCard[], maxDisplay = 8): string {
   const total = agents.length;
   const lines: string[] = [`Agents (${total})`];
   const visible = agents.slice(0, maxDisplay);
@@ -512,7 +519,7 @@ export function formatAgentListCard(agents: SafeAgentSummaryForCard[], maxDispla
 export const listAgentsFunctionSchema = {
   name: "listAgents",
   description:
-    "List the current user's Nolo agents as safe summaries. The `agents` array in the JSON result carries each agent's runnable `agentKey` (agent-<userId>-<id> for owned, agent-pub-<id> for public) plus model, apiSource, tools, prices, isOwned, isFavorite. Copy `agentKey` verbatim into startAgentRun/callAgent. Prefer isOwned agents (use your own quota, no platform credits).",
+    "List the current user's Nolo agents as safe summaries. The `agents` array in the JSON result carries each agent's runnable `agentKey` (agent-<userId>-<id> for owned, agent-pub-<id> for public) plus model, apiSource, tools, prices, isOwned, isOAuth, nextAvailableAt (epoch ms when temporarily unavailable), isFavorite. Copy `agentKey` verbatim into startAgentRun. Results prioritize favorites; within that, user OAuth/custom agents first, then other owned agents, then public agents.",
   parameters: {
     type: "object",
     properties: {
@@ -578,7 +585,7 @@ export async function listAgentsFunc(args: any, thunkApi: any): Promise<ToolResu
 export const readAgentFunctionSchema = {
   name: "readAgent",
   description:
-    "Read one agent's full config from the Nolo workspace. Accepts an agent dbKey (agent-xxx), plain id, alias, or agent URL; resolves it (including public agents via agent-pub-<id>; the server runtime also falls back to handle lookup) and returns the runnable agentKey plus a redacted record with fields such as model, provider, apiSource, tools, prompt, inputPrice, outputPrice, and isPublic. Use it to inspect an agent's full capabilities/credential status before delegation. Note: startAgentRun/callAgent take the exact agentKey from listAgents/readAgent; readAgent is not required before every dispatch when listAgents already gave you the key.",
+    "Read one agent's full config from the Nolo workspace. Accepts an agent dbKey (agent-xxx), plain id, alias, or agent URL; resolves it (including public agents via agent-pub-<id>; the server runtime also falls back to handle lookup) and returns the runnable agentKey plus a redacted record with fields such as model, provider, apiSource, tools, prompt, inputPrice, outputPrice, and isPublic. Use it to inspect an agent's full capabilities/credential status before delegation. Note: startAgentRun takes the exact agentKey from listAgents/readAgent; readAgent is not required before every dispatch when listAgents already gave you the key.",
   parameters: {
     type: "object",
     properties: {

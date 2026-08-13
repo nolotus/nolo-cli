@@ -165,11 +165,9 @@ export function convertOpenAiMessagesToGemini(
 
     if (role === "assistant") {
       flushPendingFunctionCalls();
-      const parts: GeminiPart[] = [];
       const text = messageText(
         content as AgentRuntimeChatMessage["content"],
       );
-      if (text) parts.push({ text });
 
       const toolCalls =
         "tool_calls" in raw &&
@@ -177,6 +175,22 @@ export function convertOpenAiMessagesToGemini(
           ? ((raw as { tool_calls: AgentRuntimeToolCall[] }).tool_calls ?? [])
           : [];
 
+      // Cloud Code Assist validates a function-call model turn against the
+      // immediately preceding turn. Historical TUI messages can contain two
+      // assistant records in a row (for example, text followed by a tool call)
+      // after a partial sync or a retry. Keep ordinary assistant text and the
+      // function call in separate model turns; bridge them with an explicit
+      // empty user turn so Gemini sees `user -> model(functionCall)`.
+      if (text) pushOrMergeContent("model", [{ text }]);
+      if (
+        toolCalls.length > 0 &&
+        contents.length > 0 &&
+        contents[contents.length - 1]?.role !== "user"
+      ) {
+        contents.push({ role: "user", parts: [{ text: "" }] });
+      }
+
+      const parts: GeminiPart[] = [];
       for (const call of toolCalls) {
         const name = call?.function?.name?.trim();
         if (!name) continue;
@@ -223,20 +237,15 @@ export function convertOpenAiMessagesToGemini(
         typeof (raw as { name: unknown }).name === "string"
           ? (raw as { name: string }).name.trim()
           : "";
-      const name =
-        toolNamesById.get(toolCallId) ||
-        rawName ||
-        pendingFunctionCalls[0]?.name ||
-        "tool";
-
+      // A tool result is only valid immediately after its matching function
+      // call. Partial syncs and retries can leave orphaned/duplicate tool
+      // messages in TUI history; forwarding them creates a Gemini user turn
+      // with no preceding functionCall and Cloud Code Assist rejects it.
       const pendingIndex = pendingFunctionCalls.findIndex((p) =>
-        toolCallId ? p.id === toolCallId : p.name === name,
+        toolCallId ? p.id === toolCallId : rawName ? p.name === rawName : true,
       );
-      if (pendingIndex !== -1) {
-        pendingFunctionCalls.splice(pendingIndex, 1);
-      } else if (pendingFunctionCalls.length > 0) {
-        pendingFunctionCalls.shift();
-      }
+      if (pendingIndex === -1) continue;
+      const [{ name, id }] = pendingFunctionCalls.splice(pendingIndex, 1);
 
       const output =
         messageText(content as AgentRuntimeChatMessage["content"]) || "{}";
@@ -249,7 +258,7 @@ export function convertOpenAiMessagesToGemini(
             // Gemini contents 转成 Claude messages 时需要 functionResponse →
             // tool_result 的 tool_use_id；缺 id 时网关报
             // "tool_result.tool_use_id: Field required"（HTTP 400）。
-            ...(toolCallId ? { id: toolCallId } : {}),
+            ...(id ? { id } : {}),
           },
         },
       ]);

@@ -37,7 +37,6 @@ import {
     finalizeTransientMessageOnError,
     removeTransientMessage,
     selectAllMsgs,
-    appendOverlayMessage,
 } from "../../chat/messages/messageSlice";
 import { persistToolMessages } from "../../chat/messages/persistToolMessage";
 import {
@@ -53,6 +52,7 @@ import type { Agent, DialogConfig } from "../../app/types";
 import { isResponseAPIModel } from "../llm/isResponseAPIModel";
 import { getModelContextWindow } from "../llm/getModelContextWindow";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
+import { resolveBuiltinPlatformAgentRecord } from "../../agent-runtime/builtinPlatformAgentConfigs";
 import {
     resolveAgentCallPlan,
     resolveClientWire,
@@ -333,6 +333,12 @@ function safeParseToolArgs(argsStr: string): any {
 /** streamAgentChatTurn 参数（聊天轮次专用） */
 export interface StreamAgentChatTurnArgs {
     agentKey: string;
+    /**
+     * 本轮执行配置的直接来源。auto 档位对话由代码内置 profile 提供，传了就
+     * 不再去读 `agentKey` 对应的记录——那条 `agent-pub-*` 记录按设计可以不
+     * 存在（见 chat/dialog/dialogAgentPolicy 的 resolveDialogRuntimeAgentConfig）。
+     */
+    agentConfig?: Agent;
     userInput: string | any[];
     serverBase?: string;
     dialogKey?: string; // 可选。显式指定目标对话，不传则使用当前活跃对话。
@@ -348,6 +354,7 @@ export const streamAgentChatTurnHandler = async (
 ) => {
     const {
         agentKey,
+        agentConfig: providedAgentConfig,
         userInput,
         dialogKey: explicitDialogKey,
         parentMessageId,
@@ -398,20 +405,53 @@ export const streamAgentChatTurnHandler = async (
             agentKey,
             dialogKey: explicitDialogKey ?? null,
         });
-        // 1. 读取 Agent 配置。
+        // 1. 解析 Agent 配置。优先级：调用方直接给的执行配置（auto 档位来自
+        // 代码内置 profile，无需任何记录） > redux 缓存 > 读库。读库拿不到或
+        // 拿到残缺记录时，回落到内置平台配置——四个档位 key 的 agent-pub-*
+        // 记录按设计可以不存在，不能因此让整轮失败。
         const cachedAgentConfig = selectById(
             getState() as RootState,
             agentKey,
         );
         let rawAgentConfig: Agent | null = null;
+        let agentConfigSource: string;
 
-        rawAgentConfig = isUsableAgentConfig(cachedAgentConfig)
-            ? cachedAgentConfig
-            : await readAgentConfigForTurn(
-                dispatch,
+        if (isUsableAgentConfig(providedAgentConfig)) {
+            rawAgentConfig = providedAgentConfig;
+            agentConfigSource = "provided";
+        } else if (isUsableAgentConfig(cachedAgentConfig)) {
+            rawAgentConfig = cachedAgentConfig;
+            agentConfigSource = "cache";
+        } else {
+            const builtinFallback = resolveBuiltinPlatformAgentRecord(
                 agentKey,
-                quickChatPerfStartedAt,
-            );
+            ) as Agent | null;
+            try {
+                const readConfig = await readAgentConfigForTurn(
+                    dispatch,
+                    agentKey,
+                    quickChatPerfStartedAt,
+                );
+                if (isUsableAgentConfig(readConfig)) {
+                    rawAgentConfig = readConfig;
+                    agentConfigSource = "read";
+                } else {
+                    // 记录存在但缺 provider/model（历史残缺副本）：内置配置更可信。
+                    rawAgentConfig = builtinFallback ?? readConfig ?? null;
+                    agentConfigSource = builtinFallback
+                        ? "builtin-unusable-record"
+                        : "read";
+                }
+            } catch (error) {
+                if (isTurnAborted(error) || !builtinFallback) throw error;
+                console.warn(
+                    "[streamAgentChatTurn] Agent record unavailable; using builtin platform config",
+                    { agentKey, error: toErrorMessage(error) },
+                );
+                rawAgentConfig = builtinFallback;
+                agentConfigSource = "builtin-read-failed";
+            }
+        }
         if (!rawAgentConfig) {
             return rejectWithValue(
                 `Agent config not found for ID: ${agentKey}`,
@@ -429,7 +469,8 @@ export const streamAgentChatTurnHandler = async (
         }
         if (
             runtimeOptions?.quickChatReasoningEffort &&
-            rawAgentConfig.model === "deepseek-v4-flash"
+            (rawAgentConfig.model === "deepseek-v4-flash" ||
+                rawAgentConfig.model === "deepseek-v4-pro")
         ) {
             rawAgentConfig = {
                 ...rawAgentConfig,
@@ -453,7 +494,7 @@ export const streamAgentChatTurnHandler = async (
             model: agentConfig.model,
             provider: agentConfig.provider,
             apiSource: agentConfig.apiSource,
-            source: rawAgentConfig === cachedAgentConfig ? "cache" : "read",
+            source: agentConfigSource,
         });
 
         const gptProCheck = shouldBlockForGptPro(
@@ -1535,6 +1576,7 @@ export const streamAgentChatTurnHandler = async (
                     },
                 ],
                 totalUsage: streamResult.usage ?? undefined,
+                billingUsageRecords: streamResult.usageRecords,
                 messageId,
                 msgKey,
                 agentConfig,
@@ -2613,36 +2655,9 @@ export const streamAgentChatTurnHandler = async (
         if (turnAborted) {
             dispatch(clearPendingUserInputQueue(runtimeDialogKey ? { dialogKey: runtimeDialogKey } : undefined));
         }
-        // Run-overlay presentation: after a clean (non-aborted) turn, query
-        // this dialog's background runs and append a snapshot presentation as
-        // a non-billed assistant message. Fire-and-forget-safe: queryRunOverlay
-        // catches its own errors and returns null, so this never throws into
-        // the turn-end path. Awaiting (rather than `.catch()`) keeps the
-        // overlay message ordered after the assistant reply on the wire; the
-        // query is a single lightweight GET and does not block meaningfully.
-        if (runtimeDialogKey && !turnAborted) {
-            try {
-                const { queryRunOverlay } = await import("./queryRunOverlay");
-                const overlayState = await queryRunOverlay(
-                    getState() as RootState,
-                    runtimeDialogKey,
-                );
-                if (overlayState && overlayState.runs.size > 0) {
-                    const { buildOverlayPresentation } = await import(
-                        "../../core/chat/runOverlayPresentation"
-                    );
-                    const presentation = buildOverlayPresentation(overlayState);
-                    if (presentation) {
-                        dispatch(appendOverlayMessage({
-                            dialogKey: runtimeDialogKey,
-                            text: presentation,
-                        }));
-                    }
-                }
-            } catch {
-                // Overlay is best-effort; never fail the turn over it.
-            }
-        }
+        // Run-overlay turn-end broadcast removed: the live run dock + background
+        // run-completion wake channel already surface run progress; agents can
+        // still query the full run set on demand via controlAgentRun(list).
         // Notify the cross-platform queue core that this turn ended. The
         // adapter (if registered in the store's thunk extra) will emit a
         // drain-ready event when the queue is non-empty and the turn ended

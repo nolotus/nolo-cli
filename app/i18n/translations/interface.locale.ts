@@ -985,6 +985,7 @@ export default {
       },
       publicAgents: {
         loadFailed: "Failed to load AI assistants",
+        removedFromPlaza: "{{count}} AI removed from the plaza",
         searchPlaceholder: "Search AI assistants...",
         sortLabel: "Sort:",
         sortRecommended: "Recommended",
@@ -2251,6 +2252,7 @@ export default {
       },
       publicAgents: {
         loadFailed: "加载列表失败",
+        removedFromPlaza: "有 {{count}} 个 AI 已从广场下架",
         searchPlaceholder: "搜索 AI...",
         sortLabel: "排序:",
         sortRecommended: "推荐",
@@ -3515,6 +3517,7 @@ quickChat: {
       },
       publicAgents: {
         loadFailed: "載入列表失敗",
+        removedFromPlaza: "有 {{count}} 個 AI 已從廣場下架",
         searchPlaceholder: "搜尋 AI...",
         sortLabel: "排序:",
         sortRecommended: "推薦",
@@ -4714,6 +4717,7 @@ quickChat: {
       },
       publicAgents: {
         loadFailed: "一覧の読み込みに失敗しました",
+        removedFromPlaza: "{{count}} 個の AI が広場から削除されました",
         searchPlaceholder: "AIアシスタントを検索...",
         sortLabel: "並び替え:",
         sortRecommended: "おすすめ",

@@ -88,7 +88,7 @@ function renderTabBar(
     const label = `Q${i + 1}`;
     if (i === activeIndex) {
       return colorEnabled
-        ? `${themeColorSequence("accent")}\x1b[1m ${label} \x1b[0m`
+        ? `${themeColorSequence("accent")} ${label} \x1b[0m`
         : `[${label}]`;
     }
     return colorEnabled
@@ -189,7 +189,7 @@ export function renderAskChoiceFrame(state: AskChoiceUiState): AskChoiceFrame {
       const plainRow = `${plainPrefix}${qs.otherText}`;
       if (focused && colorEnabled) {
         lines.push(
-          `\x1b[1m${themeColorSequence("accent")}${plainRow}\x1b[0m`,
+          `${themeColorSequence("accent")}${plainRow}\x1b[0m`,
         );
       } else {
         lines.push(plainRow);

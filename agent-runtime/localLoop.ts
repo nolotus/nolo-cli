@@ -5,6 +5,7 @@ import type {
   AgentRuntimeHostAdapter,
   AgentRuntimeProvider,
   AgentRuntimeToolResult,
+  AgentRuntimeSaveTurnInput,
 } from "./hostAdapter";
 import type { ActionGate } from "./actionGate";
 import { readActionGate, readCommandActionGatePayload } from "./actionGate";
@@ -106,6 +107,9 @@ export type LocalAgentTurnResult = AgentRuntimeResult & {
   /** Dialog title persisted by saveTurn (LLM-generated or fallback). */
   title?: string;
   turnMessages?: AgentRuntimeChatMessage[];
+  /** Full per-call accounting evidence; context UI must continue using usage. */
+  usageRecords?: AgentRuntimeSaveTurnInput["usageRecords"];
+  accountingUsage?: Record<string, unknown>;
 };
 
 export type LocalAgentToolEvent = {
@@ -1057,7 +1061,7 @@ function mergeTurnUsage(
   const right = read(next);
   const left = current ? read(current) : { input: 0, output: 0, cacheHit: 0, cacheMiss: 0 };
   return {
-    input_tokens: right.input || left.input,
+    input_tokens: left.input + right.input,
     output_tokens: left.output + right.output,
     cache_read_input_tokens: left.cacheHit + right.cacheHit,
     cache_creation_input_tokens: left.cacheMiss + right.cacheMiss,
@@ -1067,10 +1071,8 @@ function mergeTurnUsage(
 /**
  * 把一次带外 LLM 调用（目前只有自动压缩的摘要生成）的用量加进本轮 usage。
  *
- * 不能直接用 mergeTurnUsage：它的 input 是 `right.input || left.input`，
- * 取最后一次非零值而非累加——那是为多轮工具循环设计的（每轮 input 是累积
- * 上下文，相加会重复计数）。但摘要是一次独立的计费调用，它的 input 必须相加，
- * 否则会被静默丢掉。
+ * 摘要是主工具循环之外的独立 provider call。这里保留独立 helper，让调用方
+ * 明确区分主循环累计与带外累计，并兼容旧的字段别名。
  */
 export function addOutOfBandUsage(
   turn: Record<string, unknown> | undefined,
@@ -1131,6 +1133,10 @@ async function persistFailedLocalTurn(args: {
   model?: string;
   toolCallCount?: number;
   partialContent?: string;
+  usage?: Record<string, unknown>;
+  accountingUsage?: Record<string, unknown>;
+  usageRecords?: AgentRuntimeSaveTurnInput["usageRecords"];
+  billingConfig?: AgentRuntimeSaveTurnInput["billingConfig"];
   input: LocalAgentTurnInput;
 }): Promise<string | undefined> {
   const errorMessage = toErrorMessage(args.error);
@@ -1146,7 +1152,11 @@ async function persistFailedLocalTurn(args: {
         toolCallCount: args.toolCallCount ?? 0,
         error: true,
         errorMessage,
+        ...(args.usage ? { usage: args.usage } : {}),
       },
+      ...(args.accountingUsage ? { accountingUsage: args.accountingUsage } : {}),
+      ...(args.usageRecords?.length ? { usageRecords: args.usageRecords } : {}),
+      ...(args.billingConfig ? { billingConfig: args.billingConfig } : {}),
       ...(args.input.runtimeContext
         ? { runtimeContext: args.input.runtimeContext }
         : {}),
@@ -1204,6 +1214,18 @@ export async function runLocalAgentTurn(
     error.agentRef = input.agentRef;
     throw error;
   }
+  const rawBillingConfig = agentConfig.rawRecord ?? {};
+  const billingConfig: NonNullable<AgentRuntimeSaveTurnInput["billingConfig"]> = {
+    model: agentConfig.model || "unknown",
+    ...(agentConfig.provider ? { provider: agentConfig.provider } : {}),
+    ...(agentConfig.apiSource ? { apiSource: agentConfig.apiSource } : {}),
+    ...(agentConfig.apiKeyRef !== undefined ? { apiKeyRef: agentConfig.apiKeyRef } : {}),
+    ...(typeof rawBillingConfig.inputPrice === "number" ? { inputPrice: rawBillingConfig.inputPrice } : {}),
+    ...(typeof rawBillingConfig.outputPrice === "number" ? { outputPrice: rawBillingConfig.outputPrice } : {}),
+    ...(rawBillingConfig.sharingLevel ? { sharingLevel: rawBillingConfig.sharingLevel as "default" | "split" | "full" } : {}),
+    id: agentConfig.key,
+    ...(typeof rawBillingConfig.userId === "string" ? { userId: rawBillingConfig.userId } : {}),
+  };
 
   let history: AgentRuntimeChatMessage[] = [];
   try {
@@ -1342,6 +1364,8 @@ export async function runLocalAgentTurn(
   let toolCallCount = 0;
   let result: AgentRuntimeResult;
   let turnUsage: Record<string, unknown> | undefined;
+  let contextUsage: Record<string, unknown> | undefined;
+  const usageRecords: NonNullable<AgentRuntimeSaveTurnInput["usageRecords"]> = [];
   let loopError: unknown;
   let round = 0;
   // 空轮修复状态（语义与 server loop 对齐）：
@@ -1419,6 +1443,21 @@ export async function runLocalAgentTurn(
         context: contextMetrics,
       });
       turnUsage = mergeTurnUsage(turnUsage, result.usage);
+      contextUsage = result.usage;
+      if (result.usage && Object.keys(result.usage).length > 0) {
+        usageRecords.push({
+          callId:
+            typeof result.usage.provider_call_id === "string" &&
+            result.usage.provider_call_id.trim()
+              ? result.usage.provider_call_id.trim()
+              : crypto.randomUUID(),
+          usage: result.usage,
+          model: result.model || agentConfig.model || "unknown",
+          ...(result.provider || agentConfig.provider
+            ? { provider: result.provider || agentConfig.provider }
+            : {}),
+        });
+      }
       const toolCalls = result.tool_calls ?? [];
       const rawToolCallsCount = (result.tool_calls?.length ?? 0) || (Array.isArray((result as any).raw_tool_calls) ? (result as any).raw_tool_calls.length : 0);
       if (toolCalls.length === 0 && rawToolCallsCount === 0) {
@@ -1618,6 +1657,24 @@ export async function runLocalAgentTurn(
       model: agentConfig.model,
       toolCallCount,
       partialContent,
+      usage: contextUsage,
+      accountingUsage: addOutOfBandUsage(turnUsage, compactionUsage),
+      usageRecords: [
+        ...(compactionUsage
+          ? [{
+              callId:
+                typeof compactionUsage.provider_call_id === "string" &&
+                compactionUsage.provider_call_id.trim()
+                  ? compactionUsage.provider_call_id.trim()
+                  : crypto.randomUUID(),
+              usage: compactionUsage,
+              model: agentConfig.model || "unknown",
+              ...(agentConfig.provider ? { provider: agentConfig.provider } : {}),
+            }]
+          : []),
+        ...usageRecords,
+      ],
+      billingConfig,
       input,
     });
     attachDialogIdToError(loopError, dialogId);
@@ -1641,6 +1698,19 @@ export async function runLocalAgentTurn(
     input.persistedInput,
     input.persistedInputReference,
   );
+  if (compactionUsage && Object.keys(compactionUsage).length > 0) {
+    usageRecords.unshift({
+      callId:
+        typeof compactionUsage.provider_call_id === "string" &&
+        compactionUsage.provider_call_id.trim()
+          ? compactionUsage.provider_call_id.trim()
+          : crypto.randomUUID(),
+      usage: compactionUsage,
+      model: agentConfig.model || result.model || "unknown",
+      ...(agentConfig.provider ? { provider: agentConfig.provider } : {}),
+    });
+  }
+  const accountingUsage = addOutOfBandUsage(turnUsage, compactionUsage);
   const saved = await input.adapter.saveTurn({
     agentKey: agentConfig.key,
     messages: turnMessages,
@@ -1649,6 +1719,9 @@ export async function runLocalAgentTurn(
       ...(toolCallCount > 0 ? { toolCallCount } : {}),
       ...((agentConfig as any).toolSurface ? { runtimeToolSurface: (agentConfig as any).toolSurface } : {}),
     },
+    ...(usageRecords.length > 0 ? { usageRecords } : {}),
+    ...(accountingUsage ? { accountingUsage } : {}),
+    billingConfig,
     ...(input.runtimeContext ? { runtimeContext: input.runtimeContext } : {}),
     ...(input.continueDialogId ? { continueDialogId: input.continueDialogId } : {}),
     ...(input.spaceId ? { spaceId: input.spaceId } : {}),
@@ -1659,10 +1732,8 @@ export async function runLocalAgentTurn(
 
   return {
     ...result,
-    ...((() => {
-      const merged = addOutOfBandUsage(turnUsage, compactionUsage);
-      return merged ? { usage: merged } : {};
-    })()),
+    ...(usageRecords.length > 0 ? { usageRecords } : {}),
+    ...(accountingUsage ? { accountingUsage } : {}),
     ...(toolCallCount > 0 ? { toolCallCount } : {}),
     ...((agentConfig as any).toolSurface ? { runtimeToolSurface: (agentConfig as any).toolSurface } : {}),
     // 透出最后一轮 provider 调用的 finish_reason；多轮工具循环里只有最后一轮收尾状态有意义。

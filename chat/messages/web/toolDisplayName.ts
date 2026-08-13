@@ -31,7 +31,7 @@ const TOOL_DISPLAY_NAME_DEFAULTS: Record<string, string> = {
   replaceWorkspaceText: "替换文本",
   listAgents: "列出助手",
   readAgent: "读取助手",
-  callAgent: "调用助手",
+  startAgentRun: "启动子任务",
   exa_search: "搜索",
   firecrawl_scrape: "网页抓取",
   firecrawl_search: "网页搜索",
@@ -269,7 +269,7 @@ export function formatToolRowHeaderSummary(args: {
       break;
     case "listAgents":
     case "readAgent":
-    case "callAgent":
+    case "startAgentRun":
       detail =
         asOptionalTrimmedString(toolArgs?.name) ??
         asOptionalTrimmedString(toolArgs?.agentKey);

@@ -4,8 +4,6 @@ import { readAgentFromStore } from "./cliLocalAgentRecordReader";
 import { resolveBuiltinPlatformAgentConfig } from "../agent-runtime/builtinPlatformAgentConfigs";
 import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-  PUBLIC_GLM_52_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
 } from "../core/builtinAgents";
 import { NOLO_DEFAULT_AGENT_KEY } from "../agentAliases";
@@ -27,40 +25,6 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
       key: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
       provider: "nolo",
       model: "deepseek-v4-flash",
-      apiSource: "platform",
-      useServerProxy: true,
-    });
-  });
-
-  test("returns the nolo-hosted deepseek-v4-pro config for pro tier", async () => {
-    // The model id stays deepseek-v4-pro; only the official DeepSeek provider
-    // route was retired, so the pro tier runs on nolo like every other tier.
-    const config = await readAgentFromStore({
-      store: emptyStore,
-      agentRef: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-      userId: "user-1",
-    });
-    expect(config).not.toBeNull();
-    expect(config).toMatchObject({
-      key: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-      provider: "nolo",
-      model: "deepseek-v4-pro",
-      apiSource: "platform",
-      useServerProxy: true,
-    });
-  });
-
-  test("returns nolo-hosted GLM 5.2 config for the quality tier", async () => {
-    const config = await readAgentFromStore({
-      store: emptyStore,
-      agentRef: PUBLIC_GLM_52_AGENT_KEY,
-      userId: "user-1",
-    });
-    expect(config).not.toBeNull();
-    expect(config).toMatchObject({
-      key: PUBLIC_GLM_52_AGENT_KEY,
-      provider: "nolo",
-      model: "glm-5.2",
       apiSource: "platform",
       useServerProxy: true,
     });

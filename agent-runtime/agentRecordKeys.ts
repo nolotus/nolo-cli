@@ -10,7 +10,7 @@
  *   1. agent-{userId}-{ref}  (private alias)
  *   2. agent-pub-{ref}       (public alias)
  *
- * Previously this only returned the private candidate, causing callAgent to
+ * Previously this only returned the private candidate, causing startAgentRun to
  * miss public agents that the readAgent tool could find — an inconsistency
  * between the two agent lookup paths.
  */

@@ -1,17 +1,23 @@
-import { getModelConfig } from "./providers";
+import { resolveChatWire } from "../chat/wireAdapters";
 
-export const isResponseAPIModel = (agentConfig: { provider: string; endpointKey?: string; model?: string }) => {
-  // Only OpenAI speaks the Responses wire format. DeepSeek did too until the
-  // official DeepSeek provider was retired; its models now run on nolo
-  // (Ollama Cloud), which is plain chat.completions.
-  const provider = agentConfig.provider?.trim().toLowerCase();
-  if (provider !== "openai") return false;
-  if (agentConfig.endpointKey === "responses") return true;
-  if (!agentConfig.model) return false;
-
-  try {
-    return getModelConfig("openai", agentConfig.model).endpointKey === "responses";
-  } catch {
-    return false;
-  }
-};
+/**
+ * Whether an agent's client-side wire format is OpenAI Responses.
+ *
+ * Delegates to `resolveChatWire` (wireAdapters) — the single source of truth
+ * for client wire resolution. Previously this file mirrored
+ * `isOpenAiResponsesModel` (platformProviderEndpoints) with duplicated logic;
+ * the mirror drift risk (failure mode F1: client/proxy format disagreement)
+ * is why both now converge on `resolveChatWire`.
+ *
+ * Note: `resolveChatWire` additionally honors endpoint/customProviderUrl
+ * matching /responses, so a custom provider pointing at a Responses endpoint
+ * is now classified correctly (previously `false` for non-openai providers).
+ */
+export const isResponseAPIModel = (agentConfig: {
+  provider: string;
+  endpointKey?: string;
+  model?: string;
+  cliProvider?: string;
+  customProviderUrl?: string;
+  endpoint?: string;
+}) => resolveChatWire(agentConfig) === "responses";

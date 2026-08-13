@@ -6,6 +6,7 @@ import type {
 } from "./types";
 import type { AgentRuntimeSaveTurnInput } from "./hostAdapter";
 import { dialogMessageKey } from "../database/keys";
+import { buildDialogFallbackTitleFromUserInput } from "../chat/dialog/dialogTitle";
 
 type DialogRecord = Record<string, any>;
 type DialogWriteOp = {
@@ -35,34 +36,59 @@ function resolveDialogTitle(args: {
   existingDialog?: DialogRecord | null;
   messages: AgentRuntimeChatMessage[];
 }) {
-  if (typeof args.existingDialog?.title === "string" && args.existingDialog.title.trim()) {
-    return args.existingDialog.title;
+  const existing = args.existingDialog?.title;
+  if (typeof existing === "string" && existing.trim()) {
+    return existing.trim();
   }
   const lastUserText = extractLastUserText(args.messages).trim();
-  return lastUserText ? lastUserText.slice(0, 80) : "Local agent run";
+  return buildDialogFallbackTitleFromUserInput(lastUserText) || "Local agent run";
 }
 
 /**
  * Final dialog title for a write plan, by priority:
- *   1. existing dialog title (keep — a titled dialog never gets retitled)
- *   2. caller-supplied titleOverride (e.g. LLM-generated)
+ *   1. caller-supplied titleOverride (e.g. LLM-generated / periodic update)
+ *      — UNLESS the existing title is manual (titleSource:"manual"), which is
+ *      never overwritten by a generated override.
+ *   2. existing dialog title (if not being overridden)
  *   3. resolveDialogTitle fallback (last user message / "Local agent run")
  * Named pickDialogTitle to avoid a name clash with the fallback-only
  * resolveDialogTitle above.
+ *
+ * MEDIUM-1: titleSource "manual" protects a user-set title from being
+ * overwritten by LLM-generated overrides. Returns the chosen title plus the
+ * titleSource that should be persisted alongside it.
  */
 function pickDialogTitle(args: {
   existingDialog?: DialogRecord | null;
   titleOverride?: string;
   messages: AgentRuntimeChatMessage[];
-}): string {
-  const existing = args.existingDialog?.title;
-  if (typeof existing === "string" && existing.trim()) return existing.trim();
+}): { title: string; titleSource: "generated" | "manual" } {
+  const existingSource = args.existingDialog?.titleSource;
+  const existingIsManual = existingSource === "manual";
   const override = args.titleOverride?.trim();
-  if (override) return override;
-  return resolveDialogTitle({
-    existingDialog: args.existingDialog,
-    messages: args.messages,
-  });
+  if (override && !existingIsManual) {
+    return { title: override, titleSource: "generated" };
+  }
+  const existing = args.existingDialog?.title;
+  if (typeof existing === "string" && existing.trim()) {
+    // Preserve an existing manual source; otherwise default to "generated"
+    // (existing non-manual titles were produced by the generation pipeline).
+    return {
+      title: existing.trim(),
+      titleSource: existingIsManual ? "manual" : "generated",
+    };
+  }
+  // No existing title: a generated override still wins over the fallback.
+  if (override) {
+    return { title: override, titleSource: "generated" };
+  }
+  return {
+    title: resolveDialogTitle({
+      existingDialog: args.existingDialog,
+      messages: args.messages,
+    }),
+    titleSource: "generated",
+  };
 }
 
 function normalizeSubjectRef(ref: unknown): DialogSubjectRef | null {
@@ -77,6 +103,22 @@ function normalizeSubjectRef(ref: unknown): DialogSubjectRef | null {
     id,
     ...(role ? { role } : {}),
   };
+}
+
+/**
+ * MEDIUM-1: parse the titleUpdatedAt timestamp (ms epoch) from an existing
+ * dialog record. Accepts either a number or an ISO string. Returns 0 when
+ * absent or unparseable — callers treat 0 as "never generated" and apply the
+ * conservative throttle rule (don't regenerate when a non-empty title exists).
+ */
+function parseTitleUpdatedAtMs(existingDialog?: DialogRecord | null): number {
+  const raw = existingDialog?.titleUpdatedAt;
+  if (typeof raw === "number" && !Number.isNaN(raw)) return raw;
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return 0;
 }
 
 function mergeSubjectRefs(...groups: unknown[]): DialogSubjectRef[] | undefined {
@@ -177,8 +219,7 @@ export function buildAgentRuntimeDialogWritePlan(args: {
   existingDialog?: DialogRecord | null;
   /**
    * Pre-computed dialog title (e.g. from an async LLM title generator).
-   * When provided, overrides the default resolveDialogTitle fallback.
-   * Existing dialogs with a non-empty title always keep their title regardless.
+   * When provided, takes precedence over existingDialog.title and fallback titles.
    */
   titleOverride?: string;
 }): { dialogId: string; title: string; ops: DialogWriteOp[] } {
@@ -206,6 +247,23 @@ export function buildAgentRuntimeDialogWritePlan(args: {
           cybots: [args.input.agentKey],
           primaryAgentKey: args.input.agentKey,
         };
+  const pickedTitle = pickDialogTitle({
+    existingDialog: args.existingDialog,
+    titleOverride: args.titleOverride,
+    messages: args.input.messages,
+  });
+  const existingTitleUpdatedAtMs = parseTitleUpdatedAtMs(args.existingDialog);
+  // titleUpdatedAt tracks the last time the title content was actually
+  // (re)generated or manually set — distinct from updatedAt (any field
+  // change). Used by writeDialog's throttle. When the title changes this
+  // turn (override applied, or first-time generation), refresh it to now.
+  const titleChanged =
+    typeof args.titleOverride === "string" && args.titleOverride.trim().length > 0;
+  const titleUpdatedAtIso = titleChanged
+    ? nowIso
+    : existingTitleUpdatedAtMs > 0
+      ? new Date(existingTitleUpdatedAtMs).toISOString()
+      : (args.existingDialog?.createdAt ?? nowIso);
   const dialogRecord = {
     ...asRecordOrEmpty(args.existingDialog),
     id: dialogId,
@@ -213,11 +271,9 @@ export function buildAgentRuntimeDialogWritePlan(args: {
     type: "dialog",
     userId: args.userId,
     ...dialogAgentFields,
-    title: pickDialogTitle({
-      existingDialog: args.existingDialog,
-      titleOverride: args.titleOverride,
-      messages: args.input.messages,
-    }),
+    title: pickedTitle.title,
+    titleSource: pickedTitle.titleSource,
+    titleUpdatedAt: titleUpdatedAtIso,
     status: args.input.result.error === true ? "failed" : "done",
     triggerType: `${args.runtimeHost}-local`,
     executionMode: args.existingDialog?.executionMode ?? "foreground",

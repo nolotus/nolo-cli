@@ -8,122 +8,56 @@
  * hosted server would return, instead of falling back to the built-in `nolo`
  * agent or erroring with "Local agent config not found".
  *
- * Provider/model truth source (by priority):
- * 1. `scripts/createSpaceAgents.ts` seed definitions.
- * 2. `packages/app/settings/quickChatTierDefaults.ts` tier → agentKey map.
+ * Provider/model truth source: `packages/core/builtinAgentCatalog.ts`
+ * (`runtimeFallback: true` 条目)。本表由目录派生，不手抄。
  *
- * Keep this mapping in sync with the quick-chat tier defaults in
- * `packages/app/settings/quickChatTierDefaults.ts`.
+ * Coverage（由 catalog 的 runtimeFallback 标记决定）：
+ * - flash / pro / image tier：DeepSeek V4 Flash / Pro、Kimi K2.6
+ * - public image agents (进站即可生成图片)：GPT Image 2 生成/编辑/连续创作、
+ *   Nano Banana 2 Lite
+ * - builtin nolo：平台路由默认 agent（目录里 provider nolo / deepseek-v4-flash，
+ *   @nolo 在记录缺失时保持可用；可达时宿主记录优先，`readAgentFromStore`
+ *   先查 store）。
+ *
+ * 档位默认值见 `packages/app/settings/quickChatTierDefaults.ts`
+ * （flash/balanced/quality 复用 Flash；image 用 Kimi）。
  */
 
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
-import {
-  BUILTIN_NOLO_AGENT_KEY,
-  PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-  PUBLIC_GLM_52_AGENT_KEY,
-  PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
-} from "../core/builtinAgents";
+import type { BuiltinAgentCatalogEntry } from "../core/builtinAgentCatalog";
+import { builtinRuntimeFallbackEntries } from "../core/builtinAgentCatalog";
+import { publicAgentKey } from "../core/prefix";
 
-/**
- * Built-in platform agent configs keyed by agent dbKey.
- *
- * Coverage:
- * - flash tier: DeepSeek V4 Flash (nolo / deepseek-v4-flash)
- * - balanced tier: DeepSeek V4 Pro (nolo / deepseek-v4-pro)
- * - quality tier: GLM 5.2 (nolo / glm-5.2)
- * - image tier: Kimi K2.6 (nolo / kimi-k2.6)
- * - builtin nolo: platform-routed default agent.
- *   NOTE: the builtin nolo agent has no seed in `scripts/createSpaceAgents.ts`;
- *   its provider/model live only in the hosted production record. As a
- *   code-level fallback we route it through the same platform proxy channel
- *   as flash (provider "nolo" / model "deepseek-v4-flash") so that `@nolo`
- *   keeps working when the record is unavailable. The hosted record, when
- *   reachable, always wins because `readAgentFromStore` checks the store
- *   first.
- */
-const BUILTIN_PLATFORM_AGENT_CONFIGS: Record<string, AgentRuntimeAgentConfig> = {
-  [PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY]: {
-    key: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-    name: "DeepSeek V4 Flash",
-    provider: "nolo",
-    model: "deepseek-v4-flash",
-    apiSource: "platform",
-    useServerProxy: true,
-    rawRecord: {
-      dbKey: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-      isPublic: true,
-      provider: "nolo",
-      model: "deepseek-v4-flash",
-      apiSource: "platform",
-      useServerProxy: true,
-    },
-  },
-  [PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY]: {
-    key: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-    name: "DeepSeek V4 Pro",
-    provider: "nolo",
-    model: "deepseek-v4-pro",
-    apiSource: "platform",
-    useServerProxy: true,
-    rawRecord: {
-      dbKey: PUBLIC_DEEPSEEK_V4_PRO_AGENT_KEY,
-      isPublic: true,
-      provider: "nolo",
-      model: "deepseek-v4-pro",
-      apiSource: "platform",
-      useServerProxy: true,
-    },
-  },
-  [PUBLIC_GLM_52_AGENT_KEY]: {
-    key: PUBLIC_GLM_52_AGENT_KEY,
-    name: "GLM 5.2",
-    provider: "nolo",
-    model: "glm-5.2",
-    apiSource: "platform",
-    useServerProxy: true,
-    rawRecord: {
-      dbKey: PUBLIC_GLM_52_AGENT_KEY,
-      isPublic: true,
-      provider: "nolo",
-      model: "glm-5.2",
-      apiSource: "platform",
-      useServerProxy: true,
-    },
-  },
-  [PUBLIC_KIMI_K26_IMAGE_AGENT_KEY]: {
-    key: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
-    name: "Kimi K2.6",
-    provider: "nolo",
-    model: "kimi-k2.6",
-    apiSource: "platform",
-    useServerProxy: true,
-    rawRecord: {
-      dbKey: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
-      isPublic: true,
-      provider: "nolo",
-      model: "kimi-k2.6",
-      apiSource: "platform",
-      useServerProxy: true,
-    },
-  },
-  [BUILTIN_NOLO_AGENT_KEY]: {
-    key: BUILTIN_NOLO_AGENT_KEY,
-    name: "Nolo",
-    provider: "nolo",
-    model: "deepseek-v4-flash",
-    apiSource: "platform",
-    useServerProxy: true,
-    rawRecord: {
-      dbKey: BUILTIN_NOLO_AGENT_KEY,
-      isPublic: true,
-      provider: "nolo",
-      model: "deepseek-v4-flash",
-      apiSource: "platform",
-      useServerProxy: true,
-    },
-  },
-};
+function buildConfig(e: BuiltinAgentCatalogEntry): AgentRuntimeAgentConfig {
+  const key = publicAgentKey(e.id);
+  const rawRecord: Record<string, unknown> = {
+    dbKey: key,
+    isPublic: true,
+    provider: e.provider,
+    model: e.model,
+    apiSource: e.apiSource ?? "platform",
+    useServerProxy: e.useServerProxy ?? true,
+  };
+  if (e.hasImageOutput) rawRecord.hasImageOutput = true;
+  if (e.imageModel) rawRecord.imageModel = e.imageModel;
+  if (e.imageWorkflow) rawRecord.imageWorkflow = e.imageWorkflow;
+  if (e.imageConfig) rawRecord.imageConfig = e.imageConfig;
+  return {
+    key,
+    name: e.name,
+    provider: e.provider,
+    model: e.model,
+    apiSource: e.apiSource ?? "platform",
+    useServerProxy: e.useServerProxy ?? true,
+    rawRecord,
+  };
+}
+
+/** 兜底表 = catalog 里 runtimeFallback 条目（派生，手抄全部消失） */
+const BUILTIN_PLATFORM_AGENT_CONFIGS: Record<string, AgentRuntimeAgentConfig> =
+  Object.fromEntries(
+    builtinRuntimeFallbackEntries().map((e) => [publicAgentKey(e.id), buildConfig(e)]),
+  );
 
 /**
  * Resolve a built-in platform agent config by agentRef (agent dbKey).
@@ -134,4 +68,24 @@ export function resolveBuiltinPlatformAgentConfig(
   agentRef: string,
 ): AgentRuntimeAgentConfig | null {
   return BUILTIN_PLATFORM_AGENT_CONFIGS[agentRef] ?? null;
+}
+
+/**
+ * Same built-in truth, shaped as an Agent *record* (the flat form web hosts
+ * pass around as `agentConfig`) instead of an `AgentRuntimeAgentConfig`.
+ *
+ * Web's `streamAgentChatTurn` consumes `agentConfig.dbKey` / `.provider` /
+ * `.model` directly, so it needs `rawRecord` flattened with a `dbKey` — it
+ * cannot use the runtime-shaped config the CLI and desktop hosts take.
+ */
+export function resolveBuiltinPlatformAgentRecord(
+  agentRef: string,
+): Record<string, unknown> | null {
+  const config = resolveBuiltinPlatformAgentConfig(agentRef);
+  if (!config) return null;
+  return {
+    ...config.rawRecord,
+    dbKey: agentRef,
+    ...(config.name ? { name: config.name } : {}),
+  };
 }

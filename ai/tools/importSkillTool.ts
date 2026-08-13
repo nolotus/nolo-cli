@@ -117,8 +117,6 @@ export async function importSkillFunc(
     description,
     triggerMode: "explicit",
     toolNames: normalizedTools,
-    budgetTier: "medium",
-    dispatchPreferred: false,
     modalities: ["text"],
   };
 

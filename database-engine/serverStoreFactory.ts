@@ -7,8 +7,9 @@ import type { AuthorityStore } from "./authorityStoreTypes";
 import { createLegacyServerDb, type LegacyServerDb } from "./legacyServerDb";
 import { createLevelAuthorityStore } from "./levelAuthorityStore";
 import { createMemoryAuthorityStore } from "./memoryAuthorityStore";
+import { createSqliteAuthorityStore } from "./sqliteAuthorityStore";
 
-export type ServerStoreDriver = "level" | "memory";
+export type ServerStoreDriver = "level" | "memory" | "sqlite";
 
 export type ServerStoreFactoryEnv = {
   NOLO_SERVER_AUTHORITY_DRIVER?: string | undefined;
@@ -61,6 +62,7 @@ export function resolveServerStoreDriver(
   if (!rawDriver) return "level";
   if (rawDriver === "level") return "level";
   if (rawDriver === "memory") return "memory";
+  if (rawDriver === "sqlite") return "sqlite";
   throw new Error(`Unsupported server authority store driver: ${rawDriver}`);
 }
 
@@ -73,6 +75,8 @@ export function createAuthorityStoreForDriver(
       return createLevelBackedAuthorityStore(dbPath);
     case "memory":
       return createMemoryAuthorityStore(dbPath);
+    case "sqlite":
+      return createSqliteAuthorityStore(dbPath);
   }
 }
 

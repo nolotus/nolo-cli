@@ -41,7 +41,7 @@ type ResponseFunctionCallOutput = {
 };
 type ResponseReasoning = {
   type: "reasoning";
-  content: string;
+  content: Array<{ type: "reasoning_text"; text: string }>;
 };
 
 export type ResponseInputItem =
@@ -128,19 +128,29 @@ const normalizeToolOutput = (content: Message["content"]): string => {
 export const toResponsesTools = (tools: any[] | undefined): any[] | undefined => {
   if (!Array.isArray(tools) || tools.length === 0) return undefined;
 
-  return tools
+  const normalized = tools
     .map((tool) => {
+      // Accept both OpenAI Chat Completions tools and already-normalized
+      // Responses tools. The chat proxy may receive either shape depending on
+      // whether the caller has already selected its target wire.
       const fn = tool?.function;
-      if (!fn?.name) return null;
+      const name = fn?.name ?? tool?.name;
+      if (!name) return null;
+      const parameters = fn?.parameters ?? tool?.parameters;
       return {
         type: "function",
-        name: fn.name,
-        description: fn.description,
-        parameters: sanitizeResponsesParameters(fn.parameters),
-        strict: fn.strict,
+        name,
+        ...(typeof (fn?.description ?? tool?.description) === "string"
+          ? { description: fn?.description ?? tool?.description }
+          : {}),
+        parameters: sanitizeResponsesParameters(parameters),
+        ...(fn?.strict !== undefined || tool?.strict !== undefined
+          ? { strict: fn?.strict ?? tool?.strict }
+          : {}),
       };
     })
     .filter(Boolean);
+  return normalized.length > 0 ? normalized : undefined;
 };
 
 export const convertMessagesToResponsesInput = (
@@ -169,7 +179,15 @@ export const convertMessagesToResponsesInput = (
       typeof message.reasoning_content === "string" &&
       message.reasoning_content
     ) {
-      input.push({ type: "reasoning", content: message.reasoning_content });
+      // 数组 content（reasoning_text parts）是 OpenAI 官方与 DeepSeek 官方
+      // Responses API 都接受的格式；字符串 content 会被 DeepSeek 拒绝
+      // （serde "expected a sequence"，实测 400）。
+      input.push({
+        type: "reasoning",
+        content: [
+          { type: "reasoning_text", text: message.reasoning_content },
+        ],
+      });
     }
     const contentParts = normalizeMessageParts(message.content, role);
     if (contentParts.length > 0) {

@@ -55,6 +55,40 @@ describe("toolOutput", () => {
     expect(shouldEmitToolEvents("hide")).toBe(false);
   });
 
+  test("compact mode renders setTodoList as a readable task list", () => {
+    const format = createToolEventFormatter("compact", false);
+    const output = format(
+      toolEvent({
+        type: "tool-result",
+        toolName: "setTodoList",
+        content: JSON.stringify({
+          todos: [
+            { title: "Inspect runtime", status: "done" },
+            { title: "Add toggle", status: "in_progress" },
+            { title: "Add tests", status: "pending" },
+          ],
+        }),
+      }),
+    );
+    expect(output).toContain("Todo (3)");
+    expect(output).toContain("✓ Inspect runtime");
+    expect(output).toContain("◐ Add toggle");
+    expect(output).toContain("○ Add tests");
+  });
+
+  test("malformed setTodoList output is not reported as an empty Todo", () => {
+    const format = createToolEventFormatter("compact", false);
+    const output = format(
+      toolEvent({
+        type: "tool-result",
+        toolName: "setTodoList",
+        content: "not-json",
+      }),
+    );
+    expect(output).not.toContain("(empty)");
+    expect(output).toContain("setTodoList");
+  });
+
   test("compact mode emits formatted tree for completed read tool", () => {
     const format = createToolEventFormatter("compact");
     expect(
@@ -1021,6 +1055,87 @@ describe("toolOutput", () => {
     expect(line.split("\n").filter(Boolean)).toHaveLength(1);
   });
 
+  test("compact mode loadSkill chip is localized in zh (single-line i18n badge)", () => {
+    setCliLocale("zh");
+    try {
+      const line = formatToolEventForCli(
+        toolEvent({
+          type: "tool-result",
+          toolName: "loadSkill",
+          argumentsPreview: "search-all-spaces",
+          content: 'Skill "search-all-spaces" loaded inline. Follow its instructions.',
+        }),
+        "compact",
+        false
+      );
+      // 单行简洁 chip，与截图一致：✦ 已加载技能: <skillName>
+      expect(line).toBe("✦ 已加载技能: search-all-spaces\n");
+      expect(line).not.toContain("\x1b");
+    } finally {
+      setCliLocale("en");
+    }
+  });
+
+  test("compact mode folds search_workspace result into the search tree", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "search_workspace",
+        argumentsPreview: "笔记",
+        metadata: { query: "笔记" },
+      }),
+      "compact",
+      false
+    );
+    expect(line).toBe("• Search (1)\n  └── 笔记\n");
+    expect(line).not.toContain("search_workspace");
+  });
+
+  test("compact mode folds search_all_spaces result into the search tree", () => {
+    const line = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "search_all_spaces",
+        argumentsPreview: "roadmap",
+        metadata: { query: "roadmap" },
+      }),
+      "compact",
+      false
+    );
+    expect(line).toBe("• Search (1)\n  └── roadmap\n");
+    expect(line).not.toContain("search_all_spaces");
+  });
+
+  test("compact mode search_workspace / search_all_spaces tool-error uses localized label", () => {
+    const wsLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-error",
+        toolName: "search_workspace",
+        argumentsPreview: "笔记",
+        message: "boom",
+      }),
+      "compact",
+      false
+    );
+    expect(wsLine).toContain("Search workspace");
+    expect(wsLine).toContain("✗");
+    expect(wsLine).not.toContain("search_workspace");
+
+    const allLine = formatToolEventForCli(
+      toolEvent({
+        type: "tool-error",
+        toolName: "search_all_spaces",
+        argumentsPreview: "roadmap",
+        message: "boom",
+      }),
+      "compact",
+      false
+    );
+    expect(allLine).toContain("Search all spaces");
+    expect(allLine).toContain("✗");
+    expect(allLine).not.toContain("search_all_spaces");
+  });
+
   test("compact mode renders listAgents / startAgentRun / controlAgentRun as formatted cards (no color)", () => {
     const listLine = formatToolEventForCli(
       toolEvent({
@@ -1390,6 +1505,141 @@ describe("toolOutput", () => {
     expect(out).toContain("Run finished");
     expect(out).toContain("31 tools");
     expect(out).toContain("4m02s");
+  });
+
+  // ── suppressRunProgressCards：dock 面板覆盖进展时的 transcript 降噪 ──
+  // 开启条件是有 dock 订阅者（TUI）；裸 CLI 不传，以下用例两两对照。
+
+  test("suppression on: 纯进展轮询（toolCallCount 变化）一张卡都不印", () => {
+    const format = createToolEventFormatter("compact", false, {
+      suppressRunProgressCards: true,
+    });
+    const poll = (toolCallId: string, toolCallCount: number) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({
+            runId: "run-quiet",
+            status: "running",
+            agentName: "Worker",
+            toolCallCount,
+          }),
+        })
+      );
+    const sleep = (toolCallId: string) =>
+      format(toolEvent({ type: "tool-result", toolCallId, toolName: "run", content: "ok" }));
+
+    // 交替别的工具打断 fold——旧行为每轮印一张近乎相同的 running 卡片。
+    const out =
+      poll("p1", 2) + sleep("r1") + poll("p2", 9) + sleep("r2") + poll("p3", 17) + (format.flush?.() ?? "");
+    expect(out).not.toContain("Run status");
+    expect(out).not.toContain("● controlAgentRun");
+  });
+
+  test("suppression on: 终态仍印收尾卡（transcript 需要结论）", () => {
+    const format = createToolEventFormatter("compact", false, {
+      suppressRunProgressCards: true,
+    });
+    const poll = (toolCallId: string, status: string, extra: Record<string, unknown> = {}) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({ runId: "run-term", status, agentName: "Worker", ...extra }),
+        })
+      );
+
+    expect(poll("p1", "running", { toolCallCount: 3 })).toBe("");
+    const out = poll("p2", "done", { toolCallCount: 12 });
+    // 进展卡被抑制，终态卡保留，且合并折叠把最后一次进展带进收尾卡。
+    expect(out).not.toContain("⏳ running");
+    expect(out).toContain("Run finished");
+    expect(out).toContain("✓ done");
+    expect(out).toContain("12 tools");
+  });
+
+  test("suppression on: 带 errorMessage 的轮询仍印卡", () => {
+    const format = createToolEventFormatter("compact", false, {
+      suppressRunProgressCards: true,
+    });
+    const poll = (toolCallId: string, extra: Record<string, unknown> = {}) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({ runId: "run-err", status: "running", agentName: "Worker", ...extra }),
+        })
+      );
+
+    expect(poll("p1")).toBe("");
+    const out = poll("p2", { errorMessage: "quota exhausted" }) + (format.flush?.() ?? "");
+    expect(out).toContain("● controlAgentRun");
+    expect(out).toContain("quota exhausted");
+  });
+
+  test("suppression on: 日志尾巴变化仍印卡", () => {
+    const format = createToolEventFormatter("compact", false, {
+      suppressRunProgressCards: true,
+    });
+    const poll = (toolCallId: string, logLines: string[]) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({ runId: "run-logs", status: "running", agentName: "Worker", logLines }),
+        })
+      );
+    const sleep = (toolCallId: string) =>
+      format(toolEvent({ type: "tool-result", toolCallId, toolName: "run", content: "ok" }));
+
+    // 第一次见到这条尾巴：印。同一条尾巴再来：不印。尾巴变了：印。
+    expect(poll("p1", ["tail-a"]) + sleep("r1")).toContain("● controlAgentRun");
+    expect(poll("p2", ["tail-a"]) + sleep("r2")).not.toContain("● controlAgentRun");
+    expect(poll("p3", ["tail-a", "tail-b"]) + (format.flush?.() ?? "")).toContain("● controlAgentRun");
+  });
+
+  test("suppression on: list/stop 等非 status 动作不受影响", () => {
+    const format = createToolEventFormatter("compact", false, {
+      suppressRunProgressCards: true,
+    });
+    const stop = format(
+      toolEvent({
+        type: "tool-result",
+        toolCallId: "p1",
+        toolName: "controlAgentRun",
+        content: JSON.stringify({ runId: "run-stop", status: "killed", agentName: "Worker" }),
+      })
+    );
+    expect(stop).toContain("Run stopped");
+    expect(stop).toContain("🛑 killed");
+  });
+
+  test("suppression off（默认）: 进展轮询维持印卡现状", () => {
+    const format = createToolEventFormatter("compact", false);
+    const poll = (toolCallId: string, toolCallCount: number) =>
+      format(
+        toolEvent({
+          type: "tool-result",
+          toolCallId,
+          toolName: "controlAgentRun",
+          content: JSON.stringify({
+            runId: "run-loud",
+            status: "running",
+            agentName: "Worker",
+            toolCallCount,
+          }),
+        })
+      );
+    const sleep = () =>
+      format(toolEvent({ type: "tool-result", toolCallId: "r1", toolName: "run", content: "ok" }));
+
+    expect(poll("p1", 2) + sleep()).toContain("2 tools");
+    expect(poll("p2", 9) + (format.flush?.() ?? "")).toContain("9 tools");
   });
 
   test("controlAgentRun status without agentName does not render agent   agent", () => {

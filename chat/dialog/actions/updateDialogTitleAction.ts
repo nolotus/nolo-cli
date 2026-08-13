@@ -57,7 +57,7 @@ const getMessageContextForTitle = (
   const normalized = flattened
     .filter((msg: any) => msg?.role !== "tool" && !isAssistantToolStub(msg))
     .map((msg: any) => {
-      const textContent = serializeMessageContent(msg?.content, "这里是一个图片");
+      const textContent = serializeMessageContent(msg?.content, "[图片]");
       if (!textContent) return null;
 
       return {

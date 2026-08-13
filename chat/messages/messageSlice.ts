@@ -127,6 +127,13 @@ const initialState: MessageSliceState = {
 interface MessageStreamEndPayload {
   finalContentBuffer: any[];
   totalUsage: any;
+  /** Per-provider-call billing evidence; totalUsage remains the context snapshot. */
+  billingUsageRecords?: Array<{
+    callId: string;
+    usage: Record<string, unknown>;
+    model?: string;
+    provider?: string;
+  }>;
   msgKey: string;
   agentConfig: any;
   dialogId: string;
@@ -492,39 +499,6 @@ export const messageSlice = createSliceWithThunks({
         });
       }
     }),
-
-    /**
-     * Append a run-overlay presentation as a non-streaming assistant message.
-     *
-     * This is a pure UI presentation action — it does NOT trigger a new agent
-     * turn, does NOT call the LLM, and is therefore not billed. The message
-     * is upserted into the dialog's message list so the user sees the run
-     * status snapshot at turn-end. A fresh message id/dbKey are minted from
-     * the dialog id so repeated overlays across turns don't collide.
-     *
-     * The message is marked role:"assistant" with isStreaming:false. Callers
-     * that want to keep it out of the LLM context can post-filter by the
-     * `metadata.overlayMessage` flag set here.
-     */
-    appendOverlayMessage: create.reducer<{
-      dialogKey: string;
-      text: string;
-    }>((state, action) => {
-      const dialogId = extractCustomId(action.payload.dialogKey);
-      if (!dialogId) return;
-      const dialogState = ensureMessageDialogState(state, dialogId);
-      const { key: msgKey, messageId } = createDialogMessageKeyAndId(dialogId);
-      upsertOneMessage(dialogState, {
-        id: messageId,
-        dbKey: msgKey,
-        role: "assistant",
-        content: action.payload.text,
-        isStreaming: false,
-        metadata: { overlayMessage: true },
-      } as Message);
-    }),
-
-
 
     prepareAndPersistMessage: create.asyncThunk(
       async (
@@ -893,6 +867,7 @@ export const messageSlice = createSliceWithThunks({
         const {
           finalContentBuffer,
           totalUsage,
+          billingUsageRecords,
           msgKey,
           agentConfig,
           dialogId,
@@ -1023,23 +998,28 @@ export const messageSlice = createSliceWithThunks({
         });
 
         if (billingMode === "reported") {
-          dispatch(
-            (updateTokens as any)({
-              dialogId,
-              dialogKey,
-              usage: billedUsage,
-              agentConfig,
-            })
-          );
+          const usageRecords = billingUsageRecords?.length
+            ? billingUsageRecords
+            : [{ callId: undefined, usage: billedUsage }];
+          for (const usageRecord of usageRecords) {
+            await dispatch(
+              (updateTokens as any)({
+                dialogId,
+                dialogKey,
+                usageRecord,
+                agentConfig,
+              })
+            ).unwrap();
+          }
         } else if (billingMode === "estimated") {
-          dispatch(
+          await dispatch(
             (updateTokens as any)({
               dialogId,
               dialogKey,
               usage: billedEstimatedUsage,
               agentConfig,
             })
-          );
+          ).unwrap();
           console.warn("[billing] Missing usage at messageStreamEnd; using estimated token update", {
             dialogId,
             dialogKey,
@@ -1285,7 +1265,7 @@ export const messageSlice = createSliceWithThunks({
             ),
           );
 
-          const { agentKeyToUse, effectiveRuntimeOptions } =
+          const { agentKeyToUse, agentConfigToUse, effectiveRuntimeOptions } =
             resolveHandleSendMessageContext({
               dialogConfig,
               targetAgentKey: args.targetAgentKey,
@@ -1297,6 +1277,7 @@ export const messageSlice = createSliceWithThunks({
             await dispatch(
               streamAgentChatTurn({
                 agentKey: agentKeyToUse,
+                ...(agentConfigToUse ? { agentConfig: agentConfigToUse } : {}),
                 userInput: nextContent,
                 dialogKey,
                 parentMessageId: undefined,
@@ -1395,7 +1376,6 @@ export const {
   addToolMessage,
   updateToolMessage,
   removeMessagesByIds,
-  appendOverlayMessage,
 } = messageSlice.actions as any;
 
 

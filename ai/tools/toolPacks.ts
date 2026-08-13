@@ -2,6 +2,7 @@ import {
   SYSTEM_AGENT_CAPABILITIES,
   SYSTEM_AGENT_CAPABILITY_IDS,
 } from "./agentCapabilities";
+import { buildCodeWorkDiscipline } from "./codeWorkDiscipline";
 
 /**
  * 能力分级定义 (Capability Tiers)
@@ -9,10 +10,54 @@ import {
 export const TOOL_PACKS = {
   // L1 - 核心：交互 + 自我更新，所有 Agent 必有。
   // rememberMemory 已移至「长期记忆」能力包（defaultEnabled:true），用户可单关。
-  CORE: ["ask_user", "read", "searchDialogMessages", "createDoc", "updateDoc", "search_workspace", "search_all_spaces", "updateSelf", "queryModelUsage", "queryUserGrowthReport", "createAgentAutomation", "notifyUser"],
+  // searchDialogMessages 已改为内置 skill（search-dialog-messages），按需
+  // loadSkill 加载，不再随 CORE 常驻。
+  // search_all_spaces 已改为内置 skill（search-all-spaces），按需 loadSkill
+  // 加载，不再随 CORE 常驻；全部视图（All View）运行时只给 recommended hint，
+  // 不自动注入工具。search_workspace 保持常驻（分类视图的「当前空间」检索）。
+  CORE: [
+    "ask_user",
+    "read",
+    "createDoc",
+    "updateDoc",
+    "search_workspace",
+    "updateSelf",
+    "queryModelUsage",
+    "queryUserGrowthReport",
+    "createAgentAutomation",
+    "notifyUser",
+    "setTodoList",
+  ],
   // L2 - 联网搜索：与 CAPABILITY_PACKS「web-search」对齐。
   // 社交读工具属于「social-reader」包，不得因 exa_search 被旁路注入。
   LIGHT_WEB: ["exa_search", "fetchWebpage"],
+  // 本地工作区代码读写与执行。唯一真相源——「代码执行」能力包与 coding skill
+  // 都从这里取。以前两边各抄一份（coding 还多抄了 agent-orchestration 那 3 个），
+  // 改一个忘另一个就会静默不同步。
+  CODE: [
+    "readFile",
+    "writeFile",
+    "editFile",
+    "applyEdit",
+    "applyLineEdits",
+    "codeSearch",
+    "globFiles",
+    "searchFiles",
+    "listFiles",
+    "execShell",
+    "launchProcess",
+    "listProcesses",
+  ],
+  // 表格读写。唯一真相源——app-builder 能力包与 table object skill 都从这里取，
+  // 以前两边各抄一份，改一个忘另一个就会静默不同步。
+  TABLE: [
+    "createTable",
+    "addTableRow",
+    "addTableRows",
+    "queryTableRows",
+    "updateTableRow",
+    "deleteTableRow",
+  ],
   // L3 - 深度浏览器：全套复杂网页交互（与「full-browser」包对齐）
   FULL_BROWSER: [
     "browser_openSession",
@@ -45,6 +90,15 @@ export type CapabilityPack = {
   defaultEnabled: boolean;
   /** 图标 emoji（UI 展示用） */
   icon: string;
+  /**
+   * 组合：启用本包时一并启用这些包（递归）。
+   *
+   * 用来把一个大包拆成正交的小块而不改变对外行为：
+   * `app-builder` 拆出 `app-deploy` 后仍 includes 它，
+   * `enabledPacks: ["app-builder"]` 展开的工具集与拆分前逐字节一致，
+   * 但「能不能发布」从此是一个可以单独关掉的开关。
+   */
+  includes?: readonly string[];
   /**
    * 能力包附带的方法论文档（Markdown）。启用该包时，此内容会随工具一起
    * 注入 system prompt 的「技能提示」块，与 skill reference 的 promptPatch
@@ -88,45 +142,10 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
     label: "代码执行",
     description:
       "读写代码文件、搜索代码库、执行 shell 命令——让 agent 能改代码、跑测试。",
-    tools: [
-      "readFile",
-      "writeFile",
-      "editFile",
-      "applyEdit",
-      "applyLineEdits",
-      "codeSearch",
-      "globFiles",
-      "searchFiles",
-      "listFiles",
-      "execShell",
-      "launchProcess",
-      "listProcesses",
-    ],
+    tools: [...TOOL_PACKS.CODE],
     defaultEnabled: false,
     icon: "💻",
-    promptPatch: `# 代码执行能力包 — 操作纪律
-
-## 效率优先（省 token）
-- 不复述需求，不解释「打算怎么做」，直接动手。改完只用一两句话说清「改了什么、去哪看」。
-- 思考简短：定位问题即可，不做长篇推演。
-- 小改动走最短路径：searchFiles/globFiles 定位 → readFile 确认 → editFile 精确替换。能一次命中就不要反复读文件。
-- 已经知道文件和位置时，跳过多余的 search/read，直接 edit。
-- 禁止为一个小改动整页重写或连带改动未命中的部分。
-
-## 代码修改纪律
-- 编辑前先 readFile 确认当前内容，避免 stale hash 错误。
-- 只碰任务书列出的文件；改完用 \`git status --short\` 自查，若改到清单外文件，如实报告。
-- 不要 \`git add\` / \`git commit\` / \`git push\` / \`git stash\` / \`git reset\` / \`git checkout\` / \`git clean\`——改动留在工作区，提交由调用方验收后处理。仓库常有多个会话共用一个 checkout，你一提交就会把别人的在途文件卷进来。
-- 只跑任务里列出的测试文件，不要跑 broader 测试（broaden 测试的失败是预存的，和你的改动无关）。
-
-## Review 纪律（commit 前硬门）
-- 除 ≤2 步零逻辑风险的机械改动（错别字/格式/CSS 微调）外，所有代码变更 commit 前必须先派**其他 agent**（不同模型家族优先）review 工作区 diff（\`git diff\`，未提交的改动）。reviewer 不可是自己。无 review 不 commit——这是硬门，不是建议。
-- 派发走 \`startAgentRun(agentKey, task, { ephemeral: true })\`（web/桌面端没有 nolo CLI，所有 host 都有这个工具）。ephemeral 让 review 完成后不留 dialog 记录。
-- task 里必须写明审查对象（\`git diff\` 看工作区改动，或 \`git diff alpha...HEAD\` 看已提交改动），否则 reviewer 不知道审什么。
-- 按角色加载对应 skill：reviewer 先 \`loadSkill("coding-review")\` 拿通用流程，再按角色 \`loadSkill("coding-review-<role>")\` 拿检查项。角色清单：code-quality（**必跑**）/ architecture（**单独派发**，中级以上问题）/ security（按需 + 安全敏感触发必跑）/ frontend-ux（涉及 UI 时）/ backend-data（涉及 server 时）。角色切割的目的是注意力隔离——每个角色只盯自己的检查面，按需启用，避免一个 reviewer 背所有角色导致注意力稀释。
-- Verdict 标准：APPROVE（无 CRITICAL 或 HIGH）→ 可 commit；WARNING（仅 HIGH）→ 报告 owner 决定；BLOCK（有 CRITICAL）→ 必须先修。
-- review 可能多轮收敛（有 finding→修→再审→直到 APPROVE）。每轮 review 是无上下文的——reviewer 只看当前工作区 diff，不带上一轮 finding 记忆。
-- 若处于单 Agent 独占环境、其他 agent 不可达、或用户明确要求直接提交，允许带原因跳过（commit message 注明 [no-review: 原因]），但默认必须派 review。`,
+    promptPatch: buildCodeWorkDiscipline("代码执行能力包 — 操作纪律"),
   },
   {
     id: "skills",
@@ -149,20 +168,15 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
       "appFileRead",
       "appFileReplace",
       "appFileWrite",
-      "appPreflight",
-      "appDeploy",
       "appList",
-      "appDelete",
-      "createTable",
-      "addTableRow",
-      "addTableRows",
-      "queryTableRows",
-      "updateTableRow",
-      "deleteTableRow",
+      ...TOOL_PACKS.TABLE,
       "openAIGptImage",
     ],
     defaultEnabled: false,
     icon: "🖥",
+    // 部署那三件（预检 / 部署 / 删除）拆去 app-deploy，这里组合回来：
+    // 对外行为不变，但用户可以单独关掉发布权限而保留改代码的能力。
+    includes: ["app-deploy"],
     promptPatch: `# 应用构建能力包 — 操作纪律
 
 ## 效率优先（省 token）
@@ -178,8 +192,7 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
 
 ## 持续迭代流程
 - 用户要改功能或样式时，先用 appList 找到目标应用，再用 appRead 判断当前是源码工作区还是部署产物；一旦拿到 appId，后续都必须复用同一个 appId。
-- 每次修改后：appPreflight → appDeploy；appDeploy 必须继续传同一个 appId。
-- 收到 repairPlan 就直接修：按返回 issues 定点修复并重新预检，不要整站重写，也不要先问用户要不要修。
+- 改完走「应用发布」能力包的预检部署流程（appPreflight → appDeploy）。若该能力包未启用，说明本 agent 只有改代码权限没有发布权限，如实告知用户。
 
 ## Nolo React SSR 维护纪律（当前默认路径）
 - 新建和维护的应用优先走 Nolo React SSR（framework: "nolo-react", renderMode: "ssr"）。
@@ -201,6 +214,22 @@ export const CAPABILITY_PACKS: CapabilityPack[] = [
 
 ## 缺少源码要说明风险
 - 如果 appRead 读出来的是 HTML 壳、importmap、压缩 bundle，必须先告知用户当前更像部署产物而不是可维护源码，得到确认后再继续大改。
+`,
+  },
+  {
+    id: "app-deploy",
+    label: "应用发布",
+    description:
+      "预检并发布应用到线上，以及删除已发布的应用。与「应用构建」分开，可以只给改代码的能力而不给发布权限。",
+    tools: ["appPreflight", "appDeploy", "appDelete"],
+    defaultEnabled: false,
+    icon: "🚀",
+    promptPatch: `# 应用发布能力包 — 操作纪律
+
+## 预检与部署
+- 每次修改后：appPreflight → appDeploy；appDeploy 必须继续传同一个 appId。
+- 收到 repairPlan 就直接修：按返回 issues 定点修复并重新预检，不要整站重写，也不要先问用户要不要修。
+- 未经用户确认不要 appDelete。
 
 ## 部署应答模板
 部署成功后：
@@ -388,11 +417,30 @@ export function applySystemBuiltinSkillFilter(
  * （例如 inline-artifact agent 不该获得任何工具，故调用方不 fallback；
  * 普通 agent 由 mergeAgentToolsWithRuntime 补 DEFAULT_ENABLED_PACKS）。
  */
-export function expandEnabledPacks(
-  enabledPacks: string[] | null | undefined,
-  explicitTools: string[] | null | undefined = [],
+/**
+ * 递归收集包 id 及其 `includes`。带 seen 集合防环——组合表是手写常量，
+ * 写错成环时应该稳定收敛而不是栈溢出。
+ */
+export function collectPackIdsWithIncludes(
+  enabledPacks: readonly string[] | null | undefined,
 ): string[] {
-  const packTools = (enabledPacks ?? [])
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const visit = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+    for (const child of CAPABILITY_PACK_BY_ID[id]?.includes ?? []) visit(child);
+  };
+  for (const id of enabledPacks ?? []) visit(id);
+  return out;
+}
+
+export function expandEnabledPacks(
+  enabledPacks: readonly string[] | null | undefined,
+  explicitTools: readonly string[] | null | undefined = [],
+): string[] {
+  const packTools = collectPackIdsWithIncludes(enabledPacks)
     .map((id) => CAPABILITY_PACK_BY_ID[id]?.tools ?? [])
     .flat();
   return [...new Set([...packTools, ...(explicitTools ?? [])])];
@@ -406,7 +454,9 @@ export function expandEnabledPacks(
 export function expandEnabledPackPromptPatches(
   enabledPacks: string[] | null | undefined,
 ): string[] {
-  return (enabledPacks ?? [])
+  // 同 expandEnabledPacks：组合包的子包 promptPatch 也要一起注入，
+  // 否则拆分后 app-builder 会丢掉部署纪律那一段。
+  return collectPackIdsWithIncludes(enabledPacks)
     .map((id) => CAPABILITY_PACK_BY_ID[id]?.promptPatch)
     .filter((patch): patch is string => typeof patch === "string" && patch.length > 0);
 }

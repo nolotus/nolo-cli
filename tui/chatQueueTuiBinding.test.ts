@@ -11,6 +11,7 @@
 import { describe, expect, it, mock } from "bun:test";
 
 import { createChatQueueTuiBinding } from "./chatQueueTuiBinding";
+import type { TurnRequest } from "../core/chat/internalTurnEvent";
 
 describe("createChatQueueTuiBinding", () => {
   it("resolves a pure-text submit while running as queue-text", () => {
@@ -52,7 +53,7 @@ describe("createChatQueueTuiBinding", () => {
   });
 
   it("drains the queue after a clean turn-end by calling runTurn", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
 
     binding.enqueue("first");
@@ -62,14 +63,14 @@ describe("createChatQueueTuiBinding", () => {
 
     // Both queued items should have been drained via runTurn, in order.
     expect(runTurn).toHaveBeenCalledTimes(2);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("first");
-    expect(runTurn.mock.calls[1]?.[0]).toBe("second");
+    expect(runTurn.mock.calls[0]?.[0]).toMatchObject({ text: "first" });
+    expect(runTurn.mock.calls[1]?.[0]).toMatchObject({ text: "second" });
     expect(binding.queueLength()).toBe(0);
     binding.dispose();
   });
 
   it("does not drain when the queue is empty", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.notifyTurnStart();
     await binding.notifyTurnEnd({ ok: true, aborted: false });
@@ -78,7 +79,7 @@ describe("createChatQueueTuiBinding", () => {
   });
 
   it("aborted turn-end stops the drain cascade and clears the queue", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("will-be-abandoned");
     binding.notifyTurnStart();
@@ -89,7 +90,7 @@ describe("createChatQueueTuiBinding", () => {
   });
 
   it("a failed turn-end does not trigger any drain and keeps the queue", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: false, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: false, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("first");
     binding.enqueue("second");
@@ -104,7 +105,7 @@ describe("createChatQueueTuiBinding", () => {
 
   it("drain stops mid-cascade when a later turn fails", async () => {
     let call = 0;
-    const runTurn = mock(async (_text: string) => {
+    const runTurn = mock(async (_req: TurnRequest) => {
       call += 1;
       return call === 2
         ? ({ ok: false, aborted: false } as const)
@@ -119,8 +120,8 @@ describe("createChatQueueTuiBinding", () => {
     // a succeeded (dequeued), b failed (still dequeued — drain consumes the
     // head before runTurn resolves), c never attempted. Only c remains.
     expect(runTurn).toHaveBeenCalledTimes(2);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("a");
-    expect(runTurn.mock.calls[1]?.[0]).toBe("b");
+    expect(runTurn.mock.calls[0]?.[0]).toMatchObject({ text: "a" });
+    expect(runTurn.mock.calls[1]?.[0]).toMatchObject({ text: "b" });
     expect(binding.queueLength()).toBe(1);
     binding.dispose();
   });
@@ -132,7 +133,7 @@ describe("createChatQueueTuiBinding", () => {
     const turnPromise = new Promise<{ ok: boolean; aborted: boolean }>((resolve) => {
       resolveTurn = resolve;
     });
-    const runTurn = mock(async (_text: string) => turnPromise);
+    const runTurn = mock(async (_req: TurnRequest) => turnPromise);
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("only");
     binding.notifyTurnStart();
@@ -156,13 +157,13 @@ describe("createChatQueueTuiBinding", () => {
     // The drained turn fails (ok:false). With the old "dequeue only on
     // success" logic the message would remain and be resent on the next clean
     // turn-end; the fix dequeues at drain start so it stays gone.
-    const runTurn = mock(async (_text: string) => ({ ok: false, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: false, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("doomed");
     binding.notifyTurnStart();
     await binding.notifyTurnEnd({ ok: true, aborted: false });
     expect(runTurn).toHaveBeenCalledTimes(1);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("doomed");
+    expect(runTurn.mock.calls[0]?.[0]).toMatchObject({ text: "doomed" });
     // The failed drained message is NOT left in the queue.
     expect(binding.queueLength()).toBe(0);
     expect(binding.getStatus().queuePreview).toEqual([]);
@@ -197,7 +198,7 @@ describe("createChatQueueTuiBinding", () => {
   });
 
   it("runTurn throwing is treated as a failed turn and does not leave the head in the queue", async () => {
-    const runTurn = mock(async () => {
+    const runTurn = mock(async (_req: TurnRequest) => {
       throw new Error("network");
     });
     const binding = createChatQueueTuiBinding(runTurn);
@@ -233,8 +234,8 @@ describe("createChatQueueTuiBinding", () => {
     const binding = createChatQueueTuiBinding(async () => ({ ok: true, aborted: false }));
     binding.enqueue("leftover");
     // Idle, queue non-empty (e.g. previous turn failed and kept it).
-    const text = binding.drainHeadForManualTurn();
-    expect(text).toBe("leftover");
+    const req = binding.drainHeadForManualTurn();
+    expect(req?.text).toBe("leftover");
     expect(binding.queueLength()).toBe(0);
     // The binding flipped to running so the caller's turn-start is reflected.
     expect(binding.getStatus().isRunning).toBe(true);
@@ -291,7 +292,7 @@ describe("createChatQueueTuiBinding", () => {
     binding.dispose();
   });
   it("an armed preempt makes the next aborted turn-end drain the head instead of clearing the queue", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("first");
     binding.enqueue("second");
@@ -304,14 +305,14 @@ describe("createChatQueueTuiBinding", () => {
     // the head (and continued to the second item since the drained turn
     // succeeded) instead of clearing the queue.
     expect(runTurn).toHaveBeenCalledTimes(2);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("first");
-    expect(runTurn.mock.calls[1]?.[0]).toBe("second");
+    expect(runTurn.mock.calls[0]?.[0]).toMatchObject({ text: "first" });
+    expect(runTurn.mock.calls[1]?.[0]).toMatchObject({ text: "second" });
     expect(binding.queueLength()).toBe(0);
     binding.dispose();
   });
 
   it("a non-aborted turn-end after an armed preempt still drains normally (preempt is harmless)", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("x");
     binding.notifyTurnStart();
@@ -320,12 +321,12 @@ describe("createChatQueueTuiBinding", () => {
     // and ignored since outcome.aborted is false.
     await binding.notifyTurnEnd({ ok: true, aborted: false });
     expect(runTurn).toHaveBeenCalledTimes(1);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("x");
+    expect(runTurn.mock.calls[0]?.[0]).toMatchObject({ text: "x" });
     binding.dispose();
   });
 
   it("preempt is consumed by the next turn-end and does not leak to a later abort", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("x");
     binding.notifyTurnStart();
@@ -370,7 +371,7 @@ describe("createChatQueueTuiBinding", () => {
   });
 
   it("an armed stop-preempt preserves the queue on abort but does NOT drain", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("first");
     binding.enqueue("second");
@@ -395,7 +396,7 @@ describe("createChatQueueTuiBinding", () => {
   });
 
   it("stop-preempt is consumed by the next turn-end and does not leak", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("x");
     binding.notifyTurnStart();
@@ -404,12 +405,12 @@ describe("createChatQueueTuiBinding", () => {
     // and ignored since outcome.aborted is false; normal clean drain runs.
     await binding.notifyTurnEnd({ ok: true, aborted: false });
     expect(runTurn).toHaveBeenCalledTimes(1);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("x");
+    expect(runTurn.mock.calls[0]?.[0]).toMatchObject({ text: "x" });
     binding.dispose();
   });
 
   it("after a stop-preempt preserves the queue, a manual drainHeadForManualTurn resumes it", async () => {
-    const runTurn = mock(async (_text: string) => ({ ok: true, aborted: false } as const));
+    const runTurn = mock(async (_req: TurnRequest) => ({ ok: true, aborted: false } as const));
     const binding = createChatQueueTuiBinding(runTurn);
     binding.enqueue("first");
     binding.enqueue("second");
@@ -424,13 +425,13 @@ describe("createChatQueueTuiBinding", () => {
     // reports the outcome via notifyTurnEnd. The binding's internal cascade
     // only kicks in for the remaining item after that turn ends.
     const drained = binding.drainHeadForManualTurn();
-    expect(drained).toBe("first");
+    expect(drained?.text).toBe("first");
     expect(binding.queueLength()).toBe(1);
     // Caller runs the first turn externally and reports a clean end. The
     // cascade then drains the remaining "second" via the binding's runTurn.
     await binding.notifyTurnEnd({ ok: true, aborted: false });
     expect(runTurn).toHaveBeenCalledTimes(1);
-    expect(runTurn.mock.calls[0]?.[0]).toBe("second");
+    expect(runTurn.mock.calls[0]?.[0]).toMatchObject({ text: "second" });
     expect(binding.queueLength()).toBe(0);
     binding.dispose();
   });

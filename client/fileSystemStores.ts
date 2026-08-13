@@ -1,11 +1,10 @@
 // packages/cli/client/fileSystemStores.ts
 //
-// CLI 层 I/O 适配：把共享层（零 I/O）的 CircuitBreakerStore / TodoStore 契约
-// 落到本地文件（~/.nolo/breakers.json / ~/.nolo/todos.json）。
+// CLI 层 I/O 适配：把共享层 TodoStore 契约落到本地文件。
 //
 // 分层边界（review 重点）：
-// - 共享层 quotaCircuitBreaker.ts / runtimeTodo.ts 不碰 node:fs，只定义契约 +
-//   纯逻辑；本文件是 CLI 专属适配层，允许 import node:fs。
+// - 共享层 runtimeTodo.ts 不碰 node:fs，只定义契约 + 纯逻辑；本文件是 CLI
+//   专属适配层，允许 import node:fs。
 // - 读写只在进程内生效（CLI 短生命周期），不跨进程共享；server 端应落 DB。
 // - 所有时间戳由调用方传入或用 Date.now()（存储层允许取时钟，判定层不允许）。
 //
@@ -25,14 +24,10 @@ const nodeFs = {
   existsSync,
 } as const;
 import type {
-  CircuitBreakerEntry,
-  CircuitBreakerStore,
-} from "../ai/tools/agent/quotaCircuitBreaker";
-import type {
-  TodoRecord,
-  TodoStatus,
-  TodoStore,
-} from "../ai/tools/agent/runtimeTodo";
+  AgentRunTodoRecord,
+  AgentRunTodoStatus,
+  AgentRunTodoStore,
+} from "../ai/tools/agent/agentRunTodo";
 
 type EnvLike = Record<string, string | undefined>;
 type FsLike = {
@@ -69,96 +64,64 @@ function writeJson(path: string, data: unknown, fs: FsLike): void {
   fs.writeFileSync(path, JSON.stringify(data, null, 2));
 }
 
-// ─────────────────────────── CircuitBreakerStore ───────────────────────────
-
-export interface FileSystemCircuitBreakerStoreOptions {
-  env?: EnvLike;
-  homedir?: () => string;
-  fs?: FsLike;
-  /** 文件路径覆盖（测试用）；缺省 ~/.nolo/breakers.json。 */
-  filePath?: string;
-}
-
-/**
- * CLI 本地文件熔断表适配。条目按 target 为键存入一个 JSON 对象
- * `{ entries: CircuitBreakerEntry[] }`，get/set/clear/clearAll 同步落盘。
- *
- * 同步语义：与共享层 createInMemoryCircuitBreakerStore 的契约一致（同步 get/set），
- * 文件读写也是同步 API，所以无需 Promise 包装。
- */
-export function createFileSystemCircuitBreakerStore(
-  opts: FileSystemCircuitBreakerStoreOptions = {},
-): CircuitBreakerStore {
-  const env = opts.env ?? process.env;
-  const homedir = opts.homedir ?? nodeHomedir;
-  const fs = opts.fs ?? (nodeFs as unknown as FsLike);
-  const filePath =
-    opts.filePath ?? join(resolveNoloHome(env, homedir), "breakers.json");
-
-  const loadMap = (): Map<string, CircuitBreakerEntry> => {
-    const data = readJson<{ entries?: CircuitBreakerEntry[] }>(filePath, fs);
-    const map = new Map<string, CircuitBreakerEntry>();
-    if (data?.entries) {
-      for (const entry of data.entries) {
-        if (entry && typeof entry.target === "string") map.set(entry.target, entry);
-      }
-    }
-    return map;
-  };
-
-  const persist = (map: Map<string, CircuitBreakerEntry>): void => {
-    ensureDir(dirname(filePath), fs);
-    writeJson(filePath, { entries: [...map.values()] }, fs);
-  };
-
-  return {
-    get(target: string): CircuitBreakerEntry | undefined {
-      return loadMap().get(target);
-    },
-    set(entry: CircuitBreakerEntry): void {
-      const map = loadMap();
-      map.set(entry.target, entry);
-      persist(map);
-    },
-    clear(target: string): void {
-      const map = loadMap();
-      map.delete(target);
-      persist(map);
-    },
-    clearAll(): void {
-      persist(new Map());
-    },
-  };
-}
-
 // ─────────────────────────── TodoStore ───────────────────────────
 
 export interface FileSystemTodoStoreOptions {
   env?: EnvLike;
   homedir?: () => string;
   fs?: FsLike;
-  /** 文件路径覆盖（测试用）；缺省 ~/.nolo/todos.json。 */
+  /** 文件路径覆盖（测试用）；缺省 ~/.nolo/agent_run_todos.json。 */
   filePath?: string;
 }
 
 /**
- * CLI 本地文件 todo 适配。形状 `{ todos: TodoRecord[] }`，按 id 去重更新。
- *
- * TodoStore 契约是 async（server 落 DB 是 async），文件实现内部同步但保持
- * async 签名，以便上层无差别替换为 server/DB 实现。
+ * CLI 本地文件 AgentRunTodo 适配。形状 `{ todos: AgentRunTodoRecord[] }`，按 id 去重更新。
+ * 具备向后兼容迁移：如果 agent_run_todos.json 不存在而旧 todos.json 存在，自动自动迁移。
  */
 export function createFileSystemTodoStore(
   opts: FileSystemTodoStoreOptions = {},
-): TodoStore {
+): AgentRunTodoStore & { putTodo: (todo: AgentRunTodoRecord) => Promise<void> } {
   const env = opts.env ?? process.env;
   const homedir = opts.homedir ?? nodeHomedir;
   const fs = opts.fs ?? (nodeFs as unknown as FsLike);
-  const filePath =
-    opts.filePath ?? join(resolveNoloHome(env, homedir), "todos.json");
+  const noloHome = resolveNoloHome(env, homedir);
+  const filePath = opts.filePath ?? join(noloHome, "agent_run_todos.json");
+  const oldFilePath = join(noloHome, "todos.json");
 
-  const loadMap = (): Map<string, TodoRecord> => {
-    const data = readJson<{ todos?: TodoRecord[] }>(filePath, fs);
-    const map = new Map<string, TodoRecord>();
+  const loadMap = (): Map<string, AgentRunTodoRecord> => {
+    // 检查向后兼容迁移：如果新文件 (agent_run_todos.json) 不存在，且旧文件 (todos.json) 存在，
+    // 自动平滑迁移。明确保留原 item 上的所有扩展属性 (...item)，显式兼容旧版历史数据而不丢失关键信息。
+    if (!opts.filePath && !fs.existsSync(filePath) && fs.existsSync(oldFilePath)) {
+      const oldData = readJson<{ todos?: any[] }>(oldFilePath, fs);
+      const map = new Map<string, AgentRunTodoRecord>();
+      if (oldData?.todos) {
+        for (const item of oldData.todos) {
+          if (item && typeof item.id === "string") {
+            let status: AgentRunTodoStatus = "pending";
+            if (item.status === "running") status = "running";
+            else if (item.status === "done") status = "done";
+            else if (item.status === "blocked" || item.status === "abandoned" || item.status === "failed") status = "failed";
+            
+            const rec: AgentRunTodoRecord = {
+              ...item,
+              id: item.id,
+              title: item.title || "Untitled Task",
+              status,
+              runIds: Array.isArray(item.runIds) ? item.runIds : [],
+              createdAt: item.createdAt || new Date().toISOString(),
+              updatedAt: item.updatedAt || new Date().toISOString(),
+            };
+            map.set(rec.id, rec);
+          }
+        }
+      }
+      ensureDir(dirname(filePath), fs);
+      writeJson(filePath, { todos: [...map.values()] }, fs);
+      return map;
+    }
+
+    const data = readJson<{ todos?: AgentRunTodoRecord[] }>(filePath, fs);
+    const map = new Map<string, AgentRunTodoRecord>();
     if (data?.todos) {
       for (const todo of data.todos) {
         if (todo && typeof todo.id === "string") map.set(todo.id, todo);
@@ -167,30 +130,34 @@ export function createFileSystemTodoStore(
     return map;
   };
 
-  const persist = (map: Map<string, TodoRecord>): void => {
+  const persist = (map: Map<string, AgentRunTodoRecord>): void => {
     ensureDir(dirname(filePath), fs);
     writeJson(filePath, { todos: [...map.values()] }, fs);
   };
 
   return {
-    async getTodo(id: string): Promise<TodoRecord | undefined> {
-      return loadMap().get(id);
+    async getTodo(id: string): Promise<AgentRunTodoRecord | null> {
+      return loadMap().get(id) ?? null;
     },
-    async listTodos(filter?: { statuses?: TodoStatus[] }): Promise<TodoRecord[]> {
-      const all = [...loadMap().values()];
-      if (!filter?.statuses || filter.statuses.length === 0) return all;
-      const wanted = new Set(filter.statuses);
-      return all.filter((t) => wanted.has(t.status));
+    async listTodos(): Promise<AgentRunTodoRecord[]> {
+      return [...loadMap().values()];
     },
-    async putTodo(todo: TodoRecord): Promise<void> {
+    async saveTodo(todo: AgentRunTodoRecord): Promise<void> {
       const map = loadMap();
       map.set(todo.id, todo);
       persist(map);
     },
-    async deleteTodo(id: string): Promise<void> {
+    async putTodo(todo: AgentRunTodoRecord): Promise<void> {
       const map = loadMap();
+      map.set(todo.id, todo);
+      persist(map);
+    },
+    async deleteTodo(id: string): Promise<boolean> {
+      const map = loadMap();
+      const existed = map.has(id);
       map.delete(id);
       persist(map);
+      return existed;
     },
   };
 }

@@ -4,7 +4,22 @@ import {
   consumeSgrMouseSequence,
   isSgrWheelEvent,
   parseScrollAction,
+  renderScrollbarRow,
 } from "./tuiScrollbar";
+
+describe("renderScrollbarRow", () => {
+  test("renders a visible track and thumb when content overflows", () => {
+    const rows = Array.from({ length: 5 }, (_, row) =>
+      renderScrollbarRow(row, 5, 20, 0),
+    );
+    expect(rows.some((row) => row === "│")).toBe(true);
+    expect(rows.some((row) => row === "█")).toBe(true);
+  });
+
+  test("renders a blank column when content fits", () => {
+    expect(renderScrollbarRow(0, 5, 5, 0)).toBe(" ");
+  });
+});
 
 describe("consumeSgrMouseSequence", () => {
   test("returns a complete wheel-up report", () => {

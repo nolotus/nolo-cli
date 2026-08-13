@@ -243,7 +243,7 @@ export default {
         listAgents: "List agents",
         readAgent: "Read agent",
         loadSkill: "Load skill",
-        callAgent: "Call agent",
+        startAgentRun: "Start agent run",
       },
       gemini: {
         title: "Image Generation",
@@ -287,7 +287,7 @@ export default {
         loadFailed: "Failed to load",
         retry: "Retry",
         empty:
-          "This dialog has no background child runs yet. They appear here after callAgent(background: true).",
+          "This dialog has no background child runs yet. They appear here after startAgentRun (async dispatch).",
         statusPending: "Pending",
         statusRunning: "Running",
         statusDone: "Done",
@@ -602,7 +602,7 @@ export default {
         listAgents: "列出助手",
         readAgent: "读取助手",
         loadSkill: "加载技能",
-        callAgent: "调用助手",
+        startAgentRun: "启动子任务",
       },
       gemini: {
         title: "图像生成",
@@ -646,7 +646,7 @@ export default {
         loadFailed: "加载失败",
         retry: "重试",
         empty:
-          "当前对话还没有后台子任务。通过 callAgent(background: true) 启动后会出现在这里。",
+          "当前对话还没有后台子任务。通过 startAgentRun 异步派发启动后会出现在这里。",
         statusPending: "排队中",
         statusRunning: "运行中",
         statusDone: "已完成",
@@ -951,7 +951,7 @@ export default {
         listAgents: "列出助手",
         readAgent: "讀取助手",
         loadSkill: "載入技能",
-        callAgent: "呼叫助手",
+        startAgentRun: "啟動子任務",
       },
       gemini: {
         title: "圖像生成",
@@ -995,7 +995,7 @@ export default {
         loadFailed: "載入失敗",
         retry: "重試",
         empty:
-          "目前對話還沒有後台子任務。透過 callAgent(background: true) 啟動後會出現在這裡。",
+          "目前對話還沒有後台子任務。透過 startAgentRun 非同步派發啟動後會出現在這裡。",
         statusPending: "排隊中",
         statusRunning: "運行中",
         statusDone: "已完成",
@@ -1251,7 +1251,7 @@ export default {
         listAgents: "エージェント一覧",
         readAgent: "エージェント読み取り",
         loadSkill: "スキルを読み込み",
-        callAgent: "エージェント呼び出し",
+        startAgentRun: "エージェント実行",
       },
       gemini: {
         title: "画像生成",
@@ -1295,7 +1295,7 @@ export default {
         loadFailed: "読み込みに失敗しました",
         retry: "再試行",
         empty:
-          "この会話にはまだバックグラウンド子タスクがありません。callAgent(background: true) で起動するとここに表示されます。",
+          "この会話にはまだバックグラウンド子タスクがありません。startAgentRun（非同期）で起動するとここに表示されます。",
         statusPending: "待機中",
         statusRunning: "実行中",
         statusDone: "完了",

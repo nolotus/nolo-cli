@@ -269,6 +269,15 @@ export const getCreateAgentSchema = (t: TFunction) =>
 
       enabledPacks: z.array(z.string()).default([]),
 
+      /**
+       * 三态能力配置：slug → "required"（完整启用）/ "recommended"（启用）。
+       * 缺席即禁用。与 enabledPacks 双写——后者是给尚未迁移的读取方与旧客户端的
+       * 有损降级（recommended 在旧模型没有对应物），见 ai/tools/agentSkillConfig。
+       */
+      skills: z
+        .record(z.string(), z.enum(["required", "recommended"]))
+        .optional(),
+
       runtimeToolPolicy: runtimeToolPolicySchema.nullable().optional(),
 
       isPublic: z.boolean().default(false),

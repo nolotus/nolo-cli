@@ -6,6 +6,10 @@ import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import { Model, ModelPrice } from "../llm/types";
 import { findModelConfig, getModelConfig } from "../llm/providers";
 import { getApproxPricePerImage } from "../llm/imagePricing";
+import {
+  getPlatformHostedDeepSeekV4Price,
+  isPlatformHostedDeepSeekV4Model,
+} from "../llm/platformHosted";
 
 // ==================== 接口定义 ====================
 
@@ -55,6 +59,8 @@ interface CalculatePriceParams {
    */
   provider?: string;
   billingServiceTier?: string;
+  /** Test seam for time-dependent provider pricing; production callers omit it. */
+  nowMs?: number;
   sharingLevel?: "default" | "split" | "full";
 }
 
@@ -179,13 +185,21 @@ const resolveEffectiveModelPrice = ({
   usage,
   provider,
   billingServiceTier,
+  nowMs,
 }: {
   model: Model;
   usage: Usage;
   provider: string;
   billingServiceTier?: string;
+  nowMs?: number;
 }): ModelPrice => {
   const resolvedPrice = resolveModelPrice(model, usage);
+  if (
+    (provider === "nolo" || provider === "deepseek") &&
+    isPlatformHostedDeepSeekV4Model(model.name)
+  ) {
+    return getPlatformHostedDeepSeekV4Price(model.name, nowMs);
+  }
   if (provider === "google") {
     return resolveGoogleServiceTierPrice(model, resolvedPrice, billingServiceTier);
   }
@@ -417,7 +431,8 @@ const calculateBasicCost = (
   usage: Usage,
   provider: string,
   externalPrice?: ExternalPrice,
-  billingServiceTier?: string
+  billingServiceTier?: string,
+  nowMs?: number,
 ): CostBreakdown => {
   if (!usage || typeof usage.input_tokens !== "number") {
     throw new Error("Invalid usage data");
@@ -428,6 +443,7 @@ const calculateBasicCost = (
     usage,
     provider,
     billingServiceTier,
+    nowMs,
   });
 
   switch (provider) {
@@ -523,6 +539,7 @@ export const calculatePrice = ({
   // 不设默认值，undefined 表示 custom/未知 provider，走 zeroCostModel 路径
   provider,
   billingServiceTier,
+  nowMs,
   sharingLevel = "default",
 }: CalculatePriceParams): PriceResult => {
   // apiSource="custom" 的 agent 不一定有 provider，或 provider 不在 MODEL_MAP 里。
@@ -533,6 +550,23 @@ export const calculatePrice = ({
   try {
     model = getModelConfig(provider as any, modelName);
   } catch {
+    if (
+      (provider === "nolo" || provider === "deepseek") &&
+      isPlatformHostedDeepSeekV4Model(modelName)
+    ) {
+      const hostedModel = getModelConfig("nolo", modelName);
+      const costs = calculateBasicCost(
+        hostedModel,
+        usage,
+        provider,
+        externalPrice,
+        billingServiceTier,
+        nowMs
+      );
+      const pay = calculatePayDistribution(costs, externalPrice, sharingLevel);
+      return { cost: sanitizeCost(costs.charge), pay };
+    }
+
     const zeroCostModel: Model = {
       name: modelName,
       hasVision: false,
@@ -543,7 +577,8 @@ export const calculatePrice = ({
       usage,
       "custom",
       externalPrice,
-      billingServiceTier
+      billingServiceTier,
+      nowMs,
     );
     const pay = calculatePayDistribution(costs, externalPrice, sharingLevel);
     return { cost: sanitizeCost(costs.charge), pay };
@@ -554,7 +589,8 @@ export const calculatePrice = ({
     usage,
     provider || "custom",
     externalPrice,
-    billingServiceTier
+    billingServiceTier,
+    nowMs,
   );
   const openAIImageSurcharge =
     provider === "openai" ? resolveOpenAIBuiltInImageSurcharge(model, usage) : 0;

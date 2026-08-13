@@ -1421,7 +1421,7 @@ const baseToolDefinitions: ToolDefinition[] = [
     executor: readDialogFunc,
     description: {
       name: "readDialog",
-      description: "Read a Nolo dialog and recent messages.",
+      description: "Read a Nolo dialog (prefer dialog dbKey or URL; bare id is current-user only).",
       category: "Nolo workspace",
     },
     behavior: "data",

@@ -239,10 +239,8 @@ export {
 } from "./localWorkspaceTools";
 export {
   buildNoloWorkspaceCommandArgs,
-  buildNoloWorkspaceCliToolExecutors,
   buildNoloWorkspaceOpenAiTools,
   buildNoloTableQueryRequest,
-  buildLoadSkillExecutor,
   clampNoloPositiveInteger,
   filterNoloWorkspaceToolNames,
   getNoloComparableUpdatedAt,
@@ -257,11 +255,15 @@ export {
   NOLO_WORKSPACE_TOOL_PROMPT,
   parseNoloWorkspaceToolArguments,
   resolveNoloDialogInput,
-  runNoloWorkspaceCliTool,
 } from "./noloWorkspaceTools";
 export type {
   NoloWorkspaceToolName,
 } from "./noloWorkspaceTools";
+export {
+  buildLoadSkillExecutor,
+  buildNoloWorkspaceCliToolExecutors,
+  runNoloWorkspaceCliTool,
+} from "./noloWorkspaceTools.node";
 export type {
   AgentRuntimeAgentConfig,
   AgentRuntimeDialogSummary,

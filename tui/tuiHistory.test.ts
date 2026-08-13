@@ -2,10 +2,17 @@ import { describe, expect, test, afterEach, beforeEach } from "bun:test";
 import {
   buildCopyViewLines,
   buildHistoryLines,
+  buildTurnOffsets,
+  countTurnLines,
+  renderTurnBlock,
+  resetStreamingTurnCache,
+  renderHistory,
+  applyScrollAction,
   createTurnHistory,
   finalizeCurrentTurn,
   startTurn,
   appendToCurrentTurn,
+  getRenderCacheMissCount,
   type Turn,
 } from "./tuiHistory";
 import {
@@ -15,8 +22,10 @@ import {
   themeColorSequence,
   type TuiDensity,
 } from "./theme";
+import { padOrTruncateToWidth, stripAnsi, visibleWidth } from "./tuiAnsi";
+import { resolveCliColorEnabled } from "../client/terminalStyles";
+import { renderScrollbarRow } from "./tuiScrollbar";
 import { formatAssistantDisplay } from "../client/assistantOutput";
-import { stripAnsi } from "./tuiAnsi";
 
 // buildHistoryLines is the single paint path for both streaming and history
 // redraw. These tests lock the contract that history redraw uses the full
@@ -174,8 +183,8 @@ describe("buildHistoryLines — assistant markdown rendered through the full ren
         { role: "assistant", content: "ok" },
       ]);
     });
-    // User content keeps the literal markers; the ❯ marker carries accent.
-    expect(out).toContain("❯");
+    // User content keeps the literal markers; the ┃ gutter carries accent.
+    expect(out).toContain("┃");
     expect(out).toContain("**bold**");
     expect(out).toContain("`code`");
     // And it is NOT turned into bold escapes.
@@ -257,7 +266,7 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
   beforeEach(() => setActiveThemeName("catppuccin"));
   afterEach(() => setActiveThemeName("catppuccin"));
 
-  test("first line uses accent ❯ and accent + bold body text", () => {
+  test("first line uses accent ┃  gutter and accent + bold body text", () => {
     let lines: string[] = [];
     let accentSeq = "";
     let mutedSeq = "";
@@ -271,16 +280,13 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
     });
 
     expect(lines.length).toBe(1);
-    expect(lines[0]).toContain(`${accentSeq}❯ `);
-    // Body is bold + accent so user turns pop out of a long transcript.
-    expect(lines[0]).toContain(`\x1b[1m${accentSeq}hello world`);
+    expect(lines[0]).toContain(`${accentSeq}\x1b[1m┃  hello world`);
     expect(lines[0]).not.toContain(mutedSeq);
   });
 
-  test("explicit multiline uses chrome │ prefix and accent + bold body text", () => {
+  test("explicit multiline uses ┃  gutter prefix and accent + bold body text", () => {
     let lines: string[] = [];
     let accentSeq = "";
-    let chromeSeq = "";
     let mutedSeq = "";
     withTruecolor(() => {
       lines = buildHistoryLines(
@@ -288,22 +294,44 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
         80
       ).filter(Boolean);
       accentSeq = themeColorSequence("accent");
-      chromeSeq = themeColorSequence("chrome");
       mutedSeq = themeColorSequence("muted");
     });
 
     expect(lines.length).toBe(2);
 
-    expect(lines[0]).toContain(`${accentSeq}❯ `);
-    expect(lines[0]).toContain("first line");
+    expect(lines[0]).toContain(`${accentSeq}\x1b[1m┃  first line`);
     expect(lines[0]).not.toContain(mutedSeq);
 
-    expect(lines[1]).toContain(`${chromeSeq}│ `);
-    expect(lines[1]).toContain(`\x1b[1m${accentSeq}second line`);
+    expect(lines[1]).toContain(`${accentSeq}\x1b[1m┃  second line`);
     expect(lines[1]).not.toContain(mutedSeq);
   });
 
-  test("soft wrapping adds 2-space hanging gutter", () => {
+  test("CRLF and lone CR line endings are normalized so no \\r leaks into the frame", () => {
+    let lines: string[] = [];
+    withColor(() => {
+      lines = buildHistoryLines(
+        {
+          ...createTurnHistory(),
+          turns: [{ role: "user", content: "first line\r\nsecond line\rthird line" }],
+        },
+        80
+      );
+    });
+
+    // Three logical lines, none carrying a raw carriage return that would make
+    // the terminal rewind to the start of the row. (buildHistoryLines may emit
+    // a leading blank separator row under spacious density, so filter those.)
+    const nonEmpty = lines.filter(Boolean);
+    expect(nonEmpty.length).toBe(3);
+    for (const line of lines) {
+      expect(line).not.toContain("\r");
+    }
+    expect(stripAnsi(nonEmpty[0])).toContain("first line");
+    expect(stripAnsi(nonEmpty[1])).toContain("second line");
+    expect(stripAnsi(nonEmpty[2])).toContain("third line");
+  });
+
+  test("soft wrapping adds ┃  hanging gutter and respects content width", () => {
     let lines: string[] = [];
     withColor(() => {
       // 10 columns width forces "hello world extra" to soft-wrap
@@ -315,13 +343,18 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
 
     expect(lines.length).toBeGreaterThan(1);
     const mutedSeq = themeColorSequence("muted");
-    // Continuation line start with hanging gutter "  "
-    expect(lines[1]).toMatch(/^  /);
+    // Continuation line starts with hanging gutter "┃  "
+    expect(stripAnsi(lines[1])).toMatch(/^┃  /);
     expect(lines[1]).not.toContain(mutedSeq);
     expect(lines[1]).toContain("world");
+
+    // Every soft-wrapped line must strictly respect the 10-column visible width boundary
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(10);
+    }
   });
 
-  test("soft-wrapped continuation rows re-open bold + accent and reset at EOL", () => {
+  test("soft-wrapped continuation rows carry gutter + bold + accent and reset at EOL", () => {
     let lines: string[] = [];
     let accentSeq = "";
     withTruecolor(() => {
@@ -336,16 +369,16 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
     });
 
     expect(lines.length).toBeGreaterThan(1);
-    // Every row — not just the first — must carry bold + accent, otherwise the
-    // user turn fades back into assistant-colored body text mid-paragraph.
+    // Every row — not just the first — must carry gutter ┃, bold, and accent.
     for (const line of lines) {
-      expect(line).toContain(`\x1b[1m${accentSeq}`);
+      expect(line).toContain("┃");
+      expect(line).toContain(`${accentSeq}\x1b[1m`);
       // Styles must be closed so accent never bleeds into the scrollbar column.
       expect(line.endsWith("\x1b[0m")).toBe(true);
     }
   });
 
-  test("no-color mode produces ❯ marker, two-space multiline prefix, and zero \\x1b", () => {
+  test("no-color mode produces ┃  gutter, ┃  multiline gutter, and zero \\x1b", () => {
     let lines: string[] = [];
     noColor(() => {
       lines = buildHistoryLines(
@@ -356,11 +389,25 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
 
     const fullText = lines.join("\n");
     expect(fullText).not.toContain("\x1b");
-    expect(lines[0]).toMatch(/^❯ first long/);
-    // Soft-wrapped continuation starts with two spaces
-    expect(lines[1]).toMatch(/^  line for/);
-    // Explicit newline continuation starts with two spaces
-    expect(lines[lines.length - 1]).toMatch(/^  second line/);
+    expect(lines[0]).toMatch(/^┃  first long/);
+    // Soft-wrapped continuation starts with gutter "┃  "
+    expect(lines[1]).toMatch(/^┃  line for/);
+    // Explicit newline continuation starts with gutter "┃  "
+    expect(lines[lines.length - 1]).toMatch(/^┃  second line/);
+  });
+
+  test("assistant turn does NOT carry the user turn ┃ gutter", () => {
+    let lines: string[] = [];
+    withTruecolor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "assistant", content: "hello from assistant\nline 2" }] },
+        80
+      ).filter(Boolean);
+    });
+
+    for (const line of lines) {
+      expect(line).not.toContain("┃");
+    }
   });
 
   test("user content keeps markdown literal without formatting", () => {
@@ -374,6 +421,135 @@ describe("buildHistoryLines — user turn bubble formatting", () => {
 
     expect(lines[0]).toContain("**bold** `code` # header");
     expect(lines[0]).not.toContain("\x1b[1mbold\x1b[22m");
+  });
+});
+
+// The gutter alone survives NO_COLOR, but on a truecolor terminal the thing
+// the eye actually catches while scrolling is a solid block of color. These
+// lock the bubble contract: every row of a user turn is a full-width band,
+// padded by display width (not string length) and closed so the tint never
+// reaches the scrollbar column.
+describe("buildHistoryLines — user turn background bubble", () => {
+  beforeEach(() => setActiveThemeName("catppuccin"));
+  afterEach(() => setActiveThemeName("catppuccin"));
+
+  const userBubble = (content: string, width: number): string[] => {
+    let lines: string[] = [];
+    withTruecolor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content }] },
+        width
+      ).filter((line) => line !== "");
+    });
+    return lines;
+  };
+
+  test("every user row opens a truecolor background and closes with a reset", () => {
+    const lines = userBubble("first line\nsecond line", 40);
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of lines) {
+      expect(line).toMatch(/^\x1b\[48;2;\d+;\d+;\d+m/);
+      expect(line.endsWith("\x1b[0m")).toBe(true);
+    }
+  });
+
+  test("rows are padded to exactly contentWidth so the bubble edge is straight", () => {
+    for (const width of [40, 61]) {
+      for (const line of userBubble("short\nan appreciably longer second line that will soft wrap somewhere", width)) {
+        expect(visibleWidth(line)).toBe(width);
+      }
+    }
+  });
+
+  test("CJK content pads by display width, not string length", () => {
+    const lines = userBubble("这是一条很长的中文用户消息用来测试换行与背景填充", 30);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBe(30);
+    }
+  });
+
+  test("an interior reset re-opens the background so the row tail stays tinted", () => {
+    const [line] = userBubble("wrapped content that is long enough to carry an interior reset", 30);
+    const bg = line.match(/^\x1b\[48;2;\d+;\d+;\d+m/)![0];
+    // Every reset except the row's own closer must be followed by the wash.
+    const body = line.slice(0, -"\x1b[0m".length);
+    for (const chunk of body.split("\x1b[0m").slice(1)) {
+      expect(chunk.startsWith(bg)).toBe(true);
+    }
+  });
+
+  test("no-color mode keeps the gutter and emits no background", () => {
+    let lines: string[] = [];
+    noColor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content: "plain" }] },
+        40
+      ).filter(Boolean);
+    });
+    expect(lines[0]).toMatch(/^┃  plain/);
+    expect(lines.join("\n")).not.toContain("\x1b");
+  });
+
+  test("assistant turns get no bubble — the band is user-only", () => {
+    let lines: string[] = [];
+    withTruecolor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "assistant", content: "hello" }] },
+        40
+      ).filter(Boolean);
+    });
+    for (const line of lines) {
+      expect(line).not.toMatch(/^\x1b\[48;2;/);
+    }
+  });
+
+  const withColorNoTruecolor = (fn: () => void) => {
+    // Color ON but truecolor FORCED OFF: the ANSI-16 fallback path. Deterministic
+    // even on hosts whose terminal env (COLORTERM/TERM_PROGRAM) reports truecolor.
+    const prev = process.env.NOLO_TUI_TRUECOLOR;
+    process.env.NOLO_TUI_TRUECOLOR = "0";
+    try {
+      withColor(fn);
+    } finally {
+      if (prev === undefined) delete process.env.NOLO_TUI_TRUECOLOR;
+      else process.env.NOLO_TUI_TRUECOLOR = prev;
+    }
+  };
+
+  test("ANSI-16 fallback keeps the gutter with zero background", () => {
+    let lines: string[] = [];
+    withColorNoTruecolor(() => {
+      lines = buildHistoryLines(
+        { ...createTurnHistory(), turns: [{ role: "user", content: "first\nsecond" }] },
+        40
+      ).filter(Boolean);
+    });
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) {
+      // Degraded terminals must never get a half-applied background.
+      expect(line).not.toContain("\x1b[48;");
+      // Foreground styles still close at EOL so nothing bleeds to the scrollbar.
+      expect(line.endsWith("\x1b[0m")).toBe(true);
+    }
+    // The ┃ gutter survives on first + explicit multiline rows.
+    expect(stripAnsi(lines[0]!)).toMatch(/^┃  /);
+    expect(stripAnsi(lines[lines.length - 1]!)).toMatch(/^┃  /);
+  });
+
+  test("bubble rows stay full-width under both densities", () => {
+    const prev = getActiveDensity();
+    try {
+      for (const density of ["spacious", "cozy"] as const) {
+        setActiveDensity(density);
+        for (const line of userBubble("density check", 40)) {
+          expect(visibleWidth(line)).toBe(40);
+          expect(line.endsWith("\x1b[0m")).toBe(true);
+        }
+      }
+    } finally {
+      setActiveDensity(prev);
+    }
   });
 });
 
@@ -456,6 +632,7 @@ describe("buildHistoryLines — per-turn memoization", () => {
   });
 
   test("spacious vs cozy separator position rules", () => {
+    const densityBefore = getActiveDensity();
     noColor(() => {
       const userFirst: Turn[] = [{ role: "user", content: "hi" }];
       const assistantFirst: Turn[] = [{ role: "assistant", content: "hello" }];
@@ -470,7 +647,7 @@ describe("buildHistoryLines — per-turn memoization", () => {
         80,
       );
       expect(spaciousUser[0]).toBe("");
-      expect(spaciousUser[1]).toContain("❯");
+      expect(spaciousUser[1]).toContain("┃");
 
       const spaciousAssistant = buildHistoryLines(
         { ...createTurnHistory(), turns: assistantFirst },
@@ -502,6 +679,7 @@ describe("buildHistoryLines — per-turn memoization", () => {
       );
       expect(cozyMulti.filter((l) => l === "").length).toBe(0);
     });
+    setActiveDensity(densityBefore);
   });
 });
 
@@ -587,5 +765,508 @@ describe("buildCopyViewLines — copy view line construction", () => {
     appendToCurrentTurn(history, "streaming\r\npartial");
     const lines = buildCopyViewLines(history);
     expect(lines).toEqual(["streaming", "partial"]);
+  });
+});
+
+describe("virtualized renderHistory — windowed painting matches the full render path", () => {
+  const ROWS = 24;
+  const COLUMNS = 100;
+  const INPUT_LINES = 2;
+  type History = ReturnType<typeof createTurnHistory>;
+
+  const richAssistant = (i: number): string =>
+    [
+      `回答 ${i}：这是多行回答。`,
+      "",
+      `## 标题 ${i}`,
+      "",
+      "- 第一点：功能说明",
+      "- 第二点：边界情况",
+      "",
+      "```ts",
+      `const value${i} = compute(${i});`,
+      "```",
+      "",
+      "| 列A | 列B |",
+      "|---|---|",
+      `| 值${i} | 说明${i} |`,
+      "",
+      `[文档](https://example.com)`,
+      "",
+      "---",
+      "",
+      `结束段落 ${i}。`,
+    ].join("\n");
+
+  const buildRichHistory = (nTurns: number): History => {
+    const history = createTurnHistory();
+    for (let i = 0; i < nTurns; i++) {
+      startTurn(history, "user");
+      appendToCurrentTurn(history, `用户问题 ${i}：请解释这个功能的实现原理和边界情况。`);
+      finalizeCurrentTurn(history);
+      startTurn(history, "assistant");
+      appendToCurrentTurn(history, richAssistant(i));
+      finalizeCurrentTurn(history);
+    }
+    return history;
+  };
+
+  const renderFrame = (
+    history: History,
+    rows = ROWS,
+    columns = COLUMNS,
+    inputLines = INPUT_LINES,
+  ): string => {
+    let out = "";
+    const output = {
+      isTTY: true,
+      rows,
+      columns,
+      write(chunk: string) {
+        out += chunk;
+        return true;
+      },
+    } as unknown as NodeJS.WritableStream;
+    renderHistory(output, history, inputLines);
+    return out;
+  };
+
+  /**
+   * Reference frame: the pre-virtualization paint — full buildHistoryLines,
+   * slice the clamped window, clear + paint each row. Byte-identical to what
+   * renderHistory must emit for the same post-clamp scrollTop.
+   */
+  const referenceFrame = (
+    history: History,
+    rows = ROWS,
+    columns = COLUMNS,
+    inputLines = INPUT_LINES,
+  ): string => {
+    const visibleHeight = Math.max(1, rows - inputLines);
+    const contentWidth = Math.max(1, columns - 1);
+    const lines = buildHistoryLines(history, contentWidth);
+    const totalLines = lines.length;
+    const winStart = history.scrollTop;
+    const winEnd = Math.min(totalLines, winStart + visibleHeight);
+    const visibleLines = lines.slice(winStart, winEnd);
+    let frame = "";
+    for (let i = 0; i < visibleHeight; i++) {
+      const line = visibleLines[i] ?? "";
+      const padded = padOrTruncateToWidth(line, contentWidth);
+      const thumb = renderScrollbarRow(i, visibleHeight, totalLines, history.scrollTop);
+      const scrollbarPrefix = resolveCliColorEnabled() ? themeColorSequence("chrome") : "";
+      const scrollbarSuffix = resolveCliColorEnabled() ? "\x1b[39m" : "";
+      frame += `\x1b[${i + 1};1H`;
+      frame += "\x1b[2K";
+      frame += padded;
+      frame += `\x1b[${columns}G`;
+      frame += `${scrollbarPrefix}${thumb}${scrollbarSuffix}`;
+    }
+    const mainBottom = Math.max(1, rows - inputLines);
+    frame += `\x1b[${mainBottom};1H`;
+    return frame;
+  };
+
+  test("cold render matches the full-render slice byte-for-byte (plain)", () => {
+    noColor(() => {
+      const history = buildRichHistory(120);
+      const actual = renderFrame(history);
+      expect(actual).toBe(referenceFrame(history));
+      // followBottom clamps to the tail and the offset index total matches the
+      // full render's line count.
+      const contentWidth = Math.max(1, COLUMNS - 1);
+      const total = buildHistoryLines(history, contentWidth).length;
+      expect(history.scrollTop).toBe(Math.max(0, total - (ROWS - INPUT_LINES)));
+      expect(history.hasMoreAbove).toBe(history.scrollTop > 0);
+      expect(history.hasMoreBelow).toBe(
+        history.scrollTop + (ROWS - INPUT_LINES) < total,
+      );
+    });
+  });
+
+  test("cold render matches the full-render slice byte-for-byte (truecolor)", () => {
+    withTruecolor(() => {
+      const history = buildRichHistory(80);
+      expect(renderFrame(history)).toBe(referenceFrame(history));
+    });
+  });
+
+  test("cold render populates the render cache only for the visible window", () => {
+    noColor(() => {
+      const history = buildRichHistory(150);
+      const before = getRenderCacheMissCount();
+      renderFrame(history);
+      const rendered = getRenderCacheMissCount() - before;
+      // One screenful of turns — NOT all 150.
+      expect(rendered).toBeGreaterThan(0);
+      expect(rendered).toBeLessThanOrEqual(ROWS - INPUT_LINES);
+    });
+  });
+
+  test("every scroll action keeps output byte-identical to the full-render slice", () => {
+    noColor(() => {
+      const actions = [
+        "top",
+        "half-page-up",
+        "half-page-down",
+        "wheel-up",
+        "wheel-down",
+        "page-up",
+        "page-down",
+        "bottom",
+      ] as const;
+      for (const action of actions) {
+        const history = buildRichHistory(60);
+        const output = {
+          isTTY: true,
+          rows: ROWS,
+          columns: COLUMNS,
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream;
+        renderHistory(output, history, INPUT_LINES); // establish a clamped scrollTop
+        applyScrollAction(history, action, output, INPUT_LINES);
+        expect(renderFrame(history)).toBe(referenceFrame(history));
+      }
+    });
+  });
+
+  test("theme change at same width repaints only the visible window and stays byte-identical", () => {
+    const history = buildRichHistory(150);
+    noColor(() => {
+      renderFrame(history); // warm the width-100 counts
+    });
+    const before = getRenderCacheMissCount();
+    withColor(() => {
+      // Line counts are width-keyed and survive the theme flip; only the
+      // visible window's styled rows are re-rendered.
+      expect(renderFrame(history)).toBe(referenceFrame(history));
+    });
+    const repainted = getRenderCacheMissCount() - before;
+    expect(repainted).toBeGreaterThan(0);
+    expect(repainted).toBeLessThanOrEqual(ROWS - INPUT_LINES);
+  });
+
+  test("density change stays byte-identical", () => {
+    noColor(() => {
+      const history = buildRichHistory(120);
+      setActiveDensity("spacious"); // default: blank separators between turns
+      expect(renderFrame(history)).toBe(referenceFrame(history));
+      setActiveDensity("cozy"); // separators vanish — render cache stale
+      expect(renderFrame(history)).toBe(referenceFrame(history));
+      setActiveDensity("spacious");
+      expect(renderFrame(history)).toBe(referenceFrame(history));
+    });
+  });
+
+  test("width change stays byte-identical", () => {
+    noColor(() => {
+      const history = buildRichHistory(120);
+      renderFrame(history, ROWS, 100, INPUT_LINES); // warm counts at width 100
+      expect(renderFrame(history, ROWS, 60, INPUT_LINES)).toBe(
+        referenceFrame(history, ROWS, 60, INPUT_LINES),
+      );
+      expect(renderFrame(history, ROWS, 120, INPUT_LINES)).toBe(
+        referenceFrame(history, ROWS, 120, INPUT_LINES),
+      );
+    });
+  });
+
+  test("streaming current turn stays byte-identical frame by frame", () => {
+    noColor(() => {
+      const history = buildRichHistory(20);
+      startTurn(history, "assistant");
+      const chunks = [
+        "流式输出开始：\n\n",
+        "## 段落标题\n\n",
+        "- 要点一\n- 要点二\n\n",
+        "```ts\nconst a = 1;\n```\n\n",
+        "结尾...",
+      ];
+      for (const chunk of chunks) {
+        appendToCurrentTurn(history, chunk);
+        expect(renderFrame(history)).toBe(referenceFrame(history));
+      }
+    });
+  });
+
+  test("renders the tail of a long session without rebuilding the whole transcript", () => {
+    const history = buildRichHistory(100);
+    let writtenData = "";
+    const output = {
+      isTTY: true,
+      rows: 24,
+      columns: 80,
+      write(chunk: string) {
+        writtenData += chunk;
+        return true;
+      },
+    } as unknown as NodeJS.WritableStream;
+    noColor(() => {
+      renderHistory(output, history, 2);
+      expect(writtenData).toContain("用户问题 99");
+      expect(writtenData).toContain("回答 99");
+      expect(history.scrollTop).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe("buildTurnOffsets & incremental streaming verification", () => {
+  beforeEach(() => {
+    setActiveThemeName("catppuccin");
+    setActiveDensity("cozy");
+    resetStreamingTurnCache();
+  });
+
+  afterEach(() => {
+    setActiveThemeName("catppuccin");
+    setActiveDensity("spacious"); // restore default; cozy here leaks into later files
+    resetStreamingTurnCache();
+  });
+
+  test("buildTurnOffsets calculates line offset indexes correctly across multiple turns, empty content, and single lines", () => {
+    noColor(() => {
+      const history = createTurnHistory();
+      // Turn 0: User single line
+      history.turns.push({ role: "user", content: "Hello" });
+      // Turn 1: Assistant multiline
+      history.turns.push({ role: "assistant", content: "Line 1\nLine 2" });
+      // Turn 2: User empty content
+      history.turns.push({ role: "user", content: "" });
+      // Turn 3: Assistant single line
+      history.turns.push({ role: "assistant", content: "Done" });
+
+      const offsetsCozy = buildTurnOffsets(history, 80);
+      expect(offsetsCozy.entries.length).toBe(4);
+
+      // Cozy mode: separatorAbove should be 0 for all
+      let expectedRow = 0;
+      for (let i = 0; i < offsetsCozy.entries.length; i++) {
+        const entry = offsetsCozy.entries[i]!;
+        expect(entry.startRow).toBe(expectedRow);
+        expect(entry.separatorAbove).toBe(0);
+        expect(entry.lineCount).toBeGreaterThan(0);
+        expectedRow += entry.lineCount;
+      }
+      expect(offsetsCozy.totalLines).toBe(expectedRow);
+    });
+  });
+
+  test("buildTurnOffsets respects spacious density separator gaps", () => {
+    noColor(() => {
+      setActiveDensity("spacious");
+      const history = createTurnHistory();
+      history.turns.push({ role: "user", content: "Q1" });
+      history.turns.push({ role: "assistant", content: "A1" });
+      history.turns.push({ role: "user", content: "Q2" });
+
+      const offsetsSpacious = buildTurnOffsets(history, 80);
+      expect(offsetsSpacious.entries.length).toBe(3);
+      // Spacious mode: user turn at index 0 gets separator 1; subsequent turns get separator 1
+      expect(offsetsSpacious.entries[0]!.separatorAbove).toBe(1);
+      expect(offsetsSpacious.entries[1]!.separatorAbove).toBe(1);
+      expect(offsetsSpacious.entries[2]!.separatorAbove).toBe(1);
+
+      expect(offsetsSpacious.entries[0]!.startRow).toBe(1);
+      expect(offsetsSpacious.entries[1]!.startRow).toBe(1 + offsetsSpacious.entries[0]!.lineCount + 1);
+    });
+  });
+
+  test("incremental streaming prefix cache yields 100% byte-identical output across streaming chunks", () => {
+    withTruecolor(() => {
+      const history = createTurnHistory();
+      history.turns.push({ role: "user", content: "请用 markdown 总结一下" });
+
+      startTurn(history, "assistant");
+
+      const complexStreamParts = [
+        "好的，这是为您准备的总结：\n\n",
+        "## 第一部分：概述\n\n",
+        "这里是第一段详细说明，包含 **粗体** 和 `code` 元素。\n\n",
+        "- 要点一：高性能\n",
+        "- 要点二：虚拟化渲染\n",
+        "- 要点三：流式缓存\n\n",
+        "```typescript\nfunction optimize() {\n  return 'fast';\n}\n```\n\n",
+        "以上就是全部内容。",
+      ];
+
+      let fullContent = "";
+      for (const part of complexStreamParts) {
+        fullContent += part;
+        history.currentContent = fullContent;
+
+        // Compare buildHistoryLines (which uses streaming prefix cache) with
+        // a manually computed non-cached baseline
+        const incrementalLines = buildHistoryLines(history, 80);
+
+        // Reset cache to force a fresh non-incremental render for ground truth comparison
+        resetStreamingTurnCache();
+        const fullLines = buildHistoryLines(history, 80);
+
+        expect(incrementalLines).toEqual(fullLines);
+      }
+    });
+  });
+
+  test("windowed rendering matches full transcript slice byte-for-byte at arbitrary scroll positions", () => {
+    noColor(() => {
+      const history = createTurnHistory();
+      for (let i = 0; i < 30; i++) {
+        history.turns.push({ role: "user", content: `用户提问 ${i}` });
+        history.turns.push({
+          role: "assistant",
+          content: `助手回答 ${i}:\n- 细节 A\n- 细节 B\n\`\`\`ts\nconst x = ${i};\n\`\`\``,
+        });
+      }
+
+      const fullLines = buildHistoryLines(history, 80);
+
+      // Verify at scroll positions: 0, 15, 50, 100
+      const scrollPositions = [0, 15, 50, 100];
+      const visibleHeight = 24;
+
+      for (const pos of scrollPositions) {
+        history.scrollTop = pos;
+        history.followBottom = false;
+
+        let frameOutput = "";
+        const mockStream = {
+          isTTY: true,
+          rows: visibleHeight + 2,
+          columns: 80,
+          write(chunk: string) {
+            frameOutput += chunk;
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream;
+
+        renderHistory(mockStream, history, 2);
+
+        // Slice fullLines for window expectation
+        const expectedSlice = fullLines.slice(pos, pos + visibleHeight);
+        expect(expectedSlice.length).toBeLessThanOrEqual(visibleHeight);
+
+        // Each line in frameOutput should contain the styled text from expectedSlice
+        for (let r = 0; r < expectedSlice.length; r++) {
+          const lineText = stripAnsi(expectedSlice[r]!);
+          expect(stripAnsi(frameOutput)).toContain(lineText.trim());
+        }
+      }
+    });
+  });
+
+  test("invalidating width or theme resets cache and repaints correctly", () => {
+    withTruecolor(() => {
+      const history = createTurnHistory();
+      history.turns.push({ role: "user", content: "Theme test" });
+      startTurn(history, "assistant");
+      appendToCurrentTurn(history, "## Header\n\n- item 1\n- item 2");
+
+      const linesThemeA = buildHistoryLines(history, 80);
+
+      // Change theme
+      setActiveThemeName("trail");
+      resetStreamingTurnCache();
+      const linesThemeB = buildHistoryLines(history, 80);
+
+      // Lines structure is same, ANSI colors change
+      expect(linesThemeA.map((l) => stripAnsi(l))).toEqual(linesThemeB.map((l) => stripAnsi(l)));
+      expect(linesThemeA).not.toEqual(linesThemeB);
+
+      // Change width
+      const linesWidth120 = buildHistoryLines(history, 120);
+      expect(linesWidth120.length).toBeLessThanOrEqual(linesThemeB.length);
+    });
+  });
+
+  describe("countTurnLines lightweight calculation accuracy", () => {
+    test("strictly matches renderTurnBlock output line count across diverse markdown content", () => {
+      const testCases: { name: string; role: "user" | "assistant"; content: string }[] = [
+        {
+          name: "plain text single line",
+          role: "assistant",
+          content: "Hello world, this is simple plain text without any markdown elements.",
+        },
+        {
+          name: "plain text multiline",
+          role: "assistant",
+          content: "First line of text.\nSecond line of text.\nThird line of text.",
+        },
+        {
+          name: "code block",
+          role: "assistant",
+          content: "Here is code:\n```typescript\nfunction hello() {\n  console.log('world');\n}\n```\nDone.",
+        },
+        {
+          name: "unordered and ordered lists",
+          role: "assistant",
+          content: "List items:\n- Item 1\n- Item 2\n- Item 3\n\nOrdered:\n1. First\n2. Second",
+        },
+        {
+          name: "task items",
+          role: "assistant",
+          content: "Tasks:\n☐ Unfinished task\n☑ Completed task",
+        },
+        {
+          name: "headings with automatic breathing room",
+          role: "assistant",
+          content: "Intro text\n# Heading 1\nSection 1 text\n## Heading 2\nSection 2 text",
+        },
+        {
+          name: "markdown table",
+          role: "assistant",
+          content: "| Name | Status |\n| --- | --- |\n| Task A | Done |\n| Task B | In Progress |",
+        },
+        {
+          name: "CJK text and mixed scripts",
+          role: "assistant",
+          content: "这是一个中文测试段落，包含 Unicode 字符和 CJK 标点符号。\n- 第一点：性能优化\n- 第二点：虚拟化按需渲染",
+        },
+        {
+          name: "ultra-long lines triggering soft wrap",
+          role: "assistant",
+          content: "A".repeat(150) + "\n" + "这".repeat(80),
+        },
+        {
+          name: "nolo header line",
+          role: "assistant",
+          content: "[nolo] Executing tool: listFiles...\nResult output line.",
+        },
+        {
+          name: "user turn single line",
+          role: "user",
+          content: "User question text",
+        },
+        {
+          name: "user turn multiline",
+          role: "user",
+          content: "User question line 1\nUser question line 2\nUser question line 3",
+        },
+        {
+          name: "empty content",
+          role: "assistant",
+          content: "",
+        },
+        {
+          name: "CRLF line endings",
+          role: "assistant",
+          content: "Line 1\r\nLine 2\r\nLine 3",
+        },
+      ];
+
+      const widths = [30, 40, 80, 120];
+
+      for (const width of widths) {
+        for (const tc of testCases) {
+          const expectedTruecolor = renderTurnBlock(tc.role, tc.content, width, true).length;
+          const expectedPlain = renderTurnBlock(tc.role, tc.content, width, false).length;
+          const actualCount = countTurnLines(tc.role, tc.content, width);
+
+          expect(expectedTruecolor).toBe(expectedPlain);
+          expect(actualCount).toBe(expectedTruecolor);
+        }
+      }
+    });
   });
 });

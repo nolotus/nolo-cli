@@ -6,8 +6,6 @@ import {
   PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
   PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL,
   PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE,
-  PLATFORM_HOSTED_GLM_52_MODEL,
-  PLATFORM_HOSTED_GLM_PRICE,
   PLATFORM_HOSTED_KIMI_K3_PRICE,
   PLATFORM_HOSTED_KIMI_PRICE,
   platformHostedModels,
@@ -23,15 +21,15 @@ export const OLLAMA_CLOUD_KIMI_K3_MODEL = PLATFORM_HOSTED_KIMI_K3_MODEL;
 export const OLLAMA_CLOUD_KIMI_K26_MODEL = PLATFORM_HOSTED_KIMI_K26_MODEL;
 export const OLLAMA_CLOUD_KIMI_PRICE = PLATFORM_HOSTED_KIMI_PRICE;
 export const OLLAMA_CLOUD_KIMI_K3_PRICE = PLATFORM_HOSTED_KIMI_K3_PRICE;
-export const OLLAMA_CLOUD_GLM_52_MODEL = PLATFORM_HOSTED_GLM_52_MODEL;
-export const OLLAMA_CLOUD_GLM_PRICE = PLATFORM_HOSTED_GLM_PRICE;
 export const OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL =
   PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL;
+// Legacy GLM price (platform GLM catalog removed, but seed scripts still reference it)
+export const OLLAMA_CLOUD_GLM_PRICE = { input: 16, output: 64 };
 export const OLLAMA_CLOUD_DEEPSEEK_FLASH_PRICE =
   PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE;
 export const OLLAMA_CLOUD_CHAT_COMPLETIONS_URL =
   PLATFORM_HOSTED_CHAT_COMPLETIONS_URL;
-// Deprecated DeepSeek official API constants removed — provider was retired.
+// Legacy catalog names remain for compatibility; DeepSeek Flash now routes to the official API.
 export const ollamaCloudModels = platformHostedModels;
 
 export const isOllamaCloudDeepseekFlashModel = (
@@ -39,9 +37,9 @@ export const isOllamaCloudDeepseekFlashModel = (
 ): boolean => model === OLLAMA_CLOUD_DEEPSEEK_FLASH_MODEL;
 
 /**
- * Platform DeepSeek Flash (hosted): nolo/ollama-cloud catalog or legacy
- * `deepseek` provider records still pointing at deepseek-v4-flash. The official
- * DeepSeek provider was retired, so `deepseek` here only means "stale record".
+ * Platform DeepSeek Flash (hosted): nolo catalog or legacy `deepseek` provider
+ * records still pointing at deepseek-v4-flash. The runtime routes it to the
+ * official DeepSeek API while preserving these legacy catalog names.
  */
 export const isPlatformDeepseekFlashHosted = (
   provider?: string | null,

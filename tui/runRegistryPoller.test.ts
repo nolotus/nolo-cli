@@ -33,7 +33,9 @@ function setup(opts: { docked?: AgentRunSnapshot[] } = {}) {
   const updates: AgentRunSnapshot[] = [];
   const reads: string[] = [];
   const reconciles: string[] = [];
+  const polledBatches: RunRecord[][] = [];
   const throwOn = new Set<string>();
+  let observerThrows = false;
 
   const poller = createRunRegistryPoller({
     getDockedRuns: () => [...docked.values()],
@@ -51,6 +53,10 @@ function setup(opts: { docked?: AgentRunSnapshot[] } = {}) {
       reconciles.push(runId);
       return records.get(runId) ?? null;
     },
+    onRecordsPolled: (batch) => {
+      if (observerThrows) throw new Error("observer boom");
+      polledBatches.push(batch);
+    },
     now: () => nowMs,
     setIntervalFn: (cb) => {
       tickCb = cb;
@@ -66,8 +72,12 @@ function setup(opts: { docked?: AgentRunSnapshot[] } = {}) {
     updates,
     reads,
     reconciles,
+    polledBatches,
     records,
     throwOn,
+    set observerThrows(v: boolean) {
+      observerThrows = v;
+    },
     docked,
     dock(run: AgentRunSnapshot) {
       docked.set(run.runId, run);
@@ -396,5 +406,50 @@ describe("run registry poller", () => {
     h.poller.stop();
     h.poller.poll();
     expect(h.updates).toHaveLength(2);
+  });
+});
+
+describe("onRecordsPolled", () => {
+  test("每 tick 把成功读到的记录交出去，含刚变成终态的那条", () => {
+    const h = setup({ docked: [docked({ runId: "run-a" })] });
+    h.records.set("run-a", record({ runId: "run-a" }));
+    h.poller.poll();
+    expect(h.polledBatches.length).toBe(1);
+    expect(h.polledBatches[0]!.map((r) => `${r.runId}:${r.status}`)).toEqual(["run-a:running"]);
+
+    // run 跑完了：这条终态记录必须出现在广播里，终态唤醒才有输入。
+    h.records.set("run-a", record({ runId: "run-a", status: "done" }));
+    h.poller.poll();
+    expect(h.polledBatches.length).toBe(2);
+    expect(h.polledBatches[1]!.map((r) => `${r.runId}:${r.status}`)).toEqual(["run-a:done"]);
+  });
+
+  test("fingerprint 去重跳过 update 时，读到的记录仍然广播", () => {
+    const h = setup({ docked: [docked({ runId: "run-a" })] });
+    h.records.set("run-a", record({ runId: "run-a" }));
+    h.poller.poll();
+    h.poller.poll();
+    // 面板只收到一次（指纹没变），观察者两 tick 都收到——它的转变检测
+    // 依赖持续观测「还是 running」。
+    expect(h.updates).toHaveLength(1);
+    expect(h.polledBatches.length).toBe(2);
+  });
+
+  test("读不到记录的 run 不在广播里；一条读不到不牵连另一条", () => {
+    const h = setup({ docked: [docked({ runId: "run-a" }), docked({ runId: "run-server" })] });
+    h.records.set("run-a", record({ runId: "run-a" }));
+    // run-server 本地没有记录（跑在服务端）。
+    h.poller.poll();
+    expect(h.polledBatches.length).toBe(1);
+    expect(h.polledBatches[0]!.map((r) => r.runId)).toEqual(["run-a"]);
+  });
+
+  test("观察者抛异常不影响轮询器本身", () => {
+    const h = setup({ docked: [docked({ runId: "run-a" })] });
+    h.records.set("run-a", record({ runId: "run-a" }));
+    h.observerThrows = true;
+    expect(() => h.poller.poll()).not.toThrow();
+    // 面板照常更新。
+    expect(h.updates).toHaveLength(1);
   });
 });

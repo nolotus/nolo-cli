@@ -4,6 +4,7 @@ import { dump as dumpYaml, load as loadYaml } from "js-yaml";
 
 const SKILL_DOC_ENUMS = {
   triggerMode: ["explicit", "required", "recommended"],
+  // budgetTier 只服务 WorkflowReferenceConfig；skill 侧已移除（零读点）。
   budgetTier: ["low", "medium", "high"],
   modality: ["text", "image", "video", "audio", "3d"],
   docKind: ["knowledge", "instruction", "skill"],
@@ -24,17 +25,10 @@ export interface SkillDocConfig {
   description: string;
   triggerMode?: SkillTriggerMode;
   toolNames?: string[];
-  preferredAgents?: string[];
-  budgetTier?: SkillBudgetTier;
-  dispatchPreferred?: boolean;
   modalities?: SkillModality[];
   requiredSkills?: string[];
   recommendedSkills?: string[];
   promptPatch?: string;
-  discover?: {
-    keywords?: string[];
-    examples?: string[];
-  };
 }
 
 export interface SkillEvalCase {
@@ -108,9 +102,6 @@ export const normalizeStringArray = (
   return items.length > 0 ? items : undefined;
 };
 
-const normalizeBoolean = (value: unknown): boolean | undefined =>
-  typeof value === "boolean" ? value : undefined;
-
 const normalizeSkillEnumValue = <K extends SkillDocEnumKey>(
   key: K,
   value: unknown
@@ -119,10 +110,6 @@ const normalizeSkillEnumValue = <K extends SkillDocEnumKey>(
   (SKILL_DOC_ENUMS[key] as readonly string[]).includes(value)
     ? (value as (typeof SKILL_DOC_ENUMS)[K][number])
     : undefined;
-
-export const normalizeSkillBudgetTier = (
-  value: unknown
-): SkillBudgetTier | undefined => normalizeSkillEnumValue("budgetTier", value);
 
 export const normalizeSkillModalities = (
   value: unknown
@@ -150,25 +137,12 @@ const normalizeSkillConfig = (
   if (!name || !description) return undefined;
 
   const triggerMode = normalizeSkillEnumValue("triggerMode", record.triggerMode);
-  const budgetTier = normalizeSkillEnumValue("budgetTier", record.budgetTier);
   const modalities = normalizeSkillModalities(record.modalities);
 
   const toolNames =
     normalizeStringArray(record.toolNames) ??
     normalizeStringArray(fallbackTools) ??
     undefined;
-
-  const discover =
-    record.discover && typeof record.discover === "object"
-      ? {
-          keywords: normalizeStringArray(
-            (record.discover as Record<string, unknown>).keywords
-          ),
-          examples: normalizeStringArray(
-            (record.discover as Record<string, unknown>).examples
-          ),
-        }
-      : undefined;
 
   return {
     version: "0.1",
@@ -178,15 +152,10 @@ const normalizeSkillConfig = (
     description,
     triggerMode,
     toolNames,
-    preferredAgents: normalizeStringArray(record.preferredAgents),
-    budgetTier,
-    dispatchPreferred: normalizeBoolean(record.dispatchPreferred),
     modalities,
     requiredSkills: normalizeStringArray(record.requiredSkills),
     recommendedSkills: normalizeStringArray(record.recommendedSkills),
     promptPatch: asOptionalTrimmedString(record.promptPatch),
-    discover:
-      discover?.keywords || discover?.examples ? discover : undefined,
   };
 };
 
@@ -383,27 +352,7 @@ export const buildSkillConfigComment = (config: SkillDocConfig): string => {
       ? { recommendedSkills: config.recommendedSkills }
       : {}),
     ...(config.toolNames?.length ? { toolNames: config.toolNames } : {}),
-    ...(config.preferredAgents?.length
-      ? { preferredAgents: config.preferredAgents }
-      : {}),
-    ...(config.budgetTier ? { budgetTier: config.budgetTier } : {}),
-    ...(typeof config.dispatchPreferred === "boolean"
-      ? { dispatchPreferred: config.dispatchPreferred }
-      : {}),
     ...(config.modalities?.length ? { modalities: config.modalities } : {}),
-    ...(config.discover?.keywords?.length ||
-    config.discover?.examples?.length
-      ? {
-          discover: {
-            ...(config.discover?.keywords?.length
-              ? { keywords: config.discover.keywords }
-              : {}),
-            ...(config.discover?.examples?.length
-              ? { examples: config.discover.examples }
-              : {}),
-          },
-        }
-      : {}),
     ...(config.promptPatch ? { promptPatch: config.promptPatch } : {}),
   };
   return `<!-- ${SKILL_CONFIG_BLOCK}\n${yamlBlock(payload)}\n-->`;

@@ -65,34 +65,10 @@ export const createSkillDocFunctionSchema = {
         type: "string",
         description: "可选：附加到 system prompt 的技能提示。",
       },
-      budgetTier: {
-        type: "string",
-        enum: ["low", "medium", "high"],
-        description: "可选：该 skill 的预算等级。",
-      },
-      dispatchPreferred: {
-        type: "boolean",
-        description: "可选：是否建议优先走 agent dispatch 而不是直接本 agent 执行。",
-      },
       modalities: {
         type: "array",
         items: { type: "string", enum: ["text", "image", "video", "audio", "3d"] },
         description: "可选：该 skill 涉及的模态。",
-      },
-      preferredAgents: {
-        type: "array",
-        items: { type: "string" },
-        description: "可选：更适合执行该 skill 的 agent 名称或 key。",
-      },
-      discoverKeywords: {
-        type: "array",
-        items: { type: "string" },
-        description: "可选：触发/发现关键字。",
-      },
-      discoverExamples: {
-        type: "array",
-        items: { type: "string" },
-        description: "可选：示例任务或问法。",
       },
       evalCases: {
         type: "array",

@@ -1,38 +1,18 @@
 /**
- * CLI 版 quick-chat 自动路由：每条消息先过一个小模型分类器，
- * 在 flash / balanced / quality 三个内置档间选择 tier agent。
- *
- * 与 web 端共享纯逻辑（agent-runtime/quickChatIntentCore）；
- * 分类调用走平台代理通道 /api/v1/chat（与 local runtime 同一通道）。
- * 任何失败（未登录、超时、坏 JSON）都静默回退到复杂度 regex 兜底。
+ * CLI 版 quick-chat 自动路由：纯二选一。
+ * 有图 → Kimi K2.6（vision 档）；无图 → flash 档。
+ * 不再调 LLM 分类器，无复杂度兜底、无专职 agent 路由。
  */
 
 import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
 } from "../core/builtinAgents";
-import {
-  INTENT_MODEL,
-  INTENT_PROVIDER,
-  QUICK_CHAT_INTENT_TIMEOUT_MS,
-  TIER_DESCRIPTIONS,
-  buildQuickChatIntentSystemPrompt,
-  estimateComplexity,
-  isShortGreeting,
-  parseQuickChatIntentResult,
-  type QuickChatSkillKind,
-  type TierAgentOption,
-} from "../agent-runtime/quickChatIntentCore";
-import {
-  buildPlatformChatCompletionRequest,
-  parsePlatformChatCompletionData,
-} from "../agent-runtime/platformChatProvider";
-import { resolvePlatformChatCompletionsEndpoint } from "../agent-runtime/platformProviderEndpoints";
-import type { AgentRuntimeChatMessage } from "../agent-runtime/types";
-import type { CliFetchImpl } from "../cliFetch";
+
 /**
- * CLI 自动路由的三档 tier agent（与 web quickChatTierDefaults 对齐）。
- * image 档不参与 LLM 分类路由，由 runAgentChat 在检测到图片时自动切换。
+ * CLI 自动路由的 tier agent（与 web quickChatTierDefaults 对齐）。
+ * 无图时一律走 flash 档；balanced/quality 保留别名以兼容下游查表
+ * （CLI_AUTO_TIER_AGENT_KEY_TABLE / resolveCliAutoAgentModel）。
  */
 export const CLI_AUTO_TIER_AGENT_KEYS = {
   flash: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
@@ -57,11 +37,10 @@ export const CLI_IMAGE_AGENT_KEY = PUBLIC_KIMI_K26_IMAGE_AGENT_KEY;
 /** Vision auto-switch target model id (paired with CLI_IMAGE_AGENT_KEY). */
 export const CLI_IMAGE_AGENT_MODEL = "kimi-k2.6";
 
-/** 所有 tier agent key 的查表（用于判断是否为自动路由的内置档）。 */
+/** 所有 tier agent key 的查表（用于判断是否为自动路由的内置档）。
+ *  三档当前均指向 flash key，去重为一个条目（balanced/quality 同键）。 */
 export const CLI_AUTO_TIER_AGENT_KEY_TABLE: Record<string, true> = {
   [CLI_AUTO_TIER_AGENT_KEYS.flash]: true,
-  [CLI_AUTO_TIER_AGENT_KEYS.balanced]: true,
-  [CLI_AUTO_TIER_AGENT_KEYS.quality]: true,
 };
 
 /** Resolve the catalog model id for a known auto-route / image-tier agent key. */
@@ -77,136 +56,40 @@ export function resolveCliAutoAgentModel(agentKey: string): string | undefined {
   return undefined;
 }
 
-export type CliAutoTier = keyof typeof CLI_AUTO_TIER_AGENT_KEYS;
+export type CliAutoTier = keyof typeof CLI_AUTO_TIER_AGENT_KEYS | "image";
 
 export interface CliAutoRouteResult {
-  /** 命中的 tier agent key（内置档）。 */
+  /** 命中的 agent key（内置档 / vision 档）。 */
   agentKey: string;
   tier: CliAutoTier;
-  /** LLM 分类是否成功；false 表示走了 regex 兜底。 */
+  /** 协议保留字段：纯二选一路由恒为 true（非兜底结果）。 */
   classified: boolean;
-  confidence?: number;
-  /** 协议透传：命中的对象操作技能；CLI 下游暂未消费。 */
-  skills?: QuickChatSkillKind[];
 }
 
 export interface ClassifyCliAutoRouteOptions {
+  /** 保留以兼容调用方签名；纯二选一路由不再使用代理通道。 */
   serverUrl: string;
+  /** 保留以兼容调用方签名；纯二选一路由不再需要鉴权。 */
   authToken: string;
-  /** 测试注入用；默认全局 fetch。 */
-  fetchImpl?: CliFetchImpl;
-  /** 覆盖默认超时（仅测试用）。 */
-  timeoutMs?: number;
-}
-
-const buildRouteOptions = (): TierAgentOption[] =>
-  (["flash", "balanced", "quality"] as const).map((tier) => ({
-    tier,
-    agentKey: CLI_AUTO_TIER_AGENT_KEYS[tier],
-    description: TIER_DESCRIPTIONS[tier],
-  }));
-
-const tierForAgentKey = (agentKey: string): CliAutoTier | null => {
-  for (const tier of ["flash", "balanced", "quality"] as const) {
-    if (CLI_AUTO_TIER_AGENT_KEYS[tier] === agentKey) return tier;
-  }
-  return null;
-};
-
-/** LLM 失败时的复杂度启发式兜底。 */
-export function resolveCliAutoFallbackTier(text: string): CliAutoTier {
-  switch (estimateComplexity(text)) {
-    case "complex":
-      return "quality";
-    case "medium":
-      return "balanced";
-    case "simple":
-    default:
-      return "flash";
-  }
+  /** 消息是否带图片；true → kimi vision 档，缺省/无图 → flash 档。 */
+  hasImages?: boolean;
 }
 
 /**
- * 对一条用户消息做自动路由分类。
- * 快速通道：空文本/短问候 → flash（不调 LLM）；未登录 → 直接兜底。
+ * 纯二选一自动路由：有图 → kimi，无图 → flash。
+ * 同步执行（无 I/O），不调 LLM 分类器、无复杂度兜底、无专职路由。
+ * 调用方保留 `await` 亦可（await 同步值等价直接返回）。
  */
-export async function classifyCliAutoRoute(
-  text: string,
+export function classifyCliAutoRoute(
+  _text: string,
   options: ClassifyCliAutoRouteOptions,
-): Promise<CliAutoRouteResult> {
-  const timeoutMs = options.timeoutMs ?? QUICK_CHAT_INTENT_TIMEOUT_MS;
-  const fallbackTier = resolveCliAutoFallbackTier(text);
-  const fallback = (): CliAutoRouteResult => ({
-    agentKey: CLI_AUTO_TIER_AGENT_KEYS[fallbackTier],
-    tier: fallbackTier,
-    classified: false,
-  });
-
-  if (!text.trim()) return fallback();
-
-  // 快速通道：明显的短问候/闲聊 → flash 档，跳过 LLM。
-  if (isShortGreeting(text)) {
-    return {
-      agentKey: CLI_AUTO_TIER_AGENT_KEYS.flash,
-      tier: "flash",
-      classified: true,
-    };
+): CliAutoRouteResult {
+  if (options.hasImages) {
+    return { agentKey: CLI_IMAGE_AGENT_KEY, tier: "image", classified: true };
   }
-
-  // 未登录没有代理通道，直接兜底（本地执行不受影响）。
-  if (!options.authToken) return fallback();
-
-  const fetchImpl: CliFetchImpl =
-    options.fetchImpl ?? (globalThis.fetch as unknown as CliFetchImpl);
-
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const routeOptions = buildRouteOptions();
-    const messages: AgentRuntimeChatMessage[] = [
-      { role: "system", content: buildQuickChatIntentSystemPrompt(routeOptions) },
-      { role: "user", content: text },
-    ];
-    const { url, init } = buildPlatformChatCompletionRequest({
-      providerConfig: {
-        serverUrl: options.serverUrl,
-        authToken: options.authToken,
-        agentKey: CLI_AUTO_TIER_AGENT_KEYS.flash,
-        model: INTENT_MODEL,
-        provider: INTENT_PROVIDER,
-        endpoint: resolvePlatformChatCompletionsEndpoint(INTENT_PROVIDER) ?? "",
-        requestOptions: {},
-      },
-      messages,
-      stream: false,
-    });
-
-    const response = await fetchImpl(url, {
-      ...init,
-      signal: controller.signal,
-    });
-    if (!response.ok) return fallback();
-
-    const data = parsePlatformChatCompletionData(await response.text());
-    const content = data?.choices?.[0]?.message?.content;
-    if (typeof content !== "string" || !content.trim()) return fallback();
-
-    const parsed = parseQuickChatIntentResult(content, routeOptions);
-    if (!parsed) return fallback();
-
-    const tier = tierForAgentKey(parsed.agentKey) ?? fallbackTier;
-    return {
-      agentKey: parsed.agentKey,
-      tier,
-      classified: true,
-      confidence: parsed.confidence,
-      skills: parsed.skills,
-    };
-  } catch {
-    // 超时 / 网络错误 / 解析异常 → 静默兜底，不阻塞发送。
-    return fallback();
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
+  return {
+    agentKey: CLI_AUTO_TIER_AGENT_KEYS.flash,
+    tier: "flash",
+    classified: true,
+  };
 }

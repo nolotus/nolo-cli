@@ -4,7 +4,6 @@ import type { Model } from "./types";
 import { getModelAbility } from "./modelAbility";
 
 // 导入所有提供商的模型数据
-import { deepSeekModels } from "../../integrations/deepseek/models";
 import { googleModels } from "../../integrations/google/models";
 import { openAIModels } from "../../integrations/openai/models";
 import { deepinfraModels } from "./deepinfra";
@@ -43,7 +42,6 @@ export const ALL_MODELS: ModelWithProvider[] = [
   ...withProvider("openai")(openAIModels),
   ...withProvider("openrouter")(openrouterModels),
   ...withProvider("xai")(xaiModels),
-  ...withProvider("deepseek")(deepSeekModels),
   ...withProvider("deepinfra")(deepinfraModels),
   ...withProvider("fireworks")(fireworksModels),
   ...withProvider("cloudflare")(cloudflareModels),

@@ -3,10 +3,12 @@ import {
   listLocalCachedAgents,
   listRemoteAgents,
   listRemoteAgentsAcrossServers,
+  normalizeListedAgent,
   type ListedAgent,
 } from "../agentListHelpers";
 import { getReadableCliDb } from "../agentCommandSupport";
 import { queryUserRecords, readDbRecord } from "../agentRecordHelpers";
+import { readLiveDbRecordAfterTombstoneMerge } from "../globalRecordOperations";
 import type { CliFetchImpl } from "../cliFetch";
 import {
   parseUserIdFromAuthToken,
@@ -16,7 +18,11 @@ import {
 } from "../cliEnvHelpers";
 import { sortAgentsFavoriteOwnedPublic, type SortableAgentItem } from "../ai/agent/utils/sortUtils";
 import { t } from "./i18n";
-export const DEFAULT_TUI_AGENT_KEY = "agent-pub-01NOLOAPPBLD000000019KCKT0";
+import { NOLO_DEFAULT_AGENT_KEY } from "../agentAliases";
+
+// The TUI default is Nolo itself. App Builder is a separate platform agent and
+// must never become the implicit fallback when profile/env resolution is absent.
+export const DEFAULT_TUI_AGENT_KEY = NOLO_DEFAULT_AGENT_KEY;
 
 export type AgentCatalogEntry = {
   name: string;
@@ -114,7 +120,6 @@ function listedAgentToCatalogEntry(agent: ListedAgent): AgentCatalogEntry {
 
 export function mergeCatalogEntries(
   currentKey: string,
-  platformAgents: AgentCatalogEntry[],
   privateAgents: AgentCatalogEntry[],
   favoritedAtByKey: Record<string, number> = {},
 ) {
@@ -128,26 +133,27 @@ export function mergeCatalogEntries(
     merged.push(favoritedAt ? { ...entry, favoritedAt } : entry);
   };
 
-  const current =
-    [...platformAgents, ...privateAgents].find((entry) => entry.key === currentKey) ??
-    null;
+  const current = privateAgents.find((entry) => entry.key === currentKey) ?? null;
   if (current) push(current);
 
-  for (const entry of platformAgents) {
-    if (entry.key !== currentKey) push(entry);
-  }
-
-  const sortablePrivate: SortableAgentItem[] = privateAgents.map((entry) => ({
-    key: entry.key,
-    favoritedAt: favoritedAtByKey[entry.key],
-    isOwned: true,
-    updatedAt: entry.updatedAt ?? 0,
-  }));
+  // The switcher is a personal shortlist: show favorites plus the current
+  // private agent when it has not been favorited yet. Platform defaults are
+  // not injected into this list.
+  const sortablePrivate: SortableAgentItem[] = privateAgents
+    .filter((entry) => favoritedAtByKey[entry.key] !== undefined)
+    .map((entry) => ({
+      key: entry.key,
+      favoritedAt: favoritedAtByKey[entry.key],
+      isOwned: true,
+      updatedAt: entry.updatedAt ?? 0,
+    }));
   const sortedKeys = sortAgentsFavoriteOwnedPublic(sortablePrivate);
   const sortedKeyOrder = new Map(sortedKeys.map((item, i) => [item.key, i]));
-  const sortedPrivate = [...privateAgents].sort(
-    (a, b) => (sortedKeyOrder.get(a.key) ?? 0) - (sortedKeyOrder.get(b.key) ?? 0)
-  );
+  const sortedPrivate = privateAgents
+    .filter((entry) => favoritedAtByKey[entry.key] !== undefined)
+    .sort(
+      (a, b) => (sortedKeyOrder.get(a.key) ?? 0) - (sortedKeyOrder.get(b.key) ?? 0)
+    );
   for (const entry of sortedPrivate) {
     if (entry.key !== currentKey) push(entry);
   }
@@ -226,7 +232,6 @@ export async function loadAgentCatalog(args: {
 
   const entries = mergeCatalogEntries(
     args.currentKey,
-    resolveCatalogPlatformAgents(env),
     rawData.privateAgents,
     rawData.favoritedAtByKey,
   );
@@ -249,7 +254,6 @@ function refreshAgentCatalogInBackground(
     .then((rawData) => {
       const entries = mergeCatalogEntries(
         args.currentKey,
-        resolveCatalogPlatformAgents(env),
         rawData.privateAgents,
         rawData.favoritedAtByKey,
       );
@@ -263,12 +267,31 @@ function refreshAgentCatalogInBackground(
     });
 }
 
-/** 启动预热：后台填充目录缓存，首次 /agent 即命中（fire-and-forget）。 */
+/**
+ * Local DB prefill is intentionally disabled for the favorites-only switcher.
+ * Cached Agent records do not contain authoritative favorite metadata, so using
+ * them would briefly show agents the user did not select.
+ */
+export async function prefillCatalogFromLocalDb(_args: {
+  env?: EnvLike;
+  getDb?: () => Promise<unknown>;
+}): Promise<void> {
+  // Keep the hook for startup callers; the server response is the source of truth.
+}
+
+/** 启动预热：后台刷新收藏目录缓存（fire-and-forget）。 */
 export function prefetchAgentCatalog(args: {
   env?: EnvLike;
   fetchImpl?: CliFetchImpl;
+  /** 测试注入：用假的 DB 替代 getReadableCliDb。生产中 undefined。 */
+  getDb?: () => Promise<unknown>;
 }) {
-  void loadAgentCatalog({ ...args, currentKey: "" }).catch(() => {});
+  void (async () => {
+    // 收藏元数据必须来自服务器；本地缓存不能作为 favorites-only 列表来源。
+    await prefillCatalogFromLocalDb({ env: args.env, getDb: args.getDb }).catch(() => {});
+    // 后台网络请求刷新收藏目录缓存（SWR，后台失败静默）
+    void loadAgentCatalog({ ...args, currentKey: "" }).catch(() => {});
+  })();
 }
 
 /**
@@ -295,7 +318,9 @@ async function fetchRawCatalogData(
 
   const serverUrl = resolveServerUrl(env);
   const serverUrls = resolveServerCandidates([], env, serverUrl);
-  let privateAgents: AgentCatalogEntry[] = [];
+  // 保留原始 ListedAgent[]，供 orphan hydrate 做三键（privateKey/publicKey/id）去重，
+  // 与 agentListCommands.ts 的 `nolo agent list --safe` 对齐，避免同一 agent 重复入目。
+  let listedAgents: ListedAgent[] = [];
   // 收藏列表与 agent 目录并行拉取；失败降级为空（不影响目录展示）。
   const favoritesPromise = listFavoriteAgentIdsAcrossServers({
     authToken,
@@ -311,28 +336,80 @@ async function fetchRawCatalogData(
       serverUrls,
       userId,
     });
-    privateAgents = remoteResult.agents.map(listedAgentToCatalogEntry);
+    listedAgents = remoteResult.agents;
   } catch {
     try {
       const db = await getReadableCliDb({ write: () => {} });
-      const cached = await listLocalCachedAgents({ db, userId });
-      privateAgents = cached.map(listedAgentToCatalogEntry);
+      listedAgents = await listLocalCachedAgents({ db, userId });
     } catch {
-      privateAgents = (
-        await listRemoteAgents({
-          authToken,
-          fallbackFetchImpl,
-          fetchImpl,
-          serverUrl,
-          userId,
-          queryUserRecords,
-          readDbRecord,
-        })
-      ).map(listedAgentToCatalogEntry);
+      listedAgents = await listRemoteAgents({
+        authToken,
+        fallbackFetchImpl,
+        fetchImpl,
+        serverUrl,
+        userId,
+        queryUserRecords,
+        readDbRecord,
+      });
     }
   }
+  const privateAgents = listedAgents.map(listedAgentToCatalogEntry);
 
   const favoritedAtByKey = await favoritesPromise;
+  // A favorite may be keyed by publicKey while the switcher uses privateKey.
+  for (const agent of listedAgents) {
+    const favoritedAt = [agent.privateKey, agent.publicKey, agent.id]
+      .map((key) => favoritedAtByKey[key])
+      .find((value) => value !== undefined);
+    if (favoritedAt !== undefined) favoritedAtByKey[agent.privateKey] = favoritedAt;
+  }
+  // orphan favorite hydrate：把「已收藏但不在 listRemoteAgentsAcrossServers 返回里」
+  // 的 agent（典型是收藏的别人/公开 agent，或跨服务器、刚收藏未同步的记录）从各服务器
+  // 按 dbKey 重新读回并并入目录，对齐 web 端 useAgentPickerCandidates 与 CLI
+  // `nolo agent list --safe`（agentListCommands.ts）的兜底行为，避免 /switch 漏项。
+  // 单个 orphan 读取失败静默跳过，不阻塞目录加载。
+  // 三键去重：与 agentListCommands.ts 一致，privateKey/publicKey/id 任一命中即视为已存在，
+  // 防止「自有 public agent 以 publicKey 形态被收藏」时同一 agent 重复入目。
+  const existingKeys = new Set<string>();
+  for (const agent of listedAgents) {
+    existingKeys.add(agent.privateKey);
+    existingKeys.add(agent.publicKey);
+    existingKeys.add(agent.id);
+  }
+
+  await Promise.all(
+    Object.keys(favoritedAtByKey).map(async (favKey) => {
+      if (existingKeys.has(favKey)) return;
+      try {
+        const favRead = await readLiveDbRecordAfterTombstoneMerge({
+          authToken,
+          dbKey: favKey,
+          fallbackFetchImpl,
+          fetchImpl,
+          serverUrls,
+        });
+        const record = favRead.record;
+        if (!record || (record.type && record.type !== "agent")) return;
+        const norm = normalizeListedAgent(record);
+        if (!norm) return;
+        // 同源去重：normalize 后的 privateKey/publicKey/id 任一已存在则跳过
+        if (
+          existingKeys.has(norm.privateKey) ||
+          existingKeys.has(norm.publicKey) ||
+          existingKeys.has(norm.id)
+        ) {
+          return;
+        }
+        existingKeys.add(norm.privateKey);
+        existingKeys.add(norm.publicKey);
+        existingKeys.add(norm.id);
+        privateAgents.push(listedAgentToCatalogEntry(norm));
+      } catch {
+        // orphan favorite key, skip it.
+      }
+    }),
+  );
+
   return { privateAgents, favoritedAtByKey };
 }
 

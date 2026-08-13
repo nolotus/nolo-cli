@@ -1,7 +1,6 @@
 // ai/llm/providers.ts
 import { anthropicModels } from "../../integrations/anthropic/anthropicModels";
 import { anthropicOAuthModels } from "../../integrations/anthropic/anthropicOAuthModels";
-import { deepSeekModels } from "../../integrations/deepseek/models";
 import { googleModels } from "../../integrations/google/models";
 import { openAIModels } from "../../integrations/openai/models";
 import { openrouterModels } from "../llm/openrouterModels";
@@ -59,7 +58,6 @@ export { getCloudflareWorkersAiChatCompletionsUrl } from "./cloudflare";
  * ────────────────────────────────────────── */
 const MODEL_MAP = {
   // anthropic: anthropicModels,
-  deepseek: deepSeekModels,
   google: googleModels,
   openai: openAIModels,
   deepinfra: deepinfraModels,
@@ -228,11 +226,6 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   },
   xai: {
     default: "https://api.x.ai/v1/chat/completions",
-  },
-  deepseek: {
-    // No `responses` entry: the official DeepSeek provider was retired and no
-    // deepseek model declares endpointKey "responses", so it was unreachable.
-    default: "https://api.deepseek.com/chat/completions",
   },
   deepinfra: {
     default: "https://api.deepinfra.com/v1/openai/chat/completions",

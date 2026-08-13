@@ -12,6 +12,7 @@ import {
 } from "./localRuntimeDiagnostics";
 import {
   canUsePlatformChatProvider,
+  hasDirectOpenAiCompatibleProvider,
   resolvePlatformChatProviderConfig,
   buildPlatformChatCompletionRequest,
   parsePlatformChatCompletionResponse,
@@ -24,17 +25,15 @@ import {
 } from "./localRuntimeFetchRetry";
 import { prepareTokenUsageData } from "../ai/token/prepareTokenUsageData";
 import { createTokenKey } from "../database/keys";
-import {
-  resolveRuntimeAuthToken,
-  type EnvLike,
-} from "./localRuntimeHelpers";
-import { parseUserIdFromAuthToken } from "../cliEnvHelpers";
+import { type EnvLike } from "./localRuntimeHelpers";
 import {
   extractLastUserText,
   localTurnHasSubjectRefs,
 } from "./cliAgentConfigHelpers";
 import { buildLocalDialogWritePlan } from "./localDialogRecords";
 import { syncLocalDialogEvidenceToRemote } from "./cliRemoteDialogSync";
+import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
+import { buildDialogFallbackTitleFromUserInput } from "../chat/dialog/dialogTitle";
 import { toErrorMessage } from "../core/errorMessage";
 import type { CliFetchImpl } from "../cliFetch";
 
@@ -69,10 +68,15 @@ export function createLocalDialogTitleGenerator(
   messages: AgentRuntimeChatMessage[];
   fallbackTitle: string;
 }) => Promise<string | null>) | null {
+  // Only build a generator when at least one provider path is available:
+  // the platform chat proxy (auth token) OR a direct OpenAI-compatible local
+  // provider (OPENAI_API_KEY / base url / ollama). Without either, title
+  // generation would always degrade to the fallback, so we skip it entirely
+  // and let writeDialog use the synchronous fallback title.
+  if (!canUsePlatformChatProvider(deps.env) && !hasDirectOpenAiCompatibleProvider(deps.env)) {
+    return null;
+  }
   return async (input) => {
-    if (!canUsePlatformChatProvider(deps.env as any)) {
-      return null;
-    }
     const result = await generateLocalDialogTitle({
       messages: input.messages,
       env: deps.env,
@@ -84,10 +88,18 @@ export function createLocalDialogTitleGenerator(
           {
             sleep: deps.sleep,
             loopbackRequest: ctx.loopbackRequest,
+            maxAttempts: 1,
           },
         ),
       resolveProviderConfig: async (args: { agentConfig: any; env: any }) =>
         resolvePlatformChatProviderConfig({
+          agentConfig: args.agentConfig,
+          env: args.env,
+          apiKeyRefResolver: ctx.apiKeyRefResolver,
+          credentialBroker: ctx.credentialBroker,
+        }),
+      resolveDirectProviderConfig: async (args: { agentConfig: any; env: any }) =>
+        resolveCliOpenAiProviderConfig({
           agentConfig: args.agentConfig,
           env: args.env,
           apiKeyRefResolver: ctx.apiKeyRefResolver,
@@ -106,7 +118,7 @@ export function createLocalDialogTitleGenerator(
           trace: [],
         }),
       fallbackTitle: input.fallbackTitle,
-      timeoutMs: 15_000,
+      timeoutMs: 4_000,
     });
     return result.source === "llm" ? result.title : null;
   };
@@ -120,36 +132,65 @@ export async function writeLocalTokenRecord(args: {
   now: () => number;
   createId: () => string;
   output?: { write(chunk: string): unknown };
-}): Promise<void> {
-  const rawUsage = args.input.result.usage;
+}): Promise<Array<{ type: "put"; key: string; value: any }>> {
+  const usageRecords = args.input.usageRecords?.length
+    ? args.input.usageRecords
+    : args.input.result.usage
+      ? [{
+          callId:
+            typeof args.input.result.usage?.provider_call_id === "string" &&
+            args.input.result.usage.provider_call_id.trim()
+              ? args.input.result.usage.provider_call_id.trim()
+              : args.createId(),
+          usage: args.input.result.usage,
+          model: args.input.result.model,
+          ...(args.input.result.provider ? { provider: args.input.result.provider } : {}),
+        }]
+      : [];
   // Skip when usage is absent or empty — nothing meaningful to record.
-  if (!rawUsage || typeof rawUsage !== "object" || Object.keys(rawUsage).length === 0) {
-    return;
+  if (usageRecords.length === 0) {
+    return [];
   }
 
-  const timestamp = args.now();
-  const prepared = prepareTokenUsageData({
-    rawUsage,
-    agentConfig: {
-      model: args.input.result.model || "unknown",
-      provider: args.input.result.provider,
-      apiSource: "cli",
-    },
-    userId: args.userId,
-    agentId: args.input.agentKey,
-    dialogId: args.dialogId,
-    timestamp,
-    entry_path: "cli-local",
-  });
+  const ops: Array<{ type: "put"; key: string; value: any }> = [];
+  for (const item of usageRecords) {
+    if (!item.usage || Object.keys(item.usage).length === 0) continue;
+    const timestamp = args.now();
+    const callId =
+      item.callId ||
+      (typeof item.usage.provider_call_id === "string" && item.usage.provider_call_id.trim()) ||
+      args.createId();
+    const prepared = prepareTokenUsageData({
+      rawUsage: item.usage,
+      agentConfig: {
+        model: item.model || args.input.billingConfig?.model || "unknown",
+        provider: item.provider || args.input.billingConfig?.provider,
+        apiSource: args.input.billingConfig?.apiSource,
+        apiKeyRef: args.input.billingConfig?.apiKeyRef,
+        inputPrice: args.input.billingConfig?.inputPrice,
+        outputPrice: args.input.billingConfig?.outputPrice,
+        sharingLevel: args.input.billingConfig?.sharingLevel,
+        id: args.input.billingConfig?.id,
+        userId: args.input.billingConfig?.userId,
+      },
+      userId: args.userId,
+      agentId: args.input.agentKey,
+      dialogId: args.dialogId,
+      timestamp,
+      entry_path: "cli-local",
+    });
 
-  const recordKey = createTokenKey.record(args.userId, timestamp);
-  const tokenRecord = {
-    id: args.createId(),
-    type: "token" as const,
-    ...prepared.tokenData,
-  };
+    const recordKey = createTokenKey.recordForStableCall(args.userId, callId);
+    const tokenRecord = {
+      id: args.createId(),
+      type: "token" as const,
+      ...prepared.tokenData,
+    };
 
-  await args.store.write(recordKey, tokenRecord);
+    await args.store.write(recordKey, tokenRecord);
+    ops.push({ type: "put", key: recordKey, value: tokenRecord });
+  }
+  return ops;
 }
 
 export async function writeDialog(args: {
@@ -166,6 +207,12 @@ export async function writeDialog(args: {
     messages: AgentRuntimeChatMessage[];
     fallbackTitle: string;
   }) => Promise<string | null>) | null;
+  /**
+   * HIGH-2(a): how long writeDialog waits for the LLM title before returning
+   * with the fallback title. Defaults to 2500ms. Injectable for tests so the
+   * timeout path can be exercised deterministically without real timers.
+   */
+  titleTimeoutMs?: number;
 }) {
   let existingDialog: any = null;
   if (args.input.continueDialogId) {
@@ -173,43 +220,88 @@ export async function writeDialog(args: {
     existingDialog = await args.store.read(dialogKey);
   }
 
-  const authToken = resolveRuntimeAuthToken(args.env);
-  const isLoggedIn = Boolean(
-    authToken &&
-      (parseUserIdFromAuthToken(authToken) || args.env.NOLO_MACHINE_API_KEY?.trim()),
-  );
-  const hasExistingTitle =
-    typeof existingDialog?.title === "string" && existingDialog.title.trim();
+  const nowMs = args.now();
+  const existingTitle =
+    typeof existingDialog?.title === "string" ? existingDialog.title.trim() : "";
+  const existingTitleSource = existingDialog?.titleSource;
+  const titleTimeoutMs = args.titleTimeoutMs ?? 2500;
 
-  let titleOverride: string | undefined;
-  if (isLoggedIn && !hasExistingTitle && args.titleGenerator) {
-    const fallbackTitle = extractLastUserText(args.input.messages).trim().slice(0, 80) || "Local agent run";
-    try {
-      const generated = await args.titleGenerator({
-        messages: args.input.messages,
-        fallbackTitle,
-      });
-      if (generated) {
-        titleOverride = generated;
+  // MEDIUM-1(a): throttle title regeneration by titleUpdatedAt (not updatedAt,
+  // which is bumped every turn for unrelated fields). A manual title
+  // (titleSource:"manual") is never regenerated. When titleUpdatedAt is
+  // missing we are conservative: only regenerate when there is no existing
+  // non-empty title — this avoids re-running the LLM on every turn for old
+  // records that predate titleUpdatedAt.
+  let needsTitleUpdate = false;
+  if (existingTitleSource === "manual") {
+    // MEDIUM-1(b): manual titles are never overwritten by LLM regeneration.
+    needsTitleUpdate = false;
+  } else if (!existingTitle) {
+    needsTitleUpdate = true;
+  } else {
+    const titleUpdatedAtMs = parseTitleUpdatedAtMs(existingDialog);
+    if (titleUpdatedAtMs > 0) {
+      // 30-minute window (titleUpdated semantics: "idle 30 minutes").
+      if (nowMs - titleUpdatedAtMs >= 30 * 60 * 1000) {
+        needsTitleUpdate = true;
       }
-    } catch {
-      // Title generation failure must never block dialog persistence.
+    } else {
+      // titleUpdatedAt missing → conservative: keep the existing non-empty
+      // title, do NOT regenerate. (Old behavior treated missing as 0 → always
+      // true → regenerated every turn, which was a regression.)
+      needsTitleUpdate = false;
     }
   }
 
+  let titlePromise: Promise<string | null> | undefined;
+  if (needsTitleUpdate && args.titleGenerator) {
+    const rawLastUserText = extractLastUserText(args.input.messages);
+    const fallbackTitle =
+      buildDialogFallbackTitleFromUserInput(rawLastUserText) || "Local agent run";
+    titlePromise = args
+      .titleGenerator({ messages: args.input.messages, fallbackTitle })
+      .catch(() => null as string | null);
+  }
+
+  // HIGH-2(a): wait for the LLM title with a bounded timeout so a one-shot CLI
+  // process does not exit before the title lands (the previous fire-and-forget
+  // patch was lost on process exit). On timeout we keep the fallback title and
+  // proceed — never hang. The race resolves to null on timeout / failure.
+  let resolvedTitle: string | null = null;
+  if (titlePromise) {
+    let timeoutId: any;
+    const timeoutPromise = new Promise<null>((resolve) => {
+      timeoutId = setTimeout(() => resolve(null), titleTimeoutMs);
+    });
+    try {
+      resolvedTitle = await Promise.race([titlePromise, timeoutPromise]);
+    } catch {
+      resolvedTitle = null;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  // MEDIUM-2 (plan a): feed the LLM title through titleOverride so the contract
+  // (titleOverride drives the persisted title) actually holds in production,
+  // not just in tests. buildLocalDialogWritePlan → buildAgentRuntimeDialogWritePlan
+  // applies titleOverride while respecting manual titles (MEDIUM-1). This also
+  // means the persisted record AND the remote-sync ops carry the LLM title
+  // (HIGH-2b), so no separate background patch is needed.
   const plan = buildLocalDialogWritePlan({
     input: args.input,
     userId: args.userId,
-    now: args.now(),
+    now: nowMs,
     createId: args.createId,
     existingDialog,
     cwd: args.cwd,
-    ...(titleOverride ? { titleOverride } : {}),
+    ...(resolvedTitle ? { titleOverride: resolvedTitle } : {}),
   });
   await args.store.batch(plan.ops);
 
+  let tokenOps: Array<{ type: "put"; key: string; value: any }> = [];
   try {
-    await writeLocalTokenRecord({
+    tokenOps = await writeLocalTokenRecord({
       store: args.store,
       input: args.input,
       userId: args.userId,
@@ -232,7 +324,7 @@ export async function writeDialog(args: {
         env: args.env,
         fetchImpl: args.fetchImpl,
         input: args.input,
-        ops: plan.ops,
+        ops: [...plan.ops, ...tokenOps],
         output: args.output,
         userId: args.userId,
       });
@@ -319,4 +411,20 @@ export async function saveCliDialogSummary(args: {
     summaryPending: false,
     updatedAt: new Date().toISOString(),
   });
+}
+
+/**
+ * MEDIUM-1: parse titleUpdatedAt (ms epoch) from an existing dialog record for
+ * the writeDialog throttle. Mirrors dialogWritePlan.parseTitleUpdatedAtMs.
+ * Returns 0 when absent/unparseable — writeDialog treats 0 conservatively
+ * (don't regenerate when a non-empty title already exists).
+ */
+function parseTitleUpdatedAtMs(existingDialog: any): number {
+  const raw = existingDialog?.titleUpdatedAt;
+  if (typeof raw === "number" && !Number.isNaN(raw)) return raw;
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return 0;
 }

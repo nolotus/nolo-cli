@@ -57,6 +57,7 @@ import {
 // Prefer the lightweight packs module so mergeAgentToolsWithRuntime does not
 // force a full tools/index (all schemas + executors) load on the chat hot path.
 import { TOOL_PACKS, applyDisabledTools, expandEnabledPacks, resolveEffectiveEnabledPacks, expandEnabledPackPromptPatches, applyDefaultWebToolPacks, applySystemBuiltinSkillFilter, addDefaultSystemCapabilityTools } from "../tools/toolPacks";
+import { resolveAgentRecommendedSkillNames, resolveAgentRequiredPackIds } from "../tools/agentSkillConfig";
 import { canonicalizeToolNames, prioritizeToolNames } from "../tools/toolNameAliases";
 import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 import {
@@ -797,10 +798,12 @@ export const mergeAgentToolsWithRuntime = (
     // 自动注入。该注入只补 web-search 包工具（exa_search/fetchWebpage），
     // 不会旁路注入 social-reader（read_x_post/read_xhs_profile）。
     // 历史上 length>0 曾误伤；现已收紧为 some(web-search tool)。
-    const agentEnabledPacks = (agentConfig as any)?.enabledPacks;
+    // 能力来源走 agent.skills（缺失时自动从 enabledPacks 派生），
+    // 只取「完整启用」那一档——recommended 的语义就是工具不常驻。
+    const agentEnabledPacks = resolveAgentRequiredPackIds(agentConfig as any);
     const isInlineArtifact = isInlineVisualArtifactAgent(agentConfig);
     const effectiveEnabledPacks = resolveEffectiveEnabledPacks({
-      enabledPacks: Array.isArray(agentEnabledPacks) ? agentEnabledPacks : [],
+      enabledPacks: agentEnabledPacks,
       declaredOnly: isInlineArtifact,
     });
     const expandedPackTools = expandEnabledPacks(
@@ -814,8 +817,16 @@ export const mergeAgentToolsWithRuntime = (
     const recommendedSkillTools = canonicalizeToolNames(
         (agentConfig as any).recommendedSkillTools ?? []
     );
+    // 「启用」档（recommended）的能力名进「相关技能」一行。这一档的工具刻意不
+    // 常驻，所以模型必须先知道它存在、才谈得上按需 loadSkill——不给提示的话，
+    // recommended 与「禁用」在运行时就没有区别了。
+    // 对应 product-truth 的 US-1：QuickChat 里顺手改 page/doc/table，
+    // 能力要够得着但不常驻。
     const recommendedSkillHints = [
-        ...new Set(asNonEmptyStringArray((agentConfig as any).recommendedSkillHints)),
+        ...new Set([
+            ...asNonEmptyStringArray((agentConfig as any).recommendedSkillHints),
+            ...resolveAgentRecommendedSkillNames(agentConfig as any),
+        ]),
     ];
     const skillPromptPatches = [
         ...new Set([
@@ -854,10 +865,15 @@ export const mergeAgentToolsWithRuntime = (
     if (!isInlineVisualArtifactAgent(agentConfig)) {
         const viewMode = state ? selectViewMode(state) : "categories";
         if (viewMode === "all") {
+            // 全部视图没有「当前空间」：search_workspace 移除（与历史行为一致）。
+            // search_all_spaces 不再随 CORE 常驻（见 TOOL_PACKS.CORE），也不自动
+            // 注入——改为推荐 search-all-spaces 内置 skill，让模型知道可以按需
+            // loadSkill；载入后下一轮经 extraReferences 才把工具挂进工具面。
             enhancedTools.delete("search_workspace");
-            enhancedTools.add("search_all_spaces");
+            if (!recommendedSkillHints.includes("search-all-spaces")) {
+                recommendedSkillHints.push("search-all-spaces");
+            }
         } else {
-            enhancedTools.delete("search_all_spaces");
             enhancedTools.add("search_workspace");
         }
     }

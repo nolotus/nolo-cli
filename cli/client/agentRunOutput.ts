@@ -60,7 +60,12 @@ export function createCliTurnOutput(params: CliTurnOutputOptions) {
 
   const toolDisplayMode = resolveToolDisplayMode(options.env);
   const traceLocalTools = shouldEmitToolEvents(toolDisplayMode);
-  const formatToolEvent = createToolEventFormatter(toolDisplayMode);
+  // 有 dock 订阅者（TUI）时，run 的实时进展由 composer 上方的面板呈现，
+  // 进行中的 controlAgentRun status 轮询不再往 transcript 印进展卡
+  // （终态/报错/日志变化仍印）。裸 CLI 没有订阅者，行为完全不变。
+  const formatToolEvent = createToolEventFormatter(toolDisplayMode, undefined, {
+    suppressRunProgressCards: typeof options.onAgentRunStatus === "function",
+  });
   const eventMode = resolveAgentEventMode(options);
 
   let streamedAssistantText = false;

@@ -679,6 +679,8 @@ function isSearchToolName(name?: string): boolean {
     name === "glob_files" ||
     name === "glob" ||
     name === "searchWorkspace" ||
+    name === "search_workspace" ||
+    name === "search_all_spaces" ||
     name === "search"
   );
 }
@@ -889,12 +891,58 @@ function resolveLoadSkillName(event: LocalAgentToolEvent): string {
   return argName || "skill";
 }
 
+function formatTodoListForCli(
+  event: LocalAgentToolEvent,
+  colorEnabled: boolean,
+): string | undefined {
+  if (event.type !== "tool-result" || event.toolName !== "setTodoList") {
+    return undefined;
+  }
+  let raw: unknown = event.metadata?.displayData;
+  let parsed = typeof raw === "object" && raw !== null;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+      parsed = true;
+    } catch {
+      raw = undefined;
+    }
+  }
+  if (!parsed && typeof event.content === "string") {
+    try {
+      raw = JSON.parse(event.content);
+      parsed = true;
+    } catch {
+      raw = undefined;
+    }
+  }
+  const todos = Array.isArray((raw as any)?.todos)
+    ? (raw as any).todos
+    : undefined;
+  // Do not turn malformed tool output into a false "cleared" Todo state.
+  if (!todos) return undefined;
+  if (todos.length === 0) return "☑ Todo\n  (empty)\n";
+  const lines = todos.map((todo: any) => {
+    const status = todo?.status === "done"
+      ? "✓"
+      : todo?.status === "in_progress"
+        ? "◐"
+        : "○";
+    const title = typeof todo?.title === "string" ? todo.title : "Untitled task";
+    return `  ${status} ${title}`;
+  });
+  const text = [`☑ Todo (${todos.length})`, ...lines].join("\n") + "\n";
+  return colorEnabled ? themeText(text, "chrome") : text;
+}
+
 function formatCompactToolLine(
   event: LocalAgentToolEvent,
   pending: { toolName: string; argumentsPreview?: string } | undefined,
   colorEnabled: boolean
 ) {
   const toolName = event.toolName || pending?.toolName || "tool";
+  const todoBlock = formatTodoListForCli(event, colorEnabled);
+  if (todoBlock) return todoBlock;
   if (isReadToolName(toolName) && event.type === "tool-result") {
     const rawPath =
       (typeof event.metadata?.path === "string" ? event.metadata.path : undefined) ||
@@ -1034,8 +1082,13 @@ export type ToolEventFormatter = ((event: LocalAgentToolEvent) => string) & {
 
 export function createToolEventFormatter(
   mode: ToolDisplayMode,
-  colorEnabled = resolveCliColorEnabled()
+  colorEnabled = resolveCliColorEnabled(),
+  opts: { suppressRunProgressCards?: boolean } = {}
 ): ToolEventFormatter {
+  // 有 dock 面板覆盖 run 的实时进展时（TUI），进行中的纯进展轮询不再印卡；
+  // 终态收尾卡、报错卡、日志尾巴变化仍然印（transcript 需要结论与诊断）。
+  // 裸 CLI 没有面板，保持原有行为。
+  const suppressRunProgressCards = opts.suppressRunProgressCards === true;
   const pending = new Map<string, { toolName: string; argumentsPreview?: string }>();
   let readBuffer: LocalAgentToolEvent[] = [];
   let searchBuffer: LocalAgentToolEvent[] = [];
@@ -1075,9 +1128,21 @@ export function createToolEventFormatter(
     statusFold = null;
     const substance = cardSubstance(fold);
     if (lastPrintedCardByRunId.get(fold.runId) === substance) return "";
-    lastPrintedCardByRunId.set(fold.runId, substance);
     const prevLog = lastEmittedLogByRunId.get(fold.runId);
     const changed = Boolean(fold.logKey) && fold.logKey !== prevLog;
+    if (suppressRunProgressCards) {
+      // 进展已经在 dock 面板上实时呈现，纯进展轮询（toolCallCount /
+      // lastToolNames 变化）不再值一张卡片。仍然印的：终态（收尾结论）、
+      // 报错、日志尾巴变化。list/stop 等非 status 动作不走这条路，不受影响。
+      const terminal = isAgentRunTerminalStatus(fold.status);
+      if (!terminal && !fold.errorMessage && !changed) {
+        // 记账为已处理：不印卡但也不再算「新变化」，否则下一张该印的卡
+        // （比如终态卡）在合并折叠后可能被误判成与上次不同而多印。
+        lastPrintedCardByRunId.set(fold.runId, substance);
+        return "";
+      }
+    }
+    lastPrintedCardByRunId.set(fold.runId, substance);
     // Only remember a tail that was actually printed. Cards withhold the tail
     // while a run is healthy, so banking the key on every poll would mark a
     // never-shown tail as "already seen" and suppress it on the failure card —

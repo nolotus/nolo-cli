@@ -7,6 +7,7 @@ import {
   buildCliRuntimeEnv,
   buildEnvFromProfile,
   clearProfileAuthToken,
+  getDefaultProfileConfigPath,
   loadProfileConfig,
   normalizeProfileServerUrl,
   saveDefaultProfile,
@@ -64,6 +65,28 @@ describe("cli profile config", () => {
     expect(normalizeProfileServerUrl("http://us.nolo.chat/")).toBe("https://us.nolo.chat");
     expect(normalizeProfileServerUrl("https://nolo.chat")).toBe("https://nolo.chat");
     expect(normalizeProfileServerUrl("http://127.0.0.1:38123")).toBe("http://127.0.0.1:38123");
+  });
+
+  test("runtime env prefers explicit ambient agent over the saved profile agent", () => {
+    const runtimeEnv = buildCliRuntimeEnv(
+      {
+        NOLO_AGENT: "agent-ambient-luna",
+        NOLO_AGENT_NAME: "GPT-5.6 Luna",
+      } as NodeJS.ProcessEnv,
+      {
+        currentProfile: "default",
+        profiles: {
+          default: {
+            serverUrl: "https://nolo.chat",
+            agentKey: "agent-profile",
+            agentName: "app-builder",
+          },
+        },
+      },
+    );
+
+    expect(runtimeEnv.NOLO_AGENT).toBe("agent-ambient-luna");
+    expect(runtimeEnv.NOLO_AGENT_NAME).toBe("GPT-5.6 Luna");
   });
 
   test("runtime env prefers ambient AUTH_TOKEN over the saved profile token", () => {
@@ -190,5 +213,16 @@ describe("cli profile config", () => {
     expect(runtimeEnv.AUTH_TOKEN).toBe("profile-token");
     expect(runtimeEnv.NOLO_SERVER).toBe("https://us.nolo.chat");
     expect(runtimeEnv.BASE_URL).toBe("https://us.nolo.chat");
+  });
+
+  test("getDefaultProfileConfigPath honors NOLO_HOME so tests never touch ~/.nolo", () => {
+    const prev = process.env.NOLO_HOME;
+    try {
+      process.env.NOLO_HOME = "/tmp/nolo-isolated-home";
+      expect(getDefaultProfileConfigPath()).toBe("/tmp/nolo-isolated-home/config.json");
+    } finally {
+      if (prev === undefined) delete process.env.NOLO_HOME;
+      else process.env.NOLO_HOME = prev;
+    }
   });
 });

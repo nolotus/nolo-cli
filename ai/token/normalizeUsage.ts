@@ -95,6 +95,13 @@ export const normalizeUsage = (usage: RawUsage): NormalizedUsage => {
   const billingServiceTier = asOptionalTrimmedString(usage.billing_service_tier);
   const billingEstimated =
     "billing_estimated" in usage && usage.billing_estimated === true;
+  // Chat proxy server-billed truth anchor (server_billed + provider_call_id).
+  // Propagate verbatim so prepareTokenUsageData can mark the token record
+  // stats-only and so the client echoes provider_call_id back to the server
+  // for independent server-side double-charge verification in handleToken.
+  const serverBilled =
+    "server_billed" in usage && usage.server_billed === true;
+  const providerCallId = asOptionalTrimmedString(usage.provider_call_id);
   const imageGenerationCount =
     "image_generation_count" in usage
       ? asOptionalFiniteNumber(usage.image_generation_count)
@@ -125,6 +132,8 @@ export const normalizeUsage = (usage: RawUsage): NormalizedUsage => {
       ? { billing_service_tier: billingServiceTier }
       : {}),
     ...(billingEstimated ? { billing_estimated: true } : {}),
+    ...(serverBilled ? { server_billed: true } : {}),
+    ...(providerCallId ? { provider_call_id: providerCallId } : {}),
     ...(xaiTicks !== undefined ? { cost_in_usd_ticks: xaiTicks } : {}),
   };
 };

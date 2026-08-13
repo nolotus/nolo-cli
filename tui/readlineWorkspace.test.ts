@@ -35,7 +35,6 @@ import {
   visibleWidth,
   wrapTextToLines,
   wrapTranscriptLine,
-  buildTuiRunOverlay,
 } from "./readlineWorkspace";
 import { getCliLocale, setCliLocale, t } from "./i18n";
 import type { ListedDialog } from "../dialogCommands";
@@ -1283,7 +1282,96 @@ describe("scroll-aware history", () => {
     expect(fullOutput).toContain(TAIL);
   });
 
-  test("busy /switch switches immediately for the next turn (not queued) and warns about token cost", async () => {
+  test("executes /theme locally during busy turn without enqueuing, while normal text remains queued", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    let resolveFirstTurn: (() => void) | null = null;
+    const firstTurnPromise = new Promise<void>((resolve) => {
+      resolveFirstTurn = resolve;
+    });
+
+    let turnCount = 0;
+    const turnsProcessed: string[] = [];
+
+    const HEAD = "HEAD-part-of-the-reply";
+    const TAIL = "TAIL-part-of-the-reply";
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount++;
+        turnsProcessed.push(opt.message);
+        if (turnCount === 1) {
+          opt.output.write(HEAD);
+          await new Promise((r) => setTimeout(r, 30));
+          await firstTurnPromise;
+          opt.output.write(TAIL);
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    input.write("start turn 1\r");
+
+    while (turnCount < 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    input.write("/theme light\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const outputTextAfterTheme = Buffer.concat(chunks).toString("utf8");
+    expect(outputTextAfterTheme).toContain(t("themeBrightnessSwitched", "light"));
+
+    input.write("normal queued text\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    resolveFirstTurn!();
+    await new Promise((r) => setTimeout(r, 50));
+
+    while (turnCount < 2) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    input.write("/exit\r");
+    input.end();
+
+    await Promise.race([
+      workspacePromise,
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
+
+    expect(turnsProcessed).toEqual(["start turn 1", "normal queued text"]);
+
+    const fullOutput = Buffer.concat(chunks).toString("utf8");
+    expect(fullOutput).toContain(HEAD);
+    expect(fullOutput).toContain(TAIL);
+  });
+
+  test("executes /theme refresh locally during busy turn without enqueuing or model picker warning", async () => {
     const input = new PassThrough() as PassThrough & {
       isTTY?: boolean;
       setRawMode?: (mode: boolean) => void;
@@ -1332,14 +1420,103 @@ describe("scroll-aware history", () => {
     });
 
     input.write("start turn 1\r");
+
     while (turnCount < 1) {
       await new Promise((r) => setTimeout(r, 10));
     }
     await new Promise((r) => setTimeout(r, 30));
 
-    // Busy: switch to a known agent by name. Must apply locally right now
+    input.write("/theme refresh\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const outputTextAfterTheme = Buffer.concat(chunks).toString("utf8");
+    expect(outputTextAfterTheme).not.toContain("Model picker isn't available");
+    expect(outputTextAfterTheme).toMatch(/(refreshed|failed|re-detected|could not detect|已重新检测|无法检测)/i);
+
+    resolveFirstTurn!();
+    await new Promise((r) => setTimeout(r, 50));
+
+    input.write("/exit\r");
+    input.end();
+
+    await Promise.race([
+      workspacePromise,
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
+
+    expect(turnsProcessed).toEqual(["start turn 1"]);
+  });
+
+  test("busy /switch auto persists and routes the next turn through auto", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    let resolveFirstTurn: (() => void) | null = null;
+    const firstTurnPromise = new Promise<void>((resolve) => {
+      resolveFirstTurn = resolve;
+    });
+
+    let turnCount = 0;
+    const turnsProcessed: string[] = [];
+    const seenAgentKeys: string[] = [];
+    const seenDialogAgentModes: Array<"auto" | "fixed" | undefined> = [];
+    const savedSelections: Array<{ agentKey: string; agentName: string }> = [];
+    const env: NodeJS.ProcessEnv = {
+      NOLO_AGENT: "agent-pub-01APPBUILDER00000001YAII3I",
+      NOLO_AGENT_NAME: "app-builder",
+    };
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env,
+      saveAgentSelection: (selection) => {
+        savedSelections.push(selection);
+        return null;
+      },
+      agentRunner: async (opt) => {
+        turnCount++;
+        turnsProcessed.push(opt.message);
+        seenAgentKeys.push(opt.agentKey);
+        seenDialogAgentModes.push(opt.dialogAgentMode);
+        if (turnCount === 1) {
+          opt.output.write("HEAD");
+          await new Promise((r) => setTimeout(r, 30));
+          await firstTurnPromise;
+          opt.output.write("TAIL");
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return { exitCode: 0, dialogId: "busy-switch-dialog" };
+      },
+    });
+
+    input.write("start turn 1\r");
+    while (turnCount < 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Busy: switch back to auto. Must apply locally and persist right now
     // (the next turn uses it) and MUST NOT be enqueued as a chat turn.
-    input.write("/switch app-builder\r");
+    input.write("/switch auto\r");
     await new Promise((r) => setTimeout(r, 50));
 
     // Busy: bare /switch wants the interactive picker, which can't open
@@ -1348,13 +1525,21 @@ describe("scroll-aware history", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     const outputAfterSwitch = Buffer.concat(chunks).toString("utf8");
-    expect(outputAfterSwitch).toContain("Switched to app-builder");
+    expect(outputAfterSwitch).toContain("Switched to auto");
     // The token-cost / next-turn notice for a successful busy switch.
     expect(outputAfterSwitch).toContain("may consume more tokens");
     // The picker-unavailable notice for the bare /switch.
     expect(outputAfterSwitch).toContain(
       "isn't available while a reply is running",
     );
+    expect(savedSelections).toEqual([
+      {
+        agentKey: "agent-pub-01NOLOAPPBLD000000019KCKT0",
+        agentName: "auto",
+      },
+    ]);
+    expect(env.NOLO_AGENT).toBe("agent-pub-01NOLOAPPBLD000000019KCKT0");
+    expect(env.NOLO_AGENT_NAME).toBe("auto");
 
     // Normal text while busy is still queued for after the turn.
     input.write("normal queued text\r");
@@ -1376,8 +1561,13 @@ describe("scroll-aware history", () => {
 
     // Neither /switch form reached the agent runner: only the real user
     // messages did. A queued `/switch` would have been drained as a chat
-    // message and shown up here as "/switch app-builder".
+    // message and shown up here as "/switch auto".
     expect(turnsProcessed).toEqual(["start turn 1", "normal queued text"]);
+    expect(seenAgentKeys).toEqual([
+      "agent-pub-01APPBUILDER00000001YAII3I",
+      "agent-pub-01NOLOAPPBLD000000019KCKT0",
+    ]);
+    expect(seenDialogAgentModes).toEqual(["fixed", "auto"]);
   });
 
   // Regression for "在 TUI 对话时 agent 429 后 /agent 切换不生效"。
@@ -1408,10 +1598,9 @@ describe("scroll-aware history", () => {
       chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
     });
 
-    // The first turn (no authToken) auto-routes to the fallback tier for a
-    // complex message → the GLM-5.2 (quality) tier agent key. That key gets
-    // cached against the dialog. The bug: the second turn reused that cached
-    // key even after the user switched agents.
+    // The first turn auto-routes to the flash tier key（纯二选一：无图 → flash）。
+    // That key gets cached against the dialog. The bug: the second turn reused
+    // that cached key even after the user switched agents.
     const switchedAgentKey = "agent-pub-01APPBUILDER00000001YAII3I";
 
     let turnCount = 0;
@@ -1421,8 +1610,8 @@ describe("scroll-aware history", () => {
       scriptDir: "",
       input,
       output,
-      // No authToken → classifyCliAutoRoute returns the fallback tier without
-      // any network call; the routed tier key is still cached per dialog.
+      // classifyCliAutoRoute 现为同步纯二选一（无 LLM 调用、无网络请求）；
+      // 路由出的 tier key 仍按对话缓存。
       env: {},
       agentRunner: async (opt) => {
         turnCount++;
@@ -1432,7 +1621,7 @@ describe("scroll-aware history", () => {
       },
     });
 
-    // Turn 1: a complex-ish message → fallback tier = "quality" (GLM-5.2).
+    // Turn 1: a text message → auto-routes to the flash tier key.
     input.write("implement a distributed transaction coordinator\r");
     while (turnCount < 1) {
       await new Promise((r) => setTimeout(r, 10));
@@ -1456,8 +1645,8 @@ describe("scroll-aware history", () => {
     await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
 
     // The second turn MUST run on the switched agent. Before the fix it ran on
-    // the cached first-turn (quality) key because autoRouteByDialog overrode
-    // the user's /agent switch.
+    // the cached first-turn key because autoRouteByDialog overrode the user's
+    // /agent switch.
     expect(seenAgentKeys[1]).toBe(switchedAgentKey);
     // And the switch was actually acknowledged to the user.
     expect(Buffer.concat(chunks).toString("utf8")).toContain("Switched to");
@@ -2508,94 +2697,6 @@ describe("readlineWorkspace paste store clearance contract", () => {
   });
 });
 
-describe("run-overlay TUI adapter (buildTuiRunOverlay)", () => {
-  test("returns null when no parentDialogId is given", () => {
-    expect(buildTuiRunOverlay(undefined)).toBeNull();
-  });
-
-  test("returns null when the dialog has no runs", async () => {
-    const { tmp, restore } = await withNoloHomeDir();
-    try {
-      expect(buildTuiRunOverlay("dlg-empty")).toBeNull();
-    } finally {
-      restore();
-      void tmp;
-    }
-  });
-
-  test("builds a grouped presentation for runs of the dialog", async () => {
-    const { dir, restore } = await withNoloHomeDir();
-    try {
-      const { mkdirSync, writeFileSync } = await import("node:fs");
-      const runsDir = join(dir, "runs");
-      mkdirSync(runsDir, { recursive: true });
-      const base = "2025-01-01T00:00:00.000Z";
-      const recs = [
-        { runId: "r1", agentKey: "agent-a", parentDialogId: "dlg-1", startedAt: base, status: "running", logPath: join(runsDir, "r1.log") },
-        { runId: "r2", agentKey: "agent-b", parentDialogId: "dlg-1", startedAt: base, status: "done", logPath: join(runsDir, "r2.log") },
-        { runId: "other", agentKey: "agent-x", parentDialogId: "dlg-2", startedAt: base, status: "failed", logPath: join(runsDir, "other.log") },
-      ];
-      for (const rec of recs) {
-        writeFileSync(join(runsDir, `${rec.runId}.json`), JSON.stringify(rec));
-      }
-      const overlay = buildTuiRunOverlay("dlg-1");
-      expect(overlay).not.toBeNull();
-      expect(overlay).toContain("▶ 1 个正在运行");
-      expect(overlay).toContain("✅ 1 个已完成");
-      // Runs of other dialogs are excluded.
-      expect(overlay).not.toContain("agent-x");
-    } finally {
-      restore();
-      void dir;
-    }
-  });
-
-  // The composer dock now shows live run state, so re-listing the same runs
-  // after every turn is duplication. With a memory of what it already said, the
-  // overlay reports only the transitions the dock cannot deliver.
-  test("says nothing when no run's status has moved since last time", async () => {
-    const { dir, restore } = await withNoloHomeDir();
-    try {
-      const { mkdirSync, writeFileSync } = await import("node:fs");
-      const runsDir = join(dir, "runs");
-      mkdirSync(runsDir, { recursive: true });
-      const base = "2025-01-01T00:00:00.000Z";
-      const write = (runId: string, status: string) =>
-        writeFileSync(
-          join(runsDir, `${runId}.json`),
-          JSON.stringify({
-            runId,
-            agentKey: "agent-a",
-            parentDialogId: "dlg-3",
-            startedAt: base,
-            status,
-            logPath: join(runsDir, `${runId}.log`),
-          })
-        );
-      write("r1", "running");
-      const reported = new Map<string, string>();
-
-      expect(buildTuiRunOverlay("dlg-3", reported)).toContain("▶ 1 个正在运行");
-      // Nothing moved: the dock is already showing this run, ticking.
-      expect(buildTuiRunOverlay("dlg-3", reported)).toBeNull();
-
-      // The transition is exactly what the user may have missed.
-      write("r1", "done");
-      expect(buildTuiRunOverlay("dlg-3", reported)).toContain("✅ 1 个已完成");
-      expect(buildTuiRunOverlay("dlg-3", reported)).toBeNull();
-
-      // A newly spawned run is news even while the old one sits unchanged.
-      write("r2", "running");
-      const third = buildTuiRunOverlay("dlg-3", reported);
-      expect(third).toContain("▶ 1 个正在运行");
-      expect(third).not.toContain("已完成");
-    } finally {
-      restore();
-      void dir;
-    }
-  });
-});
-
 describe("terminal window title sync", () => {
   test("emits OSC window title sequences when output is TTY and NOLO_TUI_TITLE is not 0/false", async () => {
     const input = new PassThrough();
@@ -2655,7 +2756,7 @@ describe("terminal window title sync", () => {
 async function withNoloHomeDir(): Promise<{ dir: string; tmp: string; restore: () => void }> {
   const { mkdtemp } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
-  const dir = await mkdtemp(join(tmpdir(), "nolo-overlay-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "nolo-run-wake-test-"));
   const prev = process.env.NOLO_HOME;
   process.env.NOLO_HOME = dir;
   const restore = () => {
@@ -2664,3 +2765,191 @@ async function withNoloHomeDir(): Promise<{ dir: string; tmp: string; restore: (
   };
   return { dir, tmp: dir, restore };
 }
+
+// 终态唤醒（runCompletionWatcher → runRegistryPoller → workspace）的端到端
+// 接线测试。整条链用真家伙驱动：真 poller（1s 真实 interval）、真
+// ~/.nolo/runs/*.json（写入临时 NOLO_HOME）、真 dock 订阅——只有 agentRunner
+// 是假的。所以每个用例都要等得起「下一轮 tick」（最长 ~1s）。
+describe("run completion wake (TUI 终态唤醒)", () => {
+  /** 等 cond 为真，最长 timeoutMs。 */
+  async function waitFor(cond: () => boolean, timeoutMs = 6000): Promise<void> {
+    const start = Date.now();
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  function makeIo() {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    return { input, output, chunks };
+  }
+
+  function makeRecordWriter(dir: string, runId: string, parentDialogId: string) {
+    return async (status: string) => {
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const runsDir = join(dir, "runs");
+      mkdirSync(runsDir, { recursive: true });
+      writeFileSync(
+        join(runsDir, `${runId}.json`),
+        JSON.stringify({
+          runId,
+          agentKey: "agent-user-worker",
+          agentName: "Worker",
+          startedAt: new Date().toISOString(),
+          status,
+          logPath: join(runsDir, `${runId}.log`),
+          parentDialogId,
+          ...(status !== "running"
+            ? { endedAt: new Date().toISOString(), exitCode: 0 }
+            : {}),
+        })
+      );
+    };
+  }
+
+  test("run 干完时对话正在进行：唤醒消息入队，当前 turn 结束后自动继续", async () => {
+    const { dir, restore } = await withNoloHomeDir();
+    try {
+      const writeRecord = await makeRecordWriter(dir, "run-wake-1", "dlg-wake");
+      const { input, output } = makeIo();
+      let turnCount = 0;
+      const turnsProcessed: string[] = [];
+      let releaseSecondTurn: (() => void) | null = null;
+      const secondTurnGate = new Promise<void>((resolve) => {
+        releaseSecondTurn = resolve;
+      });
+
+      const workspacePromise = startTuiWorkspace({
+        scriptDir: "",
+        input,
+        output,
+        env: {},
+        agentRunner: async (opt: any) => {
+          turnCount++;
+          turnsProcessed.push(opt.message);
+          if (turnCount === 2) {
+            // 这一轮扮演「派发」：落一条 running 记录 + 把 run 挂上面板
+            // （onAgentRunStatus 是 dock 的模型侧入口，也是 poller 的起表信号），
+            // 然后挂住不放，模拟 turn 进行中。
+            await writeRecord("running");
+            opt.onAgentRunStatus?.({
+              runId: "run-wake-1",
+              status: "running",
+              agentName: "Worker",
+              logKey: "",
+            });
+            await secondTurnGate;
+          }
+          return { exitCode: 0, dialogId: "dlg-wake" };
+        },
+      } as any);
+
+      // turn 1：建立 dialogId = dlg-wake。
+      input.write("hello\r");
+      await waitFor(() => turnCount === 1);
+      // 等 turn 1 的收尾（busy 释放）完成再发下一轮。
+      await new Promise((r) => setTimeout(r, 200));
+
+      // turn 2：派发并挂住 → busy。
+      input.write("dispatch\r");
+      await waitFor(() => turnCount === 2);
+      // 等至少一轮 poller tick，让 watcher 先观测到 running（转变检测的前提）。
+      await new Promise((r) => setTimeout(r, 1300));
+
+      // run 在 turn 2 进行中干完了。
+      await writeRecord("done");
+      // 等一轮 tick：watcher 应当检测到 done 并触发唤醒——但 busy，所以只能入队，
+      // 绝不能就地开第三个 turn。
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(turnCount).toBe(2);
+
+      // 当前 turn 结束 → notifyTurnEnd 的 drain 把唤醒消息作为新 turn 跑。
+      releaseSecondTurn!();
+      await waitFor(() => turnCount === 3);
+      expect(turnsProcessed[2]).toContain("run-wake-1");
+      expect(turnsProcessed[2]).toContain("终态");
+      expect(turnsProcessed[2]).toContain("done");
+
+      input.write("/exit\r");
+      input.end();
+      await Promise.race([
+        workspacePromise,
+        new Promise((r) => setTimeout(r, 3000)),
+      ]);
+    } finally {
+      restore();
+    }
+  }, 20000);
+
+  test("run 干完时对话空闲：唤醒消息直接作为新 turn 跑", async () => {
+    const { dir, restore } = await withNoloHomeDir();
+    try {
+      const writeRecord = await makeRecordWriter(dir, "run-wake-2", "dlg-wake-2");
+      const { input, output } = makeIo();
+      let turnCount = 0;
+      const turnsProcessed: string[] = [];
+
+      const workspacePromise = startTuiWorkspace({
+        scriptDir: "",
+        input,
+        output,
+        env: {},
+        agentRunner: async (opt: any) => {
+          turnCount++;
+          turnsProcessed.push(opt.message);
+          if (turnCount === 2) {
+            await writeRecord("running");
+            opt.onAgentRunStatus?.({
+              runId: "run-wake-2",
+              status: "running",
+              agentName: "Worker",
+              logKey: "",
+            });
+          }
+          return { exitCode: 0, dialogId: "dlg-wake-2" };
+        },
+      } as any);
+
+      input.write("hello\r");
+      await waitFor(() => turnCount === 1);
+      await new Promise((r) => setTimeout(r, 200));
+      input.write("dispatch\r");
+      await waitFor(() => turnCount === 2);
+      // turn 2 收尾 + 一轮 tick 观测 running。
+      await new Promise((r) => setTimeout(r, 1300));
+
+      // 空闲时 run 干完 → 下一个 tick 直接唤醒一个新 turn（不需要任何人按 Enter）。
+      await writeRecord("done");
+      await waitFor(() => turnCount === 3);
+      expect(turnsProcessed[2]).toContain("run-wake-2");
+      expect(turnsProcessed[2]).toContain("终态");
+
+      input.write("/exit\r");
+      input.end();
+      await Promise.race([
+        workspacePromise,
+        new Promise((r) => setTimeout(r, 3000)),
+      ]);
+    } finally {
+      restore();
+    }
+  }, 20000);
+});

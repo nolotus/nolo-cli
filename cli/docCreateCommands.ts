@@ -50,9 +50,7 @@ Options:
   --tools '["readDoc"]'                 Tool names this skill expects.
   --required-skills '["skill-a"]'       Required skill references.
   --recommended-skills '["skill-b"]'    Recommended skill references.
-  --preferred-agents '["agent-key"]'    Preferred agent keys.
   --trigger-mode explicit|required|recommended
-  --budget-tier low|medium|high
   --prompt-patch <text>
   --page | --kind page                  Create a normal page instead of a skill-backed page.
   --sync local,main,us                  Choose write targets. Values may also be full URLs.
@@ -128,14 +126,8 @@ async function runCreateCommand(
             ...(parseJsonArg<string[]>(readOption(args, "--recommended-skills"), []).length
               ? { recommendedSkills: parseJsonArg<string[]>(readOption(args, "--recommended-skills"), []) }
               : {}),
-            ...(parseJsonArg<string[]>(readOption(args, "--preferred-agents"), []).length
-              ? { preferredAgents: parseJsonArg<string[]>(readOption(args, "--preferred-agents"), []) }
-              : {}),
             ...(readOption(args, "--trigger-mode")
               ? { triggerMode: readOption(args, "--trigger-mode") as "explicit" | "required" | "recommended" }
-              : {}),
-            ...(readOption(args, "--budget-tier")
-              ? { budgetTier: readOption(args, "--budget-tier") as "low" | "medium" | "high" }
               : {}),
             ...(readOption(args, "--prompt-patch") ? { promptPatch: readOption(args, "--prompt-patch") } : {}),
           },

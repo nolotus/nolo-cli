@@ -24,19 +24,15 @@ export function renderDialogTitle(
   colorEnabled = resolveCliColorEnabled(),
 ): string {
   if (!colorEnabled) return title;
-  // Accent + bold: dialog titles need to be immediately scannable as the
-  // header of a modal overlay. The old chrome-only treatment was too close
-  // to the row detail text and didn't assert the frame boundary.
-  return `\x1b[1m${themeColorSequence("accent")}${title}\x1b[0m`;
+  // Accent without bold: keeps dialog titles prominent without conflicting
+  // with history user turns (which uniquely pair accent + bold + ┃ gutter).
+  return `${themeColorSequence("accent")}${title}\x1b[0m`;
 }
 
 /**
  * One selectable row. The focused row reads as a selection bar — a
  * low-contrast surface fill behind accent foreground text — so the cursor is
- * findable at a glance instead of relying on the `❯` glyph alone. Terminals
- * without truecolor get accent + bold instead: ANSI-16 has no safe subtle
- * background (see surfaceBackgroundSequence), and a solid inverse block
- * would invert readability.
+ * findable at a glance instead of relying on the `❯` glyph alone.
  */
 export function renderDialogRow(
   args: {
@@ -55,7 +51,7 @@ export function renderDialogRow(
     : "";
   const row = `${marker} ${checkbox}${args.label}${detail}`;
   if (!args.focused || !colorEnabled) return row;
-  return `${surfaceBackgroundSequence()}${themeColorSequence("accent")}\x1b[1m${row}\x1b[0m`;
+  return `${surfaceBackgroundSequence()}${themeColorSequence("accent")}${row}\x1b[0m`;
 }
 
 /** "... N more above/below" affordance shown when the list is windowed. */

@@ -17,7 +17,7 @@ import {
 import {
   buildLoadSkillExecutor,
   buildNoloWorkspaceCliToolExecutors,
-} from "../../agent-runtime/noloWorkspaceTools";
+} from "../../agent-runtime/noloWorkspaceTools.node";
 import { readXPostFunc } from "../../ai/tools/readXPostTool";
 import { readXhsProfileFunc } from "../../ai/tools/readXhsProfileTool";
 import type {
@@ -32,6 +32,7 @@ import {
   createCliControlAgentRunExecutor,
   createCliStartAgentRunExecutor,
 } from "./cliAgentRunToolExecutors";
+import { setTodoListFunc } from "../../ai/tools/agent/setTodoListTool";
 
 export type ReadToolFn = (
   args: Record<string, unknown>,
@@ -303,6 +304,16 @@ export function buildLocalToolExecutors(args: {
     controlAgentRun: createCliControlAgentRunExecutor({
       env: args.env,
     }),
+    setTodoList: async (call: any) => {
+      const parsedArgs = typeof call?.arguments === "string"
+        ? (() => { try { return JSON.parse(call.arguments); } catch { return {}; } })()
+        : call?.arguments || {};
+      const res = await setTodoListFunc(parsedArgs);
+      return {
+        content: JSON.stringify(res.rawData),
+        metadata: { displayData: res.displayData },
+      };
+    },
     ...(args.pastedTextStore
       ? { readPastedText: createReadPastedTextExecutor(args.pastedTextStore) }
       : {}),

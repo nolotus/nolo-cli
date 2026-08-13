@@ -51,6 +51,30 @@ export const getPrimaryDialogAgentId = (
     | undefined,
 ): string | null => getDialogAgentIds(dialogConfig)[0] ?? null;
 
+export const getActiveDialogAgentId = (
+  dialogConfig:
+    | DialogConfig
+    | (LegacyDialogConfig & { cybots?: string[]; activeAgentKey?: string })
+    | null
+    | undefined,
+  defaultAgentId?: string,
+): string | null => {
+  if (!dialogConfig) return defaultAgentId ?? null;
+  const activeKey = normalizeAgentId(dialogConfig.activeAgentKey);
+  if (activeKey) return activeKey;
+  // 显式 primary 优先于 cybots[0]（与 getPrimaryDialogAgentId 一致）：
+  // activeAgentKey 只在显式切换后存在，未切换的 dialog 读到这里时
+  // 行为必须与旧 primary 完全一致，避免 cybots[0] ≠ primaryAgentKey
+  // 的历史数据在升级后漂移。
+  const primaryKey = normalizeAgentId(dialogConfig.primaryAgentKey);
+  if (primaryKey) return primaryKey;
+  if (Array.isArray(dialogConfig.cybots) && dialogConfig.cybots.length > 0) {
+    const firstCybot = normalizeAgentId(dialogConfig.cybots[0]);
+    if (firstCybot) return firstCybot;
+  }
+  return defaultAgentId ?? null;
+};
+
 export const addDialogAgentIds = (
   existingAgentIds: string[],
   nextAgentIds: string[],

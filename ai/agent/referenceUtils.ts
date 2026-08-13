@@ -1,6 +1,7 @@
 import type { AppDispatch } from "../../app/store";
 import type { ReferenceItem } from "../../app/types";
 import { read } from "../../database/dbSlice";
+import { resolveBuiltinSkillPage } from "../skills/builtinSkillRegistry";
 import {
   extractRuntimePageCapabilities,
   resolveSkillGraphFromRoots,
@@ -58,6 +59,13 @@ const loadContentsByKeys = async (
         if (content) contentByKey.set(dbKey, content);
         return;
       }
+      // 内置 skill 的真相在代码里，不查库——既省一次读，也避免 DB 里的物化
+      // 副本相对代码变旧（见 builtinSkillRegistry 的说明）。
+      const builtin = resolveBuiltinSkillPage(dbKey);
+      if (builtin) {
+        contentByKey.set(dbKey, builtin);
+        return;
+      }
       try {
         const content = await dispatch(read({ dbKey })).unwrap();
         if (content) contentByKey.set(dbKey, content);
@@ -88,6 +96,8 @@ dispatch: AppDispatch)
     references.
     filter((ref) => ref?.dbKey).
     map(async (ref) => {
+      const builtin = resolveBuiltinSkillPage(ref.dbKey);
+      if (builtin) return { ref, content: builtin };
       try {
         const content = await dispatch(read({ dbKey: ref.dbKey })).unwrap();
         return { ref, content };

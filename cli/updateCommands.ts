@@ -392,6 +392,126 @@ echo "nolo updated to ${installDir}/nolo"
   return exitCode;
 }
 
+// ─── Update availability check ─────────────────────────────────────────────
+// AI-assisted development ships new CLI versions constantly (alpha channel
+// pushes a release on every merge), so the TUI welcome page nudges users to
+// upgrade when the npm dist-tag for their channel is ahead of the installed
+// version. The check is best-effort: any failure (offline, registry hiccup,
+// malformed payload) resolves to null so the TUI stays silent rather than
+// nagging on flaky networks.
+
+export type CliUpdateInfo = {
+  latestVersion: string;
+  channel: CliReleaseChannel;
+};
+
+/** Set NOLO_CLI_NO_UPDATE_CHECK=1 to disable the startup update check. */
+export const NOLO_UPDATE_CHECK_KILL_SWITCH = "NOLO_CLI_NO_UPDATE_CHECK";
+
+type ParsedVersion = { main: number[]; pre: string[] };
+
+function parseCliVersion(raw: string): ParsedVersion | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(raw.trim());
+  if (!match) return null;
+  return {
+    main: [Number(match[1]), Number(match[2]), Number(match[3])],
+    pre: match[4] ? match[4].split(".") : [],
+  };
+}
+
+/**
+ * Compare two CLI versions ("0.24.0", "0.24.0-alpha.5") as semver-ish,
+ * returning -1 / 0 / 1. Pre-release suffixes sort below the release they
+ * prefix ("0.24.0-alpha.5" < "0.24.0"), matching npm dist-tag semantics so
+ * the alpha channel can still surface a newer alpha.
+ */
+export function compareCliVersions(a: string, b: string): number {
+  const pa = parseCliVersion(a);
+  const pb = parseCliVersion(b);
+  // Malformed input falls back to lexicographic order instead of NaN poison.
+  if (!pa || !pb) return a.localeCompare(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa.main[i] !== pb.main[i]) return pa.main[i] < pb.main[i] ? -1 : 1;
+  }
+  if (pa.pre.length === 0 && pb.pre.length === 0) return 0;
+  if (pa.pre.length === 0) return 1;
+  if (pb.pre.length === 0) return -1;
+  const len = Math.max(pa.pre.length, pb.pre.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    if (x === y) continue;
+    const xn = /^\d+$/.test(x) ? Number(x) : NaN;
+    const yn = /^\d+$/.test(y) ? Number(y) : NaN;
+    if (!Number.isNaN(xn) && !Number.isNaN(yn)) return xn < yn ? -1 : 1;
+    if (!Number.isNaN(xn)) return -1; // numeric identifiers sort below alphanumeric
+    if (!Number.isNaN(yn)) return 1;
+    return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+export type CliUpdateCheckOptions = {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+};
+
+/**
+ * Best-effort check against the npm registry for a newer `nolo-cli` on the
+ * channel implied by the server origin (us.nolo.chat → alpha, else latest).
+ * Resolves to null when there is no newer version or the check cannot
+ * complete — callers must treat null as "no prompt".
+ */
+export async function checkForCliUpdate(
+  currentVersion: string | undefined,
+  serverUrl?: string | null,
+  options: CliUpdateCheckOptions = {},
+): Promise<CliUpdateInfo | null> {
+  const env = options.env ?? process.env;
+  // per-key fallback 与 refreshGitStatus 的 kill switch 一致：显式 env 缺键时
+  // 仍尊重进程级开关（workspace 测试常传 env: {}）。
+  if (
+    (env[NOLO_UPDATE_CHECK_KILL_SWITCH] ?? process.env[NOLO_UPDATE_CHECK_KILL_SWITCH]) === "1"
+  ) {
+    return null;
+  }
+  // 当前版本缺失或不可解析（本地开发/未知安装）时不提示，避免误报。
+  if (!currentVersion || !parseCliVersion(currentVersion)) return null;
+
+  const channel = getCliInstallChannel(serverUrl);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 2000;
+
+  try {
+    const res = await fetchImpl(
+      `https://registry.npmjs.org/nolo-cli/${channel}`,
+      {
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: { accept: "application/json" },
+      },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: string };
+    const latestVersion = data.version;
+    // 两侧版本都必须可解析才比较：registry 返回非法版本（或恶意 payload）
+    // 时不得进入字典序 fallback，否则可能把垃圾字符串当成"更新版本"误报。
+    if (
+      !latestVersion ||
+      !parseCliVersion(latestVersion) ||
+      compareCliVersions(latestVersion, currentVersion) <= 0
+    ) {
+      return null;
+    }
+    return { latestVersion, channel };
+  } catch {
+    // Offline / timeout / malformed payload: stay silent, never nag.
+    return null;
+  }
+}
+
 export async function runSelfUpdate(
   outputOrOptions?: NodeJS.WritableStream | RunSelfUpdateOptions,
 ) {

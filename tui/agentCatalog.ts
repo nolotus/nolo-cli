@@ -120,7 +120,6 @@ function listedAgentToCatalogEntry(agent: ListedAgent): AgentCatalogEntry {
 
 export function mergeCatalogEntries(
   currentKey: string,
-  platformAgents: AgentCatalogEntry[],
   privateAgents: AgentCatalogEntry[],
   favoritedAtByKey: Record<string, number> = {},
 ) {
@@ -134,26 +133,27 @@ export function mergeCatalogEntries(
     merged.push(favoritedAt ? { ...entry, favoritedAt } : entry);
   };
 
-  const current =
-    [...platformAgents, ...privateAgents].find((entry) => entry.key === currentKey) ??
-    null;
+  const current = privateAgents.find((entry) => entry.key === currentKey) ?? null;
   if (current) push(current);
 
-  for (const entry of platformAgents) {
-    if (entry.key !== currentKey) push(entry);
-  }
-
-  const sortablePrivate: SortableAgentItem[] = privateAgents.map((entry) => ({
-    key: entry.key,
-    favoritedAt: favoritedAtByKey[entry.key],
-    isOwned: true,
-    updatedAt: entry.updatedAt ?? 0,
-  }));
+  // The switcher is a personal shortlist: show favorites plus the current
+  // private agent when it has not been favorited yet. Platform defaults are
+  // not injected into this list.
+  const sortablePrivate: SortableAgentItem[] = privateAgents
+    .filter((entry) => favoritedAtByKey[entry.key] !== undefined)
+    .map((entry) => ({
+      key: entry.key,
+      favoritedAt: favoritedAtByKey[entry.key],
+      isOwned: true,
+      updatedAt: entry.updatedAt ?? 0,
+    }));
   const sortedKeys = sortAgentsFavoriteOwnedPublic(sortablePrivate);
   const sortedKeyOrder = new Map(sortedKeys.map((item, i) => [item.key, i]));
-  const sortedPrivate = [...privateAgents].sort(
-    (a, b) => (sortedKeyOrder.get(a.key) ?? 0) - (sortedKeyOrder.get(b.key) ?? 0)
-  );
+  const sortedPrivate = privateAgents
+    .filter((entry) => favoritedAtByKey[entry.key] !== undefined)
+    .sort(
+      (a, b) => (sortedKeyOrder.get(a.key) ?? 0) - (sortedKeyOrder.get(b.key) ?? 0)
+    );
   for (const entry of sortedPrivate) {
     if (entry.key !== currentKey) push(entry);
   }
@@ -232,7 +232,6 @@ export async function loadAgentCatalog(args: {
 
   const entries = mergeCatalogEntries(
     args.currentKey,
-    resolveCatalogPlatformAgents(env),
     rawData.privateAgents,
     rawData.favoritedAtByKey,
   );
@@ -255,7 +254,6 @@ function refreshAgentCatalogInBackground(
     .then((rawData) => {
       const entries = mergeCatalogEntries(
         args.currentKey,
-        resolveCatalogPlatformAgents(env),
         rawData.privateAgents,
         rawData.favoritedAtByKey,
       );
@@ -270,41 +268,18 @@ function refreshAgentCatalogInBackground(
 }
 
 /**
- * 用本地 DB 缓存快速填充内存缓存（at: 0 标记为过期，触发 SWR 后台刷新）。
- * 避免冷启动后首次 /agent 因网络 prefetch 未完成而闪烁 "Loading agents…"。
+ * Local DB prefill is intentionally disabled for the favorites-only switcher.
+ * Cached Agent records do not contain authoritative favorite metadata, so using
+ * them would briefly show agents the user did not select.
  */
-export async function prefillCatalogFromLocalDb(args: {
+export async function prefillCatalogFromLocalDb(_args: {
   env?: EnvLike;
-  /** 测试注入：用假的 DB 替代 getReadableCliDb。生产中 undefined。 */
   getDb?: () => Promise<unknown>;
 }): Promise<void> {
-  const env = args.env ?? process.env;
-  const authToken = resolveAuthToken([], env);
-  const userId = authToken ? parseUserIdFromAuthToken(authToken) : null;
-  if (!authToken || !userId) return;
-
-  const cacheKey = `${userId}|${resolveServerUrl(env)}`;
-  // 已有缓存（可能来自更早的 prefetch）则不覆盖
-  if (agentCatalogCache?.cacheKey === cacheKey) return;
-
-  try {
-    const db = args.getDb ? await args.getDb() : await getReadableCliDb({ write: () => {} });
-    const cached = await listLocalCachedAgents({ db, userId });
-    if (cached.length === 0) return;
-    const entries = mergeCatalogEntries(
-      "",
-      resolveCatalogPlatformAgents(env),
-      cached.map(listedAgentToCatalogEntry),
-      {},
-    );
-    // at: 0 → SWR 判定为过期，下次 loadAgentCatalog 触发后台刷新
-    agentCatalogCache = { cacheKey, at: 0, entries };
-  } catch {
-    // 本地 DB 读取失败：静默降级，保持原有行为（网络前台加载）
-  }
+  // Keep the hook for startup callers; the server response is the source of truth.
 }
 
-/** 启动预热：后台填充目录缓存，首次 /agent 即命中（fire-and-forget）。 */
+/** 启动预热：后台刷新收藏目录缓存（fire-and-forget）。 */
 export function prefetchAgentCatalog(args: {
   env?: EnvLike;
   fetchImpl?: CliFetchImpl;
@@ -312,9 +287,9 @@ export function prefetchAgentCatalog(args: {
   getDb?: () => Promise<unknown>;
 }) {
   void (async () => {
-    // 先用本地 DB 缓存快速填充内存缓存（<10ms），避免冷启动闪烁 loading
+    // 收藏元数据必须来自服务器；本地缓存不能作为 favorites-only 列表来源。
     await prefillCatalogFromLocalDb({ env: args.env, getDb: args.getDb }).catch(() => {});
-    // 后台网络请求刷新缓存（SWR，后台失败静默）
+    // 后台网络请求刷新收藏目录缓存（SWR，后台失败静默）
     void loadAgentCatalog({ ...args, currentKey: "" }).catch(() => {});
   })();
 }
@@ -381,6 +356,13 @@ async function fetchRawCatalogData(
   const privateAgents = listedAgents.map(listedAgentToCatalogEntry);
 
   const favoritedAtByKey = await favoritesPromise;
+  // A favorite may be keyed by publicKey while the switcher uses privateKey.
+  for (const agent of listedAgents) {
+    const favoritedAt = [agent.privateKey, agent.publicKey, agent.id]
+      .map((key) => favoritedAtByKey[key])
+      .find((value) => value !== undefined);
+    if (favoritedAt !== undefined) favoritedAtByKey[agent.privateKey] = favoritedAt;
+  }
   // orphan favorite hydrate：把「已收藏但不在 listRemoteAgentsAcrossServers 返回里」
   // 的 agent（典型是收藏的别人/公开 agent，或跨服务器、刚收藏未同步的记录）从各服务器
   // 按 dbKey 重新读回并并入目录，对齐 web 端 useAgentPickerCandidates 与 CLI

@@ -29,7 +29,7 @@ export const BUILTIN_CHROME_OPERATOR_AGENT_KEY = publicAgentKey(BUILTIN_CHROME_O
 /** 平台内置 6 个 agent 的 public key 列表（来自 catalog 的 builtin 组） */
 export const BUILTIN_PLATFORM_AGENT_KEYS = builtinPlatformEntries().map(
   (e) => publicAgentKey(e.id),
-) as const;
+);
 
 const BUILTIN_PLATFORM_AGENT_KEY_SET = new Set<string>(BUILTIN_PLATFORM_AGENT_KEYS);
 

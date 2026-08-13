@@ -674,6 +674,10 @@ const STRINGS = {
     zh: "nolo {0}\n用 nolo update 更新当前安装。\n如果本地仓库输出的版本不同，请先发布/安装最新的 npm 包。",
   },
   versionUnknown: { en: "unknown version", zh: "未知版本" },
+  updateAvailable: {
+    en: "New nolo {0} available (you have {1}) — run /update to upgrade",
+    zh: "新版本 nolo {0} 可用（当前 {1}）— 运行 /update 升级",
+  },
   // --- Dialog list / timestamps -----------------------------------------
   recentDialogs: { en: "Recent dialogs:", zh: "最近对话：" },
   dialogListTip: {

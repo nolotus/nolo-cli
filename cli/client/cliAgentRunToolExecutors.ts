@@ -110,9 +110,6 @@ const resolveTodoStore = (deps: CliAgentRunToolExecutorDeps): AgentRunTodoStore 
 const resolveNowMs = (deps: CliAgentRunToolExecutorDeps): number =>
   typeof deps.nowMs === "function" ? deps.nowMs() : Date.now();
 
-const resolveTarget = (deps: CliAgentRunToolExecutorDeps, agentKey: string): string =>
-  typeof deps.resolveProviderTarget === "function" ? deps.resolveProviderTarget(agentKey) : agentKey;
-
 /**
  * 给 `status` 的返回值补一段紧凑的进度，让 tailLines:0 真的能回答「它卡住了
  * 吗」。
@@ -421,8 +418,8 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
             runSummaries.push({
               runId: rec.runId,
               status: rec.status,
-              startedAt: readTimestamp(rec.startedAt),
-              finishedAt: readTimestamp(rec.endedAt),
+              startedAt: readTimestamp(rec.startedAt)?.toString(),
+              finishedAt: readTimestamp(rec.endedAt)?.toString(),
               ...(rec.agentName ? { agentName: rec.agentName } : {}),
             });
           }

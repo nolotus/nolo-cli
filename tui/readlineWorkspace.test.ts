@@ -1164,6 +1164,79 @@ describe("scroll-aware history", () => {
     expect(splitRawInput("\x1b[<65;1;1M")).toEqual(["\x1b[<65;1;1M"]);
   });
 
+  test("repaints the welcome banner with the update hint when the check lands on the welcome page", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const chunks: Uint8Array[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: { NOLO_CLI_VERSION: "0.1.0" },
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ version: "0.2.0" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+      agentRunner: async () => ({ exitCode: 0, dialogId: "test" }),
+    });
+
+    // 轮询等待异步检查结果到达并触发 banner 重绘（网络检查是异步的，
+    // 不会在欢迎页首帧内完成）。
+    const deadline = Date.now() + 5000;
+    let text = "";
+    while (Date.now() < deadline) {
+      text = Buffer.concat(chunks).toString("utf8");
+      if (text.includes("0.2.0")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(text).toContain("0.2.0"); // 新版本提示已渲染出来
+
+    // 重绘帧 = 清行序列（\x1b[N;1H\x1b[2K）+ 逐行定位写入（\x1b[N;1H<行文本>）。
+    // 防回归断言：row 1 先被清行，随后 banner 第一行又被定位写到 row 1 ——
+    // 修正前的实现把 welcome 整段拼接在清行循环之后，光标停在最后清的那行
+    // （row 8），banner 会从屏幕中部开始画。
+    // 从提示行反查它所在的 repaint 帧：BSU（帧开头）→ 清行 → 逐行写入 →
+    // ESU（帧尾）。不能从文本开头找第一个清行序列——composer 首次绘制等
+    // 早期输出里也有 \x1b[1;1H\x1b[2K，会定位错帧。
+    const hintIndex = text.indexOf("0.2.0");
+    const frameOpen = text.lastIndexOf("\x1b[?2026h", hintIndex);
+    expect(frameOpen).toBeGreaterThanOrEqual(0);
+    // 防回归断言：row 1 在帧内先被清行，随后 banner 第一行又被定位写到
+    // row 1 —— 修正前的实现把 welcome 整段拼接在清行循环之后，光标停在
+    // 最后清的那行，banner 会从屏幕中部开始画。
+    const row1Clear = text.indexOf("\x1b[1;1H\x1b[2K", frameOpen);
+    expect(row1Clear).toBeGreaterThanOrEqual(0);
+    expect(row1Clear).toBeLessThan(hintIndex);
+    const bannerStart = text.indexOf("\x1b[1;1H", row1Clear + 7);
+    expect(bannerStart).toBeGreaterThanOrEqual(0);
+    expect(bannerStart).toBeLessThan(hintIndex);
+    // ESU 在帧尾（提示行之后）。
+    const frameClose = text.indexOf("\x1b[?2026l", hintIndex);
+    expect(frameClose).toBeGreaterThan(hintIndex);
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+  });
+
   test("executes /context locally during busy turn without enqueuing, while normal text remains queued", async () => {
     const input = new PassThrough() as PassThrough & {
       isTTY?: boolean;

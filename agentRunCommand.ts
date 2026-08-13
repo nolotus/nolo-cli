@@ -476,10 +476,10 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   }
 
   // T3456 — Memory injection route (CLI analogue of desktop T14).
-  // Logged-in state (authToken present): HTTP POST {serverUrl}/api/memory/query
-  //   to fetch the promptBlock from the server memory service.
-  // Anonymous state (no authToken): resolveMemoryRuntime local direct read
-  //   using the CLI local LevelDB (~/.nolo/data/leveldb) keyed by machineId.
+  // Local-first runs must not touch the configured server just to recall memory:
+  // a deployment/restart of nolo.chat must not produce a 502 before a local
+  // OAuth/API-key turn even starts. Only an explicit --server run uses the
+  // remote memory endpoint; local/auto runs use the local runtime store.
   // Network/local failures are visible-but-non-fatal: we warn and omit the
   // memory layer rather than failing the whole turn (same contract as desktop).
   // Tests with tight watchdog budgets inject `memoryRecallDisabled: true`.
@@ -489,8 +489,16 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   const memoryAgentKey = effectiveAgentKey;
   const memorySpaceId = parsed.spaceId ?? undefined;
   try {
-    if (memoryAuthToken && memoryServerUrl) {
-      // Logged-in: HTTP memory query (mirrors desktop :1204-1239).
+    const resolvedRuntimeMode =
+      parsed.runtimeMode ??
+      (env.NOLO_RUNTIME_MODE === "local" ||
+      env.NOLO_RUNTIME_MODE === "server" ||
+      env.NOLO_RUNTIME_MODE === "auto"
+        ? env.NOLO_RUNTIME_MODE
+        : "auto");
+    const usesExplicitServerRuntime = resolvedRuntimeMode === "server";
+    if (usesExplicitServerRuntime && memoryAuthToken && memoryServerUrl) {
+      // Explicit --server: HTTP memory query (mirrors desktop :1204-1239).
       const memoryResponse = await fetch(`${memoryServerUrl}/api/memory/query`, {
         method: "POST",
         headers: {
@@ -517,7 +525,7 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         console.warn("[cli-memory] memory query returned non-ok status:", memoryResponse.status);
       }
     } else {
-      // Anonymous: local direct read via resolveMemoryRuntime.
+      // Local/auto (and anonymous server) runs: local direct read via resolveMemoryRuntime.
       const localDb = await getDefaultCliLocalRuntimeDb({ env });
       const machineId = resolveMachineId();
       const resolution = await resolveMemoryRuntime({

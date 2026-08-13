@@ -17,6 +17,7 @@ import {
   renderTuiHelp,
   renderWelcome,
 } from "./sessionRender";
+import type { CliUpdateInfo } from "../updateCommands";
 import { getCliLocale, setCliLocale, t, type CliLocale } from "./i18n";
 import { displayWidth, stripAnsi, createRawInputDecoder } from "./readlineWorkspace";
 import { detectImagePaths } from "./pasteImage";
@@ -1117,6 +1118,45 @@ describe("themed render surfaces", () => {
 
       // Omitting columns (pure-function callers / other tests) keeps the scene.
       expect(renderWelcome(state)).toContain("♠");
+    } finally {
+      if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
+      else process.env.NOLO_CLI_COLOR = previous;
+    }
+  });
+
+  test("renderWelcome advertises a newer CLI version when the check found one", () => {
+    const previous = process.env.NOLO_CLI_COLOR;
+    try {
+      process.env.NOLO_CLI_COLOR = "0";
+      const state = {
+        ...createInitialTuiState({ NOLO_CLI_VERSION: "0.24.0" }),
+        updateAvailable: {
+          latestVersion: "0.25.0",
+          channel: "latest",
+        } satisfies CliUpdateInfo,
+      };
+
+      const welcome = renderWelcome(state);
+      expect(welcome).toContain("0.25.0");
+      expect(welcome).toContain("0.24.0");
+      expect(welcome).toContain("/update");
+      expect(welcome).not.toContain("\x1b"); // plain mode stays ANSI-free
+    } finally {
+      if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
+      else process.env.NOLO_CLI_COLOR = previous;
+    }
+  });
+
+  test("renderWelcome stays compact when no update is available", () => {
+    // 无更新时欢迎页不出现升级行：6 行 scene + 版本行 + /help 提示行 ≤ 8，
+    // 保持 "keeps the welcome compact" 契约。
+    const previous = process.env.NOLO_CLI_COLOR;
+    try {
+      process.env.NOLO_CLI_COLOR = "0";
+      const state = createInitialTuiState({ NOLO_CLI_VERSION: "0.24.0" });
+      const welcome = renderWelcome(state);
+      expect(welcome).not.toContain("run /update");
+      expect(welcome.split("\n").filter(Boolean).length).toBeLessThanOrEqual(8);
     } finally {
       if (previous === undefined) delete process.env.NOLO_CLI_COLOR;
       else process.env.NOLO_CLI_COLOR = previous;

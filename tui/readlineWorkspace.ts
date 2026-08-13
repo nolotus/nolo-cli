@@ -29,7 +29,7 @@ import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
 import { isBalanceExhaustedError, isQuotaExhaustedError } from "../agentRunCommand";
 import { saveProfileAgentSelection } from "../client/profileConfig";
-import { runSelfUpdate } from "../updateCommands";
+import { checkForCliUpdate, runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
 import { runSelectDialog, type SelectDialogItem } from "./selectDialog";
@@ -81,6 +81,7 @@ import { toErrorMessage } from "../core/errorMessage";
 import { getCliLocale, initCliLocale, t } from "./i18n";
 import { saveProfileLocale } from "../client/profileConfig";
 import { createChatQueueTuiBinding, type ChatQueueTuiBinding } from "./chatQueueTuiBinding";
+import { emitTerminalBell, shouldEmitTerminalBell } from "./terminalNotification";
 
 // Ctrl+S (0x13): flush all queued follow-ups as one merged message. Named so
 // the raw byte is greppable by intent ("Ctrl+S" / "flush") rather than only by
@@ -941,7 +942,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // terminal width is passed through so renderWelcome can drop the wide scene
   // art on narrow terminals instead of letting it wrap.
   const bannerColumns = (output as { columns?: number }).columns;
-  output.write(renderWelcome(state, 0, 0, bannerColumns));
+  // 首帧字符串复用两次：写出 + 行数计算。避免把渲染逻辑（含主题/终端状态
+  // 读取）执行两遍，导致首帧与行数计算不一致。
+  const initialWelcome = renderWelcome(state, 0, 0, bannerColumns);
+  output.write(initialWelcome);
+  const initialBannerLineCount = initialWelcome.split("\n").length;
 
   let lastSentTitle: string | null = null;
   const syncWindowTitle = () => {
@@ -1125,6 +1130,62 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       scheduleRender();
     });
   };
+
+  // 版本发布快（AI 辅助开发每次合入即发版）：启动时异步查一次 npm registry
+  // 当前通道的最新版。检查永远不阻塞启动、失败静默（离线/超时/registry 抖动
+  // 都当无更新），NOLO_CLI_NO_UPDATE_CHECK=1 可整体禁用。结果到达时若用户还
+  // 停在欢迎页（未开始对话），从顶部重绘 banner 把 /update 提示带出来；已
+  // 在对话中则只更新 state，不打断当前画面。
+  const repaintBanner = () => {
+    if (!(output as { isTTY?: boolean }).isTTY) return;
+    // modal / dialog 拥有屏幕（如 /help、confirm）时不重绘，否则会擦掉弹层。
+    if (fixedInput.isPaused()) return;
+    if (modalOwnsKeyboard) return; // picker / confirm 弹层持有键盘时不重绘
+    // 终端可能已 resize：重绘时实时读宽度，让 renderWelcome 重新决定是否
+    // 保留 scene，避免旧宽度下画的 banner 在新宽度 wrap 出残留。
+    const currentColumns = (output as { columns?: number }).columns ?? 80;
+    const welcome = renderWelcome(state, 0, 0, currentColumns);
+    const lines = welcome.split("\n");
+    // 窄终端下 update hint / welcome hint 这类长行会物理换行，破坏"逻辑行数 =
+    // 物理行数"的逐行定位；写入前按列宽截断，保证每行正好占一行。
+    const safeWidth = Math.max(1, currentColumns);
+    const safeLines = lines.map((line) => padOrTruncateToWidth(line, safeWidth));
+    const clearLines = Math.max(initialBannerLineCount, safeLines.length);
+    // 与 paintSyncedFrame 一致的 BSU/ESU + 光标隐藏包裹，避免清行与写入
+    // 之间的中间帧闪烁；composer 重绘也在同一帧内完成。
+    output.write("\x1b[?2026h\x1b[?25l");
+    try {
+      let frame = "";
+      // 先清掉旧 banner 区域（含窄终端无 scene 的短 banner），再逐行定位写入
+      // 新 banner。注意不能只 \x1b[H 一次后拼接多行文本：清行循环会把光标停在
+      // 最后清的那行，welcome 会从那里开始画（banner 掉到屏幕中部）。
+      for (let i = 0; i < clearLines; i++) frame += `\x1b[${i + 1};1H\x1b[2K`;
+      safeLines.forEach((line, i) => {
+        frame += `\x1b[${i + 1};1H${line}`;
+      });
+      output.write(frame);
+      // 顶部 banner 区域重绘不影响底部 composer，但活动输入行的绘制状态需要
+      // 恢复，否则光标/缓冲行与终端实际内容脱节。
+      if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
+    } finally {
+      output.write("\x1b[?25h\x1b[?2026l");
+    }
+  };
+  void checkForCliUpdate(state.cliVersion, state.serverUrl, {
+    fetchImpl,
+    env: options.env ?? process.env,
+  }).then((updateAvailable) => {
+    if (sessionEnded || !updateAvailable) return;
+    state = { ...state, updateAvailable };
+    // 欢迎页仍在屏幕上才重绘 banner：turns 为空且没有正在流式输出的 turn。
+    // 第一轮 turn 开始后（currentRole 非空）transcript 已接管顶部，此时只
+    // 更新 state，不打断画面。
+    if (history.turns.length === 0 && history.currentRole === null) {
+      repaintBanner();
+    } else {
+      scheduleRender();
+    }
+  });
 
   // 防重入卫兵：onInputLinesChange → renderHistoryToOutput → 若 composer 重绘
   // 又触发 onInputLinesChange → 无限递归把 CPU 打满。重入时直接 return。
@@ -1400,6 +1461,16 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
       const wasAborted = activeTurnAbort.signal.aborted;
       activeTurnAbort = null;
+      if (
+        shouldEmitTerminalBell({
+          wasAborted,
+          streamInterrupted: runResult.streamInterrupted,
+          exitCode: runResult.exitCode,
+          interactive: isInteractiveInput(input),
+        })
+      ) {
+        emitTerminalBell(output);
+      }
       // An explicit switch only needs to suppress the cached route for the
       // turn it was issued on; once run, normal per-dialog caching resumes.
       explicitAgentSwitch = false;
@@ -2651,6 +2722,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     if (persistentCount > 0) {
       output.write(`[nolo] ${t("persistentProcessesLeft", String(persistentCount))}\n`);
     }
+    // 非交互（readline）路径结束时不走 interactive 的 finish()，这里同样
+    // 标记 session 结束，让迟到的异步回调（如更新检查）不再触发渲染写入
+    // 已关闭的 stdout/pipe。
+    sessionEnded = true;
     rl.close();
   }
 }

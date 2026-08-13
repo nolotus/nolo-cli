@@ -258,9 +258,24 @@ export function renderWelcome(
     ? `${themeColorSequence("accent")}nolo\x1b[0m ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |")
     : `nolo ${state.cliVersion ?? ""} | server ${state.serverUrl}`.replace("  |", " |");
 
+  // 版本发布快（alpha 每次合入即发版），欢迎页在检查到新版本时补一行升级
+  // 提示。无更新 / 检查不可用时 updateAvailable 为空，这一行不出现，
+  // welcome 保持原来的紧凑布局（"keeps the welcome compact" 测试契约）。
+  const updateLine = state.updateAvailable
+    ? themeText(
+        t(
+          "updateAvailable",
+          state.updateAvailable.latestVersion,
+          state.cliVersion ?? t("versionUnknown"),
+        ),
+        "accent",
+        colorEnabled,
+      )
+    : null;
+
   const body = sceneArt
-    ? [sceneArt, versionLine, t("welcomeHint"), ""]
-    : [versionLine, t("welcomeHint"), ""];
+    ? [sceneArt, versionLine, ...(updateLine ? [updateLine] : []), t("welcomeHint"), ""]
+    : [versionLine, ...(updateLine ? [updateLine] : []), t("welcomeHint"), ""];
   return body.join("\n");
 }
 

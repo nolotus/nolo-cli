@@ -35,7 +35,7 @@ const buildMemFs = () => {
 const buildDeps = (overrides: Partial<CliAgentRunToolExecutorDeps> = {}) => {
   const mem = buildMemFs();
   const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
-  const killCalls: Array<{ pid: number; signal: string }> = [];
+  const killCalls: Array<{ pid: number; signal: string | number }> = [];
   const deps: CliAgentRunToolExecutorDeps & { mem: typeof mem; spawnCalls: typeof spawnCalls; killCalls: typeof killCalls } = {
     env: {},
     cliEntrypoint: "/cli/entrypoint",
@@ -47,7 +47,7 @@ const buildDeps = (overrides: Partial<CliAgentRunToolExecutorDeps> = {}) => {
       spawnCalls.push({ cmd, args });
       return { pid: 123, unref: () => {} };
     }) as SpawnLike,
-    kill: (pid: number, signal: string) => {
+    kill: (pid: number, signal: string | number) => {
       killCalls.push({ pid, signal });
     },
     fs: mem.fs,

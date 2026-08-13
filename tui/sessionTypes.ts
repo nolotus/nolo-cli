@@ -1,6 +1,7 @@
 import type { AgentRuntimeRequestedMode } from "../agentRuntimeLocal";
 import type { TurnTokenUsage } from "../client/tokenUsage";
 import type { ToolDisplayMode } from "../client/toolOutput";
+import type { CliUpdateInfo } from "../updateCommands";
 import type { AttachedImage } from "./pasteImage";
 import type { GitStatus } from "./gitStatus";
 
@@ -20,6 +21,12 @@ export type TuiState = {
   profileName: string;
   serverUrl: string;
   cliVersion?: string;
+  /**
+   * npm registry 异步检查结果：当前通道有新版本时非空，欢迎页据此提示
+   * /update 升级。null / undefined 表示无更新或检查不可用（离线等），
+   * 一律不打扰用户。
+   */
+  updateAvailable?: CliUpdateInfo;
   /**
    * 用于解析 paste 行里的相对路径。workspace 启动时从 process.cwd() 取。
    * 保留在 state 里是为了让 handleTuiInput 这种纯函数也能做路径解析。

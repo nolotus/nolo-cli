@@ -85,23 +85,79 @@ export const PLATFORM_HOSTED_KIMI_K3_PRICE = {
 export const PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
 export const PLATFORM_HOSTED_DEEPSEEK_PRO_MODEL = "deepseek-v4-pro";
 
+/** DeepSeek V4 peak/off-peak pricing takes effect at 2026-08-17 00:00 Beijing time. */
+export const DEEPSEEK_V4_PRICING_EFFECTIVE_AT_MS = Date.UTC(2026, 7, 16, 16);
+
 /**
- * DeepSeek V4 Flash uses the official DeepSeek domestic RMB price directly;
- * it does not receive the nolo external-API conversion or discount rule.
- * Official: ¥1 input / ¥2 output per 1M tokens.
+ * Peak pricing in yuan per million tokens, from the DeepSeek API pricing
+ * notice shown in the official API Docs (effective 2026-08-17 00:00 Beijing).
  */
+export const PLATFORM_HOSTED_DEEPSEEK_FLASH_PEAK_PRICE = {
+  input: 3,
+  inputCacheHit: 0.1,
+  output: 9,
+} as const;
+export const PLATFORM_HOSTED_DEEPSEEK_PRO_PEAK_PRICE = {
+  input: 9,
+  inputCacheHit: 0.3,
+  output: 27,
+} as const;
+
+/** Existing prices remain in effect until the announced effective time. */
 export const PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE = {
   input: 1,
   inputCacheHit: 0.02,
   output: 2,
 } as const;
-
-/** Official DeepSeek V4 Pro price: ¥3 input / ¥6 output per 1M tokens. */
 export const PLATFORM_HOSTED_DEEPSEEK_PRO_PRICE = {
   input: 3,
   inputCacheHit: 0.025,
   output: 6,
 } as const;
+
+/** Off-peak pricing is half of the peak price. */
+export const PLATFORM_HOSTED_DEEPSEEK_FLASH_OFF_PEAK_PRICE = {
+  input: 1.5,
+  inputCacheHit: 0.05,
+  output: 4.5,
+} as const;
+export const PLATFORM_HOSTED_DEEPSEEK_PRO_OFF_PEAK_PRICE = {
+  input: 4.5,
+  inputCacheHit: 0.15,
+  output: 13.5,
+} as const;
+
+export const getPlatformHostedDeepSeekV4Price = (
+  model: string,
+  nowMs = Date.now(),
+) => {
+  if (nowMs < DEEPSEEK_V4_PRICING_EFFECTIVE_AT_MS) {
+    return model === PLATFORM_HOSTED_DEEPSEEK_PRO_MODEL
+      ? PLATFORM_HOSTED_DEEPSEEK_PRO_PRICE
+      : PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE;
+  }
+
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Shanghai",
+      hour: "numeric",
+      hourCycle: "h23",
+    }).format(new Date(nowMs)),
+  );
+  const peak = (hour >= 9 && hour < 12) || (hour >= 14 && hour < 18);
+  if (!peak) {
+    return model === PLATFORM_HOSTED_DEEPSEEK_PRO_MODEL
+      ? PLATFORM_HOSTED_DEEPSEEK_PRO_OFF_PEAK_PRICE
+      : PLATFORM_HOSTED_DEEPSEEK_FLASH_OFF_PEAK_PRICE;
+  }
+  return model === PLATFORM_HOSTED_DEEPSEEK_PRO_MODEL
+    ? PLATFORM_HOSTED_DEEPSEEK_PRO_PEAK_PRICE
+    : PLATFORM_HOSTED_DEEPSEEK_FLASH_PEAK_PRICE;
+};
+
+export const isPlatformHostedDeepSeekV4Model = (model: string): boolean =>
+  model === PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL ||
+  model === PLATFORM_HOSTED_DEEPSEEK_PRO_MODEL;
 
 /**
  * Platform hosted chat completions upstream.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   DEFAULT_TUI_AGENT_KEY,
+  resolveCatalogPlatformAgents,
   formatAgentSourceLabel,
   invalidateAgentCatalogCache,
   loadAgentCatalog,
@@ -34,6 +35,14 @@ const privateAgent = (
   updatedAt,
 });
 
+describe("TUI platform catalog", () => {
+  it("shows auto by default and nolo when auto routing is disabled", () => {
+    expect(resolveCatalogPlatformAgents({} as Record<string, string | undefined>)[0]?.name).toBe("auto");
+    expect(resolveCatalogPlatformAgents({ NOLO_AUTO_ROUTE: "0" })[0]?.name).toBe("nolo");
+    expect(resolveCatalogPlatformAgents({} as Record<string, string | undefined>)).toHaveLength(1);
+  });
+});
+
 describe("TUI default agent", () => {
   it("uses the canonical Nolo key as the implicit fallback", () => {
     expect(DEFAULT_TUI_AGENT_KEY).toBe(BUILTIN_NOLO_AGENT_KEY);
@@ -41,9 +50,10 @@ describe("TUI default agent", () => {
 });
 
 describe("mergeCatalogEntries favorites ordering", () => {
-  it("shows only favorited private agents, ordered by favoritedAt desc", () => {
+  it("shows auto and all owned agents, with favorites first", () => {
     const merged = mergeCatalogEntries(
       "agent-pub-default",
+      [platform("auto", DEFAULT_TUI_AGENT_KEY)],
       [
         privateAgent("older-fav", "agent-fav-old", 100),
         privateAgent("plain-new", "agent-plain-new", 999),
@@ -54,14 +64,18 @@ describe("mergeCatalogEntries favorites ordering", () => {
     );
 
     expect(merged.map((entry) => entry.name)).toEqual([
+      "auto",
       "newer-fav",
       "older-fav",
+      "plain-new",
+      "plain-old",
     ]);
   });
 
-  it("excludes non-favorited entries", () => {
+  it("keeps non-favorited owned entries", () => {
     const merged = mergeCatalogEntries(
       "agent-pub-default",
+      [platform("auto", DEFAULT_TUI_AGENT_KEY)],
       [privateAgent("fav", "agent-fav"), privateAgent("plain", "agent-plain")],
       { "agent-fav": 1234 },
     );
@@ -69,12 +83,13 @@ describe("mergeCatalogEntries favorites ordering", () => {
     const fav = merged.find((entry) => entry.key === "agent-fav");
     const plain = merged.find((entry) => entry.key === "agent-plain");
     expect(fav?.favoritedAt).toBe(1234);
-    expect(plain).toBeUndefined();
+    expect(plain?.favoritedAt).toBeUndefined();
   });
 
   it("keeps the current agent first and excludes unselected entries", () => {
     const merged = mergeCatalogEntries(
       "agent-fav",
+      [],
       [privateAgent("fav", "agent-fav"), privateAgent("plain", "agent-plain")],
       { "agent-fav": 1, "agent-plain": 2 },
     );
@@ -85,19 +100,21 @@ describe("mergeCatalogEntries favorites ordering", () => {
     ]);
   });
 
-  it("retains an unfavorited current private agent as the only exception", () => {
+  it("keeps the current agent first", () => {
     const merged = mergeCatalogEntries(
       "agent-current",
+      [],
       [privateAgent("current", "agent-current"), privateAgent("plain", "agent-plain")],
       {},
     );
 
-    expect(merged.map((entry) => entry.key)).toEqual(["agent-current"]);
+    expect(merged.map((entry) => entry.key)).toEqual(["agent-current", "agent-plain"]);
   });
 
   it("dedupes duplicate favorited entries sharing the same key", () => {
     const merged = mergeCatalogEntries(
       "",
+      [],
       [
         privateAgent("first", "agent-duplicate"),
         privateAgent("second", "agent-duplicate"),
@@ -156,7 +173,7 @@ describe("loadAgentCatalog caching (SWR)", () => {
     const { fetchImpl, getQueryCount } = makeFetch();
 
     const first = await loadAgentCatalog({ env, currentKey: "", fetchImpl });
-    expect(first.length).toBe(0);
+    expect(first.length).toBe(1);
     const afterFirst = getQueryCount();
     expect(afterFirst).toBeGreaterThan(0);
 
@@ -233,7 +250,7 @@ describe("favorites-only switcher cache behavior", () => {
     // loadAgentCatalog must do a foreground fetch
     const entries = await loadAgentCatalog({ env, currentKey: "", fetchImpl });
     expect(queryCount).toBeGreaterThan(0);
-    expect(entries.length).toBe(0); // no platform agents are injected
+    expect(entries.length).toBe(1); // auto is always available
     invalidateAgentCatalogCache();
   });
 
@@ -315,7 +332,7 @@ describe("loadAgentCatalog orphan favorite hydrate", () => {
 
     expect(entries.find((entry) => entry.key === orphanKey)).toBeUndefined();
     // 不应抛错：空的收藏目录仍然合法
-    expect(entries.length).toBe(0);
+    expect(entries.length).toBe(1);
     invalidateAgentCatalogCache();
   });
 

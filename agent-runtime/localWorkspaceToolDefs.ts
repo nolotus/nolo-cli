@@ -8,6 +8,7 @@
 
 import { resolveExecutableOnPath } from "./runtimeCompat";
 import type { AgentRuntimeToolResult } from "./hostAdapter";
+import { IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS } from "./shellCommandPolicy";
 
 export type OpenAiCompatibleTool = Record<string, unknown> & {
   function?: Record<string, unknown> & { name?: string };
@@ -50,7 +51,9 @@ export function tokenizeShellPrefix(command: string) {
 function buildWorkspacePathProperty() {
   return {
     type: "string",
-    description: "Path relative to the workspace root.",
+    minLength: 1,
+    description:
+      "Path relative to the workspace root. Required and must be non-empty for readFile/writeFile/editFile; for listFiles/searchFiles/globFiles it is optional and defaults to the workspace root when omitted.",
   };
 }
 
@@ -59,12 +62,12 @@ function buildListWorkspaceDescription(variant?: ListFilesDescriptionVariant) {
     return "List files and directories inside a workspace directory.";
   }
   if (variant === "workflow") {
-    return "List a bounded directory overview inside the workspace. Use first when you need to understand nearby structure, choose a subdirectory, or inspect a non-code project. Then use globFiles for path-pattern discovery, searchFiles for text/content discovery, and readFile only for the specific files or line ranges you need.";
+    return "List directory overview inside workspace. Then use globFiles for path patterns, searchFiles for text discovery, and readFile for content.";
   }
   if (variant === "antiShell") {
-    return "List a bounded directory overview inside the workspace. Do not use execShell with ls/find/tree for normal directory overviews when listFiles can show the needed depth and limit. Use globFiles for path-pattern discovery and searchFiles for content search.";
+    return "List directory overview inside workspace. Prefer listFiles over shell ls/find commands.";
   }
-  return "List a bounded directory overview inside the workspace. Use for scanning nearby structure, not for path-pattern discovery across the repo. Prefer globFiles for finding files by name/extension and searchFiles for text inside files.";
+  return "List files and directories inside a workspace folder. Defaults to shallow overview (depth 1).";
 }
 
 function buildListWorkspaceParameters(variant?: ListFilesParameterVariant) {
@@ -127,26 +130,20 @@ function buildReadWorkspaceDescription(variant?: ReadFileDescriptionVariant) {
     return "Read a UTF-8 text file inside the workspace.";
   }
   if (variant === "workflow") {
-    return 'Read a UTF-8 text file inside the workspace after listFiles, globFiles, or searchFiles has narrowed the target. Use lines with a range from searchFiles matches, or lines: "-50" for logs and generated output. Read the whole file only when the task truly needs all content or exact edit context.';
+    return 'Read a UTF-8 text file inside the workspace. Use lines with a range from searchFiles matches, or lines: "-50" for logs. Read the whole file only when the task needs all content.';
   }
   if (variant === "antiShell") {
-    return "Read a UTF-8 text file inside the workspace. Do not use execShell with cat/sed/head/tail for normal text reads when readFile can return the needed file or line range. Use searchFiles first for content search, then readFile only the relevant lines when possible.";
+    return "Read a UTF-8 text file inside the workspace. Prefer readFile over shell commands (cat/head/tail).";
   }
-  return 'Read a UTF-8 text file inside the workspace. Read before editing when you need exact text for editFile. For discovery or classification tasks, avoid batch-reading every candidate; report candidate paths first, or read only one to three representative files with a small lines count. Use lines ranges for large code, docs, data, configs, and logs after searchFiles returns line numbers. Read the whole file only when the task truly needs all content or exact edit context.';
+  return "Read a UTF-8 text file inside the workspace. Use lines for focused range reads after searchFiles to save tokens.";
 }
 
 function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
   const path = buildWorkspacePathProperty();
-  // One argument for one concept. startLine/endLine/maxLines/tailLines were
-  // four orthogonal integers describing a single line range, so most of their
-  // combinations were invalid and had to be caught by runtime rules the model
-  // could not see (tailLines excluding the others, endLine >= startLine).
-  // A slice string has no invalid combinations — only invalid syntax, which
-  // one example in this description prevents.
   const lines = {
     type: "string",
     description:
-      'Which lines to return: "40-120" for a range (1-based, inclusive), "120-" from a line to the end, "-50" for the last N lines (logs, generated output), "50" for the first N. Omit to read the whole file. Use a range after searchFiles gives a line number, and a small count to preview candidates instead of reading many whole files. When the user gives a read/preview budget, each readFile preview consumes one budget slot.',
+      'Line slice: "40-120" (range, 1-based, inclusive), "120-" (from line to end), "-50" (tail N lines), "50" (head N lines). Omit to read full file.',
   };
   if (variant === "minimal") {
     return {
@@ -186,7 +183,7 @@ function buildWriteWorkspaceFileTool(): OpenAiCompatibleTool {
     function: {
       name: "writeFile",
       description:
-        "Write full UTF-8 file content inside the workspace. For new files or deliberate whole-file rewrites only. For existing files, prefer editFile for targeted edits. Warn that whole-file rewrites can cause line-ending churn.",
+        "Write full UTF-8 file content inside the workspace (new files or whole-file rewrites). Prefer editFile for targeted edits.",
       parameters: {
         type: "object",
         properties: {
@@ -208,7 +205,7 @@ function buildReplaceWorkspaceTextTool(): OpenAiCompatibleTool {
     function: {
       name: "editFile",
       description:
-        "Use for small, exact edits in one workspace file without constructing a patch. Read the file first when you need the exact oldText; set expectedReplacements to avoid accidental broad edits. When expected replacement count fails, report a blocker instead of falling back to a full-file rewrite.",
+        "Replace exact text occurrences in a workspace file. If expected replacement count fails, report the error instead of falling back to a whole-file rewrite.",
       parameters: {
         type: "object",
         properties: {
@@ -237,37 +234,37 @@ function buildSearchWorkspaceDescription(variant?: SearchFilesDescriptionVariant
     return "Search workspace file contents.";
   }
   if (variant === "workflow") {
-    return "Search file contents inside the current workspace after listFiles or globFiles has scoped the likely area, or directly when the task names text to find. Use for code, docs, data, configs, logs, and other text files. Return line numbers, then use readFile with focused ranges for interpretation or editing.";
+    return "Search file contents inside workspace. Returns line numbers; use readFile with line ranges for focused reading.";
   }
   if (variant === "antiShell") {
-    return "Search text inside workspace files for code, docs, data, configs, logs, or other text-like assets. Do not use execShell for content search when searchFiles can directly find matching lines. Use globFiles instead for path-only discovery, then readFile for exact surrounding content when needed.";
+    return "Search text inside workspace files using ripgrep. Prefer searchFiles over shell grep.";
   }
-  return "Search file contents inside the current workspace using ripgrep when available. Use for grep-like text or regex search across code, docs, data, configs, logs, and other text files. Use globFiles instead when you only need to find files by name or extension before readFile.";
+  return "Search file contents inside the workspace using ripgrep. Returns matching lines and line numbers. Prefer globFiles when only finding file paths.";
 }
 
 function buildSearchWorkspaceParameters(variant?: SearchFilesParameterVariant) {
   const query = {
     type: "string",
-    description: "Search query. Treated as a regular expression unless literal is true.",
+    description: "Search query (regex or literal string).",
   };
   const path = buildWorkspacePathProperty();
   const includeIgnored = {
     type: "boolean",
     description:
-      "When true, search files ignored by .gitignore such as .tmp. Defaults to false. Build artifacts (dist/, *.tsbuildinfo, *.min.js, etc.) are always excluded regardless of this flag. .git and node_modules remain excluded.",
+      "When true, search gitignored files. Build artifacts (dist/, node_modules, .git) remain excluded.",
   };
   const exclude = {
     type: "array",
     items: { type: "string" },
-    description: "Glob patterns to exclude from content search, for example ['dist/**', 'build/**', 'exports/**', '*.log'].",
+    description: "Glob patterns to exclude from content search (e.g. ['dist/**', '*.log']).",
   };
   const maxResults = {
     type: "integer",
-    description: "Maximum number of matching output lines to return. Use a small value when you only need candidate files or examples.",
+    description: "Max matching output lines to return.",
   };
   const literal = {
     type: "boolean",
-    description: "When true, search for query as literal text instead of a regular expression.",
+    description: "When true, search query as literal text instead of regex.",
   };
   const caseSensitive = {
     type: "boolean",
@@ -275,7 +272,7 @@ function buildSearchWorkspaceParameters(variant?: SearchFilesParameterVariant) {
   };
   const contextLines = {
     type: "integer",
-    description: "Number of surrounding context lines to include around each match. Defaults to 0.",
+    description: "Number of surrounding context lines around each match. Defaults to 0.",
   };
   if (variant === "minimal") {
     return {
@@ -331,33 +328,33 @@ function buildGlobWorkspaceDescription(variant?: GlobFilesDescriptionVariant) {
     return "Find workspace files by path glob without reading file contents.";
   }
   if (variant === "workflow") {
-    return "Find files by glob pattern inside the current workspace without reading file contents. Use after listFiles when you know the likely area, or first when the task names a filename, extension, asset type, config, or document pattern. Then use searchFiles for text inside candidates or readFile for the specific candidate paths.";
+    return "Find files by glob pattern. Use searchFiles for text inside candidates, and readFile for specific paths.";
   }
   if (variant === "antiShell") {
-    return "Find workspace files by path glob without reading file contents. Use for code, docs, data, images, configs, logs, or any file discovery task. Do not use execShell or listFiles for path discovery when globFiles can directly narrow candidate files. Use before opening or reading files, and use searchFiles instead for searching text inside files.";
+    return "Find workspace files by path glob. Prefer globFiles over shell find/ls commands.";
   }
-  return "Find files by glob pattern inside the current workspace without reading file contents. Use for code, docs, data, images, configs, logs, or any file discovery task. Use one bounded glob with brace groups before repeated narrow globs when a task names several extensions or config names, for example **/*.{png,jpg,svg}, **/{package.json,bunfig.toml,tsconfig*.json}, or src/**/*.ts. Prefer searchFiles for searching text inside files, and readFile only after candidate paths are narrow enough.";
+  return "Find file paths by glob pattern without reading file contents. Use brace groups (e.g. '**/*.{ts,tsx}') to match multiple patterns in one call.";
 }
 
 function buildGlobWorkspaceParameters(variant?: GlobFilesParameterVariant) {
   const pattern = {
     type: "string",
-    description: "Glob pattern for files. For candidate discovery, combine related names or extensions in one brace-group pattern before making repeated narrow calls, for example '**/*.ts', 'packages/**/local*.test.ts', '**/*.{png,jpg,svg}', or '**/{package.json,bunfig.toml,tsconfig*.json}'.",
+    description: "Glob pattern for files (supports brace groups like '**/*.{ts,tsx}', '**/{package.json,tsconfig*.json}').",
   };
   const path = buildWorkspacePathProperty();
   const includeIgnored = {
     type: "boolean",
     description:
-      "When true, include files ignored by .gitignore. Defaults to false; .git and node_modules remain excluded.",
+      "When true, include gitignored files (.git and node_modules remain excluded).",
   };
   const maxResults = {
     type: "integer",
-    description: "Maximum number of file paths to return. Use a small value when you only need candidate paths before readFile; if results are truncated, report that and narrow the pattern or path before reading.",
+    description: "Max file paths to return.",
   };
   const exclude = {
     type: "array",
     items: { type: "string" },
-    description: "Glob patterns to exclude from results, for example ['dist/**', 'build/**', 'exports/**', '*.tmp'].",
+    description: "Glob patterns to exclude from results.",
   };
   if (variant === "minimal") {
     return {
@@ -385,7 +382,7 @@ function buildGlobWorkspaceParameters(variant?: GlobFilesParameterVariant) {
       pattern,
       glob: {
         type: "string",
-        description: "Alias for pattern, kept for compatibility with codeSearch-style prompts.",
+        description: "Alias for pattern, kept for compatibility.",
       },
       path,
       exclude,
@@ -463,17 +460,19 @@ function buildExecShellTool(toolName: string): OpenAiCompatibleTool {
     function: {
       name: toolName,
       description:
-        "Run a shell command in the local workspace. Commands already execute from the workspace root; do not cd into guessed paths such as /workspace, /repo, /home/user, or /home/user/workspace. Prefer one command that performs a complete verification or related git operation instead of many tiny commands. For branch setup, prefer idempotent commands such as git switch -C <branch> when replacing or recreating a benchmark branch is acceptable. Use portable POSIX commands for macOS/BSD shells; avoid GNU-only flags such as cat -A. Do not use cat -A. Do not use brittle byte-offset commands such as xxd -s -32. For separator lines, use echo or printf '%s\\n'. For text-file content or trailing-newline checks, prefer readFile over shell byte inspection when that tool is available. Do not run repeated git status, git log, git rev-parse, or branch checks after a successful command already returned the needed clean status and commit information; use one final verification command. If a command fails, use the error output to adjust the next command rather than repeating the same shape. For long-running commands that should keep running in the background (dev servers, watchers, REPLs, \`--watch\`/\`serve\`/\`dev\` scripts), prefer launchProcess. Obviously long-running commands run via execShell (sleep over 5s, tail -f, watch, infinite loops, dev/serve/watch scripts) are moved to the background automatically and return {detached: true, pid, label} — use listProcesses to inspect or stop them, and tell the user the command is running in the background. Any other command blocks until it exits, so keep those short.",
+        `Execute a shell command from the workspace root. Prefer one compound command (e.g. 'git status && git diff --stat') to perform complete verification instead of multiple small roundtrips. Do not cd into guessed paths (e.g. /workspace, /repo, /home/user); commands already run from the workspace root. Use portable POSIX commands for macOS/BSD shells; do not use cat -A or brittle byte-offset tools such as xxd -s -32. For text-file content or trailing-newline checks, prefer readFile over shell byte inspection. After a successful command returned the needed status/commit info, do not run repeated git status/log/rev-parse checks; use one final verification command. Commands block until exit. Long-running commands (sleep over ${IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS}s, dev servers, watchers) automatically detach to background returning {detached: true, pid, label}; for persistent services, prefer launchProcess.`,
       parameters: {
         type: "object",
         properties: {
           cmd: {
             type: "string",
-            description: "Shell command to run.",
+            description:
+              "Shell command to run. Must be a non-empty command string — never pass an empty string, whitespace-only text, or null.",
           },
           command: {
             type: "string",
-            description: "Shell command to run.",
+            description:
+              "Shell command to run. Compatibility field for providers that model the command under this name; the executor reads cmd first, then falls back to command. Must also be non-empty when used.",
           },
         },
       },
@@ -487,7 +486,7 @@ function buildLaunchProcessTool(): OpenAiCompatibleTool {
     function: {
       name: "launchProcess",
       description:
-        "Launch a long-running process (dev server, watcher, REPL) in the background and return immediately without blocking the conversation. Use this instead of execShell for commands that do not exit on their own. Returns {pid, label, status:'running'}. The process keeps running after the tool returns; use listProcesses to check status or the host UI (/procs, /stop) to stop it.",
+        "Start a long-running background process (dev server, watcher, REPL) and return immediately with {pid, label, status}. Use listProcesses to inspect or stop it.",
       parameters: {
         type: "object",
         properties: {
@@ -502,7 +501,7 @@ function buildLaunchProcessTool(): OpenAiCompatibleTool {
           persist: {
             type: "boolean",
             description:
-              "Mark the process as persistent so it survives the current TUI/session exit (kept running in the background when the conversation closes). Defaults to false. Use for long-lived services (e.g. a desktop dev server) you want to keep alive after the session ends.",
+              "Keep process alive after session/conversation closes. Defaults to false.",
           },
         },
         required: ["command"],
@@ -517,7 +516,7 @@ function buildListProcessesTool(): OpenAiCompatibleTool {
     function: {
       name: "listProcesses",
       description:
-        "List currently registered background processes launched via launchProcess. Returns array of {pid, label, command, status, startedAt, persist}.",
+        "List active background processes launched via launchProcess. Returns {pid, label, command, status, startedAt, persist}[].",
       parameters: {
         type: "object",
         properties: {},

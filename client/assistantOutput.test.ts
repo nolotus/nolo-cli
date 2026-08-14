@@ -201,6 +201,60 @@ describe("assistantOutput", () => {
     expect(output).toContain("\x1b[1mNolo\x1b[0m");
   });
 
+  test("stream writer flushes long prose before the model sends a newline", () => {
+    const chunks: string[] = [];
+    const writer = createRenderAwareStreamWriter({
+      write: (chunk) => chunks.push(chunk),
+    });
+
+    writer.push("这是一段足够长的普通文本，模型可能很久才发送换行，因此不能等到整轮结束才显示。继续输出更多内容来超过增量刷新阈值。");
+
+    // The partial line must already be visible before flush(), while the
+    // remaining tail is emitted normally when the turn ends.
+    const partial = chunks.join("");
+    expect(partial).not.toBe("");
+    writer.flush();
+    const output = chunks.join("").replace(/\x1b\[[0-9;]*m/g, "");
+    expect(output).toContain("这是一段足够长的普通文本");
+    expect(output).toContain("继续输出更多内容");
+    expect(output).toBe(
+      "这是一段足够长的普通文本，模型可能很久才发送换行，因此不能等到整轮结束才显示。继续输出更多内容来超过增量刷新阈值。"
+    );
+  });
+
+  test("partially flushes ordinary English punctuation", () => {
+    const chunks: string[] = [];
+    const text = "This is a long sentence (with punctuation)! It should remain visibly incremental.";
+    const writer = createRenderAwareStreamWriter({ write: (chunk) => chunks.push(chunk) });
+    writer.push(text);
+    expect(chunks.join("")).not.toBe("");
+    writer.flush();
+    expect(chunks.join("").replace(/\x1b\[[0-9;]*m/g, "")).toBe(text);
+  });
+
+  test("uses grapheme-safe partial flushes for plain text with emoji", () => {
+    const chunks: string[] = [];
+    const text = "普通文本 ".repeat(7) + "👍🏽 继续输出更多内容来超过阈值。";
+    const writer = createRenderAwareStreamWriter({ write: (chunk) => chunks.push(chunk) });
+    writer.push(text);
+    expect(chunks.join("")).not.toBe("");
+    writer.flush();
+    const output = chunks.join("").replace(/\x1b\[[0-9;]*m/g, "");
+    expect(output).toBe(text);
+    expect(output).toContain("👍🏽");
+  });
+
+  test("does not partially flush markdown syntax or split emoji", () => {
+    const chunks: string[] = [];
+    const writer = createRenderAwareStreamWriter({ write: (chunk) => chunks.push(chunk) });
+    writer.push("这是 **一段很长的加粗文本**，以及 inline `code` 和链接 [docs](https://nolo.chat)。👍🏽");
+    expect(chunks).toEqual([]);
+    writer.flush();
+    const output = chunks.join("");
+    expect(output).not.toContain("**");
+    expect(output).toContain("👍🏽");
+  });
+
   test("stream writer inserts blank line between list block and following prose", () => {
     // Live TUI streams one finished line at a time — without stream-path
     // breathing, polishAssistantStructure never sees the list↔prose pair and

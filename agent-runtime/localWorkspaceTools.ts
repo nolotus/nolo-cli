@@ -500,7 +500,7 @@ function isPathInsideWorkspace(args: {
  * use in tool-call arguments instead of our canonical schema field names.
  * Listed here as a single source so adding a new provider only touches one place.
  */
-const PATH_FIELD_ALIASES = ["path", "file_path", "filePath", "filename", "file", "target_file", "targetFile", "file_to_read", "fileToRead"] as const;
+const PATH_FIELD_ALIASES = ["path", "file_path", "filePath", "filename", "file", "target_file", "targetFile", "file_to_read", "fileToRead", "target_path", "read_path", "path_to_read", "pathToRead"] as const;
 const OLD_TEXT_FIELD_ALIASES = ["oldText", "old_string", "oldString", "search", "search_string", "find", "match"] as const;
 const NEW_TEXT_FIELD_ALIASES = ["newText", "new_string", "newString", "replacement", "replace"] as const;
 const SEARCH_QUERY_FIELD_ALIASES = ["query", "search_query", "searchQuery", "q", "pattern", "search"] as const;
@@ -1620,6 +1620,50 @@ export async function resolveLocalWorkspaceToolPath(args: {
   return targetPath;
 }
 
+export const READ_FILE_MAX_CHAR_LIMIT = 32_000;
+
+function defensivelyTruncateReadFile(args: {
+  content: string;
+  totalLines: number;
+  limit?: number;
+}): { content: string; truncatedByCharLimit: boolean } {
+  const limit = args.limit ?? READ_FILE_MAX_CHAR_LIMIT;
+  if (args.content.length <= limit) {
+    return { content: args.content, truncatedByCharLimit: false };
+  }
+  const maxBudget = Math.floor(limit * 0.4);
+  const lines = splitTextLines(args.content);
+  if (lines.length <= 10) {
+    const head = args.content.slice(0, maxBudget);
+    const tail = args.content.slice(-maxBudget);
+    const omitted = args.content.length - head.length - tail.length;
+    return {
+      content: `${head}\n\n[... ${omitted} characters omitted. Content exceeds limit (${args.content.length} chars). Use lines slice or searchFiles to inspect specific parts. ...]\n\n${tail}`,
+      truncatedByCharLimit: true,
+    };
+  }
+  const headLinesCount = Math.min(150, Math.floor(lines.length * 0.4));
+  const tailLinesCount = Math.min(50, Math.floor(lines.length * 0.2));
+  let head = lines.slice(0, headLinesCount).join("\n");
+  let tail = lines.slice(-tailLinesCount).join("\n");
+
+  // Hard limit budget guard: if head or tail contains ultra-long lines (e.g. minified JS / large JSON),
+  // defensively trim their character counts to guarantee total output strictly respects limit.
+  if (head.length > maxBudget) {
+    head = head.slice(0, maxBudget);
+  }
+  if (tail.length > maxBudget) {
+    tail = tail.slice(-maxBudget);
+  }
+
+  const omittedLines = lines.length - headLinesCount - tailLinesCount;
+  const omittedChars = args.content.length - head.length - tail.length;
+  return {
+    content: `${head}\n\n[... Omitted ${Math.max(1, omittedLines)} lines (${omittedChars} chars). File exceeds safety limit (${args.content.length} chars, ${args.totalLines} lines). Use lines="start-end" (e.g. lines="151-300") or searchFiles to read specific sections. ...]\n\n${tail}`,
+    truncatedByCharLimit: true,
+  };
+}
+
 async function readFileTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
@@ -1641,19 +1685,25 @@ async function readFileTool(args: {
     content,
     ...sliceArgs,
   });
-  return {
+  const truncatedRead = defensivelyTruncateReadFile({
     content: sliced.content,
+    totalLines: sliced.totalLines,
+  });
+  const isTruncated = sliced.truncated || truncatedRead.truncatedByCharLimit;
+  return {
+    content: truncatedRead.content,
     metadata: {
       path: normalizeWorkspaceRelativePath({
         workspaceRoot: resolve(args.workspaceRoot),
         targetPath: absolutePath,
       }),
-      bytes: Buffer.byteLength(sliced.content),
+      bytes: Buffer.byteLength(truncatedRead.content),
       totalBytes: Buffer.byteLength(content),
       startLine: sliced.startLine,
       endLine: sliced.endLine,
       totalLines: sliced.totalLines,
-      truncated: sliced.truncated,
+      truncated: isTruncated,
+      ...(truncatedRead.truncatedByCharLimit ? { truncatedByByteLimit: true, truncatedByCharLimit: true } : {}),
       ...(sliceArgs.maxLines ? { maxLines: sliceArgs.maxLines } : {}),
       ...(sliceArgs.tailLines ? { tailLines: sliceArgs.tailLines } : {}),
       ...(warnings.length

@@ -493,7 +493,8 @@ export interface SafeAgentSummaryForCard {
   isFavorite?: boolean;
   /** True when the agent belongs to the current user (self-owned). */
   isOwned?: boolean;
-  /** Prefer publicKey for delegation; fall back to id. */
+  /** Exact runnable key returned by listAgents. */
+  agentKey?: string | null;
   publicKey?: string | null;
   id?: string | null;
 }
@@ -508,7 +509,8 @@ export function formatAgentListCard(agents: SafeAgentSummaryForCard[], maxDispla
     const name = agent.name || "(unnamed)";
     const model = agent.model || "—";
     const source = agent.apiSource || agent.provider || agent.cliProvider || "—";
-    lines.push(`${star}${own} ${name}  ${model}  ${source}`);
+    const key = agent.agentKey || "(agentKey unavailable)";
+    lines.push(`${star}${own} ${name}  ${model}  ${source}  ${key}`);
   }
   if (total > maxDisplay) {
     lines.push(`… +${total - maxDisplay} more`);
@@ -585,13 +587,13 @@ export async function listAgentsFunc(args: any, thunkApi: any): Promise<ToolResu
 export const readAgentFunctionSchema = {
   name: "readAgent",
   description:
-    "Read one agent's full config from the Nolo workspace. Accepts an agent dbKey (agent-xxx), plain id, alias, or agent URL; resolves it (including public agents via agent-pub-<id>; the server runtime also falls back to handle lookup) and returns the runnable agentKey plus a redacted record with fields such as model, provider, apiSource, tools, prompt, inputPrice, outputPrice, and isPublic. Use it to inspect an agent's full capabilities/credential status before delegation. Note: startAgentRun takes the exact agentKey from listAgents/readAgent; readAgent is not required before every dispatch when listAgents already gave you the key.",
+    "Read one agent's full config from the Nolo workspace. Pass the exact agentKey from listAgents (agent-<userId>-<id> for owned agents or agent-pub-<id> for public agents); do not pass the display name shown in the compact list. A plain id or agent URL is also accepted when needed. Returns the resolved runnable agentKey and a redacted record with model, provider, apiSource, tools, prompt, prices, and isPublic.",
   parameters: {
     type: "object",
     properties: {
       agent: {
         type: "string",
-        description: "Agent dbKey (e.g. agent-xxx), agent id, alias, or agent URL.",
+        description: "Exact agentKey from listAgents (preferred; copy verbatim), agent id, or agent URL. Do not use the display name.",
       },
     },
     required: ["agent"],

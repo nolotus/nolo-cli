@@ -24,7 +24,10 @@ import {
   type FetchInit,
 } from "./localRuntimeFetchRetry";
 import { prepareTokenUsageData } from "../../ai/token/prepareTokenUsageData";
-import { createTokenKey } from "../../database/keys";
+import { applyTokenUsageToDayStats } from "../../ai/token/applyTokenUsageToDayStats";
+import { createTokenKey, createTokenStatsKey } from "../../database/keys";
+import { runKeyed } from "../../core/keyedTaskQueue";
+import { format } from "date-fns";
 import { type EnvLike } from "./localRuntimeHelpers";
 import {
   extractLastUserText,
@@ -181,6 +184,10 @@ export async function writeLocalTokenRecord(args: {
     });
 
     const recordKey = createTokenKey.recordForStableCall(args.userId, callId);
+    // Align with Desktop adapter: skip if detail token already recorded (idempotent retry).
+    const existingToken = await args.store.read(recordKey, { remote: false }).catch(() => null);
+    if (existingToken) continue;
+
     const tokenRecord = {
       id: args.createId(),
       type: "token" as const,
@@ -188,7 +195,33 @@ export async function writeLocalTokenRecord(args: {
     };
 
     await args.store.write(recordKey, tokenRecord);
+    // Note: only detail records are returned in `ops` for remote sync.
+    // Server-side `ownsCliProjection` handles server stats projection authoritatively from details,
+    // avoiding dual-writer race conditions between stats upload and server projection.
     ops.push({ type: "put", key: recordKey, value: tokenRecord });
+
+    // Update local DayStats under per-key queue so TUI displays stats immediately.
+    const dateKey = format(timestamp, "yyyy-MM-dd");
+    const statsKey = createTokenStatsKey(args.userId, dateKey);
+    await runKeyed(statsKey, async () => {
+      let existingStats: unknown = null;
+      try {
+        existingStats = await args.store.read(statsKey, { remote: false });
+      } catch {
+        // First stats entry for this day — start from null.
+      }
+      const newStats = applyTokenUsageToDayStats(existingStats, {
+        userId: args.userId,
+        timeKey: dateKey,
+        model: prepared.billedModel,
+        provider: prepared.recordProvider,
+        input_tokens: prepared.usage.input_tokens,
+        output_tokens: prepared.usage.output_tokens,
+        cost: prepared.tokenData.cost,
+      });
+      const statsRecord = { ...newStats, id: statsKey, type: "token" as const };
+      await args.store.write(statsKey, statsRecord);
+    });
   }
   return ops;
 }

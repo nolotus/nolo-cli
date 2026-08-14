@@ -10,10 +10,7 @@ import type { AgentRuntimeAgentConfig, AgentRuntimeChatMessage } from "../../age
 import { resolveAgentRuntimeConfigFromRecord } from "../../agent-runtime";
 import { resolveBuiltinPlatformAgentConfig } from "../../agent-runtime/builtinPlatformAgentConfigs";
 import type { HybridRecordStore } from "./hybridRecordStore";
-import {
-  buildLocalAgentLookupKeys,
-  shouldReadAgentKeyRemotely,
-} from "./localAgentRecords";
+import { buildLocalAgentLookupKeys } from "./localAgentRecords";
 import { dialogMessageRange } from "../../database/keys";
 import { localDialogMessageRecordToRuntimeMessage } from "./localDialogRecords";
 import {
@@ -61,9 +58,12 @@ export function resolveBuiltinLocalCliAgentConfig(
 /**
  * Read an agent config from the store.
  *
- * Single-phase lookup:
+ * Local-first lookup:
  * 1. Key lookup: build candidate dbKeys from agentRef (alias → agent-{userId}-{ref}),
- *    read each from the store (remote-first for concrete agent keys).
+ *    read each from the store with hybrid defaults — local cache hit is used
+ *    directly; on local miss the store falls back to remote servers (including
+ *    NOLO_SYNC_SERVERS) and caches the fetched record locally. This keeps the
+ *    runtime usable regardless of which site created the agent.
  * 2. If no key matched, fall back to the builtin platform agent config.
  */
 export async function readAgentFromStore(args: {
@@ -73,9 +73,7 @@ export async function readAgentFromStore(args: {
 }): Promise<AgentRuntimeAgentConfig | null> {
   // Sequential lookup with early return — each key must be checked in order, stopping at first match.
   for (const key of buildLocalAgentLookupKeys(args)) {
-    const record = await args.store.read(key, {
-      remote: shouldReadAgentKeyRemotely(key),
-    });
+    const record = await args.store.read(key);
     if (!record || typeof record !== "object") continue;
     return resolveAgentRuntimeConfigFromRecord(key, record);
   }

@@ -1607,12 +1607,12 @@ describe("scroll-aware history", () => {
     );
     expect(savedSelections).toEqual([
       {
-        agentKey: "agent-pub-01NOLOAPPBLD000000019KCKT0",
-        agentName: "auto",
+        agentKey: "",
+        agentName: "",
       },
     ]);
-    expect(env.NOLO_AGENT).toBe("agent-pub-01NOLOAPPBLD000000019KCKT0");
-    expect(env.NOLO_AGENT_NAME).toBe("auto");
+    expect(env.NOLO_AGENT).toBeUndefined();
+    expect(env.NOLO_AGENT_NAME).toBeUndefined();
 
     // Normal text while busy is still queued for after the turn.
     input.write("normal queued text\r");

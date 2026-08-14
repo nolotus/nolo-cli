@@ -1470,7 +1470,7 @@ const baseToolDefinitions: ToolDefinition[] = [
     executor: listAgentsFunc,
     description: {
       name: "listAgents",
-      description: "List the current user's Nolo agents as safe summaries; use readAgent to resolve the runnable agentKey before delegation.",
+      description: "List the current user's Nolo agents as safe summaries containing each agent's runnable agentKey for delegation. Copy the agentKey verbatim; do not infer it from the display name.",
       category: "Nolo workspace",
     },
     behavior: "data",

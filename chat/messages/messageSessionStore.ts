@@ -25,6 +25,12 @@ export interface MessageSessionState {
   // useHasStreamingMessage (useSyncExternalStore) instead of scanning Redux
   // msgs so streaming tokens don't re-render the whole list / title.
   streamingMessageId: string | null;
+  // Wave12: last stream-clear timestamp for this dialog — written in the same
+  // reducer pass as clearAllStreaming (user abort or logout all:true system
+  // clear; see messageSlice clearAllStreaming). Memory-only, so async message
+  // persistence can never overwrite it; lets UI edge-detection tell aborted
+  // turns apart from normal completions.
+  lastAbortTimestamp: number;
 }
 
 const createEmptyMessageSessionState = (): MessageSessionState => ({
@@ -37,6 +43,7 @@ const createEmptyMessageSessionState = (): MessageSessionState => ({
   currentInitMsgsRequestId: undefined,
   currentLoadOlderRequestId: undefined,
   streamingMessageId: null,
+  lastAbortTimestamp: 0,
 });
 
 let activeDialogId: string | null = null;
@@ -141,6 +148,17 @@ export function markMessageStreamActivity(dialogId?: string | null) {
   return action("messageSession/streamActivity", { dialogId });
 }
 
+// Wave12 — written in the same reducer pass as clearAllStreaming (also hit by
+// logout all:true system clear) so the streaming→completed edge detector can
+// tell "aborted turn" apart from a normal completion. Memory-only (unlike
+// message metadata, which async persist may overwrite).
+export function markMessageSessionAbort(dialogId?: string | null) {
+  const session = ensureMessageSession(dialogId);
+  session.lastAbortTimestamp = Date.now();
+  notify();
+  return action("messageSession/abort", { dialogId });
+}
+
 // ===== Wave11: streaming-message id index =====
 // Written in the same spot as `isStreaming` on the Redux record (see
 // messageSlice reducers), so the store is the single source of truth for
@@ -189,6 +207,10 @@ export function getMessageSessionError(
 }
 export function getLastStreamTimestamp(dialogId?: string | null): number {
   return getMessageSession(dialogId).lastStreamTimestamp;
+}
+
+export function getLastAbortTimestamp(dialogId?: string | null): number {
+  return getMessageSession(dialogId).lastAbortTimestamp;
 }
 export function getMessagesLoadingState(dialogId?: string | null) {
   const session = getMessageSession(dialogId);
@@ -306,6 +328,12 @@ export function useLastStreamTimestamp(dialogId?: string | null): number {
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   if (dialogId == null) return 0;
   return getLastStreamTimestamp(dialogId);
+}
+
+export function useLastAbortTimestamp(dialogId?: string | null): number {
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  if (dialogId == null) return 0;
+  return getLastAbortTimestamp(dialogId);
 }
 
 export function useMessagesLoadingState(dialogId?: string | null) {

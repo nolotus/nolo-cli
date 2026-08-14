@@ -623,9 +623,50 @@ export function createRenderAwareStreamWriter(args: {
   // Last emitted line kind outside (and across) fences — drives stream-path
   // list↔prose breathing so live TUI matches whole-message polish.
   let lastKind: StreamLineKind | null = null;
+  // Keep the live transcript moving even when a provider sends a long prose
+  // line without a newline. Complete lines still take the structured path
+  // below; this is only a safe, whitespace-boundary fallback for prose.
+  const PARTIAL_FLUSH_THRESHOLD = 48;
 
   const emitBreathIfNeeded = (nextKind: StreamLineKind) => {
     if (needsListProseBreath(lastKind, nextKind)) args.write("\n");
+  };
+
+  const flushPartialProse = () => {
+    if (inFence || buffer.length < PARTIAL_FLUSH_THRESHOLD) return;
+    const firstLine = buffer.split("\n", 1)[0] ?? "";
+    // Only flush lines that are definitely plain prose. Any Markdown marker
+    // stays buffered so a later chunk can be rendered as one complete span;
+    // otherwise a partial `**bold`/`code`/link could leak raw syntax or differ
+    // from the whole-message renderer. Lists and headings also need their
+    // structural line boundary for spacing decisions.
+    if (isTableRow(firstLine) || classifyStreamLine(firstLine) !== "prose") return;
+    // Use grapheme segments rather than String#slice so emoji and combining
+    // marks cannot be split in the middle of a user-visible character.
+    const Segmenter = Intl.Segmenter;
+    const graphemes = typeof Segmenter === "function"
+      ? Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(firstLine), (part) => part.segment)
+      : Array.from(firstLine);
+    if (graphemes.length < PARTIAL_FLUSH_THRESHOLD) return;
+    let cut = PARTIAL_FLUSH_THRESHOLD;
+    const whitespaceIndex = graphemes
+      .slice(0, cut)
+      .findLastIndex((part) => /\s/.test(part));
+    if (whitespaceIndex > 0) cut = whitespaceIndex + 1;
+    const prefix = graphemes.slice(0, cut).join("");
+    // Only the emitted prefix needs to be structurally safe. Markdown that
+    // starts later in the still-buffered suffix cannot affect this chunk.
+    const hasUnsafeMarkdownPrefix =
+      /[`*_~\[]/.test(prefix) ||
+      /^\s*[#>]/.test(prefix) ||
+      /!\[/.test(prefix);
+    if (hasUnsafeMarkdownPrefix) return;
+    emitBreathIfNeeded("prose");
+    emitFormattedAssistantBlock(args.write, prefix, false);
+    lastKind = "prose";
+    buffer = prefix.length === buffer.length
+      ? ""
+      : buffer.slice(prefix.length);
   };
 
   const flushCompleteBlocks = () => {
@@ -704,6 +745,7 @@ export function createRenderAwareStreamWriter(args: {
       if (!chunk) return;
       buffer += chunk;
       flushCompleteBlocks();
+      flushPartialProse();
     },
     flush() {
       if (!buffer) return;

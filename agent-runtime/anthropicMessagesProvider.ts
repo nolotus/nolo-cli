@@ -338,6 +338,14 @@ export function buildAnthropicMessagesBody(args: {
         }];
       })
     : [];
+
+  // Inject a cache_control breakpoint on the last tool definition so the entire
+  // toolset is cached as part of the initial prefix (tools -> system -> messages).
+  // Idempotent: skip when any tool already carries a cache_control breakpoint
+  // (mirrors the system/messages injection guards below).
+  if (tools.length > 0 && !tools.some((tool) => isCacheControl(tool.cache_control))) {
+    tools[tools.length - 1].cache_control = { type: "ephemeral" };
+  }
   const model =
     stringValue(args.openAiBody.model) ?? args.agentConfig.model ?? "claude-sonnet-5";
   const maxTokensRaw =
@@ -469,7 +477,7 @@ export async function fetchAnthropicMessagesCompletion(args: {
   openAiBody: JsonRecord;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
-}): Promise<{ status: number; body: JsonRecord }> {
+}): Promise<{ status: number; body: JsonRecord; headers?: Headers }> {
   const response = await (args.fetchImpl ?? fetch)(ANTHROPIC_MESSAGES_URL, {
     method: "POST",
     headers: {
@@ -487,7 +495,7 @@ export async function fetchAnthropicMessagesCompletion(args: {
   const payload = (await response.json().catch(async () => ({
     error: { message: await response.text().catch(() => response.statusText) },
   }))) as JsonRecord;
-  if (!response.ok) return { status: response.status, body: payload };
+  if (!response.ok) return { status: response.status, body: payload, headers: response.headers };
   return { status: 200, body: mapAnthropicMessageToOpenAi(payload) };
 }
 

@@ -4,6 +4,7 @@ import { NOLO_CLUSTER_SERVERS } from "../database/config";
 import { resolvePlatformAuthToken } from "../agent-runtime/providerResolution";
 import {
   createHybridRecordStore,
+  parseSyncServersEnv,
   shouldCacheHybridRemoteRecord,
   type HybridRecordKvDb,
   type HybridRecordStore,
@@ -25,6 +26,7 @@ function resolveFallbackServers(env: EnvLike) {
   const values = [
     env.NOLO_SERVER_URL,
     env.BASE_URL,
+    ...parseSyncServersEnv(env),
     ...NOLO_CLUSTER_SERVERS,
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   return [...new Set(values.map(normalizeServerOrigin))];

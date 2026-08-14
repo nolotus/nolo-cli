@@ -125,6 +125,23 @@ export function shouldCacheHybridRemoteRecord(remoteRecord: any, localRecord: an
   return shouldReplaceWithHybridRecord(remoteRecord, localRecord);
 }
 
+export type SyncServersEnvLike = Record<string, string | undefined>;
+
+/**
+ * Parse NOLO_SYNC_SERVERS: comma-separated extra site origins the runtime
+ * should consult on local miss (e.g. "https://alpha.nolo.chat,https://us.nolo.chat").
+ * Shared by CLI and desktop hybrid stores so extra sites behave identically
+ * regardless of which runtime executes the agent.
+ */
+export function parseSyncServersEnv(env: SyncServersEnvLike | undefined) {
+  const raw = env?.NOLO_SYNC_SERVERS?.trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 export function createHybridRecordStore(
   deps: HybridRecordStoreDeps
 ): HybridRecordStore {

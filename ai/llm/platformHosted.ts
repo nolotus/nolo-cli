@@ -8,7 +8,6 @@ import {
   PLATFORM_HOSTED_KIMI_K3_MODEL,
 } from "./kimi";
 import {
-  DEEPINFRA_CLAUDE_HAIKU_PRICE,
   DEEPINFRA_CLAUDE_OPUS_PRICE,
   DEEPINFRA_CLAUDE_SONNET_PRICE,
 } from "./deepinfra";
@@ -17,16 +16,14 @@ import {
  * Claude 模型（平台托管语义）：记录侧 provider=nolo（统一管理），实际上游
  * 仍是 deepinfra（URL 指向 deepinfra、key 用 DEEPINFRA_API_KEY）。价格沿用
  * deepinfra 人民币报价，见 deepinfra.ts 注释。
+ * Claude Haiku 4.5 已下架（2026-08-14，无使用量），不再列入平台目录。
  */
-export const PLATFORM_HOSTED_CLAUDE_HAIKU_4_5_MODEL =
-  "anthropic/claude-haiku-4-5";
 export const PLATFORM_HOSTED_CLAUDE_SONNET_5_MODEL =
   "anthropic/claude-sonnet-5";
 export const PLATFORM_HOSTED_CLAUDE_OPUS_4_8_MODEL =
   "anthropic/claude-opus-4-8";
 
 export const PLATFORM_HOSTED_CLAUDE_MODELS = [
-  PLATFORM_HOSTED_CLAUDE_HAIKU_4_5_MODEL,
   PLATFORM_HOSTED_CLAUDE_SONNET_5_MODEL,
   PLATFORM_HOSTED_CLAUDE_OPUS_4_8_MODEL,
 ] as const;
@@ -76,6 +73,35 @@ export const PLATFORM_HOSTED_KIMI_K3_PRICE = {
   input: 16, // crof $2 × 8，特殊价不走通用 0.8×7 换算
   inputCacheHit: 2, // crof $0.25 × 8
   output: 64, // crof $8 × 8
+} as const;
+
+/**
+ * GLM 5.2 官方 Z.AI API $1.4/$4.4 per 1M，nolo 对外 8 折。
+ */
+export const PLATFORM_HOSTED_GLM_PRICE = {
+  input: toPlatformCredits(1.4),
+  inputCacheHit: toPlatformCredits(0.26),
+  output: toPlatformCredits(4.4),
+} as const;
+
+/** Platform hosted model id for GLM 5.2 (platform catalog). */
+export const PLATFORM_HOSTED_GLM_52_MODEL = "glm-5.2";
+
+/**
+ * Gemini 3.7 Flash（平台托管语义）：官方促销定价（through 2026-12-31）
+ * input $0.75 / output（含思考代币）$3.75 / 上下文缓存 $0.075 per 1M，
+ * nolo 对外 8 折（toPlatformCredits = usd × 0.8 × 7）。
+ * 2027-01-01 起官方正式价 input $1.50 / output $7.50 / 缓存 $0.15（届时
+ * 对应 credits：8.4 / 42 / 0.84，需在生效时更新本常量）。
+ * 目录约束：平台只托管 flash 文本模型 + 图片（image-preview）模型，
+ * 不托管任何非图片的 gemini pro 文本模型。
+ */
+export const PLATFORM_HOSTED_GEMINI_37_FLASH_MODEL = "gemini-3.7-flash";
+export const PLATFORM_HOSTED_GEMINI_37_FLASH_PRICE = {
+  input: toPlatformCredits(0.75),
+  output: toPlatformCredits(3.75),
+  cachingWrite: toPlatformCredits(0.075),
+  cachingRead: toPlatformCredits(0.075),
 } as const;
 
 /**
@@ -293,6 +319,26 @@ export const platformHostedModels = [
     contextWindow: 262144,
     supportsTool: true,
   },
+  {
+    name: PLATFORM_HOSTED_GLM_52_MODEL,
+    displayName: "GLM 5.2",
+    hasVision: false,
+    price: { ...PLATFORM_HOSTED_GLM_PRICE },
+    maxOutputTokens: 131072,
+    contextWindow: 1_000_000,
+    supportsTool: true,
+    supportsReasoningEffort: true,
+  },
+  {
+    name: PLATFORM_HOSTED_GEMINI_37_FLASH_MODEL,
+    displayName: "Gemini 3.7 Flash",
+    hasVision: true,
+    price: { ...PLATFORM_HOSTED_GEMINI_37_FLASH_PRICE },
+    maxOutputTokens: 65536,
+    contextWindow: 1_048_576,
+    supportsTool: true,
+    supportsReasoningEffort: true,
+  },
 
   {
     name: PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL,
@@ -313,15 +359,6 @@ export const platformHostedModels = [
     contextWindow: 1_000_000,
     supportsTool: true,
     supportsReasoningEffort: true,
-  },
-  {
-    name: PLATFORM_HOSTED_CLAUDE_HAIKU_4_5_MODEL,
-    displayName: "Claude Haiku 4.5",
-    hasVision: true,
-    price: { ...DEEPINFRA_CLAUDE_HAIKU_PRICE },
-    maxOutputTokens: 4092,
-    contextWindow: 195000,
-    supportsTool: false,
   },
   {
     name: PLATFORM_HOSTED_CLAUDE_SONNET_5_MODEL,

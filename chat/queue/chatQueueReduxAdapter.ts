@@ -184,9 +184,14 @@ export class ChatQueueReduxAdapter {
    * the other way around would let the seed read back the value we just wrote
    * and double-count it.
    */
-  enqueue(dialogKey: string, text: string): void {
-    this.getRuntime(dialogKey).send({ type: "enqueue", text });
+  enqueue(dialogKey: string, text: string): { accepted: true; queueLength: number } {
+    const runtime = this.getRuntime(dialogKey);
+    runtime.send({ type: "enqueue", text });
     enqueueUserInput({ text, dialogKey });
+    return {
+      accepted: true,
+      queueLength: runtime.getState().queue.length,
+    };
   }
 
   /** Current queue snapshot (from the core runtime). */

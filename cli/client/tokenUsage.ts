@@ -207,9 +207,21 @@ export function formatUsage(usage: any, dialogId: unknown) {
   if (typeof dialogId === "string" && dialogId)
     parts.push(`dialog=${dialogId}`);
 
-  const input = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
-  const output = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
-  if (input || output) parts.push(`tokens=${input}+${output}`);
+  if (usage && typeof usage === "object") {
+    const normalized = normalizeUsage(usage as never);
+    const input = Number(normalized.input_tokens || usage?.input_tokens || usage?.prompt_tokens || 0);
+    const output = Number(normalized.output_tokens || usage?.output_tokens || usage?.completion_tokens || 0);
+    const cacheHit = Number(normalized.cache_read_input_tokens || 0);
+
+    if (input || output) {
+      let tokenStr = `tokens=${input}+${output}`;
+      if (cacheHit > 0 && input > 0) {
+        const hitPercent = ((cacheHit / (input + cacheHit)) * 100).toFixed(1).replace(/\.0$/, "");
+        tokenStr += ` (cache: ${formatTokenCount(cacheHit)} / ${hitPercent}%)`;
+      }
+      parts.push(tokenStr);
+    }
+  }
 
   return parts.length ? `  (${parts.join("  ")})` : "";
 }

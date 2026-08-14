@@ -133,6 +133,48 @@ describe("CLI hybrid record store", () => {
     });
   });
 
+  test("consults NOLO_SYNC_SERVERS sites on local miss and caches the hit locally", async () => {
+    const { db, store: memory } = createMemoryDb();
+    const requests: string[] = [];
+    const hybrid = createCliHybridRecordStore({
+      db,
+      env: {
+        NOLO_SERVER: "https://nolo.chat",
+        NOLO_SYNC_SERVERS: "https://alpha.nolo.chat, https://us.nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      fetchImpl: async (url) => {
+        const target = String(url);
+        requests.push(target);
+        if (target.startsWith("https://alpha.nolo.chat/")) {
+          return Response.json({
+            data: {
+              dbKey: "agent-pub-alphabuild",
+              name: "alpha agent",
+              model: "deepseek-v4-flash",
+              updatedAt: "2026-08-13T00:00:00.000Z",
+            },
+          });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    await expect(hybrid.read("agent-pub-alphabuild")).resolves.toMatchObject({
+      name: "alpha agent",
+      serverOrigin: "https://alpha.nolo.chat",
+    });
+    // alpha is consulted before the built-in cluster fallback servers.
+    expect(requests).toEqual([
+      "https://nolo.chat/api/v1/db/read/agent-pub-alphabuild",
+      "https://alpha.nolo.chat/api/v1/db/read/agent-pub-alphabuild",
+    ]);
+    expect(memory.get("agent-pub-alphabuild")).toMatchObject({
+      name: "alpha agent",
+      serverOrigin: "https://alpha.nolo.chat",
+    });
+  });
+
   test("keeps newer local records over stale remote records", () => {
     expect(shouldCacheRemoteRecord(
       { updatedAt: "2026-05-12T00:00:00.000Z" },

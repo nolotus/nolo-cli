@@ -60,13 +60,6 @@ export const PLATFORM_AGENTS: AgentCatalogEntry[] = [
     kind: "platform",
     description: "one assistant that routes work across your agents and data",
   },
-  {
-    name: "app-builder",
-    key: "agent-pub-01APPBUILDER00000001YAII3I",
-    model: "-",
-    kind: "platform",
-    description: "builds web apps, tools, charts, and product prototypes",
-  },
 ];
 
 /**
@@ -120,6 +113,7 @@ function listedAgentToCatalogEntry(agent: ListedAgent): AgentCatalogEntry {
 
 export function mergeCatalogEntries(
   currentKey: string,
+  platformAgents: AgentCatalogEntry[],
   privateAgents: AgentCatalogEntry[],
   favoritedAtByKey: Record<string, number> = {},
 ) {
@@ -133,27 +127,32 @@ export function mergeCatalogEntries(
     merged.push(favoritedAt ? { ...entry, favoritedAt } : entry);
   };
 
-  const current = privateAgents.find((entry) => entry.key === currentKey) ?? null;
+  const current =
+    [...platformAgents, ...privateAgents].find((entry) => entry.key === currentKey) ?? null;
   if (current) push(current);
 
-  // The switcher is a personal shortlist: show favorites plus the current
-  // private agent when it has not been favorited yet. Platform defaults are
-  // not injected into this list.
-  const sortablePrivate: SortableAgentItem[] = privateAgents
-    .filter((entry) => favoritedAtByKey[entry.key] !== undefined)
-    .map((entry) => ({
-      key: entry.key,
-      favoritedAt: favoritedAtByKey[entry.key],
-      isOwned: true,
-      updatedAt: entry.updatedAt ?? 0,
-    }));
+  // Always keep the explicit auto/platform choices available. User-owned
+  // agents are shown regardless of favorite state; favorites only affect
+  // ordering and the star marker.
+  for (const entry of platformAgents) {
+    if (entry.key !== currentKey) push(entry);
+  }
+
+  // The switcher includes every user-owned agent. Favorites are sorted first,
+  // followed by the remaining owned agents by their update time.
+  const sortablePrivate: SortableAgentItem[] = privateAgents.map((entry) => ({
+    key: entry.key,
+    ...(favoritedAtByKey[entry.key] !== undefined
+      ? { favoritedAt: favoritedAtByKey[entry.key] }
+      : {}),
+    isOwned: true,
+    updatedAt: entry.updatedAt ?? 0,
+  }));
   const sortedKeys = sortAgentsFavoriteOwnedPublic(sortablePrivate);
   const sortedKeyOrder = new Map(sortedKeys.map((item, i) => [item.key, i]));
-  const sortedPrivate = privateAgents
-    .filter((entry) => favoritedAtByKey[entry.key] !== undefined)
-    .sort(
-      (a, b) => (sortedKeyOrder.get(a.key) ?? 0) - (sortedKeyOrder.get(b.key) ?? 0)
-    );
+  const sortedPrivate = [...privateAgents].sort(
+    (a, b) => (sortedKeyOrder.get(a.key) ?? 0) - (sortedKeyOrder.get(b.key) ?? 0)
+  );
   for (const entry of sortedPrivate) {
     if (entry.key !== currentKey) push(entry);
   }
@@ -232,6 +231,7 @@ export async function loadAgentCatalog(args: {
 
   const entries = mergeCatalogEntries(
     args.currentKey,
+    resolveCatalogPlatformAgents(env),
     rawData.privateAgents,
     rawData.favoritedAtByKey,
   );
@@ -254,6 +254,7 @@ function refreshAgentCatalogInBackground(
     .then((rawData) => {
       const entries = mergeCatalogEntries(
         args.currentKey,
+        resolveCatalogPlatformAgents(env),
         rawData.privateAgents,
         rawData.favoritedAtByKey,
       );

@@ -138,4 +138,56 @@ describe("readAgentFromStore key lookup", () => {
     // no longer reachable.
     expect(config).toBeNull();
   });
+
+  test("reads agent records local-first (no forced remote flag on read)", async () => {
+    // Execution must not force remote reads for agent keys: local cache hits
+    // are used directly, and on local miss the hybrid store's default
+    // (remote fallback + local caching) applies. So read must be called
+    // WITHOUT { remote: true }.
+    const calls: Array<{ key: string; remote?: boolean }> = [];
+    const store = {
+      read: async (key: string, options?: { remote?: boolean }) => {
+        calls.push({ key, remote: options?.remote });
+        return null;
+      },
+      iterator: async function* () {},
+    } as any;
+    await readAgentFromStore({
+      store,
+      agentRef: "agent-user-1-my-helper",
+      userId: "user-1",
+    });
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call.remote).toBeUndefined();
+    }
+  });
+
+  test("uses the local cached record on local-first hit", async () => {
+    const key = "agent-user-1-my-helper";
+    const localRecord = {
+      type: "agent",
+      id: "my-helper",
+      userId: "user-1",
+      name: "Cached Helper",
+      model: "deepseek-v4-flash",
+      apiSource: "cli",
+      provider: "cli",
+    };
+    const store = {
+      read: async (k: string) => (k === key ? localRecord : null),
+      iterator: async function* () {},
+    } as any;
+    const config = await readAgentFromStore({
+      store,
+      agentRef: key,
+      userId: "user-1",
+    });
+    expect(config).not.toBeNull();
+    expect(config).toMatchObject({
+      key,
+      name: "Cached Helper",
+      model: "deepseek-v4-flash",
+    });
+  });
 });

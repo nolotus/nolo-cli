@@ -1,6 +1,12 @@
 export const AGENT_RUNTIME_PACKAGE_ID = "agent-runtime";
 
 export {
+  DEFAULT_PROVIDER_RETRY_MS,
+  isAgentCoolingDown,
+  resolveAgentNextAvailableAt,
+} from "./agentAvailability";
+
+export {
   AUTO_EXECUTION_PROFILES,
   DEFAULT_AUTO_EXECUTION_PROFILE,
   DEFAULT_AUTO_EXECUTION_TIER,
@@ -204,6 +210,7 @@ export { dialogMessageRecordToAgentRuntimeMessage } from "./dialogMessageRecord"
 export { buildAgentRuntimeDialogWritePlan } from "./dialogWritePlan";
 export {
   createHybridRecordStore,
+  parseSyncServersEnv,
   shouldCacheHybridRemoteRecord,
 } from "./hybridRecordStore";
 export {

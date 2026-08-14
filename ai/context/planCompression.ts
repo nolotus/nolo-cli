@@ -32,6 +32,7 @@ export interface CompressionInput {
   contextWindow: number;
   force?: boolean;
   reason?: CompressionReason;
+  realContextUsagePercent?: number;
 }
 
 export interface CompressionPlan {
@@ -92,6 +93,16 @@ const classifyConversationLoad = (msgs: Message[]): ConversationLoad => {
   return "medium";
 };
 
+/**
+ * Accept either a ratio (0..1) or a percentage (0..100), but reject invalid
+ * values so bad provider telemetry falls back to the legacy estimate path.
+ */
+const normalizeContextUsageRatio = (value: number | undefined): number | undefined => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const ratio = value > 1 ? value / 100 : value;
+  return ratio >= 0 && ratio <= 1 ? ratio : undefined;
+};
+
 const emptyPlan = (startIndex: number): CompressionPlan => ({
   shouldCompress: false,
   compressCount: 0,
@@ -111,6 +122,7 @@ export function planCompression(input: CompressionInput): CompressionPlan {
     contextWindow,
     force = false,
     reason,
+    realContextUsagePercent,
   } = input;
 
   // 1. 找到最后一次压缩的位置
@@ -145,14 +157,33 @@ export function planCompression(input: CompressionInput): CompressionPlan {
     recentLoad,
   });
 
+  let shouldTriggerByUsage = false;
+  const usageRatio = normalizeContextUsageRatio(realContextUsagePercent);
+  if (usageRatio !== undefined) {
+    if (usageRatio >= 0.78) {
+      shouldTriggerByUsage = true;
+    } else if (
+      usageRatio >= 0.65 &&
+      isActiveSummaryWorthDoing(pendingTokens, contextWindow)
+    ) {
+      shouldTriggerByUsage = true;
+    }
+  }
+  // 估算安全网始终兜底：真实占用率可能是「合法但错误」的遥测（例如上报偏低
+  // 导致压缩被抑制、上下文无限增长），不能因为它的存在就禁用基于预算的估算
+  // 触发。usageRatio 分支只负责「真实占用率触发的额外压缩」，估算兜底不变。
+  if (totalUsed >= historyBudget) {
+    shouldTriggerByUsage = true;
+  }
+
   const shouldRunActiveSummary =
     force &&
     reason === "manual" &&
     !hasOpenEndedToolCall(pendingMsgs[pendingMsgs.length - 1]) &&
     isActiveSummaryWorthDoing(pendingTokens, contextWindow);
 
-  // 历史 + 待处理总开销未达到预算，且没有明确的主动归档信号，不触发压缩
-  if (totalUsed < historyBudget && !shouldRunActiveSummary) {
+  // 既未达到使用率/用量门槛，也没有明确的主动归档信号，不触发压缩
+  if (!shouldTriggerByUsage && !shouldRunActiveSummary) {
     return emptyPlan(startIndex);
   }
 
@@ -170,9 +201,12 @@ export function planCompression(input: CompressionInput): CompressionPlan {
     keepCount++;
   }
 
-  // 主动归档时保留最后两条原文，避免刚给用户的结论立刻被折叠进 summary。
+  const triggeredByRealUsage =
+    usageRatio !== undefined && shouldTriggerByUsage;
+
+  // 主动归档或真实占用率触发时，若估算开销低于 historyBudget，保留最后两条原文
   let compressCount =
-    shouldRunActiveSummary && totalUsed < historyBudget
+    (shouldRunActiveSummary || triggeredByRealUsage) && totalUsed < historyBudget
       ? Math.max(0, pendingMsgs.length - ACTIVE_SUMMARY_TAIL_KEEP_COUNT)
       : pendingMsgs.length - keepCount;
 

@@ -62,6 +62,7 @@ import {
   getActiveMessageDialogId,
   getHasStreamingMessage,
   getMessageSession,
+  markMessageSessionAbort,
   markMessageStreamActivity,
   patchMessageSession,
   resetAllMessageSessions,
@@ -88,6 +89,7 @@ export {
   useIsLoadingOlder,
   useHasMoreOlder,
   useMessageSessionError,
+  useLastAbortTimestamp,
   useLastStreamTimestamp,
   useMessagesLoadingState,
   useHasStreamingMessage,
@@ -397,6 +399,11 @@ export const messageSlice = createSliceWithThunks({
         }
         // Wave11: clear the streaming index for this dialog in lockstep.
         setStreamingMessageId(dialogId, null);
+        // Wave12: clearAllStreaming 唯一调用点是 abortAllMessages（dialogSlice，
+        // 含 logout 的 all:true 系统级清理）。在 session store 打上 abort 时间戳
+        // （内存态、不被异步 persist 覆盖），让「AI turn 完成提醒」的边沿检测
+        // 能区分中止与正常完成。
+        markMessageSessionAbort(dialogId);
       });
     }),
 

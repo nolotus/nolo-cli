@@ -11,6 +11,7 @@
 
 import { planCompression } from "../ai/context/planCompression";
 import { getModelContextWindow } from "../ai/llm/getModelContextWindow";
+import { canonicalizeToolName } from "./toolNameAliases";
 import { serializeMessageContent } from "../core/chat/messageContentSerialize";
 import type {
   AgentRuntimeHostAdapter,
@@ -34,28 +35,111 @@ export type PlanCompressionBridgeMessage = {
  */
 export const LOCAL_AUTO_COMPACTION_SYSTEM_PROMPT = `你是对话上下文压缩器。根据【现有记忆】和【新增对话】，输出可替代原始消息的事实性要点，供后续对话直接使用。
 
-严格只输出下面两部分，标题必须完全一致：
+严格只输出下面三部分，标题必须完全一致：
 关键事实档案
 - ...
 对话进展与待办
+- ...
+文件操作清单
 - ...
 
 要求：
 1) 使用对话主语言；混合语言时优先用户主要语言；专有名词、文件路径、标识符、命令保留原文。
 2) 关键事实档案只保留之后继续对话仍有价值的信息：用户目标/偏好、约束、技术栈、确定的文件路径、核心决策、未完成待办。
 3) 对话进展与待办：先极简概括旧上下文，再更详细记录最近进展、结论、分歧与下一步。
-4) 忽略寒暄、重复尝试、已放弃方案和无价值废话。
-5) 不要编造未出现的信息；不要开场白、结束语、markdown 代码块或额外章节；不要调用任何工具。`;
+4) 文件操作清单：列出本次压缩范围内读取、写入、编辑过的文件路径及操作类型（如: - 读取: path/to/file；若未涉及文件操作写"无"）。
+5) 忽略寒暄、重复尝试、已放弃方案和无价值废话。
+6) 不要编造未出现的信息；不要开场白、结束语、markdown 代码块或额外章节；不要调用任何工具。`;
+
+export type FileOperation = {
+  type: "read" | "write" | "edit";
+  path: string;
+};
+
+export function extractFileOperations(
+  msgs: PlanCompressionBridgeMessage[],
+): FileOperation[] {
+  const result: FileOperation[] = [];
+  const seen = new Set<string>();
+
+  for (const msg of msgs) {
+    if (!Array.isArray(msg.tool_calls)) continue;
+    for (const call of msg.tool_calls) {
+      const name =
+        call.function?.name || (call as { name?: string }).name || "";
+      if (!name) continue;
+
+      // Canonicalize model aliases first, then classify only local file tools.
+      // This preserves read/edit/write tool calls without misclassifying
+      // readDoc/readAgent/writeRow as filesystem operations.
+      const canonicalName = canonicalizeToolName(name);
+      const fileOperationByTool: Record<string, FileOperation["type"]> = {
+        readFile: "read",
+        writeFile: "write",
+        editFile: "edit",
+      };
+      const opType = fileOperationByTool[canonicalName];
+
+      if (!opType) continue;
+
+      let rawArgs =
+        call.function?.arguments ??
+        (call as { arguments?: unknown }).arguments;
+      let parsedArgs: Record<string, unknown> | null = null;
+
+      if (typeof rawArgs === "string") {
+        try {
+          parsedArgs = JSON.parse(rawArgs);
+        } catch {
+          // ignore invalid JSON
+        }
+      } else if (typeof rawArgs === "object" && rawArgs !== null) {
+        parsedArgs = rawArgs as Record<string, unknown>;
+      }
+
+      const path =
+        parsedArgs?.path ?? parsedArgs?.filePath ?? parsedArgs?.file;
+      if (typeof path === "string" && path.trim()) {
+        const key = `${opType}:${path.trim()}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push({ type: opType, path: path.trim() });
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+export function formatFileOperations(
+  msgs: PlanCompressionBridgeMessage[],
+): string {
+  const ops = extractFileOperations(msgs);
+  if (ops.length === 0) {
+    return "无";
+  }
+  const typeLabelMap = {
+    read: "读取",
+    write: "写入",
+    edit: "编辑",
+  };
+  return ops
+    .map((op) => `- ${typeLabelMap[op.type]}: ${op.path}`)
+    .join("\n");
+}
 
 export function buildLocalAutoCompactionUserContent(
   previousSummary: string,
   messagesText: string,
+  fileOpsText?: string,
 ): string {
-  return `【现有记忆】：
-${previousSummary || "(无)"}
-
-【新增对话】：
-${messagesText}`.trim();
+  const parts = [`【现有记忆】：\n${previousSummary || "(无)"}`];
+  if (fileOpsText !== undefined) {
+    parts.push(`【文件操作清单】：\n${fileOpsText || "无"}`);
+  }
+  parts.push(`【新增对话】：\n${messagesText}`);
+  return parts.join("\n\n").trim();
 }
 
 /**
@@ -249,12 +333,14 @@ export async function maybeAutoCompactLocalHistory(args: {
 
   try {
     const provider = await args.resolveProvider();
-    const messagesText = formatMessagesForLocalSummary(
-      plan.msgsToCompress as PlanCompressionBridgeMessage[],
-    );
+    const msgsToCompress =
+      plan.msgsToCompress as PlanCompressionBridgeMessage[];
+    const messagesText = formatMessagesForLocalSummary(msgsToCompress);
+    const fileOpsText = formatFileOperations(msgsToCompress);
     const promptContent = buildLocalAutoCompactionUserContent(
       existingSummary,
       messagesText,
+      fileOpsText,
     );
     const result = await provider.complete([
       { role: "system", content: LOCAL_AUTO_COMPACTION_SYSTEM_PROMPT },

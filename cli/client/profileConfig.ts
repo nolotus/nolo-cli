@@ -142,8 +142,20 @@ export function saveProfileAgentSelection(
   if (!config) return null;
   const profile = config.profiles[config.currentProfile];
   if (!profile) return null;
-  profile.agentKey = selection.agentKey.trim();
-  profile.agentName = selection.agentName.trim();
+
+  const agentKey = selection.agentKey.trim();
+  const agentName = selection.agentName.trim();
+  // The auto entry is represented at runtime by the built-in Nolo router key,
+  // but it must not be persisted as a user-selected agent. Otherwise the next
+  // process cannot distinguish "auto" from an explicit selection and stale
+  // agent metadata leaks back into NOLO_AGENT on startup.
+  if (!agentKey) {
+    delete profile.agentKey;
+    delete profile.agentName;
+  } else {
+    profile.agentKey = agentKey;
+    profile.agentName = agentName;
+  }
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   return config;

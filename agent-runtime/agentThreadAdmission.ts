@@ -24,7 +24,7 @@ export type AgentThreadAdmissionDecision =
     }
   | {
       allowed: false;
-      reason: "max_concurrent_reached";
+      reason: "max_concurrent_reached" | "agent_temporarily_unavailable";
       activeThreadCount: number;
       maxConcurrent: number;
     };

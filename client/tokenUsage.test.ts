@@ -6,6 +6,7 @@ import {
 import {
   buildTurnTokenUsage,
   formatTokenCount,
+  formatUsage,
   mergeUsageRecords,
   renderTokenStatus,
   resolveAgentContextWindow,
@@ -93,5 +94,39 @@ describe("tokenUsage", () => {
       buildTurnTokenUsage({ input_tokens: 100, output_tokens: 50 }, "nolo")
         ?.credits
     ).toBeUndefined();
+  });
+
+  test("formatUsage renders cache hit count and percentage", () => {
+    expect(
+      formatUsage(
+        {
+          input_tokens: 10_000,
+          output_tokens: 250,
+          cache_read_input_tokens: 8_000,
+        },
+        "01TESTDIALOG0000000000"
+      )
+    ).toContain("cache: 8k / 44.4%");
+
+    // OpenAI/Anthropic 语义：input 不含 cache 时命中可能超过新输入，
+    // 分母包含 cacheHit 后百分比恒 ≤100%
+    expect(
+      formatUsage(
+        {
+          input_tokens: 2_000,
+          output_tokens: 100,
+          cache_read_input_tokens: 10_000,
+        },
+        "01TESTDIALOG0000000000"
+      )
+    ).toContain("cache: 10k / 83.3%");
+
+    expect(
+      renderTokenStatus({
+        input: 10_000,
+        output: 250,
+        cacheRead: 8_000,
+      })
+    ).toBe("in 10k (cache 8k) out 250 left —");
   });
 });

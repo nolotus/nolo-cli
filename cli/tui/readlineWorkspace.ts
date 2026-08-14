@@ -740,17 +740,25 @@ function persistAgentSelection(
   env: NodeJS.ProcessEnv | undefined,
   saveSelection: typeof saveProfileAgentSelection = saveProfileAgentSelection,
 ) {
+  const isAuto =
+    state.agentKey === DEFAULT_TUI_AGENT_KEY &&
+    state.agentName.trim().toLowerCase() === "auto";
   try {
     saveSelection({
-      agentKey: state.agentKey,
-      agentName: state.agentName,
+      agentKey: isAuto ? "" : state.agentKey,
+      agentName: isAuto ? "" : state.agentName,
     });
   } catch {
     // profile persistence is best-effort in the workspace loop
   }
   if (env) {
-    env.NOLO_AGENT = state.agentKey;
-    env.NOLO_AGENT_NAME = state.agentName;
+    if (isAuto) {
+      delete env.NOLO_AGENT;
+      delete env.NOLO_AGENT_NAME;
+    } else {
+      env.NOLO_AGENT = state.agentKey;
+      env.NOLO_AGENT_NAME = state.agentName;
+    }
   }
 }
 

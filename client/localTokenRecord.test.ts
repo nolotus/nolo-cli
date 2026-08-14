@@ -184,15 +184,31 @@ describe("CLI local token record persistence", () => {
       ],
     } as any);
 
-    expect(singleWrites.filter((write) => write.key.startsWith("token-"))).toHaveLength(2);
-    const remoteTokens = requests.filter((request) => request.customKey?.startsWith("token-"));
+    const tokenDetailWrites = singleWrites.filter(
+      (write) => write.key.startsWith("token-") && !write.key.includes("token-stats")
+    );
+    expect(tokenDetailWrites).toHaveLength(2);
+    // Remote sync ops must contain ONLY detail records, not DayStats snapshots.
+    const remoteTokens = requests.filter(
+      (request) => request.customKey?.startsWith("token-") && !request.customKey?.includes("token-stats")
+    );
     expect(remoteTokens).toHaveLength(2);
+    const remoteStats = requests.filter((request) => request.customKey?.includes("token-stats"));
+    expect(remoteStats).toHaveLength(0);
     expect(new Set(remoteTokens.map((request) => request.customKey)).size).toBe(2);
     expect(new Set(remoteTokens.map((request) => request.data.timestamp)).size).toBe(1);
     expect(remoteTokens.map((request) => request.data.billable)).toEqual([true, true]);
+
+    // DayStats should be written locally
+    const statsWrites = singleWrites.filter((write) => write.key.includes("token-stats"));
+    expect(statsWrites.length).toBeGreaterThanOrEqual(1);
+    const latestStats = statsWrites[statsWrites.length - 1].value;
+    expect(latestStats.total.count).toBe(2);
+    expect(latestStats.total.tokens.input).toBe(30);
+    expect(latestStats.total.tokens.output).toBe(6);
   });
 
-  test("reuses the same detail key when a call is retried at a later time", async () => {
+  test("reuses the same detail key when a call is retried at a later time (idempotent, no double stats)", async () => {
     const { store, singleWrites } = createMockStore();
     const adapter = createTestAdapter(store);
     const originalNow = Date.now;
@@ -214,14 +230,23 @@ describe("CLI local token record persistence", () => {
       Date.now = originalNow;
     }
     const tokenKeys = singleWrites
-      .filter((write) => write.key.startsWith("token-"))
+      .filter((write) => write.key.startsWith("token-") && !write.key.includes("token-stats"))
       .map((write) => write.key);
+    // Because existingToken was detected on retry, detail was NOT overwritten and stats were NOT duplicated.
     expect(tokenKeys).toEqual([
-      createTokenKey.recordForStableCall("test-user-1", "retry-call"),
       createTokenKey.recordForStableCall("test-user-1", "retry-call"),
     ]);
     const range = createTokenKey.rangeOfUser("test-user-1");
     expect(tokenKeys[0] >= range.start && tokenKeys[0] <= range.end).toBe(true);
+
+    // DayStats should be written exactly once, not duplicated
+    const statsWrites = singleWrites
+      .filter((write) => write.key.includes("token-stats"))
+      .map((write) => write.value);
+    expect(statsWrites).toHaveLength(1);
+    expect(statsWrites[0].total.count).toBe(1);
+    expect(statsWrites[0].total.tokens.input).toBe(10);
+    expect(statsWrites[0].total.tokens.output).toBe(2);
   });
 
   test("entry_path is cli-local", async () => {

@@ -11,6 +11,7 @@ import {
   loadProfileConfig,
   normalizeProfileServerUrl,
   saveDefaultProfile,
+  saveProfileAgentSelection,
 } from "./profileConfig";
 
 describe("cli profile config", () => {
@@ -189,6 +190,31 @@ describe("cli profile config", () => {
         NOLO_AGENT: "agent-pub-abc",
       });
       expect(clearProfileAuthToken(path)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not persist auto as an explicit agent selection", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-auto-"));
+    try {
+      const path = join(dir, "config.json");
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+      });
+
+      saveProfileAgentSelection({ agentKey: "", agentName: "" }, path);
+      let config = loadProfileConfig(path)!;
+      expect(config.profiles.default.agentKey).toBeUndefined();
+      expect(config.profiles.default.agentName).toBeUndefined();
+      expect(buildEnvFromProfile(config)).not.toHaveProperty("NOLO_AGENT");
+      expect(buildEnvFromProfile(config)).not.toHaveProperty("NOLO_AGENT_NAME");
+
+      saveProfileAgentSelection({ agentKey: "agent-custom-auto", agentName: "auto" }, path);
+      config = loadProfileConfig(path)!;
+      expect(config.profiles.default.agentKey).toBe("agent-custom-auto");
+      expect(config.profiles.default.agentName).toBe("auto");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

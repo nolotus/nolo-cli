@@ -237,6 +237,7 @@ import {
   fetchAnthropicMessagesCompletion,
   isAnthropicOAuthAgent,
 } from "../../agent-runtime/anthropicMessagesProvider";
+import { isAgentCoolingDown, resolveAgentNextAvailableAt } from "../../agent-runtime/agentAvailability";
 import {
   createCursorProvider,
   isCursorOAuthAgent,
@@ -256,10 +257,7 @@ import {
   buildLocalDialogWritePlan,
   localDialogMessageRecordToRuntimeMessage,
 } from "./localDialogRecords";
-import {
-  buildLocalAgentLookupKeys,
-  shouldReadAgentKeyRemotely,
-} from "./localAgentRecords";
+import { buildLocalAgentLookupKeys } from "./localAgentRecords";
 import { createCliHybridRecordStore } from "./hybridRecordStore";
 import { executeLocalToolWithPolicy } from "./localToolPolicy";
 import { inferCaptureIntent } from "../../ai/policy/runtimePolicy";
@@ -597,6 +595,23 @@ export function createCliLocalRuntimeAdapter(
         }),
       }),
     resolveProvider: async (agentConfig) => {
+      // 冷却检查放在派发点：loadAgentConfig 只负责加载配置，不应因冷却失败
+      // （冷却 ≠ 配置错误，listAgents/预览等读配置路径不能被误伤）。
+      if (isAgentCoolingDown(agentConfig, now())) {
+        throw new Error(
+          `agent temporarily unavailable until ${new Date(Number((agentConfig as any).nextAvailableAt)).toISOString()}`,
+        );
+      }
+      const recordLocalAvailability = async (status: number, body: unknown) => {
+        const key = typeof agentConfig.key === "string" ? agentConfig.key : "";
+        if (!key || (status !== 200 && status !== 429)) return;
+        const current = await getOrCreateSharedStore(deps).then((store) => store.read(key, { remote: false })).catch(() => null);
+        if (!current || typeof current !== "object") return;
+        const next = { ...(current as Record<string, unknown>) };
+        if (status === 429) next.nextAvailableAt = resolveAgentNextAvailableAt(body, now());
+        else delete next.nextAvailableAt;
+        await getOrCreateSharedStore(deps).then((store) => store.write(key, next)).catch(() => undefined);
+      };
       if (isCliProviderAgent(agentConfig)) {
         const provider = resolveCliProviderName(agentConfig);
         logLocalRuntimeDiagnostic("provider.selected", {
@@ -742,6 +757,7 @@ export function createCliLocalRuntimeAdapter(
                   loopbackRequest,
                 }),
             });
+            await recordLocalAvailability(result.status, result.body);
             if (result.status < 200 || result.status >= 300) {
               const errMsg =
                 result.body &&
@@ -838,6 +854,7 @@ export function createCliLocalRuntimeAdapter(
                   loopbackRequest,
                 }),
             });
+            await recordLocalAvailability(result.status, result.body);
             if (result.status < 200 || result.status >= 300) {
               const errMsg =
                 result.body?.error &&
@@ -924,6 +941,7 @@ export function createCliLocalRuntimeAdapter(
                   loopbackRequest,
                 }),
             });
+            await recordLocalAvailability(result.status, result.body);
             if (result.status < 200 || result.status >= 300) {
               const errMsg =
                 result.body?.error &&

@@ -166,8 +166,9 @@ export const getCreateAgentSchema = (t: TFunction) =>
       name: z
         .string()
         .trim()
-        .min(1, t("validation.nameRequired"))
-        .max(50, t("validation.nameTooLong")),
+        .max(50, t("validation.nameTooLong"))
+        .optional()
+        .or(z.literal("")),
 
       /**
        * Stable machine-callable name for agent routing. Unlike name, this is

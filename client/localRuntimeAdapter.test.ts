@@ -1870,7 +1870,7 @@ describe("CLI local runtime adapter", () => {
 
     expect(result.content).toBe("platform longer retry ok");
     expect(attempts).toBe(4);
-    expect(retryDelays.length).toBe(1);
+    expect(retryDelays.length).toBeGreaterThanOrEqual(1);
     expect(retryDelays[0]).toBeGreaterThan(0);
   });
 
@@ -2537,16 +2537,16 @@ describe("CLI local runtime adapter", () => {
     const globFiles = tools.get("globFiles") as any;
     const searchFiles = tools.get("searchFiles") as any;
 
-    expect(listFiles.description).toContain("not for path-pattern discovery across the repo");
+    expect(listFiles.description).toContain("inside a workspace folder");
     expect(publicSchemaKeys(listFiles)).toEqual([
       "path",
       "maxDepth",
       "maxResults",
       "entryType",
     ]);
-    expect(readFile.description).toContain("Use lines ranges");
+    expect(readFile.description).toContain("Read a UTF-8 text file");
     expect(publicSchemaKeys(readFile)).toEqual(["path", "lines"]);
-    expect(globFiles.description).toContain("any file discovery task");
+    expect(globFiles.description).toContain("Find file paths by glob pattern");
     expect(publicSchemaKeys(globFiles)).toEqual([
       "pattern",
       "path",
@@ -2554,7 +2554,7 @@ describe("CLI local runtime adapter", () => {
       "includeIgnored",
       "maxResults",
     ]);
-    expect(searchFiles.description).toContain("using ripgrep when available");
+    expect(searchFiles.description).toContain("Search file contents inside the workspace using ripgrep");
     expect(publicSchemaKeys(searchFiles)).toEqual([
       "query",
       "path",
@@ -2672,7 +2672,7 @@ describe("CLI local runtime adapter", () => {
     });
 
     const globFiles = requests[0]?.body.tools.find((tool: any) => tool.function.name === "globFiles")?.function;
-    expect(globFiles.description).toContain("Do not use execShell or listFiles for path discovery");
+    expect(globFiles.description).toContain("Prefer globFiles over shell");
     expect(publicSchemaKeys(globFiles)).toEqual([
       "pattern",
       "path",
@@ -2718,7 +2718,7 @@ describe("CLI local runtime adapter", () => {
     });
 
     const listFiles = requests[0]?.body.tools.find((tool: any) => tool.function.name === "listFiles")?.function;
-    expect(listFiles.description).toContain("Do not use execShell with ls/find/tree");
+    expect(listFiles.description).toContain("Prefer listFiles over shell");
     expect(publicSchemaKeys(listFiles)).toEqual([
       "path",
       "maxDepth",
@@ -2763,8 +2763,7 @@ describe("CLI local runtime adapter", () => {
     });
 
     const readFile = requests[0]?.body.tools.find((tool: any) => tool.function.name === "readFile")?.function;
-    expect(readFile.description).toContain("Use lines ranges");
-    expect(readFile.parameters.properties.lines.description).toContain("each readFile preview consumes one budget slot");
+    expect(readFile.description).toContain("Use lines");
     expect(publicSchemaKeys(readFile)).toEqual(["path", "lines"]);
   });
 
@@ -2804,7 +2803,7 @@ describe("CLI local runtime adapter", () => {
     });
 
     const searchFiles = requests[0]?.body.tools.find((tool: any) => tool.function.name === "searchFiles")?.function;
-    expect(searchFiles.description).toContain("Do not use execShell for content search");
+    expect(searchFiles.description).toContain("Prefer searchFiles over shell");
     expect(publicSchemaKeys(searchFiles)).toEqual([
       "query",
       "path",

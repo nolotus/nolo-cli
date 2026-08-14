@@ -43,7 +43,17 @@ const readFiniteNumberField = (
 const readCostInUsdTicks = (usage: unknown): number | undefined =>
   readFiniteNumberField(usage, "cost_in_usd_ticks");
 
-export const normalizeUsage = (usage: RawUsage): NormalizedUsage => {
+export const normalizeUsage = (usage: RawUsage | null | undefined): NormalizedUsage => {
+  if (!usage || typeof usage !== "object") {
+    return {
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+  }
+
   const inputTokens =
     "input_tokens" in usage
       ? (usage.input_tokens ?? 0)

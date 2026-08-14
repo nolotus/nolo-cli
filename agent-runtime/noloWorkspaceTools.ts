@@ -25,7 +25,7 @@ export const NOLO_WORKSPACE_TOOL_NAMES = [
 export type NoloWorkspaceToolName = typeof NOLO_WORKSPACE_TOOL_NAMES[number];
 
 export const NOLO_WORKSPACE_TOOL_PROMPT =
-  "Nolo workspace tools are available for Nolo data: use listDialogs/readDialog/queryDialogsBySubjectRef to inspect dialogs, listAgents to discover agents and readAgent to resolve the runnable agentKey and full config before delegation, listSpaces/readSpace to inspect spaces, readDoc/readSkillDoc to read docs, loadSkill to activate a skill, listTables/queryTableRows to query tables, and cliWhoami/cliDoctor to check CLI state when the user asks to inspect Nolo workspace data. Use deleteDialogs only when the user explicitly asks to delete dialogs; it must preview matches and wait for user confirmation before deleting. Prefer tools over guessing, and combine tool results when the user asks for summaries or analysis.";
+  "Nolo workspace tools: listDialogs/readDialog/queryDialogsBySubjectRef for dialogs; listAgents/readAgent for agent config and delegation with runnable agentKey; listSpaces/readSpace for spaces; readDoc/readSkillDoc for docs; loadSkill to activate skills; listTables/queryTableRows for tables; cliWhoami/cliDoctor for CLI status. deleteDialogs requires confirmation.";
 
 const NOLO_WORKSPACE_TOOL_NAME_SET = new Set<string>(NOLO_WORKSPACE_TOOL_NAMES);
 const DIALOG_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
@@ -66,26 +66,23 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
     limit: { type: "integer", description: "Maximum dialogs to return." },
     space: stringToolParam("Optional space id or URL."),
   });
-  add("readDialog", [
-    "Read one persisted dialog in the Nolo workspace.",
-    "Prefer the full dialog dbKey (dialog-<userId>-<id>) or a dialog URL; a bare id only resolves for the currently logged-in user and cannot reliably read other users' or cross-server dialogs. Use listDialogs first when the target dialog is unclear.",
-  ].join("\n"), {
+  add("readDialog", "Read one persisted dialog in the Nolo workspace by full dbKey (dialog-<userId>-<id>) or URL. Use listDialogs first if target is unclear; bare id works for current user only.", {
     dialog: stringToolParam("Dialog dbKey (dialog-<userId>-<id>), dialog URL, or bare id (current user only)."),
     limit: { type: "integer", description: "Optional message limit." },
   }, ["dialog"]);
   add("queryDialogsBySubjectRef", "Query persisted dialog evidence by a generic dialog.subjectRefs target.", {
-    rowDbKey: stringToolParam("Optional convenience alias for subjectKind=table-row, subjectId=<rowDbKey>, subjectRole=task."),
-    subjectKind: stringToolParam("Generic subject ref kind, for example table-row, page, file, commit, or artifact."),
-    subjectId: stringToolParam("Generic subject ref id."),
+    rowDbKey: stringToolParam("Optional alias for subjectKind=table-row, subjectId=<rowDbKey>, subjectRole=task."),
+    subjectKind: stringToolParam("Subject ref kind (e.g. table-row, page, file, commit, artifact)."),
+    subjectId: stringToolParam("Subject ref id."),
     subjectRole: stringToolParam("Optional subject ref role."),
     limit: { type: "integer", description: "Maximum matching dialog summaries to return." },
-    status: stringToolParam("Optional dialog status filter, for example running, done, or failed."),
+    status: stringToolParam("Optional dialog status filter (running, done, failed)."),
     checkpointStatus: stringToolParam("Optional runtimeCheckpoint.status filter."),
     hasArtifacts: { type: "boolean", description: "When true, only return dialogs with artifact evidence." },
-    excludeDialogId: stringToolParam("Optional dialog id or dialog dbKey to exclude from evidence results, typically the current caller dialog."),
+    excludeDialogId: stringToolParam("Optional dialog id to exclude from results."),
   });
-  add("deleteDialogs", "Find and delete the current user's dialogs by title/id/dbKey. This is destructive: preview matches first and wait for explicit user confirmation before deleting.", {
-    query: stringToolParam("Dialog title/id/dbKey search text, for example 中医评测 or a dialog id."),
+  add("deleteDialogs", "Find and delete dialogs by title/id/dbKey. Preview matches and wait for user confirmation before deleting.", {
+    query: stringToolParam("Dialog title/id/dbKey search text."),
     matchMode: {
       type: "string",
       enum: ["contains", "exact", "prefix", "dialogId"],
@@ -97,16 +94,12 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
       description: "Confirmed dialog ids or dbKeys to delete.",
     },
   }, ["query"]);
-  add("listAgents", "List the current user's agents as safe summaries; use readAgent to resolve the runnable agentKey before delegation.", {
+  add("listAgents", "List the current user's agents with runnable agentKey for delegation. Copy the agentKey verbatim; do not infer it from the display name.", {
     space: stringToolParam("Optional space id or URL."),
     publicOnly: { type: "boolean", description: "Only show public agents." },
-    // 端间差异（LOW-R2-3）：CLI 命令 `nolo agent list` 无 --limit（parseAgentListArgs
-    // 仅支持 --json/--public-only/--ids-only），本地缓存全量列出；web 端
-    // listAgentsFunc 另有 limit（默认 100，最大 500）。如后续对齐需在
-    // parseAgentListArgs / agentListCommands 增加 --limit 透传。
   });
-  add("readAgent", "Read one agent's full config from the Nolo workspace. Accepts an agent dbKey (agent-xxx), plain id, alias, or agent URL; resolves it (including public agents via agent-pub-<id>; the server runtime also falls back to handle lookup) and returns the runnable agentKey plus a redacted record with fields such as model, provider, apiSource, tools, prompt, inputPrice, outputPrice, and isPublic. Use it before delegation to confirm an agent's identity and capabilities, or to resolve the agentKey that startAgentRun requires.", {
-    agent: stringToolParam("Agent dbKey (e.g. agent-xxx), agent id, alias, or agent URL."),
+  add("readAgent", "Read one agent's full config by exact agentKey returned by listAgents (agent-<userId>-<id> or agent-pub-<id>); do not use the display name.", {
+    agent: stringToolParam("Exact agentKey from listAgents (preferred; copy verbatim; plain id or URL are compatibility fallbacks)."),
   }, ["agent"]);
   add("listSpaces", "List joined spaces in the Nolo workspace.", {});
   add("readSpace", "Read one space in the Nolo workspace.", {
@@ -120,8 +113,8 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
   add("readSkillDoc", "Read one skill doc in the Nolo workspace.", {
     doc: stringToolParam("Skill doc/page key."),
   }, ["doc"]);
-  add("loadSkill", "Load a Skill by name from the workspace skill directory (.agents/skills/<name>/SKILL.md) and return its full SKILL.md content inline so you can follow its instructions. Use this instead of readFile when you want to activate a skill. On an unknown name the tool returns a plain text list of available skill names rather than failing.", {
-    name: stringToolParam("Skill name (the name advertised in the skill-discovery layer)."),
+  add("loadSkill", "Load a skill by name (.agents/skills/<name>/SKILL.md) and return its full instructions inline. Returns available skills if not found.", {
+    name: stringToolParam("Skill name advertised in skill discovery."),
   }, ["name"]);
   add("listTables", "List tables in the current user scope or an optional space scope.", {
     limit: { type: "integer", description: "Maximum tables to return." },

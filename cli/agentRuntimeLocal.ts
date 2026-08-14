@@ -10,6 +10,7 @@ export {
   buildAgentRuntimeAgentLookupKeys,
   buildAgentRuntimeDialogWritePlan,
   dialogMessageRecordToAgentRuntimeMessage,
+  parseSyncServersEnv,
   pickAgentRuntimeInferenceOptions,
   parseOpenAiCompatibleChatCompletionResponse,
   parsePlatformChatCompletionData,

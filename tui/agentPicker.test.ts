@@ -45,7 +45,7 @@ describe("agentPicker", () => {
       key: "agent-0e95801d90-minimax-m3",
       model: "MiniMax-M3",
     });
-    expect(resolveAgentSwitchTarget("2", catalog)?.key).toBe(PLATFORM_AGENTS[1].key);
+    expect(resolveAgentSwitchTarget("1", catalog)?.key).toBe(PLATFORM_AGENTS[0].key);
   });
 
   test("keeps the current agent first when merging catalog entries", () => {

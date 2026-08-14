@@ -280,12 +280,16 @@ export const buildSkillDiscoveryLayer = (
  *
  * Null when no AGENTS.md file was found.
  */
-export const buildAgentsMdLayer = (content: string): TurnContextLayer | null => {
+export const buildAgentsMdLayer = (
+  content: string,
+  /** Source filename shown in the block header — hosts may fall back to CLAUDE.md. */
+  fileName = "AGENTS.md",
+): TurnContextLayer | null => {
   const trimmed = content.trim();
   if (!trimmed) return null;
   return makeLayer(
     "agents-md",
-    `--- 项目指令（AGENTS.md）---\n${trimmed}`,
+    `--- 项目指令（${fileName}）---\n${trimmed}`,
     "session",
   );
 };
@@ -389,6 +393,26 @@ export const renderTurnContextBlocksWithScope = (
       content: layer.content.trim(),
       cacheScope: layer.cacheScope,
     }));
+
+/**
+ * Order scoped blocks cache-first: every `session` block ahead of every `turn`
+ * block, preserving each group's relative order.
+ *
+ * The stable prefix is only cacheable while it stays byte-identical, so a
+ * turn-scope block appearing before a session-scope one would push everything
+ * after it out of the cached region. Hosts assembling their own layer lists
+ * (CLI, TUI, desktop) share this helper instead of re-sorting by hand — three
+ * hand-written copies of that sort are exactly how the skill-discovery index
+ * ended up misfiled in the dynamic suffix.
+ */
+export const partitionScopedBlocks = <
+  T extends { cacheScope: "session" | "turn" },
+>(
+  blocks: ReadonlyArray<T>,
+): T[] => [
+  ...blocks.filter((block) => block.cacheScope === "session"),
+  ...blocks.filter((block) => block.cacheScope === "turn"),
+];
 
 // ============================================================================
 // T12 — Dialog summary layer

@@ -10,7 +10,13 @@ import {
   type UserChoiceResult,
 } from "../client/localRuntimeAdapter";
 import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPrompts";
-import { buildSkillDiscoveryContextBlock } from "../../agent-runtime/skillDiscovery";
+import { buildSkillDiscoveryContextLayer } from "../../agent-runtime/skillDiscovery";
+import {
+  buildAgentsMdLayer,
+  partitionScopedBlocks,
+  renderTurnContextBlocksWithScope,
+  type TurnContextLayer,
+} from "../../agent-runtime/turnContext";
 import { resolvePlatformAuthToken } from "../../agent-runtime/providerResolution";
 import {
   classifyCliAutoRoute,
@@ -322,10 +328,13 @@ export function installAltScreenRestoreHandlers(
 
 /**
  * Read AGENTS.md (or CLAUDE.md fallback) from the workspace root.
- * Returns a formatted context block string, or null when absent.
- * Session-scope: stable across turns in the same workspace.
+ * Returns the runtime's canonical agents-md layer, or null when absent.
+ *
+ * The block text and its cacheScope both come from `buildAgentsMdLayer` — this
+ * host must not format the marker itself, or downstream consumers are forced
+ * to string-match it back to recover the scope.
  */
-function readAgentsMdBlock(cwd: string): string | null {
+function readAgentsMdLayer(cwd: string): TurnContextLayer | null {
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
     const filePath = join(cwd, name);
     if (existsSync(filePath)) {
@@ -335,7 +344,7 @@ function readAgentsMdBlock(cwd: string): string | null {
         if (Buffer.byteLength(content, "utf8") > AGENTS_MD_MAX_BYTES) {
           content = Buffer.from(content, "utf8").subarray(0, AGENTS_MD_MAX_BYTES).toString("utf8") + "\n\n<!-- AGENTS.md truncated -->";
         }
-        return `--- 项目指令（${name}）---\n${content}`;
+        return buildAgentsMdLayer(content, name);
       } catch { /* skip unreadable */ }
     }
   }
@@ -521,39 +530,26 @@ async function runAgentChat(
       }
     }
   }
-  // Read AGENTS.md from cwd (project-level instructions, session-scope)
-  const agentsMdBlock = readAgentsMdBlock(state.cwd);
-  const extraContextBlocks = [
-    ...(agentsMdBlock ? [agentsMdBlock] : []),
-    ...(skillContextBlocks ?? []),
+  // Assemble the turn's context layers. Each builder stamps its own cacheScope
+  // (session = stable prefix, cached; turn = dynamic suffix, recomputed), so
+  // this host never has to infer scope by string-matching block markers.
+  const layers: Array<TurnContextLayer | null> = [
+    readAgentsMdLayer(state.cwd),
+    // Skill discovery: scan conventional skill dirs for SKILL.md and inject an
+    // index layer so the model knows what skills exist and can readFile them
+    // on-demand. Mirrors agentRunCommand.ts and desktopAgentRuntimeTurnService.
+    buildSkillDiscoveryContextLayer(state.cwd),
   ];
-  // Skill discovery: scan conventional skill dirs for SKILL.md and inject an
-  // index layer so the model knows what skills exist and can readFile them
-  // on-demand. Mirrors agentRunCommand.ts and desktopAgentRuntimeTurnService.
-  const skillDiscoveryBlock = buildSkillDiscoveryContextBlock(state.cwd);
-  if (skillDiscoveryBlock) {
-    extraContextBlocks.push(skillDiscoveryBlock);
-  }
-  // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
-  // Scope assignment is driven by whether a block's *content* changes between
-  // turns of the same session, not by which builder produced it:
-  //   session (stable prefix, cached)  — AGENTS.md, skill discovery index
-  //   turn    (dynamic suffix, uncached) — everything else
-  // Skill discovery is a pure function of the workspace skill dirs, so it is
-  // byte-identical across every turn; keeping it in the dynamic suffix (~1.5k
-  // tokens here) inflated the uncached region for zero benefit.
-  const agentsMdMarker = "--- 项目指令（";
-  const skillDiscoveryMarker = "--- 可用技能（Skills）---";
-  const isSessionScoped = (block: string): boolean =>
-    block.startsWith(agentsMdMarker) || block.startsWith(skillDiscoveryMarker);
-  const contextBlockScopes: ContextBlockScope[] = [
-    ...extraContextBlocks
-      .filter(isSessionScoped)
-      .map((content) => ({ content, cacheScope: "session" as const })),
-    ...extraContextBlocks
-      .filter((block) => !isSessionScoped(block))
+  const contextBlockScopes: ContextBlockScope[] = partitionScopedBlocks([
+    ...renderTurnContextBlocksWithScope(layers),
+    // Attached skill bodies are already self-contained sections built by
+    // buildSkillContextBlocks; they stay turn-scope because the user can
+    // attach/detach skills between turns.
+    ...(skillContextBlocks ?? [])
+      .map((content) => content.trim())
+      .filter((content) => content.length > 0)
       .map((content) => ({ content, cacheScope: "turn" as const })),
-  ];
+  ]);
   const result: RunAgentTurnResult = await agentRunner({
     agentName: effectiveAgentName,
     agentKey: effectiveAgentKey,

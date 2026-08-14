@@ -135,7 +135,7 @@ function buildReadWorkspaceDescription(variant?: ReadFileDescriptionVariant) {
   if (variant === "antiShell") {
     return "Read a UTF-8 text file inside the workspace. Prefer readFile over shell commands (cat/head/tail).";
   }
-  return "Read a UTF-8 text file inside the workspace. Use lines for focused range reads after searchFiles to save tokens.";
+  return "Read a UTF-8 text file inside the workspace. Use lines for focused range reads after searchFiles to save tokens. A range already delivered earlier for an unchanged file answers with a short notice instead of resending (force:true refetches).";
 }
 
 function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
@@ -156,9 +156,14 @@ function buildReadWorkspaceParameters(variant?: ReadFileParameterVariant) {
   // executor accepts. The legacy integer arguments stay readable at runtime
   // for in-flight callers, but are deliberately undeclared so no model picks
   // them up from the schema — see LEGACY_SLICE_ARG_NAMES in localWorkspaceTools.
+  const force = {
+    type: "boolean",
+    description:
+      "Refetch even when the requested range was already delivered earlier and the file is unchanged (e.g. after context compaction).",
+  };
   return {
     type: "object",
-    properties: { path, lines },
+    properties: { path, lines, force },
     required: ["path"],
   };
 }

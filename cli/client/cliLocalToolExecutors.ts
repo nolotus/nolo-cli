@@ -9,6 +9,13 @@
  */
 import type { EnvLike } from "./localRuntimeHelpers";
 import type { CollapsedPasteStore } from "../../core/collapsedPaste";
+import {
+  filterRetainedLedgerRecords,
+  isLineRangeCovered,
+  type LedgerEntry,
+  type LedgerRecord,
+} from "../../core/readRangeLedger";
+import { resolveHistoricalToolContentCap } from "../../ai/agent/toolOutputPolicy";
 import type { CliFetchImpl } from "../cliFetch";
 import type { PermissionRequest } from "../../agent-runtime/actionGate";
 import {
@@ -46,8 +53,19 @@ export type LocalCliExecutor = (
 ) => Promise<{ content: string; stopReason?: string; usage?: unknown }>;
 
 const MAX_PASTED_TEXT_LINES_PER_READ = 200;
+// An explicit endLine may exceed the paging cap by this margin, so a slightly
+// over-one-page paste (e.g. 210 lines requested as 1-210) is delivered by a
+// single call instead of forcing a tail-fetching second read.
+const PASTED_TEXT_EXPLICIT_OVERSHOOT_LINES = 20;
+const PASTE_LEDGER_MAX_RECORDS = 64;
 
-function createReadPastedTextExecutor(store: CollapsedPasteStore) {
+export function createReadPastedTextExecutor(store: CollapsedPasteStore) {
+  // Read ledger: ranges fully delivered this session. A repeated read whose
+  // request is covered by still-in-context deliveries answers with a short
+  // notice instead of resending (force:true overrides). Only deliveries small
+  // enough to survive historical projection are treated as still in context —
+  // see resolveHistoricalToolContentCap.
+  const ledger = new Map<number, LedgerEntry>();
   return async (call: any) => {
     let parsed: Record<string, unknown> = {};
     try {
@@ -73,32 +91,92 @@ function createReadPastedTextExecutor(store: CollapsedPasteStore) {
         metadata: { error: true, code: "paste_not_found", pasteId },
       };
     }
+    const force = parsed.force === true;
 
     const lines = text.split("\n");
+    const fingerprint = `${lines.length}:${text.length}`;
     const requestedStart = Number(parsed.startLine);
     const requestedEnd = Number(parsed.endLine);
     const startLine = Number.isInteger(requestedStart) && requestedStart > 0
       ? Math.min(requestedStart, lines.length)
       : 1;
+    const explicitEnd = Number.isInteger(requestedEnd) && requestedEnd >= startLine
+      ? requestedEnd
+      : undefined;
+    const defaultEnd = startLine + MAX_PASTED_TEXT_LINES_PER_READ - 1;
     const endLine = Math.min(
       lines.length,
-      Number.isInteger(requestedEnd) && requestedEnd >= startLine
-        ? requestedEnd
-        : startLine + MAX_PASTED_TEXT_LINES_PER_READ - 1,
-      startLine + MAX_PASTED_TEXT_LINES_PER_READ - 1,
+      explicitEnd ?? defaultEnd,
+      defaultEnd + (explicitEnd !== undefined ? PASTED_TEXT_EXPLICIT_OVERSHOOT_LINES : 0),
     );
-    return {
-      content: lines.slice(startLine - 1, endLine).join("\n"),
-      metadata: {
-        pasteId,
-        startLine,
-        endLine,
-        totalLines: lines.length,
-        totalChars: text.length,
-        truncated: endLine < lines.length,
-        source: "tui-paste-store",
-      },
+
+    let entry = ledger.get(pasteId);
+    if (entry && entry.fingerprint !== fingerprint) {
+      entry = undefined;
+      ledger.delete(pasteId);
+    }
+    if (!force && entry) {
+      const retainedCap = resolveHistoricalToolContentCap("readPastedText", 0);
+      const retained = filterRetainedLedgerRecords(entry.records, retainedCap);
+      if (retained.length > 0 && isLineRangeCovered({ startLine, endLine }, retained)) {
+        return {
+          content:
+            `[readPastedText] paste #${pasteId} lines ${startLine}-${endLine} were already ` +
+            "delivered earlier in this session and remain in context; not resending. " +
+            "Pass force:true to refetch.",
+          metadata: {
+            pasteId,
+            startLine,
+            endLine,
+            totalLines: lines.length,
+            deduped: true,
+            source: "tui-paste-store",
+          },
+        };
+      }
+    }
+
+    const delivered = lines.slice(startLine - 1, endLine).join("\n");
+    // Footer only when we cut the request short (paging cap or explicit
+    // overshoot margin): it carries the exact next startLine so follow-up
+    // pages never overlap or guess.
+    // No continuation footer at EOF — "continue with startLine=N+1" past the
+    // last line would be misleading.
+    const clamped = explicitEnd !== undefined && endLine < explicitEnd && endLine < lines.length;
+    const paged = explicitEnd === undefined && endLine < lines.length;
+    const needsFooter = clamped || paged;
+    const content = needsFooter
+      ? `${delivered}\n[readPastedText: returned lines ${startLine}-${endLine} of ${lines.length}. Continue with startLine=${endLine + 1}.]`
+      : delivered;
+
+    const metadata = {
+      pasteId,
+      startLine,
+      endLine,
+      totalLines: lines.length,
+      totalChars: text.length,
+      truncated: endLine < lines.length,
+      // Continuation pointer whenever more content exists, even when an
+      // explicit request was honored in full — the schema contract says a
+      // truncated read advertises the exact next startLine.
+      ...(endLine < lines.length ? { nextStartLine: endLine + 1 } : {}),
+      source: "tui-paste-store",
     };
+    // Provider-facing historical messages carry a bounded metadata suffix
+    // (projectToolContentForProvider), so record content + suffix length —
+    // the same conservative units as readFile's ledger.
+    const persistedChars =
+      content.length +
+      "\n\n[tool metadata]\n".length +
+      JSON.stringify(metadata).length;
+    const records = entry?.records ?? [];
+    records.push({ startLine, endLine, chars: persistedChars });
+    ledger.set(pasteId, {
+      fingerprint,
+      records: records.slice(-PASTE_LEDGER_MAX_RECORDS),
+    });
+
+    return { content, metadata };
   };
 }
 

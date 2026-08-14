@@ -1,6 +1,16 @@
 export type ToolOutputProjectionProfile = {
   maxChars: number;
   headRatio: number;
+  /**
+   * Optional historical-retention cap. Read-family tools set it so small read
+   * results survive historical compression intact: the model keeps the content
+   * in context and does not pay another tool step to re-read the same range.
+   * Tools without it keep the caller-provided historicalMaxChars. The read
+   * executors reuse the same cap (resolveHistoricalToolContentCap) as their
+   * dedup-ledger retention gate, so "not resending" and "still in history"
+   * can never disagree.
+   */
+  historicalMaxChars?: number;
 };
 
 export const MAX_HISTORICAL_TOOL_CONTENT_CHARS = 1600;
@@ -19,9 +29,9 @@ export const DEFAULT_TOOL_OUTPUT_PROFILE: ToolOutputProjectionProfile = {
 };
 
 export const TOOL_OUTPUT_PROFILES: Record<string, ToolOutputProjectionProfile> = {
-  readFile: { maxChars: 4800, headRatio: 0.68 },
-  read_file: { maxChars: 4800, headRatio: 0.68 },
-  readWorkspaceFile: { maxChars: 4800, headRatio: 0.68 },
+  readFile: { maxChars: 4800, headRatio: 0.68, historicalMaxChars: 4800 },
+  read_file: { maxChars: 4800, headRatio: 0.68, historicalMaxChars: 4800 },
+  readWorkspaceFile: { maxChars: 4800, headRatio: 0.68, historicalMaxChars: 4800 },
   searchFiles: { maxChars: 3600, headRatio: 0.78 },
   search_files: { maxChars: 3600, headRatio: 0.78 },
   listFiles: { maxChars: 2800, headRatio: 0.85 },
@@ -31,13 +41,30 @@ export const TOOL_OUTPUT_PROFILES: Record<string, ToolOutputProjectionProfile> =
   launchProcess: { maxChars: 2800, headRatio: 0.35 },
   editFile: { maxChars: 2800, headRatio: 0.62 },
   writeFile: { maxChars: 2400, headRatio: 0.62 },
-  readPastedText: { maxChars: 4800, headRatio: 0.5 },
+  readPastedText: { maxChars: 4800, headRatio: 0.5, historicalMaxChars: 4800 },
 };
 
 export function resolveToolOutputProfile(
   toolName?: string,
 ): ToolOutputProjectionProfile {
   return (toolName ? TOOL_OUTPUT_PROFILES[toolName] : undefined) ?? DEFAULT_TOOL_OUTPUT_PROFILE;
+}
+
+/**
+ * Historical-retention cap for one tool message. Tools with a profile
+ * historicalMaxChars keep that many characters in history (read results stay
+ * reusable, so the model does not re-read unchanged content just because the
+ * flat historical budget compressed it away); every other tool falls back to
+ * the caller-provided historicalMaxChars.
+ */
+export function resolveHistoricalToolContentCap(
+  toolName: string | undefined,
+  historicalMaxChars: number,
+): number {
+  const profile = toolName ? TOOL_OUTPUT_PROFILES[toolName] : undefined;
+  return profile?.historicalMaxChars !== undefined
+    ? Math.max(historicalMaxChars, profile.historicalMaxChars)
+    : historicalMaxChars;
 }
 
 /** Web/server 路径下单条 tool 消息的投影决策（纯函数）。
@@ -67,9 +94,10 @@ export function projectToolMessageContent(input: {
     );
   }
 
-  if (content.length <= historicalMaxChars) return content;
+  const cap = resolveHistoricalToolContentCap(toolName, historicalMaxChars);
+  if (content.length <= cap) return content;
   return (
-    content.slice(0, historicalMaxChars) +
+    content.slice(0, cap) +
     `\n…[截断，原始长度 ${content.length} 字符]`
   );
 }

@@ -243,12 +243,6 @@ export interface DiscoveredSkill {
  * directories inside the bound folder. The model sees what skills are
  * available and can read them on-demand via readFile/listFiles tools.
  *
- * Session-scope: the index is a pure function of the workspace skill dirs, so
- * it is byte-identical across every turn of a session. It belongs in the
- * cached stable prefix — leaving it in the dynamic suffix inflated the
- * uncached region (~1.5k tokens in this repo) for no benefit. A skill added
- * mid-session is picked up on the next process start, same as AGENTS.md.
- *
  * Null when no skills were discovered (the caller scanned and found nothing).
  */
 export const buildSkillDiscoveryLayer = (
@@ -267,7 +261,7 @@ export const buildSkillDiscoveryLayer = (
         `- ${s.name}: ${s.description}\n  path: ${s.relativePath}`,
     ),
   ];
-  return makeLayer("skill-discovery", lines.join("\n"), "session");
+  return makeLayer("skill-discovery", lines.join("\n"));
 };
 
 /**
@@ -280,16 +274,12 @@ export const buildSkillDiscoveryLayer = (
  *
  * Null when no AGENTS.md file was found.
  */
-export const buildAgentsMdLayer = (
-  content: string,
-  /** Source filename shown in the block header — hosts may fall back to CLAUDE.md. */
-  fileName = "AGENTS.md",
-): TurnContextLayer | null => {
+export const buildAgentsMdLayer = (content: string): TurnContextLayer | null => {
   const trimmed = content.trim();
   if (!trimmed) return null;
   return makeLayer(
     "agents-md",
-    `--- 项目指令（${fileName}）---\n${trimmed}`,
+    `--- 项目指令（AGENTS.md）---\n${trimmed}`,
     "session",
   );
 };
@@ -393,26 +383,6 @@ export const renderTurnContextBlocksWithScope = (
       content: layer.content.trim(),
       cacheScope: layer.cacheScope,
     }));
-
-/**
- * Order scoped blocks cache-first: every `session` block ahead of every `turn`
- * block, preserving each group's relative order.
- *
- * The stable prefix is only cacheable while it stays byte-identical, so a
- * turn-scope block appearing before a session-scope one would push everything
- * after it out of the cached region. Hosts assembling their own layer lists
- * (CLI, TUI, desktop) share this helper instead of re-sorting by hand — three
- * hand-written copies of that sort are exactly how the skill-discovery index
- * ended up misfiled in the dynamic suffix.
- */
-export const partitionScopedBlocks = <
-  T extends { cacheScope: "session" | "turn" },
->(
-  blocks: ReadonlyArray<T>,
-): T[] => [
-  ...blocks.filter((block) => block.cacheScope === "session"),
-  ...blocks.filter((block) => block.cacheScope === "turn"),
-];
 
 // ============================================================================
 // T12 — Dialog summary layer

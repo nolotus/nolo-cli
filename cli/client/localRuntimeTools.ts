@@ -70,9 +70,7 @@ export function buildOpenAiTools(args: {
           function: {
             name: "readPastedText",
             description:
-              "Read a chunk of a large TUI paste by pasteId. Use startLine and endLine to page through the full content. " +
-              "A truncated read appends the exact next startLine; a range already delivered earlier in this session " +
-              "answers with a short notice instead of resending (pass force:true to refetch after context compaction).",
+              "Read a chunk of a large TUI paste by pasteId. Use startLine and endLine to page through the full content.",
             parameters: {
               type: "object",
               properties: {
@@ -90,12 +88,7 @@ export function buildOpenAiTools(args: {
                   type: "integer",
                   minimum: 1,
                   description:
-                    "Last 1-based line to return; each call is bounded to a 200-line chunk (a slightly larger explicit range is honored in one call).",
-                },
-                force: {
-                  type: "boolean",
-                  description:
-                    "Refetch even when the requested range was already delivered earlier in this session.",
+                    "Last 1-based line to return; each call is bounded to a 200-line chunk.",
                 },
               },
               required: ["pasteId"],

@@ -7,7 +7,6 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveToolGuidedSections } from "../../ai/agent/toolGuidedSections";
 import { estimateTokenCount } from "../../ai/context/tokenUtils";
 import { prepareTools } from "../../ai/tools/prepareTools";
 import { expandEnabledPacks } from "../../ai/tools/toolPacks";
@@ -90,9 +89,6 @@ export function estimateDefaultCliContextTokens(opts: {
   ]);
 
   const guidance = buildRuntimeGuidanceBlocks(toolNames);
-  // Same table the runtimes inject, so the estimate tracks the orchestration /
-  // review-gate sections too.
-  const toolSections = resolveToolGuidedSections(toolNames);
   const systemParts = [
     prompt,
     buildIdentityBlock({
@@ -104,7 +100,6 @@ export function estimateDefaultCliContextTokens(opts: {
     guidance.contextLayerContract,
     guidance.emailRegistrationWorkflow,
     guidance.webResearchToolPolicy,
-    ...Object.values(toolSections),
     buildCurrentTimeBlock(new Date()),
     readAgentsMd(cwd),
     buildSkillDiscoveryContextBlock(cwd) ?? "",

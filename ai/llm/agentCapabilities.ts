@@ -26,7 +26,6 @@ const isCustomAgent = (agent: AgentCapabilityConfig): boolean => {
  * 基础名（gemini-3.6-flash），精确匹配会漏判，故在查 catalog 前先折叠后缀。
  */
 const ANTIGRAVITY_EFFORT_SUFFIXES = [
-  "-tiered",
   "-extra-low",
   "-low",
   "-medium",

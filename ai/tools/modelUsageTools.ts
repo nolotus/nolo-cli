@@ -26,7 +26,7 @@ export const queryModelUsageFunctionSchema = {
       },
       model: {
         type: "string",
-        description: "可选模型过滤，例如 gemini-3.7-flash。",
+        description: "可选模型过滤，例如 gemini-3.5-flash。",
       },
       serviceTier: {
         type: "string",

@@ -111,27 +111,6 @@ export const googleModels: Model[] = [
       priority: { inputOutput: 1.8, cache: 1.8 },
     },
   },
-  {
-    name: "gemini-3.7-flash",
-    displayName: "Gemini 3.7 Flash",
-    provider: "google",
-    description:
-      "Gemini 3.7 Flash model for fast frontier agentic, coding, and multimodal tasks.",
-    hasVision: true,
-    hasAudio: true,
-    contextWindow: 1048576,
-    maxOutputTokens: 65536,
-    supportsTool: true,
-    supportsReasoningEffort: true,
-    // Official promo pricing: $0.75/$3.75/$0.075 per 1M through 2026-12-31.
-    // Antigravity's subscription wire route is tiered; Gemini API uses this logical id.
-    price: {
-      input: 0.75 * 7,
-      output: 3.75 * 7,
-      cachingWrite: 0.075 * 7,
-      cachingRead: 0.075 * 7,
-    },
-  },
   createGoogleImageModel({
     name: "gemini-3-pro-image-preview",
     displayName: "Nano Banana Pro (Gemini 3 Pro Image Preview)",

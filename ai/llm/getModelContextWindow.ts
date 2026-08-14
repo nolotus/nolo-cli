@@ -33,6 +33,7 @@ const QWEN_3_6_CONTEXT_WINDOW = 262_144;
 const GLM_5_2_CONTEXT_WINDOW = 1_000_000;
 
 const ANTIGRAVITY_EFFORT_SUFFIXES = [
+  "-tiered",
   "-extra-low",
   "-low",
   "-medium",

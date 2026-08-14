@@ -21,7 +21,7 @@ import { summarizeToolArguments } from "./summarizeToolArguments";
 import { buildIdentityBlock } from "./identityBlock";
 import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
 import { buildRuntimeGuidanceBlocks } from "./runtimeGuidance";
-import { MENU_USAGE_INSTRUCTIONS } from "./menuUsage";
+import { resolveToolGuidedSections } from "../ai/agent/toolGuidedSections";
 import { canonicalizeToolNames } from "./toolNameAliases";
 import { buildCurrentTimeBlock } from "./currentTimeContext";
 import type { ContextBlockScope } from "./contextBlockScope";
@@ -30,6 +30,7 @@ import {
   MAX_HISTORICAL_TOOL_CONTENT_CHARS,
   FRESH_TOOL_OUTPUT_MAX_CHARS,
   clipToolText,
+  resolveHistoricalToolContentCap,
   resolveToolOutputProfile,
 } from "../ai/agent/toolOutputPolicy";
 import { planContextUsage } from "../ai/context/retention";
@@ -829,17 +830,22 @@ type PreparedProviderMessages = {
   metrics: LocalAgentContextMetrics;
 };
 
-function summarizeHistoricalToolContent(
+// Exported for the cross-turn retention regression test: the ledger gate in
+// the read executors and this projection must agree on the same cap, or the
+// dedup notice can claim "still in context" for content history already cut.
+export function summarizeHistoricalToolContent(
   content: AgentRuntimeMessageContent,
   toolName?: string,
   metadata?: Record<string, unknown>,
 ): AgentRuntimeMessageContent {
-  const profile = resolveToolOutputProfile(toolName);
   return projectToolContentForProvider({
     content,
     toolName,
     metadata,
-    maxChars: Math.min(profile.maxChars, MAX_HISTORICAL_TOOL_CONTENT_CHARS),
+    // Same single source of truth as the server path and the read ledgers:
+    // read-family tools keep their profile historical cap (4800) cross-turn,
+    // unprofiled tools fall back to the flat historical budget.
+    maxChars: resolveHistoricalToolContentCap(toolName, MAX_HISTORICAL_TOOL_CONTENT_CHARS),
     label: "historical tool result truncated for the next turn",
   });
 }
@@ -1266,16 +1272,19 @@ export async function runLocalAgentTurn(
     agentConfig.exposedToolNames ?? agentConfig.toolNames ?? []
   );
   const guidanceBlocks = buildRuntimeGuidanceBlocks(agentTools);
-  // 与 web/server 对齐：ask_user 交互说明由本地宿主注入（单一真值 menuUsage.ts）。
-  // 仅当本地确实暴露 ask_user 工具时注入，避免白占稳定前缀。
-  const menuUsageBlock = agentTools.includes("ask_user") ? MENU_USAGE_INSTRUCTIONS : "";
+  // 与 web/server 对齐：工具驱动指令表（多 Agent 编排/协作 review 硬门、
+  // menuUsage、网页访问、知识管理、记忆捕获等）与 buildSystemPrompt 共用同一
+  // resolveToolGuidedSections。本地运行时此前只拼 runtime guidance 块，review
+  // 硬门因此只在服务端路径生效——“本地会话不走第三方 review”事故的根因。
+  // menuUsage 已并入该表，不再单独注入。
+  const toolGuidedSections = resolveToolGuidedSections(agentTools);
   const guidanceScopes: ContextBlockScope[] =
     [
       guidanceBlocks.startupProtocol,
       guidanceBlocks.contextLayerContract,
       guidanceBlocks.emailRegistrationWorkflow,
       guidanceBlocks.webResearchToolPolicy,
-      menuUsageBlock,
+      ...Object.values(toolGuidedSections),
     ]
       .map((content) => content.trim())
       .filter((content): content is string => content.length > 0)

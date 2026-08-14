@@ -535,21 +535,25 @@ async function runAgentChat(
     extraContextBlocks.push(skillDiscoveryBlock);
   }
   // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
-  // Scope assignment uses the same cache-friendly rule as agentRunCommand.ts:
-  // AGENTS.md = session (stable prefix for cache hits)
-  // skill content / skill discovery = turn (dynamic suffix)
+  // Scope assignment is driven by whether a block's *content* changes between
+  // turns of the same session, not by which builder produced it:
+  //   session (stable prefix, cached)  — AGENTS.md, skill discovery index
+  //   turn    (dynamic suffix, uncached) — everything else
+  // Skill discovery is a pure function of the workspace skill dirs, so it is
+  // byte-identical across every turn; keeping it in the dynamic suffix (~1.5k
+  // tokens here) inflated the uncached region for zero benefit.
   const agentsMdMarker = "--- 项目指令（";
-  const contextBlockScopes: ContextBlockScope[] = [];
-  for (const block of extraContextBlocks) {
-    if (block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "session" });
-    }
-  }
-  for (const block of extraContextBlocks) {
-    if (!block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "turn" });
-    }
-  }
+  const skillDiscoveryMarker = "--- 可用技能（Skills）---";
+  const isSessionScoped = (block: string): boolean =>
+    block.startsWith(agentsMdMarker) || block.startsWith(skillDiscoveryMarker);
+  const contextBlockScopes: ContextBlockScope[] = [
+    ...extraContextBlocks
+      .filter(isSessionScoped)
+      .map((content) => ({ content, cacheScope: "session" as const })),
+    ...extraContextBlocks
+      .filter((block) => !isSessionScoped(block))
+      .map((content) => ({ content, cacheScope: "turn" as const })),
+  ];
   const result: RunAgentTurnResult = await agentRunner({
     agentName: effectiveAgentName,
     agentKey: effectiveAgentKey,

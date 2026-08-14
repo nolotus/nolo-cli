@@ -546,14 +546,18 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });
 
   // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
-  // Scope assignment mirrors desktopAgentRuntimeTurnService.ts:1272:
-  //   AGENTS.md / memory-use-guidance = session (stable prefix for cache hits)
-  //   skill content / skill discovery / memory-overlay = turn (dynamic suffix)
-  // session-scope: AGENTS.md (first N entries of extraContextBlocks are
-  // AGENTS.md content pushed before skill blocks — find it by marker).
+  // Scope assignment is driven by whether a block's *content* changes between
+  // turns of the same session:
+  //   session — AGENTS.md, skill discovery index, memory-use-guidance
+  //   turn    — skill content, memory-overlay
+  // Skill discovery is a pure function of the workspace skill dirs, so it is
+  // byte-identical across turns and belongs in the cached stable prefix.
   const agentsMdMarker = "--- 项目指令（";
+  const skillDiscoveryMarker = "--- 可用技能（Skills）---";
+  const isSessionScoped = (block: string): boolean =>
+    block.startsWith(agentsMdMarker) || block.startsWith(skillDiscoveryMarker);
   for (const block of extraContextBlocks) {
-    if (block.startsWith(agentsMdMarker)) {
+    if (isSessionScoped(block)) {
       contextBlockScopes.push({ content: block, cacheScope: "session" });
     }
   }
@@ -561,9 +565,9 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   if (memoryUseGuidanceLayer?.content?.trim()) {
     contextBlockScopes.push({ content: memoryUseGuidanceLayer.content, cacheScope: "session" });
   }
-  // turn-scope: skill content + skill discovery (all non-AGENTS.md blocks)
+  // turn-scope: skill content (varies with which skills are attached this turn)
   for (const block of extraContextBlocks) {
-    if (!block.startsWith(agentsMdMarker)) {
+    if (!isSessionScoped(block)) {
       contextBlockScopes.push({ content: block, cacheScope: "turn" });
     }
   }

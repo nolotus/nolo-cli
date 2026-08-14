@@ -243,6 +243,12 @@ export interface DiscoveredSkill {
  * directories inside the bound folder. The model sees what skills are
  * available and can read them on-demand via readFile/listFiles tools.
  *
+ * Session-scope: the index is a pure function of the workspace skill dirs, so
+ * it is byte-identical across every turn of a session. It belongs in the
+ * cached stable prefix — leaving it in the dynamic suffix inflated the
+ * uncached region (~1.5k tokens in this repo) for no benefit. A skill added
+ * mid-session is picked up on the next process start, same as AGENTS.md.
+ *
  * Null when no skills were discovered (the caller scanned and found nothing).
  */
 export const buildSkillDiscoveryLayer = (
@@ -261,7 +267,7 @@ export const buildSkillDiscoveryLayer = (
         `- ${s.name}: ${s.description}\n  path: ${s.relativePath}`,
     ),
   ];
-  return makeLayer("skill-discovery", lines.join("\n"));
+  return makeLayer("skill-discovery", lines.join("\n"), "session");
 };
 
 /**

@@ -1,23 +1,16 @@
 import { existsSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { spawnSync, spawn as spawnChildProcess } from "node:child_process";
 
 import { toErrorMessage } from "../core/errorMessage";
 import { isRecord } from "../core/isRecord";
-import {
-  filterRetainedLedgerRecords,
-  isLineRangeCovered,
-  type LedgerEntry,
-} from "../core/readRangeLedger";
 import { asOptionalFiniteNumber } from "../core/optionalNumber";
 import { asOptionalPositiveFiniteNumber } from "../core/optionalPositiveNumber";
 import { asOptionalTrimmedString } from "../core/optionalString";
 import { asRecordOrEmpty } from "../core/recordOrEmpty";
 import { asTrimmedNonEmptyStringArray } from "../core/stringArray";
 import { asTrimmedString } from "../core/trimmedString";
-import { resolveHistoricalToolContentCap } from "../ai/agent/toolOutputPolicy";
 import type {
   AgentRuntimeToolCallInput,
   AgentRuntimeToolResult,
@@ -122,7 +115,6 @@ export type ToolActivity = Partial<ToolActivityAction> & {
 };
 
 type WorkspaceFileArgs = {
-  force?: unknown;
   path?: unknown;
   file_path?: unknown;
   filePath?: unknown;
@@ -1672,14 +1664,10 @@ function defensivelyTruncateReadFile(args: {
   };
 }
 
-const READ_FILE_LEDGER_MAX_RECORDS = 64;
-
 async function readFileTool(args: {
   call: AgentRuntimeToolCallInput;
   workspaceRoot: string;
   confirmExternalFileAccess?: (request: PermissionRequest) => Promise<boolean>;
-  /** Session-scoped dedup ledger; created per executor map. */
-  readLedger?: Map<string, LedgerEntry>;
 }): Promise<AgentRuntimeToolResult> {
   const parsed = parseWorkspaceToolArguments(args.call.arguments);
   const requestedPath = requireWorkspaceToolPath(parsed);
@@ -1702,83 +1690,28 @@ async function readFileTool(args: {
     totalLines: sliced.totalLines,
   });
   const isTruncated = sliced.truncated || truncatedRead.truncatedByCharLimit;
-  const relativePath = normalizeWorkspaceRelativePath({
-    workspaceRoot: resolve(args.workspaceRoot),
-    targetPath: absolutePath,
-  });
-
-  // Read ledger: an unchanged file whose requested range was already fully
-  // delivered (and small enough to still sit intact in history) answers with
-  // a short notice instead of resending content; force:true bypasses this.
-  // Truncated reads are never recorded — the model only saw part of them, so
-  // a follow-up read of the same range stays legitimate.
-  const force = parsed.force === true;
-  const ledger = args.readLedger;
-  const requestRange = { startLine: sliced.startLine, endLine: sliced.endLine };
-  const fingerprint = createHash("sha1").update(content).digest("hex").slice(0, 20);
-  let entry = ledger?.get(relativePath);
-  if (entry && entry.fingerprint !== fingerprint) {
-    entry = undefined;
-    ledger?.delete(relativePath);
-  }
-  // The !isTruncated gate belongs on the recording side only: a sliced read
-  // may still be deduped when every requested line was already delivered.
-  if (!force && entry && ledger) {
-    const retainedCap = resolveHistoricalToolContentCap("readFile", 0);
-    const retained = filterRetainedLedgerRecords(entry.records, retainedCap);
-    if (retained.length > 0 && isLineRangeCovered(requestRange, retained)) {
-      return {
-        content:
-          `[readFile] ${relativePath} lines ${requestRange.startLine}-${requestRange.endLine} were already ` +
-          "delivered earlier and the file is unchanged; not resending. Pass force:true to refetch.",
-        metadata: {
-          path: relativePath,
-          startLine: requestRange.startLine,
-          endLine: requestRange.endLine,
-          totalLines: sliced.totalLines,
-          deduped: true,
-          ...(warnings.length
-            ? { warnings: [...warnings, buildReadFileSliceHint(sliced.totalLines)] }
-            : {}),
-          ...(activity ? { activity } : {}),
-        },
-      };
-    }
-  }
-  const metadata = {
-    path: relativePath,
-    bytes: Buffer.byteLength(truncatedRead.content),
-    totalBytes: Buffer.byteLength(content),
-    startLine: sliced.startLine,
-    endLine: sliced.endLine,
-    totalLines: sliced.totalLines,
-    truncated: isTruncated,
-    ...(truncatedRead.truncatedByCharLimit ? { truncatedByByteLimit: true, truncatedByCharLimit: true } : {}),
-    ...(sliceArgs.maxLines ? { maxLines: sliceArgs.maxLines } : {}),
-    ...(sliceArgs.tailLines ? { tailLines: sliceArgs.tailLines } : {}),
-    ...(warnings.length
-      ? { warnings: [...warnings, buildReadFileSliceHint(sliced.totalLines)] }
-      : {}),
-    ...(activity ? { activity } : {}),
+  return {
+    content: truncatedRead.content,
+    metadata: {
+      path: normalizeWorkspaceRelativePath({
+        workspaceRoot: resolve(args.workspaceRoot),
+        targetPath: absolutePath,
+      }),
+      bytes: Buffer.byteLength(truncatedRead.content),
+      totalBytes: Buffer.byteLength(content),
+      startLine: sliced.startLine,
+      endLine: sliced.endLine,
+      totalLines: sliced.totalLines,
+      truncated: isTruncated,
+      ...(truncatedRead.truncatedByCharLimit ? { truncatedByByteLimit: true, truncatedByCharLimit: true } : {}),
+      ...(sliceArgs.maxLines ? { maxLines: sliceArgs.maxLines } : {}),
+      ...(sliceArgs.tailLines ? { tailLines: sliceArgs.tailLines } : {}),
+      ...(warnings.length
+        ? { warnings: [...warnings, buildReadFileSliceHint(sliced.totalLines)] }
+        : {}),
+      ...(activity ? { activity } : {}),
+    },
   };
-  if (!isTruncated && ledger) {
-    // Record the persisted tool-message length, not the bare content length:
-    // localLoop.formatToolMessageContent embeds the metadata JSON into the
-    // durable message for readFile, and historical projection clips that
-    // whole string. Keeping the ledger in the same units makes the retention
-    // gate match exactly what history still holds.
-    const persistedChars =
-      truncatedRead.content.length +
-      "\n\n[tool metadata]\n".length +
-      JSON.stringify(metadata).length;
-    const records = entry?.records ?? [];
-    records.push({ ...requestRange, chars: persistedChars });
-    ledger.set(relativePath, {
-      fingerprint,
-      records: records.slice(-READ_FILE_LEDGER_MAX_RECORDS),
-    });
-  }
-  return { content: truncatedRead.content, metadata };
 }
 
 async function writeFileTool(args: {
@@ -2730,9 +2663,6 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
   const fileAccess = args.confirmExternalFileAccess
     ? { confirmExternalFileAccess: args.confirmExternalFileAccess }
     : {};
-  // One dedup ledger per executor map (per session/turn): readFile answers
-  // repeated reads of unchanged, still-in-context ranges with a notice.
-  const readFileLedger = new Map<string, LedgerEntry>();
   const searchBinaryResolvers = {
     ...(args.resolveRipgrepBinary
       ? { resolveRipgrepBinary: args.resolveRipgrepBinary }
@@ -2763,7 +2693,6 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
     readFile: (call: AgentRuntimeToolCallInput) => readFileTool({
       call,
       workspaceRoot: args.workspaceRoot,
-      readLedger: readFileLedger,
       ...fileAccess,
     }),
     writeFile: (call: AgentRuntimeToolCallInput) => writeFileTool({

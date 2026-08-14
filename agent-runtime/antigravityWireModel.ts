@@ -15,10 +15,9 @@ export type ResolvedAntigravityWire = {
 };
 
 const WIRE_PROFILES: Readonly<Record<string, AntigravityWireProfile>> = {
-  // Antigravity discovery exposes 3.7 Flash as one tiered wire model.
-  // The UI labels its effort variants (Low/Medium/High), but the literal
-  // -medium/-high ids return 404 from streamGenerateContent.
-  "gemini-3.7-flash-tiered": { modelEnum: "MODEL_PLACEHOLDER_M301", maxOutputTokens: 65536 },
+  "gemini-3.7-flash-low": { maxOutputTokens: 65536 },
+  "gemini-3.7-flash-medium": { maxOutputTokens: 65536 },
+  "gemini-3.7-flash-high": { maxOutputTokens: 65536 },
   "gemini-3.6-flash-low": { maxOutputTokens: 65536 },
   "gemini-3.6-flash-medium": { maxOutputTokens: 65536 },
   "gemini-3.6-flash-high": { maxOutputTokens: 65536 },
@@ -47,11 +46,8 @@ export function resolveAntigravityWireModel(logicalModelId: string): ResolvedAnt
     return { wireModelId, profile: WIRE_PROFILES[wireModelId] };
   }
 
-  if (
-    lower === "gemini-3.7-flash" ||
-    ["gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high"].includes(lower)
-  ) {
-    const wireModelId = "gemini-3.7-flash-tiered";
+  if (lower === "gemini-3.7-flash") {
+    const wireModelId = "gemini-3.7-flash-low";
     return { wireModelId, profile: WIRE_PROFILES[wireModelId] };
   }
 

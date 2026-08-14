@@ -688,7 +688,7 @@ function executeGemini(
   options: CliExecuteOptions
 ): Promise<CliExecuteResult> {
   const {
-    model = "gemini-3.6-flash",
+    model = "gemini-3.7-flash",
     timeout = 120_000,
     cwd = process.cwd(),
     yolo = true,
@@ -1910,7 +1910,7 @@ function executeGeminiStreaming(
   options: CliExecuteOptions & { onChunk: (chunk: string) => void }
 ): Promise<CliExecuteResult> {
   const {
-    model = "gemini-3.6-flash",
+    model = "gemini-3.7-flash",
     timeout = 120_000,
     cwd = process.cwd(),
     yolo = true,

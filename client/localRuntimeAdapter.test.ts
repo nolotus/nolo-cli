@@ -2545,7 +2545,7 @@ describe("CLI local runtime adapter", () => {
       "entryType",
     ]);
     expect(readFile.description).toContain("Read a UTF-8 text file");
-    expect(publicSchemaKeys(readFile)).toEqual(["path", "lines"]);
+    expect(publicSchemaKeys(readFile)).toEqual(["path", "lines", "force"]);
     expect(globFiles.description).toContain("Find file paths by glob pattern");
     expect(publicSchemaKeys(globFiles)).toEqual([
       "pattern",
@@ -2634,6 +2634,49 @@ describe("CLI local runtime adapter", () => {
     const toolMessage = requests[1]?.body.messages.find((message: any) => message.role === "tool");
     expect(toolMessage?.content).toContain("paste-line-1");
     expect(toolMessage?.content).toContain("totalLines");
+  });
+
+  test("local runtime injects the tool-guided review hard gate with orchestration tools", async () => {
+    const requests: Array<{ body: any }> = [];
+    const adapter = createAdapter({
+      env: {
+        OPENAI_API_KEY: "sk-local",
+        NOLO_LOCAL_OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+      },
+      db: {
+        get: async () => ({
+          dbKey: "review-gate-agent",
+          prompt: "Orchestrate when needed.",
+          model: "fake-local",
+          provider: "custom",
+          tools: ["startAgentRun", "controlAgentRun"],
+        }),
+        put: async () => {},
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        requests.push({ body });
+        return Response.json({ choices: [{ message: { content: "done" } }] });
+      },
+    });
+
+    await runLocalAgentTurn({
+      adapter,
+      agentRef: "review-gate-agent",
+      input: "change code, then get it reviewed",
+    });
+
+    const systemMessage = requests[0]?.body.messages.find(
+      (message: any) => message.role === "system",
+    );
+    const systemText = JSON.stringify(systemMessage?.content ?? "");
+    // The local/desktop/TUI path must inject the same tool-guided sections as
+    // web/server — the review hard gate among them.
+    expect(systemText).toContain("review 证据硬门");
+    expect(systemText).toContain("多 Agent 协作");
+    expect(systemText).toContain("多 Agent 编排（后台 Run）");
   });
 
   test("can vary globFiles schema through local runtime env", async () => {
@@ -2764,7 +2807,7 @@ describe("CLI local runtime adapter", () => {
 
     const readFile = requests[0]?.body.tools.find((tool: any) => tool.function.name === "readFile")?.function;
     expect(readFile.description).toContain("Use lines");
-    expect(publicSchemaKeys(readFile)).toEqual(["path", "lines"]);
+    expect(publicSchemaKeys(readFile)).toEqual(["path", "lines", "force"]);
   });
 
   test("can vary searchFiles schema through local runtime env", async () => {

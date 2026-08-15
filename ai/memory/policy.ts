@@ -41,7 +41,9 @@ export function buildMemorySubjectsForAgent(input: {
 }): MemorySubjectRef[] {
   const policy = input.policy ?? resolveAgentMemoryPolicy({ agentKey: input.agentKey });
   const result: MemorySubjectRef[] = [];
-  const agentSubject = input.memorySubjectId?.trim();
+  // 与 remember.ts / correction.ts / dialogLearning.ts 惯例一致：
+  // agent 主体默认回退到 agentKey，避免调用方未显式传 memorySubjectId 时丢失 agent subject。
+  const agentSubject = input.memorySubjectId?.trim() || input.agentKey.trim();
   if (agentSubject) {
     result.push({ subjectType: "agent", subjectId: agentSubject });
   }

@@ -13,11 +13,14 @@ import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPromp
 import { buildSkillDiscoveryContextLayer } from "../../agent-runtime/skillDiscovery";
 import {
   buildAgentsMdLayer,
+  buildMemoryOverlayLayer,
+  buildMemoryUseGuidanceLayer,
   partitionScopedBlocks,
   renderTurnContextBlocksWithScope,
   type TurnContextLayer,
 } from "../../agent-runtime/turnContext";
 import { resolvePlatformAuthToken } from "../../agent-runtime/providerResolution";
+import { resolveCliMemory } from "../memoryRecall";
 import {
   classifyCliAutoRoute,
 } from "../client/autoModelRouter";
@@ -508,8 +511,23 @@ async function runAgentChat(
     // on-demand. Mirrors agentRunCommand.ts and desktopAgentRuntimeTurnService.
     buildSkillDiscoveryContextLayer(state.cwd),
   ];
+
+  // Memory overlay: remote-first recall with local fallback (mirrors
+  // agentRunCommand.ts). TUI dialog was previously missing this layer —
+  // memory was only injected for `nolo agent run`, not for TUI conversations.
+  const memoryPromptBlock = await resolveCliMemory({
+    serverUrl: state.serverUrl,
+    authToken: resolvePlatformAuthToken(env),
+    agentKey: effectiveAgentKey,
+    userInput: effectiveMessage,
+    env,
+  }).catch(() => null);
+  const memoryOverlayLayer = buildMemoryOverlayLayer({ promptBlock: memoryPromptBlock });
+  const memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });
+
   const contextBlockScopes: ContextBlockScope[] = partitionScopedBlocks([
     ...renderTurnContextBlocksWithScope(layers),
+    ...renderTurnContextBlocksWithScope([memoryUseGuidanceLayer]),
     // Attached skill bodies are already self-contained sections built by
     // buildSkillContextBlocks; they stay turn-scope because the user can
     // attach/detach skills between turns.
@@ -517,6 +535,7 @@ async function runAgentChat(
       .map((content) => content.trim())
       .filter((content) => content.length > 0)
       .map((content) => ({ content, cacheScope: "turn" as const })),
+    ...renderTurnContextBlocksWithScope([memoryOverlayLayer]),
   ]);
   const result: RunAgentTurnResult = await agentRunner({
     agentName: effectiveAgentName,

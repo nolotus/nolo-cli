@@ -56,7 +56,11 @@ export function getServerAuthorityStore() {
 }
 
 export type ServerDbOpenRetryOptions = {
-  /** 锁错误重试总预算（ms）。默认从 env NOLO_SERVER_DB_OPEN_LOCK_TIMEOUT_MS 读，缺省 90000（必须 > drain 预算 30s） */
+  /**
+   * 锁错误重试总预算（ms）。默认从 env NOLO_SERVER_DB_OPEN_LOCK_TIMEOUT_MS 读，
+   * 缺省 8000 —— 这是「快速失败」预算，不是「等旧进程 drain 完」预算。
+   * 为什么不需要覆盖 drain 的 30s：见 DEFAULT_SERVER_DB_OPEN_LOCK_TIMEOUT_MS 的说明。
+   */
   timeoutMs?: number;
   /** 相邻两次重试的间隔（ms），默认 1000 */
   intervalMs?: number;
@@ -72,7 +76,29 @@ export type ServerDbOpenRetryOptions = {
   quiet?: boolean;
 };
 
-const DEFAULT_SERVER_DB_OPEN_LOCK_TIMEOUT_MS = 90_000;
+/**
+ * 抢锁预算。旧值 90s 是「等旧进程 drain 完」的悲观上限，但它把一次**失败的进程交接**
+ * 变成了 90 秒静默重试：新进程每秒 warn 一次却不退出，PM2 认为它还活着，
+ * 于是要么旧进程仍在服务（部署静默失败、新代码从未上线），
+ * 要么旧进程已死（服务真空，且超过 Caddy 的 60s lb_try_duration，用户看到硬失败）。
+ *
+ * 实测（生产机，独立实例）：父子进程结构下 kill 漏掉持锁进程时，
+ * 新进程连续重试 82s 仍未启动，而外部探针全程 200 —— 故障完全不可见。
+ *
+ * 正常交接只需毫秒级（实测 close 2ms / open 15ms），drain 已不再无条件等待，
+ * 所以这里改为 8s：足够覆盖一次正常交接的抖动，又能在真正卡住时**快速失败**，
+ * 让进程退出 → PM2 重启 → 异常可见，而不是静默耗尽整个部署窗口。
+ *
+ * ⚠️ 安全前提（改动前必读）：8s < drain 预算 30s，这个值只有在
+ * **新进程启动时旧进程已经关完 DB** 的前提下才安全。该前提由
+ * `scripts/release/deployRemote.sh` 的 rebuild_nolo 时序保证：
+ *     delete_nolo_and_wait → wait_for_leveldb_lock_release → start_nolo
+ * 即先等旧进程退出并确认 LOCK 无持有者，才拉起新进程。
+ * 若future 有人把 start_nolo 提到 wait_for_leveldb_lock_release 之前
+ * （例如为了「预热重叠」让新旧进程并行），本预算必须同步上调到 > drain 上限，
+ * 否则新进程会在旧进程正常 drain 期间被误判为抢锁失败而反复重启。
+ */
+const DEFAULT_SERVER_DB_OPEN_LOCK_TIMEOUT_MS = 8_000;
 const DEFAULT_SERVER_DB_OPEN_LOCK_INTERVAL_MS = 1_000;
 
 function resolveServerDbOpenLockTimeoutMs(
@@ -124,7 +150,13 @@ export async function ensureServerDbOpen(options?: ServerDbOpenRetryOptions) {
       const remainingMs = deadline - now();
       if (remainingMs <= 0) {
         if (!options?.quiet) {
-          console.error("❌ 打开 LevelDB 失败: 数据库已被其他进程占用");
+          // 抢锁超时几乎总是「上一个进程没退干净」，而不是磁盘/权限问题。
+          // 打印可直接执行的排查线索，避免只留一行无从下手的报错。
+          console.error(
+            `❌ 打开 LevelDB 失败: 锁被其他进程持有，已重试 ${attempt} 次 / ${timeoutMs}ms。` +
+              ` 通常是上一个 server 进程未完全退出（注意父子进程树），` +
+              ` 排查：fuser -v ${authorityStore.location ?? "<dbPath>"}/LOCK`
+          );
         }
         throw err;
       }

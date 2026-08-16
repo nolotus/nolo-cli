@@ -339,15 +339,32 @@ describe("cli controlAgentRun executor", () => {
     expect(data.runs.map((r: any) => r.runId)).toEqual(["run-1", "run-2"]);
   });
 
-  it("stop kills the pid and finalizes the run as killed", async () => {
-    const deps = buildDeps();
+  it("stop kills the process group and finalizes the run as killed", async () => {
+    const kills: { pid: number; signal: string | number }[] = [];
+    let alive = true;
+    const deps = buildDeps({
+      kill: (pid: number, signal: string | number) => {
+        kills.push({ pid, signal });
+        if (signal === 0) {
+          if (!alive) {
+            const error = new Error("ESRCH") as Error & { code: string };
+            error.code = "ESRCH";
+            throw error;
+          }
+          return;
+        }
+        if (signal === "SIGTERM") alive = false;
+      },
+      sleep: async () => {},
+    });
     seedRun(deps, "run-1");
     const executor = createCliControlAgentRunExecutor(deps);
     const result = await executor({
       arguments: JSON.stringify({ action: "stop", runId: "run-1" }),
     });
     expect(JSON.parse(result.content)).toEqual({ runId: "run-1", found: true, status: "killed" });
-    expect(deps.killCalls).toEqual([{ pid: 123, signal: "SIGTERM" }]);
+    // 杀整个进程组（负 pid），而非单进程。
+    expect(kills.some((k) => k.pid === -123 && k.signal === "SIGTERM")).toBe(true);
     const record = JSON.parse(deps.mem.files.get("/home/test/.nolo/runs/run-1.json")!);
     expect(record.status).toBe("killed");
     expect(record.endedAt).toBeDefined();

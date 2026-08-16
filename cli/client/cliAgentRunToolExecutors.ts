@@ -35,6 +35,7 @@ import {
   gcRunRecords,
   queryRunRecords,
   spawnLocalBackgroundRun,
+  terminateRunProcess,
 } from "../agentRunControl";
 import { readTimestamp } from "./agentRunSnapshot";
 import { agentRunCardLabels } from "../tui/i18n";
@@ -604,13 +605,20 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
 
     // action === "stop"
     if (typeof record.pid === "number") {
-      try {
-        (deps.kill ?? ((pid: number, signal: string) => process.kill(pid, signal as NodeJS.Signals)))(
-          record.pid,
-          "SIGTERM",
-        );
-      } catch {
-        // pid 已不存在或无权：继续 finalize 为 killed（与 CLI stop 命令行为一致）。
+      const confirmed = await terminateRunProcess(record, "SIGTERM", deps);
+      if (!confirmed) {
+        // 进程 SIGKILL 后仍存活：不标记 killed，如实上报。
+        return {
+          content: JSON.stringify({
+            runId: record.runId,
+            found: true,
+            status: record.status,
+            stopConfirmed: false,
+          }),
+          metadata: {
+            displayData: `stop failed: process ${record.pid} still alive after SIGKILL`,
+          },
+        };
       }
     }
     finalizeRunRecord(record.runId, { status: "killed" }, deps);

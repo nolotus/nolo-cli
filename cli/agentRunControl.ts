@@ -1538,6 +1538,76 @@ export async function runAgentLogsCommand(
   return 0;
 }
 
+/** SIGTERM 优雅退出最长等待窗口。 */
+export const TERMINATE_GRACE_MS = 10_000;
+/** 存活探测轮询间隔。 */
+export const TERMINATE_POLL_MS = 250;
+/** SIGKILL 强杀后等待进程被 reaped 的最长时间。 */
+export const TERMINATE_KILL_GRACE_MS = 5_000;
+
+/**
+ * Terminate a detached agent-run process group and confirm it is actually gone.
+ *
+ * `spawnLocalBackgroundRun` spawns the child with `detached: true`, so the
+ * child's pid doubles as its process-group id. The old stop/kill path signaled
+ * only the group leader with `kill(pid)` and immediately finalized the record
+ * as "killed" — if the leader swallowed SIGTERM (or stayed blocked waiting on a
+ * child execShell), the record said "killed" while the process kept burning
+ * quota. This function instead signals the whole group (-pid), probes liveness
+ * with signal 0, and escalates to SIGKILL when the graceful signal is ignored.
+ * Only a confirmed exit is reported as killed.
+ *
+ * Returns true when the process group is confirmed gone (or was already gone);
+ * false when even SIGKILL could not reap it — the caller must NOT mark the run
+ * killed in that case.
+ */
+export async function terminateRunProcess(
+  record: Pick<RunRecord, "pid">,
+  initialSignal: "SIGTERM" | "SIGKILL",
+  deps: AgentRunControlDeps,
+): Promise<boolean> {
+  const pid = record.pid;
+  if (typeof pid !== "number" || pid <= 0) return true;
+
+  const kill = deps.kill ?? ((p: number, s: string | number) => {
+    process.kill(p, s as NodeJS.Signals);
+  });
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const nowMs = (): number => (deps.now ? deps.now().getTime() : Date.now());
+
+  const signalGroup = (sig: "SIGTERM" | "SIGKILL"): void => {
+    try {
+      if (process.platform !== "win32") {
+        kill(-pid, sig); // negative pid = the whole process group
+      } else {
+        kill(pid, sig);
+      }
+    } catch {
+      // Group already gone or unavailable — the liveness probe below decides.
+    }
+  };
+
+  if (isPidGone(pid, deps)) return true;
+
+  signalGroup(initialSignal);
+  if (initialSignal === "SIGTERM") {
+    const deadline = nowMs() + TERMINATE_GRACE_MS;
+    while (!isPidGone(pid, deps) && nowMs() < deadline) {
+      await sleep(TERMINATE_POLL_MS);
+    }
+  }
+
+  if (!isPidGone(pid, deps)) {
+    signalGroup("SIGKILL");
+    const killDeadline = nowMs() + TERMINATE_KILL_GRACE_MS;
+    while (!isPidGone(pid, deps) && nowMs() < killDeadline) {
+      await sleep(TERMINATE_POLL_MS);
+    }
+  }
+
+  return isPidGone(pid, deps);
+}
+
 async function runSignalCommand(
   args: string[],
   signal: "SIGTERM" | "SIGKILL",
@@ -1558,20 +1628,17 @@ async function runSignalCommand(
     deps.output.write(`Run has no pid: ${record.runId}\n`);
     return 1;
   }
-  const kill = deps.kill ?? ((pid, sig) => process.kill(pid, sig as NodeJS.Signals));
-  try {
-    kill(record.pid, signal);
-  } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code === "ESRCH") {
-      deps.output.write(`Process ${record.pid} already exited.\n`);
-    } else {
-      deps.output.write(`Failed to ${verb} ${record.runId}: ${error}\n`);
-      return 1;
-    }
+  const confirmed = await terminateRunProcess(record, signal, deps);
+  if (!confirmed) {
+    deps.output.write(
+      `Failed to ${verb} ${record.runId} (pid ${record.pid}): process still alive after SIGKILL.\n`
+    );
+    return 1;
   }
   finalizeRunRecord(record.runId, { status: "killed" }, deps);
-  deps.output.write(`Sent ${signal} to ${record.runId} (pid ${record.pid}).\n`);
+  deps.output.write(
+    `Stopped ${record.runId} (pid ${record.pid}): process group confirmed gone.\n`
+  );
   return 0;
 }
 

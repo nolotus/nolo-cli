@@ -22,11 +22,9 @@ const estimateTokens = (text: string): number => {
   return Math.ceil(cjk * 1.5 + ascii / 4);
 };
 
-/** overlay 头部固定开销（标题 + 说明 + 空行）。 */
+/** overlay 头部固定开销。压缩为一行——省 ~60 tokens 给记忆内容。 */
 const OVERLAY_HEADER_LINES = [
-  "--- Memory Overlay ---",
-  "以下是当前请求可用的记忆事实；相关时直接基于这些记忆回答。",
-  "用户当前输入优先于记忆；记忆只辅助理解，不要求迎合。",
+  "--- Memory (相关时参考，用户输入优先) ---",
   "",
 ];
 const OVERLAY_HEADER_TOKENS = estimateTokens(OVERLAY_HEADER_LINES.join("\n"));
@@ -81,20 +79,20 @@ const normalizeDisplayContent = (item: MemoryItem): string => {
 
   if (item.kind === "semantic") {
     if (item.tags?.includes("understanding-memory") && item.facet) {
-      return formatFacetContent(item.facet, normalized, "用户当前");
+      return formatFacetContent(item.facet, normalized, "");
     }
-    return `用户长期偏好/事实：${normalized}`;
+    return normalized;
   }
 
   if (
     item.kind === "episodic" &&
     (item.patternKey === "explicit-remember" || item.patternKey === "agent-remember")
   ) {
-    return `用户明确要求你记住：${normalized}`;
+    return normalized;
   }
 
   if (item.kind === "episodic" && item.tags?.includes("understanding-memory") && item.facet) {
-    return formatFacetContent(item.facet, normalized, "最近一次对话显示：用户");
+    return formatFacetContent(item.facet, normalized, "上次: ");
   }
 
   return normalized;

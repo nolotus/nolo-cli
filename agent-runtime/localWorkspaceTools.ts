@@ -903,13 +903,13 @@ function pluralizeReplacement(count: number) {
 }
 
 /**
- * Clip an editFile oldText/newText payload into a short preview snippet for the
- * TUI trace. Keeps the first EDIT_SNIPPET_MAX_LINES non-empty lines, each
+ * Clip an editFile oldText/newText payload into a preview snippet for the
+ * TUI trace. Keeps up to EDIT_SNIPPET_MAX_LINES non-empty lines, each
  * capped at EDIT_SNIPPET_WIDTH chars, so the user can see what actually changed
- * without the full (potentially huge) text flooding the trace.
+ * while preventing massive whole-file diffs from overwhelming trace payloads.
  */
-const EDIT_SNIPPET_MAX_LINES = 5;
-const EDIT_SNIPPET_WIDTH = 96;
+const EDIT_SNIPPET_MAX_LINES = 24;
+const EDIT_SNIPPET_WIDTH = 160;
 
 function clipEditSnippet(text: string): string {
   const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
@@ -1828,6 +1828,7 @@ async function writeFileTool(args: {
     metadata: {
       path: relativePath,
       bytes: Buffer.byteLength(content),
+      totalLines: content.length === 0 ? 0 : content.split(/\r?\n/).length,
       ...(diffStat ? { diffStat } : {}),
       ...(activity ? { activity } : {}),
     },

@@ -2,7 +2,7 @@ import { Language } from "../types";
 import {
   ADVANCED_FEATURE_MIN_BALANCE,
   GPT_PRO_REQUIRED_RECHARGE_AMOUNT,
-} from "../../../auth/gptProTier";
+} from "../../../core/gptProTier";
 
 export default {
   [Language.EN]: {

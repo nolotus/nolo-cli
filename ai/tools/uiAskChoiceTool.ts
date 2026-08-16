@@ -2,19 +2,7 @@
 
 export const uiAskChoiceFunctionSchema = {
     name: "ask_user",
-    description: [
-        "让用户在 2～5 个互斥选项之间做选择的通用“出选项”工具。适用场景：需求模糊时给方向候选、计划分支节点决策、出题/问卷、新会话功能导航。",
-        "调用前须先在普通回复文本里解释背景与权衡（先解释，再调用）。",
-        "",
-        "多问题 & 多选支持：",
-        "- 当你需要一次问多个问题时，使用 questions 数组代替 question+choices。",
-        "- 每个 question 可以设置 multiSelect: true 允许多选。",
-        "- 每个 question 可以设置 allowOther: false 隐藏“其他”输入框。",
-        "- 每个 choice 可以加 detail 字段提供更长的描述。",
-        "- 每个 choice 可以加 recommended: true 标记你的推荐项（有明确推荐时用）。",
-        "",
-        "何时调用 / 推荐与权衡 / 调用规范的完整行为规则由系统提示的「交互说明」块注入，不在此重复。"
-    ].join("\n"),
+    description: "让用户在 2～5 个互斥选项之间做选择的通用“出选项”工具（需求模糊、分支决策、问卷等）。调用前须先在普通回复文本里解释背景与权衡（先解释，再调用）。多问题传 questions，单问题传 question+choices。",
     parameters: {
         type: "object",
         properties: {
@@ -26,19 +14,17 @@ export const uiAskChoiceFunctionSchema = {
             choices: {
                 type: "array",
                 description:
-                    "备选项列表。每个选项会渲染成一个按钮，供用户点击选择。",
+                    "备选项列表，渲染为按钮供用户点击。",
                 items: {
                     type: "object",
                     properties: {
                         id: {
                             type: "string",
-                            description:
-                                "选项内部标识（用于后续逻辑或调试，不会直接展示给用户）。"
+                            description: "选项标识。"
                         },
                         label: {
                             type: "string",
-                            description:
-                                "显示给用户看的按钮文字。例如：“生成本周周报”。"
+                            description: "按钮文字，如“生成本周周报”。"
                         },
                         detail: {
                             type: "string",
@@ -47,18 +33,13 @@ export const uiAskChoiceFunctionSchema = {
                         },
                         recommended: {
                             type: "boolean",
-                            description: [
-                                "标记这是你的推荐项。有明确推荐时把该选项放在 choices 第一位并置 true。",
-                                "没有明确推荐时不要设置（默认 false），并在调用前文本里说明各选项优缺点。"
-                            ].join(" ")
+                            description:
+                                "标记为推荐项（放首位并置 true，无推荐则省略）。"
                         },
                         userMessage: {
                             type: "string",
-                            description: [
-                                "用户点击此选项后，你希望作为下一条 user 消息发送给模型的自然语言内容。",
-                                "建议写成完整的一句话，例如：“帮我生成一份本周的工作周报”。",
-                                "如果留空，将使用 label 作为 userMessage。"
-                            ].join(" ")
+                            description:
+                                "点击后作为下一条 user 消息发送的文案（留空默认用 label）。"
                         }
                     },
                     required: ["id", "label"]
@@ -67,13 +48,13 @@ export const uiAskChoiceFunctionSchema = {
             questions: {
                 type: "array",
                 description:
-                    "多问题模式：一次问多个问题，每个问题独立渲染为一个 tab。与 question+choices 二选一。",
+                    "多问题模式（多 tab 渲染，与 question+choices 二选一）。",
                 items: {
                     type: "object",
                     properties: {
                         id: {
                             type: "string",
-                            description: "问题标识，用于结果对应。"
+                            description: "问题标识。"
                         },
                         question: {
                             type: "string",
@@ -93,7 +74,7 @@ export const uiAskChoiceFunctionSchema = {
                                     },
                                     recommended: {
                                         type: "boolean",
-                                        description: "标记这是你的推荐项（有明确推荐时置 true，无则省略）。"
+                                        description: "推荐项标记（置 true 标推荐，无则省略）。"
                                     },
                                     userMessage: { type: "string" }
                                 },
@@ -102,18 +83,15 @@ export const uiAskChoiceFunctionSchema = {
                         },
                         multiSelect: {
                             type: "boolean",
-                            description: "允许多选。默认 false。",
-                            default: false
+                            description: "允许多选，默认 false。"
                         },
                         allowOther: {
                             type: "boolean",
-                            description: "显示“其他”自由输入行。默认 true。",
-                            default: true
+                            description: "显示“其他”自由输入行，默认 true。"
                         },
                         required: {
                             type: "boolean",
-                            description: "是否必须回答才能提交。默认 true。",
-                            default: true
+                            description: "是否必须回答才能提交，默认 true。"
                         }
                     },
                     required: ["id", "question", "choices"]
@@ -121,11 +99,7 @@ export const uiAskChoiceFunctionSchema = {
             },
             blocking: {
                 type: "boolean",
-                description: [
-                    "是否需要等待用户选择之后，再继续当前流程（例如 Plan）。",
-                    "默认 true：即发出问题后，等待用户点击某个选项再继续。"
-                ].join(" "),
-                default: true
+                description: "是否等待用户选择后再继续流程，默认 true。"
             }
         },
         required: []

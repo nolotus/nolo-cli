@@ -45,6 +45,22 @@ export const isPlatformHostedGrokModel = (model?: string | null): boolean =>
   asTrimmedLowercaseString(model) === PLATFORM_HOSTED_GROK_4_6_MODEL;
 
 /**
+ * Qwen 3.7 Flash（平台托管语义）：记录侧 provider=nolo（统一管理），实际上游
+ * 为 OpenRouter（openrouter.ai，OpenAI 兼容 chat.completions，key 用
+ * OPENROUTER_API_KEY）。视觉理解强、便宜，用于图片预处理管道。
+ *
+ * OpenRouter model id: qwen/qwen3.7-flash
+ * 定价: $0.03/$0.13 per 1M (input/output)
+ */
+export const PLATFORM_HOSTED_QWEN_37_FLASH_MODEL = "qwen3.7-flash";
+export const PLATFORM_HOSTED_QWEN_37_FLASH_OPENROUTER_ID =
+  "qwen/qwen3.7-flash";
+
+export const isPlatformHostedQwen37FlashModel = (
+  model?: string | null,
+): boolean => asTrimmedLowercaseString(model) === PLATFORM_HOSTED_QWEN_37_FLASH_MODEL;
+
+/**
  * nolo 平台内部价格单位：积分 / 1M tokens。
  * 外部美元 API 的统一销售口径是 8 折，再按 1 USD = 7 credits 记账。
  */
@@ -386,6 +402,19 @@ export const platformHostedModels = [
     price: { input: 2 * 7, output: 6 * 7 },
     maxOutputTokens: 100_000,
     contextWindow: 500000,
+    supportsTool: true,
+  },
+  {
+    name: PLATFORM_HOSTED_QWEN_37_FLASH_MODEL,
+    displayName: "Qwen 3.7 Flash",
+    hasVision: true,
+    // 上游 OpenRouter：$0.03/$0.13 per 1M → nolo 8 折 ×7
+    price: {
+      input: toPlatformCredits(0.03),
+      output: toPlatformCredits(0.13),
+    },
+    maxOutputTokens: 65_536,
+    contextWindow: 1_000_000,
     supportsTool: true,
   },
 ];

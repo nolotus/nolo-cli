@@ -27,6 +27,7 @@ import {
   createToolCallAccumulator,
   finalizeAccumulatedToolCalls,
 } from "./toolCallAccumulator";
+import { sanitizeForOutbound } from "./outboundHistorySanitize";
 
 export type OpenAiCompatibleProviderConfig = {
   model: string;
@@ -49,7 +50,13 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
     args.providerConfig.provider,
     args.providerConfig.model,
   );
-  const messages = toOpenAiCompatibleMessages(args.messages, {
+  // Sanitize cross-wire history here so this builder is the single seam — any
+  // caller (internal `send` or a future direct importer) is covered without
+  // remembering to sanitize separately. Downgrades tool_calls not in the
+  // current `tools` array to text and pairs tool_calls with results, so strict
+  // gateways (ollama) accept the replayed history instead of 400-ing.
+  const sanitizedMessages = sanitizeForOutbound(args.messages, args.tools);
+  const messages = toOpenAiCompatibleMessages(sanitizedMessages, {
     stripReasoningContent: shouldStripReasoning,
   });
   const body = {

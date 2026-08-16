@@ -510,8 +510,10 @@ export function renderDiffLine(args: {
   padTo?: number;
   env?: Record<string, string | undefined>;
   colorEnabled?: boolean;
+  /** Optional pre-highlighted line text (with ANSI sequences) to use instead of plain fg. */
+  highlightedText?: string;
 }): string {
-  const { kind, text } = args;
+  const { kind, text, highlightedText } = args;
   const env = args.env ?? process.env;
   const colorEnabled = args.colorEnabled ?? resolveCliColorEnabled();
   if (!colorEnabled) return text;
@@ -519,16 +521,16 @@ export function renderDiffLine(args: {
   const seqs = diffLineSequences(env);
   if (!seqs) {
     // Degraded terminal: foreground color only, no background, no bar.
-    if (kind === "context") return text;
+    if (kind === "context") return highlightedText ?? text;
     const token: TuiThemeToken =
       kind === "added" ? "success" : kind === "removed" ? "danger" : "info";
-    return `${themeColorSequence(token, env)}${text}\x1b[39m`;
+    return `${themeColorSequence(token, env)}${highlightedText ?? text}\x1b[39m`;
   }
 
   const seq = seqs[kind];
   // \x1b[0m resets both fg and bg so the tint never leaks to the next line.
   return renderSurfaceLine({
-    text: `${seq.fg}${text}`,
+    text: highlightedText ?? `${seq.fg}${text}`,
     surface: seq.bg,
     padTo: args.padTo ?? visibleWidth(text),
   });

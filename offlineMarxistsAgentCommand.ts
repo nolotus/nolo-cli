@@ -1,5 +1,6 @@
 import { toErrorMessage } from "./core/errorMessage";
 import { asOptionalTrimmedString } from "./core/optionalString";
+import { ownedAgentKey, publicAgentKey } from "./core/prefix";
 import { normalizeServerOrigin } from "./core/serverOrigin";
 import { DEFAULT_NOLO_SERVER_URL } from "./defaultServer";
 import type { CliFetchImpl } from "./cliFetch";
@@ -82,7 +83,7 @@ function parseArgs(args: string[], env: EnvLike): ParsedArgs | null {
   const targetAgentKey =
     readFlagValue(args, "--target-agent") ??
     env.NOLO_OFFLINE_MARXISTS_AGENT_KEY ??
-    `agent-${userId}-${targetAgentId}`;
+    ownedAgentKey(userId, targetAgentId);
   const spaceId =
     readFlagValue(args, "--space") ??
     env.NOLO_OFFLINE_MARXISTS_SPACE_ID ??
@@ -259,7 +260,7 @@ export async function runSetupOfflineMarxistsAgentCommand(
       dbKey: parsed.targetAgentKey,
       data: target,
     });
-    const publicKey = `agent-pub-${parsed.targetAgentId}`;
+    const publicKey = publicAgentKey(parsed.targetAgentId);
     if (parsed.publicAgent) {
       await writeDbRecord({
         fetchImpl,

@@ -1,4 +1,4 @@
-import authReducer from "../auth/authSlice";
+import { authReducer } from "identity/authReducer";
 import databaseReducer from "../database/dbSlice";
 import settingReducer from ".//settings/settingSlice";
 

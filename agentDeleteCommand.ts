@@ -16,6 +16,7 @@
  */
 
 import { toErrorMessage } from "./core/errorMessage";
+import { ownedAgentKey, publicAgentKey } from "./core/prefix";
 import { resolveCliAgentKeyInput } from "./agentAliases";
 import { getReadableCliDb, type AgentCommandDeps } from "./agentCommandSupport";
 import { resolveAgentRecordFromHybridStore } from "./agentRecordHelpers";
@@ -71,8 +72,8 @@ function buildAgentKeys(agentKey: string, fallbackUserId: string | undefined) {
   if (!privateUserId) return null;
   return {
     agentId,
-    privateKey: `agent-${privateUserId}-${agentId}`,
-    publicKey: `agent-pub-${agentId}`,
+    privateKey: ownedAgentKey(privateUserId, agentId),
+    publicKey: publicAgentKey(agentId),
   };
 }
 

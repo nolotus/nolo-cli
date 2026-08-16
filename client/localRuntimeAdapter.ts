@@ -806,6 +806,11 @@ export function createCliLocalRuntimeAdapter(
               model: agentConfig.model || "gemini-3.1-pro",
               provider: agentConfig.provider || "google-antigravity",
               ...(tool_calls ? { tool_calls } : {}),
+              // fetchAntigravityCloudCodeCompletion 已把 CCA 流聚合完毕并归一化成
+              // OpenAI chat.completions 形状：choices[0] + usage
+              // （prompt_tokens/completion_tokens/total_tokens）。必须透传，否则
+              // localLoop 的 lastUsage 无 token 数，TUI context chip 拿不到更新。
+              usage: result.body?.usage as Record<string, any> | undefined,
               trace: messages,
             };
           },
@@ -888,6 +893,11 @@ export function createCliLocalRuntimeAdapter(
               model: agentConfig.model || "claude-sonnet-5",
               provider: "anthropic",
               ...(tool_calls ? { tool_calls } : {}),
+              // fetchAnthropicMessagesCompletion 已把 Anthropic Messages 响应归一化成
+              // OpenAI chat.completions 形状：choices[0] + usage（prompt_tokens/
+              // output_tokens/cache_*）。必须透传，否则 localLoop 的 lastUsage 无
+              // token 数，TUI context chip 拿不到更新（与 Codex OAuth 分支同因）。
+              usage: result.body?.usage as Record<string, any> | undefined,
               trace: messages,
             };
           },

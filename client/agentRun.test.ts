@@ -832,6 +832,259 @@ describe("cli agent run client", () => {
     expect(output.text()).not.toContain("Fix the local credential/config");
   });
 
+  test("local 400 with invalid tool call arguments is reported as a rejected-payload/history-replay issue, not a credential problem", async () => {
+    // Reproduces the real ollama gateway rejection seen after /switch from
+    // DeepSeek to GLM: the provider returns HTTP 400 invalid_request_error
+    // "invalid tool call arguments" because the replayed dialog history
+    // contains tool_calls produced by a different model. This must NOT be
+    // reported as "Fix the local credential/config".
+    const output = new CaptureOutput();
+    const result = await runAgentTurn({
+      agentName: "GLM 5.2",
+      agentKey: "agent-glm-local",
+      serverUrl: "https://nolo.chat",
+      message: "continue",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "auto",
+      output,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "GLM 5.2",
+          apiSource: "custom",
+          customProviderUrl: "https://ollama.com/v1",
+          model: "glm-5.2:cloud",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-kept-400" }),
+        resolveProvider: async () => ({
+          model: "glm-5.2:cloud",
+          complete: async () => {
+            throw new Error(
+              'local provider failed: HTTP 400 invalid tool call arguments (ref: 84c02a96-3c3b-4c6e-a7ae-2084a8efecd7) | {"error":{"message":"invalid tool call arguments (ref: 84c02a96-...)","type":"invalid_request_error","param":null}}',
+            );
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("server fallback should not run");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.dialogId).toBe("dialog-kept-400");
+    expect(output.text()).toContain("local run unavailable");
+    expect(output.text()).toContain("rejected the request body");
+    // History-replay hint should fire because the body carries
+    // invalid_request_error / invalid tool call arguments.
+    expect(output.text()).toContain("history contains tool_calls");
+    // The misleading credential hint must NOT appear for a 400 body rejection.
+    expect(output.text()).not.toContain("Fix the local credential/config");
+  });
+
+  test("local 401 auth failure still points at the local credential", async () => {
+    const output = new CaptureOutput();
+    const result = await runAgentTurn({
+      agentName: "GLM 5.2",
+      agentKey: "agent-glm-local",
+      serverUrl: "https://nolo.chat",
+      message: "continue",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "auto",
+      output,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "GLM 5.2",
+          apiSource: "custom",
+          customProviderUrl: "https://ollama.com/v1",
+          model: "glm-5.2:cloud",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-kept-401" }),
+        resolveProvider: async () => ({
+          model: "glm-5.2:cloud",
+          complete: async () => {
+            throw new Error(
+              'local provider failed: HTTP 401 {"error":{"message":"invalid api key","type":"authentication_error"}}',
+            );
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("server fallback should not run");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.text()).toContain("local run unavailable");
+    expect(output.text()).toContain("auth rejected");
+    // 401 is the one case where the credential hint IS correct.
+    expect(output.text()).toContain("Fix the local credential/config");
+  });
+
+  test("local antigravity OAuth 400 (not tool-call-shaped) is rejected-payload, not a credential problem", async () => {
+    // Covers the antigravity OAuth transport label `local antigravity provider
+    // failed: HTTP <status>` — the regex must match transport labels beyond
+    // the bare `local provider failed`.
+    const output = new CaptureOutput();
+    const result = await runAgentTurn({
+      agentName: "AGY Flash",
+      agentKey: "agent-agy-local",
+      serverUrl: "https://nolo.chat",
+      message: "continue",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "auto",
+      output,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "AGY Flash",
+          apiSource: "custom",
+          customProviderUrl: "https://antigravity.googleapis.com/v1",
+          model: "gemini-3.7-flash",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-kept-agy-400" }),
+        resolveProvider: async () => ({
+          model: "gemini-3.7-flash",
+          complete: async () => {
+            throw new Error(
+              'local antigravity provider failed: HTTP 400 {"error":{"message":"Request contains invalid arguments.","code":400,"status":"INVALID_ARGUMENT"}}',
+            );
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("server fallback should not run");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.text()).toContain("local run unavailable");
+    expect(output.text()).toContain("rejected the request body");
+    // A bare INVALID_ARGUMENT (not tool-call-shaped) must NOT trigger the
+    // history-replay ("/switch history") hint — that hint is reserved for
+    // `invalid tool call arguments` / `invalid_request_error` bodies.
+    expect(output.text()).not.toContain("history contains tool_calls");
+    expect(output.text()).not.toContain("Fix the local credential/config");
+  });
+
+  test("desktop platform provider 502 is reported as transient, not a credential problem", async () => {
+    // Covers the desktop-adapter platform label `desktop platform provider
+    // failed: HTTP <status>` — PLATFORM_TRANSPORT_RE must match it as platform.
+    const output = new CaptureOutput();
+    const result = await runAgentTurn({
+      agentName: "GLM 5.2",
+      agentKey: "agent-glm-local",
+      serverUrl: "https://nolo.chat",
+      message: "continue",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "auto",
+      output,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "GLM 5.2",
+          apiSource: "custom",
+          customProviderUrl: "https://ollama.com/v1",
+          model: "glm-5.2:cloud",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-kept-desktop-502" }),
+        resolveProvider: async () => ({
+          model: "glm-5.2:cloud",
+          complete: async () => {
+            throw new Error(
+              'desktop platform provider failed: HTTP 502 "<html>bad gateway</html>"',
+            );
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("server fallback should not run");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.text()).toContain("local run unavailable");
+    expect(output.text()).toContain("upstream/gateway issue");
+    // Platform transport is described as the server chat proxy, not the local
+    // credential.
+    expect(output.text()).toContain("server chat proxy");
+    expect(output.text()).not.toContain("Fix the local credential/config");
+  });
+
+  test("platform 500 is reported as a transient gateway issue, not a credential problem", async () => {
+    const output = new CaptureOutput();
+    const result = await runAgentTurn({
+      agentName: "GLM 5.2",
+      agentKey: "agent-glm-local",
+      serverUrl: "https://nolo.chat",
+      message: "continue",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      runtimeMode: "auto",
+      output,
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["leveldb-agent-config", "local-provider"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "GLM 5.2",
+          apiSource: "custom",
+          customProviderUrl: "https://ollama.com/v1",
+          model: "glm-5.2:cloud",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({ dialogId: "dialog-kept-500" }),
+        resolveProvider: async () => ({
+          model: "glm-5.2:cloud",
+          complete: async () => {
+            throw new Error(
+              'platform provider failed: HTTP 502 {}',
+            );
+          },
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("server fallback should not run");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.text()).toContain("local run unavailable");
+    expect(output.text()).toContain("upstream/gateway issue");
+    expect(output.text()).not.toContain("Fix the local credential/config");
+  });
+
   test("ephemeral mode skips persistence: adapter.saveTurn is never called", async () => {
     const output = new CaptureOutput();
     const saveTurnCalls: any[] = [];

@@ -15,21 +15,20 @@ import {
 export const fetchWebpageFunctionSchema = {
   name: "fetchWebpage",
   description:
-    "访问指定的网页 URL，使用真实浏览器渲染后提取 Markdown 内容，支持 JS 动态渲染页面（SPA/React 等）。" +
-    "对于 docs.* 文档站，会自动通过 /llms.txt 和 /llms-full.txt 规范化 URL。" +
-    "适合文章阅读、内容总结、网页数据提取。" +
-    "如果用户明确给了 URL 并要求据此更新代码/文档，应优先直接抓取这些 URL，并把抓到的字段视为权威来源。",
+    "访问指定网页 URL 并提取 Markdown 内容（支持 JS 渲染/SPA）。" +
+    "对于 docs.* 文档站自动通过 /llms.txt 规范化。" +
+    "用户若已提供明确 URL，优先直接抓取作为权威来源，避免额外搜索步骤。",
   parameters: {
     type: "object",
     properties: {
       url: {
         type: "string",
         description:
-          "要抓取其内容的网页的完整 URL 地址（http/https）。对于 docs.* 文档站，可提供大致推测的页面路径，工具会先尝试规范化到权威文档 URL。",
+          "要抓取的网页完整 URL 地址（http/https）。docs.* 站点可传推测路径，工具会自动规范化。",
       },
       waitForNetworkIdle: {
         type: "boolean",
-        description: "是否等待网络请求结束再提取（适合 SPA/动态页面），默认 false。",
+        description: "是否等待网络请求结束再提取（适合 SPA 动态页面），默认 false。",
         default: false,
       },
     },

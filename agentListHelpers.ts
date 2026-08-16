@@ -10,6 +10,13 @@ import {
   readLiveDbRecordAfterTombstoneMerge,
 } from "./globalRecordOperations";
 import { agentRecordHasConfiguredCredential } from "./agentRecordHelpers";
+import {
+  isOwnedAgentKey,
+  ownedAgentKey,
+  parseOwnedAgentId,
+  publicAgentKey,
+  PUBLIC_AGENT_KEY_PREFIX,
+} from "./core/prefix";
 
 export type ListedAgent = {
   id: string;
@@ -46,8 +53,8 @@ function parseAgentRecordId(privateKey: string, explicitId?: string) {
 
 function buildCompanionKeys(rawId: string, userId: string) {
   return {
-    privateKey: `agent-${userId}-${rawId}`,
-    publicKey: `agent-pub-${rawId}`,
+    privateKey: ownedAgentKey(userId, rawId),
+    publicKey: publicAgentKey(rawId),
   };
 }
 
@@ -56,9 +63,8 @@ export function normalizeListedAgent(record: any): ListedAgent | null {
   const explicitId = typeof record?.id === "string" && record.id ? record.id : undefined;
   const ownerUserId = typeof record?.userId === "string" ? record.userId : "";
   const rawId = explicitId
-    || (ownerUserId && privateKey.startsWith(`agent-${ownerUserId}-`)
-      ? privateKey.slice(`agent-${ownerUserId}-`.length)
-      : parseAgentRecordId(privateKey, explicitId));
+    || (ownerUserId ? parseOwnedAgentId(privateKey, ownerUserId) : null)
+    || parseAgentRecordId(privateKey, explicitId);
   if (!privateKey || !rawId || !ownerUserId) return null;
   const keys = buildCompanionKeys(rawId, ownerUserId);
   const credentialConfigured = agentRecordHasConfiguredCredential(record);
@@ -163,11 +169,11 @@ export async function listLocalCachedAgents(args: {
   const publicKeys = new Set<string>();
   for await (const [key, value] of args.db.iterator({ gte: "", lte: "\uffff" })) {
     if (typeof key !== "string" || !value || typeof value !== "object") continue;
-    if (key.startsWith(`agent-${args.userId}-`)) {
+    if (isOwnedAgentKey(key, args.userId)) {
       privateRecords.set(key, { ...(value as Record<string, unknown>), dbKey: key });
       continue;
     }
-    if (key.startsWith("agent-pub-")) {
+    if (key.startsWith(PUBLIC_AGENT_KEY_PREFIX)) {
       publicKeys.add(key);
     }
   }

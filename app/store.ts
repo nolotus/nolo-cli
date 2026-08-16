@@ -1,7 +1,7 @@
 import { configureStore, type ThunkDispatch, type UnknownAction } from "@reduxjs/toolkit";
 import { TypedUseSelectorHook, useDispatch, useSelector } from "react-redux";
 import { reducer } from "./reducer";
-import type { TokenManager } from "../auth/types";
+import type { TokenManager } from "identity/authTypes";
 import type { Level } from "level";
 
 // RootState: explicit interface — NOT derived from AppStore or reducer map.

@@ -10,15 +10,18 @@ import {
   type UserChoiceResult,
 } from "../client/localRuntimeAdapter";
 import { resolveSkillReference, buildSkillContextBlocks } from "../agentRunPrompts";
-import { buildSkillDiscoveryContextBlock } from "../agent-runtime/skillDiscovery";
+import { buildSkillDiscoveryContextLayer } from "../agent-runtime/skillDiscovery";
+import {
+  buildAgentsMdLayer,
+  partitionScopedBlocks,
+  renderTurnContextBlocksWithScope,
+  type TurnContextLayer,
+} from "../agent-runtime/turnContext";
 import { resolvePlatformAuthToken } from "../agent-runtime/providerResolution";
 import {
   classifyCliAutoRoute,
-  CLI_AUTO_TIER_AGENT_KEY_TABLE,
-  CLI_IMAGE_AGENT_KEY,
 } from "../client/autoModelRouter";
 import { deleteDbRecord, readDbRecord } from "../agentRecordHelpers";
-import { resolveAgentImageInputSupport, type AgentCapabilityConfig } from "../ai/llm/agentCapabilities";
 import { resolveAgentContextWindow } from "../client/tokenUsage";
 import { estimateDefaultCliContextTokens } from "../client/estimateCliContext";
 import type { LocalAgentActionGate } from "../agent-runtime/localLoop";
@@ -115,6 +118,7 @@ export {
   startTurn,
   appendToCurrentTurn,
   finalizeCurrentTurn,
+  appendLocalTurn,
   applyOutputChunkToCurrentTurn,
   renderHistory,
   createHistoryOutputStream,
@@ -137,6 +141,7 @@ import {
   applyOutputChunkToCurrentTurn,
   applyScrollAction,
   appendToCurrentTurn,
+  appendLocalTurn,
   buildCopyViewLines,
   createHistoryOutputStream,
   createTurnHistory,
@@ -322,10 +327,13 @@ export function installAltScreenRestoreHandlers(
 
 /**
  * Read AGENTS.md (or CLAUDE.md fallback) from the workspace root.
- * Returns a formatted context block string, or null when absent.
- * Session-scope: stable across turns in the same workspace.
+ * Returns the runtime's canonical agents-md layer, or null when absent.
+ *
+ * The block text and its cacheScope both come from `buildAgentsMdLayer` — this
+ * host must not format the marker itself, or downstream consumers are forced
+ * to string-match it back to recover the scope.
  */
-function readAgentsMdBlock(cwd: string): string | null {
+function readAgentsMdLayer(cwd: string): TurnContextLayer | null {
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
     const filePath = join(cwd, name);
     if (existsSync(filePath)) {
@@ -335,7 +343,7 @@ function readAgentsMdBlock(cwd: string): string | null {
         if (Buffer.byteLength(content, "utf8") > AGENTS_MD_MAX_BYTES) {
           content = Buffer.from(content, "utf8").subarray(0, AGENTS_MD_MAX_BYTES).toString("utf8") + "\n\n<!-- AGENTS.md truncated -->";
         }
-        return `--- 项目指令（${name}）---\n${content}`;
+        return buildAgentsMdLayer(content, name);
       } catch { /* skip unreadable */ }
     }
   }
@@ -440,41 +448,10 @@ async function runAgentChat(
       );
     }
   }
-  // 图片输入：检测当前 agent 是否支持 vision，不支持则自动切换到 Kimi K2.6。
-  // 判定基准是「用户显式选择的 agent」(state.agentKey)，而不是缓存里被首轮分类
-  // 覆盖的 effectiveAgentKey——否则显式选了 vision agent（如 agy-flash）的用户，
-  // 在同一段对话后续发图时，effectiveAgentKey 仍是首轮的 flash tier key（无 vision），
-  // 会被误切到 Kimi。只有用户未显式选 agent（默认平台 agent）时，才用 tier 缓存判。
-  const userSelectedAgent = state.agentKey !== DEFAULT_TUI_AGENT_KEY;
-  const visionProbeKey = hasImages && userSelectedAgent
-    ? state.agentKey
-    : effectiveAgentKey;
-  if (hasImages && effectiveAgentKey !== CLI_IMAGE_AGENT_KEY) {
-    let needsVisionSwitch = false;
-    if (CLI_AUTO_TIER_AGENT_KEY_TABLE[visionProbeKey]) {
-      // 三个 tier agent（flash/balanced/quality）均无 vision 能力。
-      needsVisionSwitch = true;
-    } else {
-      // 用户选择的 agent：读 record 检查 vision 能力。
-      const authToken = resolvePlatformAuthToken(env);
-      const record = await readDbRecord({
-        dbKey: visionProbeKey,
-        authToken,
-        serverUrl: state.serverUrl,
-        fetchImpl: fetch,
-      }).catch(() => null);
-      if (record && !resolveAgentImageInputSupport(record as AgentCapabilityConfig)) {
-        needsVisionSwitch = true;
-      }
-    }
-    if (needsVisionSwitch) {
-      output.write(
-        `\n[nolo] 当前 agent 不支持图片输入，已自动切换到 Kimi K2.6\n`,
-      );
-      effectiveAgentKey = CLI_IMAGE_AGENT_KEY;
-      effectiveAgentName = "Kimi K2.6";
-    }
-  }
+  // 图片输入：图片档已移除，不再自动切换到 Kimi K2.6。
+  // 纯文本模型收到图片时，vision 预处理管道（localLoop 中的
+  // preprocessImagesForTextOnlyAgent）会先用 Qwen 3.7 Flash 描述图片为文字，
+  // 替换 image_url part 后继续对话。用户如需精确视觉可手动 /switch 到 Kimi。
   // Resolve attached skill references (dbKey, .agents/skills/<name>/SKILL.md)
   // and inject as system context blocks — same
   // mechanism as `nolo agent run --skill <ref>`.
@@ -521,35 +498,26 @@ async function runAgentChat(
       }
     }
   }
-  // Read AGENTS.md from cwd (project-level instructions, session-scope)
-  const agentsMdBlock = readAgentsMdBlock(state.cwd);
-  const extraContextBlocks = [
-    ...(agentsMdBlock ? [agentsMdBlock] : []),
-    ...(skillContextBlocks ?? []),
+  // Assemble the turn's context layers. Each builder stamps its own cacheScope
+  // (session = stable prefix, cached; turn = dynamic suffix, recomputed), so
+  // this host never has to infer scope by string-matching block markers.
+  const layers: Array<TurnContextLayer | null> = [
+    readAgentsMdLayer(state.cwd),
+    // Skill discovery: scan conventional skill dirs for SKILL.md and inject an
+    // index layer so the model knows what skills exist and can readFile them
+    // on-demand. Mirrors agentRunCommand.ts and desktopAgentRuntimeTurnService.
+    buildSkillDiscoveryContextLayer(state.cwd),
   ];
-  // Skill discovery: scan conventional skill dirs for SKILL.md and inject an
-  // index layer so the model knows what skills exist and can readFile them
-  // on-demand. Mirrors agentRunCommand.ts and desktopAgentRuntimeTurnService.
-  const skillDiscoveryBlock = buildSkillDiscoveryContextBlock(state.cwd);
-  if (skillDiscoveryBlock) {
-    extraContextBlocks.push(skillDiscoveryBlock);
-  }
-  // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
-  // Scope assignment uses the same cache-friendly rule as agentRunCommand.ts:
-  // AGENTS.md = session (stable prefix for cache hits)
-  // skill content / skill discovery = turn (dynamic suffix)
-  const agentsMdMarker = "--- 项目指令（";
-  const contextBlockScopes: ContextBlockScope[] = [];
-  for (const block of extraContextBlocks) {
-    if (block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "session" });
-    }
-  }
-  for (const block of extraContextBlocks) {
-    if (!block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "turn" });
-    }
-  }
+  const contextBlockScopes: ContextBlockScope[] = partitionScopedBlocks([
+    ...renderTurnContextBlocksWithScope(layers),
+    // Attached skill bodies are already self-contained sections built by
+    // buildSkillContextBlocks; they stay turn-scope because the user can
+    // attach/detach skills between turns.
+    ...(skillContextBlocks ?? [])
+      .map((content) => content.trim())
+      .filter((content) => content.length > 0)
+      .map((content) => ({ content, cacheScope: "turn" as const })),
+  ]);
   const result: RunAgentTurnResult = await agentRunner({
     agentName: effectiveAgentName,
     agentKey: effectiveAgentKey,
@@ -1360,8 +1328,21 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     turnEpoch += 1;
     const myEpoch = turnEpoch;
     history.followBottom = true;
-    startTurn(history, "user");
-    appendToCurrentTurn(history, message);
+    // 屏幕上印什么 ≠ 送进模型的是什么。终态唤醒是系统事件，不是用户发言：
+    // 模型仍收完整摘要（message），transcript 只留一行紧凑状态，且不套用户
+    // 气泡——否则每条 run 完成都在对话里伪造一条几百字的「用户消息」。
+    const isInternalEvent = req.event.kind !== "user";
+    const transcriptText =
+      req.event.kind === "child-run-completed"
+        ? (req.event.displayText ?? req.event.text)
+        : message;
+    startTurn(history, isInternalEvent ? "assistant" : "user");
+    appendToCurrentTurn(
+      history,
+      isInternalEvent
+        ? dimCliText(transcriptText, resolveCliColorEnabled())
+        : transcriptText,
+    );
     finalizeCurrentTurn(history);
     renderHistoryToOutput();
     if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
@@ -1572,16 +1553,14 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }
   };
 
-  const emitCommandOutput = (text: string) => {
+  const emitCommandOutput = (text: string, command = "") => {
     if (!text) return;
     if (!isInteractiveInput(input)) {
       output.write(`${text}\n`);
       return;
     }
     history.followBottom = true;
-    startTurn(history, "assistant");
-    appendToCurrentTurn(history, text);
-    finalizeCurrentTurn(history);
+    appendLocalTurn(history, command, text);
     renderHistoryToOutput();
     if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
   };
@@ -1612,19 +1591,24 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // output.write lands inside the scroll region and is wiped by the next
     // composer repaint (\x1b[J), which made /context et al invisible. Route
     // command echo + output through history instead.
+    //
+    // 非 chat 的 slash 命令统一走 local turn：命令行 + 输出合并成一条
+    // role="local" 的回显，与 user/assistant 对话视觉区分，翻历史不再
+    // 把 /switch 这类命令伪装成一轮对话。action 类命令（pick-agent 等）
+    // 无 output 时不写 history。/exit 的 "bye" 也不进 history——退出后
+    // 历史立即销毁，写 local turn 纯浪费且可能被清屏前闪烁。
+    //
+    // 非交互模式（管道/脚本）下仍需输出 result.output，但走 emitCommandOutput
+    // 内部的 output.write 分支（不写 history），command 传空因为非交互模式
+    // 没有"命令回显"的视觉概念。
     const interactive = isInteractiveInput(input);
 
-    if (interactive && result.action?.type !== "chat") {
-      history.followBottom = true;
-      startTurn(history, "user");
-      appendToCurrentTurn(history, line.trim());
-      finalizeCurrentTurn(history);
-      renderHistoryToOutput();
-      if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
-    }
-
-    if (result.output) {
-      emitCommandOutput(result.output);
+    if (
+      result.action?.type !== "chat" &&
+      result.action?.type !== "exit" &&
+      result.output
+    ) {
+      emitCommandOutput(result.output, interactive ? line.trim() : "");
     }
 
     if (state.agentKey !== previousAgentKey) {
@@ -1636,7 +1620,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       persistExplicitAgentSwitch(previousAgentKey);
     }
 
-    if (result.action?.type === "exit") return true;
+    if (result.action?.type === "exit") {
+      // "bye" 作为退出前最后一帧的视觉确认，直接 output.write 而不进
+      // history——退出后 history 立即销毁，写 local turn 没有意义。
+      if (result.output) output.write(`${result.output}\n`);
+      return true;
+    }
 
     if (result.action?.type === "clear") {
       if (result.action.dialogId) {

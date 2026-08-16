@@ -1,5 +1,29 @@
 import { createHash } from "node:crypto";
 
+import {
+  OPENAI_CODEX_ACCESS_TOKEN_CLIENT_SKEW_MS,
+  OPENAI_CODEX_AUTHORIZE_URL,
+  OPENAI_CODEX_CALLBACK_PATH,
+  OPENAI_CODEX_CALLBACK_PORT,
+  OPENAI_CODEX_CALLBACK_URL,
+  OPENAI_CODEX_CLIENT_ID,
+  OPENAI_CODEX_DEVICE_AUTH_URL,
+  OPENAI_CODEX_DEVICE_REDIRECT_URI,
+  OPENAI_CODEX_DEVICE_TOKEN_URL,
+  OPENAI_CODEX_DEVICE_VERIFICATION_URL,
+  OPENAI_CODEX_ORIGINATOR,
+  OPENAI_CODEX_SCOPES,
+  OPENAI_CODEX_TOKEN_REQUEST_TIMEOUT_MS,
+  OPENAI_CODEX_TOKEN_URL,
+  decodeOpenAiIdToken,
+  normalizeOpenAiCodexTokenPayload,
+  normalizeOpenAiTokenPayload,
+  openAiCodexRefresh,
+  refreshOpenAiCodexToken as runtimeRefreshOpenAiCodexToken,
+  type DecodedIdToken,
+  type OpenAiTokenPayload,
+  type RefreshOpenAiCodexTokenDeps,
+} from "../../../agent-runtime/openaiCodexOAuth";
 import { startCallbackServer } from "../callback-server";
 import { generatePkcePair } from "../pkce";
 import {
@@ -17,36 +41,29 @@ import type {
 } from "../types";
 import type { CliFetchImpl } from "../../cliFetch";
 
-export const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-export const OPENAI_CODEX_SCOPES = [
-  "openid",
-  "profile",
-  "email",
-  "offline_access",
-  "api.connectors.read",
-  "api.connectors.invoke",
-];
-export const OPENAI_CODEX_DEVICE_AUTH_URL =
-  "https://auth.openai.com/api/accounts/deviceauth/usercode";
-/** Device-code poll endpoint: returns authorization_code + code_verifier once approved. */
-export const OPENAI_CODEX_DEVICE_TOKEN_URL =
-  "https://auth.openai.com/api/accounts/deviceauth/token";
-/** Page where the user enters the printed user_code. */
-export const OPENAI_CODEX_DEVICE_VERIFICATION_URL =
-  "https://auth.openai.com/codex/device";
-/** redirect_uri used when exchanging a device-flow authorization_code. */
-export const OPENAI_CODEX_DEVICE_REDIRECT_URI =
-  "https://auth.openai.com/deviceauth/callback";
-export const OPENAI_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
-export const OPENAI_CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
-/** Originator tag the ChatGPT auth server expects for the Codex CLI login flow. */
-export const OPENAI_CODEX_ORIGINATOR = "codex_cli_rs";
-export const OPENAI_CODEX_CALLBACK_PORT = 1455;
-export const OPENAI_CODEX_CALLBACK_PATH = "/auth/callback";
-export const OPENAI_CODEX_CALLBACK_URL = `http://localhost:${OPENAI_CODEX_CALLBACK_PORT}${OPENAI_CODEX_CALLBACK_PATH}`;
+export {
+  OPENAI_CODEX_ACCESS_TOKEN_CLIENT_SKEW_MS,
+  OPENAI_CODEX_AUTHORIZE_URL,
+  OPENAI_CODEX_CALLBACK_PATH,
+  OPENAI_CODEX_CALLBACK_PORT,
+  OPENAI_CODEX_CALLBACK_URL,
+  OPENAI_CODEX_CLIENT_ID,
+  OPENAI_CODEX_DEVICE_AUTH_URL,
+  OPENAI_CODEX_DEVICE_REDIRECT_URI,
+  OPENAI_CODEX_DEVICE_TOKEN_URL,
+  OPENAI_CODEX_DEVICE_VERIFICATION_URL,
+  OPENAI_CODEX_ORIGINATOR,
+  OPENAI_CODEX_SCOPES,
+  OPENAI_CODEX_TOKEN_REQUEST_TIMEOUT_MS,
+  OPENAI_CODEX_TOKEN_URL,
+  decodeOpenAiIdToken,
+  normalizeOpenAiCodexTokenPayload,
+  normalizeOpenAiTokenPayload,
+  openAiCodexRefresh,
+};
+export type { DecodedIdToken, OpenAiTokenPayload, RefreshOpenAiCodexTokenDeps };
 
 const AUTHORIZATION_CODE_GRANT_TYPE = "authorization_code";
-const REFRESH_TOKEN_GRANT_TYPE = "refresh_token";
 
 const DEVICE_CODE_DEFAULT_INTERVAL_MS = 5_000;
 const DEVICE_POLL_SAFETY_MARGIN_MS = 3_000;
@@ -97,113 +114,15 @@ async function postForm(
 }
 
 async function parseJsonResponse(response: Response): Promise<Json> {
-  const text = await response.text().catch(() => "");
-  if (!text) return {};
   try {
-    return JSON.parse(text) as Json;
+    return (await response.json()) as Json;
   } catch {
     return {};
   }
 }
 
-function scopeString(scopes: string[] = OPENAI_CODEX_SCOPES): string {
-  return scopes.join(" ");
-}
-
-function base64UrlDecode(value: string): string {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
-  return Buffer.from(padded, "base64").toString("utf8");
-}
-
-export type DecodedIdToken = {
-  chatgptAccountId?: string;
-  email?: string;
-  payload?: Json;
-};
-
-/** Namespaced claims OpenAI embeds in the Codex access/id JWTs. */
-const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
-const OPENAI_PROFILE_CLAIM = "https://api.openai.com/profile";
-
-function readClaimString(claim: unknown, key: string): string | undefined {
-  if (!claim || typeof claim !== "object") return undefined;
-  const value = (claim as Record<string, unknown>)[key];
-  return typeof value === "string" && value ? value : undefined;
-}
-
-/**
- * Decodes a Codex JWT (access or id token). `chatgpt_account_id` lives under the
- * namespaced `https://api.openai.com/auth` claim — not at the top level — so the
- * account id header can be attached to Codex Responses requests.
- */
-export function decodeOpenAiIdToken(idToken?: string): DecodedIdToken {
-  if (!idToken) return {};
-  const parts = idToken.split(".");
-  if (parts.length < 2) return {};
-  try {
-    const payload = JSON.parse(base64UrlDecode(parts[1])) as Json;
-    const authClaim = payload[OPENAI_AUTH_CLAIM];
-    const profileClaim = payload[OPENAI_PROFILE_CLAIM];
-    return {
-      chatgptAccountId:
-        readClaimString(authClaim, "chatgpt_account_id") ??
-        (typeof payload["chatgpt_account_id"] === "string"
-          ? (payload["chatgpt_account_id"] as string)
-          : undefined),
-      email:
-        readClaimString(profileClaim, "email") ??
-        (typeof payload["email"] === "string" ? (payload["email"] as string) : undefined),
-      payload,
-    };
-  } catch {
-    return {};
-  }
-}
-
-function tokenResponseToCredential(
-  token: OAuthTokenResponse,
-  now: number
-): OAuthCredential {
-  // Prefer the access token (always the credential actually used upstream), fall
-  // back to the id token.
-  const fromAccess = decodeOpenAiIdToken(token.accessToken);
-  const fromId = decodeOpenAiIdToken(token.idToken);
-  const decoded: DecodedIdToken = {
-    chatgptAccountId: fromAccess.chatgptAccountId ?? fromId.chatgptAccountId,
-    email: fromAccess.email ?? fromId.email,
-  };
-  const expiresAt =
-    typeof token.expiresIn === "number" && token.expiresIn > 0
-      ? now + token.expiresIn * 1000
-      : undefined;
-  return {
-    provider: "chatgpt",
-    accessToken: token.accessToken,
-    ...(token.refreshToken ? { refreshToken: token.refreshToken } : {}),
-    ...(expiresAt ? { expiresAt } : {}),
-    ...(token.scope ? { scope: token.scope } : {}),
-    ...(token.idToken ? { idToken: token.idToken } : {}),
-    ...(decoded.chatgptAccountId ? { accountId: decoded.chatgptAccountId } : {}),
-    obtainedAt: now,
-  };
-}
-
-function extractTokenResponse(data: Json): OAuthTokenResponse | null {
-  const accessToken = data["access_token"];
-  if (typeof accessToken !== "string" || !accessToken) return null;
-  const expiresInRaw = data["expires_in"];
-  return {
-    accessToken,
-    ...(typeof data["refresh_token"] === "string"
-      ? { refreshToken: data["refresh_token"] as string }
-      : {}),
-    ...(typeof expiresInRaw === "number"
-      ? { expiresIn: expiresInRaw }
-      : {}),
-    ...(typeof data["scope"] === "string" ? { scope: data["scope"] as string } : {}),
-    ...(typeof data["id_token"] === "string" ? { idToken: data["id_token"] as string } : {}),
-  };
+function scopeString(): string {
+  return OPENAI_CODEX_SCOPES.join(" ");
 }
 
 export type DeviceCodeStartResult = {
@@ -349,7 +268,7 @@ export async function exchangeCodexAuthorizationCode(args: {
   now?: () => number;
 }): Promise<OAuthCredential> {
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const now = args.now ?? Date.now;
+  const now = (args.now ?? Date.now)();
   const response = await postForm(
     fetchImpl,
     OPENAI_CODEX_TOKEN_URL,
@@ -368,11 +287,10 @@ export async function exchangeCodexAuthorizationCode(args: {
       `OpenAI authorization-code exchange failed (HTTP ${response.status}): ${JSON.stringify(data)}`
     );
   }
-  const token = extractTokenResponse(data);
-  if (!token) {
-    throw new Error(`OpenAI authorization-code exchange returned no token: ${JSON.stringify(data)}`);
-  }
-  return tokenResponseToCredential(token, now());
+  return normalizeOpenAiCodexTokenPayload({
+    payload: data,
+    now,
+  });
 }
 
 export async function exchangeAuthorizationCode(args: {
@@ -447,38 +365,10 @@ export async function runOpenAiCodexBrowserPkce(
 }
 
 export const refreshOpenAiCodexToken: OAuthRefreshFn = async (credential, deps = {}) => {
-  if (!credential.refreshToken) {
-    throw new Error("Cannot refresh ChatGPT OAuth token without a refresh_token.");
-  }
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  const now = deps.now ?? Date.now;
-  const response = await postForm(
-    fetchImpl,
-    OPENAI_CODEX_TOKEN_URL,
-    {
-      grant_type: REFRESH_TOKEN_GRANT_TYPE,
-      refresh_token: credential.refreshToken,
-      client_id: OPENAI_CODEX_CLIENT_ID,
-      scope: scopeString(),
-    },
-    deps
-  );
-  const data = await parseJsonResponse(response);
-  if (!response.ok) {
-    throw new Error(
-      `OpenAI token refresh failed (HTTP ${response.status}): ${JSON.stringify(data)}`
-    );
-  }
-  const token = extractTokenResponse(data);
-  if (!token) {
-    throw new Error(`OpenAI token refresh returned no token: ${JSON.stringify(data)}`);
-  }
-  const refreshed = tokenResponseToCredential(token, now());
-  return {
-    ...refreshed,
-    refreshToken: refreshed.refreshToken ?? credential.refreshToken,
-    accountId: refreshed.accountId ?? credential.accountId,
-  };
+  return runtimeRefreshOpenAiCodexToken(credential, {
+    fetchImpl: deps.fetchImpl,
+    now: deps.now,
+  });
 };
 
 export const openAiCodexFlowController: OAuthFlowController = {

@@ -14,7 +14,7 @@ import {
   type ModelLayerOverride,
 } from "./agent-runtime/modelLayerOverride";
 import type { ContextBlockScope } from "./agent-runtime/contextBlockScope";
-import { buildSkillDiscoveryContextBlock } from "./agent-runtime/skillDiscovery";
+import { buildSkillDiscoveryContextLayer } from "./agent-runtime/skillDiscovery";
 import { CliProviderQuotaError } from "./ai/agent/cliExecutor";
 import type { AgentRuntimeHostAdapter } from "./agentRuntimeLocal";
 import { resolveAgentRecordFromHybridStore, readDbRecord } from "./agentRecordHelpers";
@@ -58,7 +58,14 @@ import {
   shouldPrintLocalRunSummary,
   type LocalRunWorkspaceInspection,
 } from "./agentRunLocalWorkspace";
-import { buildMemoryOverlayLayer, buildMemoryUseGuidanceLayer } from "./agent-runtime/turnContext";
+import {
+  buildAgentsMdLayer,
+  buildMemoryOverlayLayer,
+  buildMemoryUseGuidanceLayer,
+  partitionScopedBlocks,
+  renderTurnContextBlocksWithScope,
+  type TurnContextLayer,
+} from "./agent-runtime/turnContext";
 import { resolveMemoryRuntime } from "./ai/memory/runtime";
 import { getDefaultCliLocalRuntimeDb } from "./localRuntimeDb";
 import { resolveMachineId } from "./connector-experimental/machineInfo";
@@ -440,6 +447,11 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   // payload. Interactive foreground `nolo agent run` keeps the full stack.
   // See packages/agent-runtime/agentRunIsolation.ts for the runKind contract.
   const isSubtask = isSubtaskRun(env);
+  // Layers stamp their own cacheScope; plain skill-content blocks stay turn-scope.
+  // `extraContextBlocks` below is derived from both, purely for the legacy
+  // string-block fallback still accepted by the runner.
+  const scopedLayers: Array<TurnContextLayer | null> = [];
+  const skillContentBlocks: string[] = [];
   const extraContextBlocks: string[] = [];
   const contextBlockScopes: ContextBlockScope[] = [];
   let memoryPromptBlock: string | null = null;
@@ -457,23 +469,20 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         if (Buffer.byteLength(mdContent, "utf8") > AGENTS_MD_MAX) {
           mdContent = Buffer.from(mdContent, "utf8").subarray(0, AGENTS_MD_MAX).toString("utf8") + "\n\n<!-- AGENTS.md truncated -->";
         }
-        extraContextBlocks.push(`--- 项目指令（${name}）---\n${mdContent}`);
+        scopedLayers.push(buildAgentsMdLayer(mdContent, name));
         break;
       } catch { /* skip */ }
     }
   }
   // Skill content blocks
-  extraContextBlocks.push(...buildSkillContextBlocks(skillReferences));
+  skillContentBlocks.push(...buildSkillContextBlocks(skillReferences));
 
   // Skill discovery: scan conventional skill dir (.agents/skills)
   // for SKILL.md files and inject an index layer so the model knows what skills
   // are available and can readFile them on-demand. Without this, skills like
   // nolo-commit/nolo-cli are invisible to CLI agents even though their SKILL.md
   // files exist in the workspace.
-  const skillDiscoveryBlock = buildSkillDiscoveryContextBlock(cliCwd);
-  if (skillDiscoveryBlock) {
-    extraContextBlocks.push(skillDiscoveryBlock);
-  }
+  scopedLayers.push(buildSkillDiscoveryContextLayer(cliCwd));
 
   // T3456 — Memory injection route (CLI analogue of desktop T14).
   // Local-first runs must not touch the configured server just to recall memory:
@@ -545,32 +554,28 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   memoryOverlayLayer = buildMemoryOverlayLayer({ promptBlock: memoryPromptBlock });
   memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });
 
-  // T3456 — Assemble contextBlockScopes (upgrade from extraContextBlocks).
-  // Scope assignment mirrors desktopAgentRuntimeTurnService.ts:1272:
-  //   AGENTS.md / memory-use-guidance = session (stable prefix for cache hits)
-  //   skill content / skill discovery / memory-overlay = turn (dynamic suffix)
-  // session-scope: AGENTS.md (first N entries of extraContextBlocks are
-  // AGENTS.md content pushed before skill blocks — find it by marker).
-  const agentsMdMarker = "--- 项目指令（";
-  for (const block of extraContextBlocks) {
-    if (block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "session" });
-    }
-  }
-  // session-scope: memory-use-guidance
-  if (memoryUseGuidanceLayer?.content?.trim()) {
-    contextBlockScopes.push({ content: memoryUseGuidanceLayer.content, cacheScope: "session" });
-  }
-  // turn-scope: skill content + skill discovery (all non-AGENTS.md blocks)
-  for (const block of extraContextBlocks) {
-    if (!block.startsWith(agentsMdMarker)) {
-      contextBlockScopes.push({ content: block, cacheScope: "turn" });
-    }
-  }
-  // turn-scope: memory-overlay
-  if (memoryOverlayLayer?.content?.trim()) {
-    contextBlockScopes.push({ content: memoryOverlayLayer.content, cacheScope: "turn" });
-  }
+  // T3456 — Assemble contextBlockScopes. Every builder stamps its own
+  // cacheScope, so nothing here has to infer scope from a block's marker text:
+  //   session — AGENTS.md, skill discovery index, memory-use-guidance
+  //   turn    — attached skill content, memory-overlay
+  // partitionScopedBlocks then orders session ahead of turn so the cacheable
+  // prefix stays contiguous.
+  contextBlockScopes.push(
+    ...partitionScopedBlocks([
+      ...renderTurnContextBlocksWithScope([
+        ...scopedLayers,
+        memoryUseGuidanceLayer,
+      ]),
+      ...skillContentBlocks
+        .map((content) => content.trim())
+        .filter((content) => content.length > 0)
+        .map((content) => ({ content, cacheScope: "turn" as const })),
+      ...renderTurnContextBlocksWithScope([memoryOverlayLayer]),
+    ]),
+  );
+  // Legacy string-block fallback for runners that don't take scoped blocks.
+  // Derived from the scoped list so the two can never disagree.
+  extraContextBlocks.push(...contextBlockScopes.map((block) => block.content));
   } // end if (!isSubtask) — subtask keeps extraContextBlocks/contextBlockScopes empty
 
   // Build the runner options once; the same options (message, cwd,

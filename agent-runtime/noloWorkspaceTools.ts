@@ -66,9 +66,16 @@ export function buildNoloWorkspaceOpenAiTools(args: { toolNames?: string[] }) {
     limit: { type: "integer", description: "Maximum dialogs to return." },
     space: stringToolParam("Optional space id or URL."),
   });
-  add("readDialog", "Read one persisted dialog in the Nolo workspace by full dbKey (dialog-<userId>-<id>) or URL. Use listDialogs first if target is unclear; bare id works for current user only.", {
-    dialog: stringToolParam("Dialog dbKey (dialog-<userId>-<id>), dialog URL, or bare id (current user only)."),
-    limit: { type: "integer", description: "Optional message limit." },
+  add("readDialog", "Read one persisted dialog (metadata + messages) by full dbKey (dialog-<userId>-<id>) or URL. Use listDialogs first if target is unclear; a bare id resolves against the current user, pass user for someone else's dialog. Reading an agent run's dialog is fine at any time, but do not poll a still-running one through the full transcript: if controlAgentRun is available prefer it for live runs, otherwise use mode=\"status\" for a compact snapshot, and pull the full transcript once the run is done/failed/cancelled.", {
+    dialog: stringToolParam("Dialog dbKey (dialog-<userId>-<id>), dialog URL, or bare id (resolved against user/current account)."),
+    mode: {
+      type: "string",
+      enum: ["full", "status"],
+      description: "full (default) returns meta + messages; status returns a compact run snapshot (status/checkpoint/tools/files/error) without the transcript — prefer it when you only need to know whether an agent run is still active or how it ended.",
+    },
+    limit: { type: "integer", description: "Max messages to return in mode=full, newest first. Omit for the complete transcript; a small limit can hide earlier tool calls. Ignored in mode=status." },
+    user: stringToolParam("Owner userId for a bare dialog id (e.g. a child run started by another account). Ignored when dialog is a dbKey or URL."),
+    server: stringToolParam("Optional server base URL to read from, e.g. when the dialog lives on another machine's nolo server."),
   }, ["dialog"]);
   add("queryDialogsBySubjectRef", "Query persisted dialog evidence by a generic dialog.subjectRefs target.", {
     rowDbKey: stringToolParam("Optional alias for subjectKind=table-row, subjectId=<rowDbKey>, subjectRole=task."),
@@ -480,9 +487,18 @@ export function buildNoloWorkspaceCommandArgs(call: { name: string; arguments: s
     case "readDialog": {
       const dialog = noloStringArg(args.dialog ?? args.dialogId ?? args.id);
       if (!dialog) throw new Error("readDialog requires dialog.");
-      const cliArgs = ["dialog", "read", dialog];
-      const limit = noloPositiveIntegerString(args.limit);
+      const mode = noloStringArg(args.mode);
+      if (mode && mode !== "full" && mode !== "status") {
+        throw new Error(`readDialog mode must be "full" or "status", got "${mode}".`);
+      }
+      const statusMode = mode === "status";
+      const cliArgs = ["dialog", statusMode ? "status" : "read", dialog];
+      const limit = statusMode ? null : noloPositiveIntegerString(args.limit);
       if (limit) cliArgs.push(limit);
+      const user = noloStringArg(args.user ?? args.userId ?? args.owner);
+      if (user) cliArgs.push("--user", user);
+      const server = noloStringArg(args.server ?? args.serverBase ?? args.serverUrl);
+      if (server) cliArgs.push("--server", server);
       return cliArgs;
     }
     case "queryDialogsBySubjectRef": {

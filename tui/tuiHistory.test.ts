@@ -12,6 +12,7 @@ import {
   finalizeCurrentTurn,
   startTurn,
   appendToCurrentTurn,
+  appendLocalTurn,
   getRenderCacheMissCount,
   type Turn,
 } from "./tuiHistory";
@@ -1267,6 +1268,126 @@ describe("buildTurnOffsets & incremental streaming verification", () => {
           expect(actualCount).toBe(expectedTruecolor);
         }
       }
+    });
+  });
+
+  describe("local turn rendering (slash command echo)", () => {
+    beforeEach(() => setActiveThemeName("catppuccin"));
+    afterEach(() => setActiveThemeName("catppuccin"));
+
+    test("appendLocalTurn writes a single local turn with command + output", () => {
+      const history = createTurnHistory();
+      appendLocalTurn(history, "/switch 2", "Switched to DeepSeek V4 Flash");
+      expect(history.turns).toHaveLength(1);
+      expect(history.turns[0]!.role).toBe("local");
+      expect(history.turns[0]!.command).toBe("/switch 2");
+      expect(history.turns[0]!.content).toBe("Switched to DeepSeek V4 Flash");
+      // currentRole must be reset — local turns are finalized, not streaming
+      expect(history.currentRole).toBeNull();
+    });
+
+    test("local turn renders with › prefix for command, no user/assistant markers", () => {
+      let out = "";
+      withColor(() => {
+        out = render([
+          { role: "local", command: "/switch 2", content: "Switched to DeepSeek V4 Flash" },
+        ]);
+      });
+      // Command line carries the › prefix
+      expect(out).toContain("› /switch 2");
+      // Output line is indented
+      expect(out).toContain("  Switched to DeepSeek V4 Flash");
+      // Must NOT carry user (┃) or assistant (◈) markers
+      expect(out).not.toContain("┃");
+      expect(out).not.toContain("◈");
+    });
+
+    test("local turn without command (system feedback) renders content only", () => {
+      let out = "";
+      withColor(() => {
+        out = render([
+          { role: "local", command: "", content: "Turn stopped" },
+        ]);
+      });
+      expect(out).toContain("  Turn stopped");
+      expect(out).not.toContain("›");
+      expect(out).not.toContain("┃");
+      expect(out).not.toContain("◈");
+    });
+
+    test("countTurnLines matches renderTurnBlock for local turns with command", () => {
+      const cases = [
+        { command: "/help", content: "line one\nline two\nline three" },
+        { command: "/switch 2", content: "Switched to DeepSeek V4 Flash" },
+        { command: "", content: "Turn stopped" },
+      ];
+      for (const tc of cases) {
+        const rendered = renderTurnBlock("local", tc.content, 120, true, tc.command).length;
+        const counted = countTurnLines("local", tc.content, 120, tc.command);
+        expect(counted).toBe(rendered);
+      }
+    });
+
+    test("local turn is visually distinct from user and assistant in a mixed history", () => {
+      let out = "";
+      withColor(() => {
+        out = render([
+          { role: "user", content: "hello" },
+          { role: "assistant", content: "hi there" },
+          { role: "local", command: "/switch 2", content: "Switched to DeepSeek V4 Flash" },
+          { role: "user", content: "next question" },
+        ]);
+      });
+      expect(out).toContain("┃  hello");
+      expect(out).toContain("◈");
+      expect(out).toContain("hi there");
+      expect(out).toContain("› /switch 2");
+      expect(out).toContain("  Switched to DeepSeek V4 Flash");
+      expect(out).toContain("┃  next question");
+    });
+
+    test("buildCopyViewLines includes › prefix for local command turns", () => {
+      const history = createTurnHistory();
+      history.turns.push({
+        role: "local",
+        command: "/switch 2",
+        content: "Switched to DeepSeek V4 Flash",
+      });
+      const lines = buildCopyViewLines(history);
+      const joined = lines.join("\n");
+      expect(joined).toContain("› /switch 2");
+      expect(joined).toContain("Switched to DeepSeek V4 Flash");
+    });
+
+    test("local turn with empty content renders command line only", () => {
+      let out = "";
+      withColor(() => {
+        out = render([{ role: "local", command: "/agent list", content: "" }]);
+      });
+      expect(out).toContain("› /agent list");
+      // No indented content line when content is empty
+      expect(out.split("\n")).toHaveLength(1);
+    });
+
+    test("local turn renders and counts identically across narrow widths", () => {
+      const content = "line one\nline two with more text than the width allows";
+      const command = "/help --verbose --flag=value";
+      for (const width of [10, 20, 40]) {
+        const rendered = renderTurnBlock("local", content, width, true, command).length;
+        const counted = countTurnLines("local", content, width, command);
+        expect(counted).toBe(rendered);
+      }
+    });
+
+    test("local turn normalizes CRLF and lone CR in content", () => {
+      const history = createTurnHistory();
+      appendLocalTurn(history, "/copy", "line1\r\nline2\rline3");
+      const lines = buildCopyViewLines(history);
+      const joined = lines.join("\n");
+      expect(joined).toContain("line1");
+      expect(joined).toContain("line2");
+      expect(joined).toContain("line3");
+      expect(joined).not.toContain("\r");
     });
   });
 });

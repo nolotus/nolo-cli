@@ -51,6 +51,15 @@ export type ProjectChatQueueStatusInput = {
  * specific language while still giving all clients the same placeholder
  * semantics.
  */
+/**
+ * 从队列项中提取预览文本：内部事件优先用 displayText（面向用户的紧凑单行），
+ * 没有时回退到 text（面向模型的完整摘要）。纯字符串直接返回。
+ */
+function resolveQueuePreviewText(item: any): string {
+  if (typeof item === "string") return item;
+  return item?.event?.displayText ?? item?.text ?? "";
+}
+
 export function projectChatQueueStatus({
   state,
   maxPreview = 3,
@@ -59,7 +68,7 @@ export function projectChatQueueStatus({
   const preview: string[] = [];
   for (let i = 0; i < Math.min(maxPreview, state.queue.length); i++) {
     const item = state.queue[i] as any;
-    const text = typeof item === "string" ? item : (item?.text ?? "");
+    const text = resolveQueuePreviewText(item);
     preview.push(text.length > previewCharLimit ? text.slice(0, previewCharLimit) + "…" : text);
   }
 

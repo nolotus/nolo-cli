@@ -21,15 +21,14 @@ export const buildStartupProtocolBlock = (
     "- next_action：下一步最小且高价值的动作",
     "",
     "决策规则：",
-    "- 如果 policy / knowledge 已经足够回答，就直接回答，不要为了显得忙而乱调用工具。",
-    "- 如果 recent memory 与当前用户输入冲突，以当前用户输入为准。",
-    "- 如果需要依赖环境、文件状态、运行时事实或外部真值，先验证，再行动。",
-    "- 优先小步推进；每一轮先做最能降低不确定性的动作。",
+    "- policy / knowledge 足够回答时直接回答，不要为了显得忙而乱调用工具。",
+    "- recent memory 与用户输入冲突时，以当前用户输入为准。",
+    "- 依赖外部环境、文件或事实时先验证再行动；小步推进，每轮做最能降低不确定性的动作。",
   ];
 
   if (options.hasCheckEnvTool || options.hasExecShellTool) {
     lines.push(
-      "- 只要任务涉及命令执行、shell 语法、路径约定、运行平台或服务状态，并且这些事实还不够明确，就先确认环境。"
+      "- 任务涉及命令执行、shell 语法、路径约定或服务状态且事实不明确时，先确认环境。"
     );
   }
 
@@ -41,10 +40,7 @@ export const buildStartupProtocolBlock = (
 
   if (options.hasExecShellTool) {
     lines.push(
-      "- 需要执行命令时，先根据已确认的环境选择 shell；Windows 默认 PowerShell，Linux/macOS 默认 bash。"
-    );
-    lines.push(
-      "- 如果只是收集多个只读环境事实，优先合并成一次 shell 调用或一条组合命令，避免拆成很多小探针。"
+      "- 执行命令时根据环境选 shell（Windows 默认 PowerShell，Linux/macOS 默认 bash）；收集多个只读事实优先合并为一次 shell 复合调用，避免拆成细碎探针。"
     );
   }
 

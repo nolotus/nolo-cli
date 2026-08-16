@@ -1,39 +1,33 @@
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 
+import {
+  ANTHROPIC_ACCESS_TOKEN_CLIENT_SKEW_MS,
+  ANTHROPIC_OAUTH_AUTHORIZE_URL,
+  ANTHROPIC_OAUTH_CALLBACK_PORT,
+  ANTHROPIC_OAUTH_CLIENT_ID,
+  ANTHROPIC_OAUTH_REDIRECT_URI,
+  ANTHROPIC_OAUTH_SCOPES,
+  ANTHROPIC_OAUTH_TOKEN_URL,
+  anthropicRefresh,
+  normalizeAnthropicTokenPayload,
+  refreshAnthropicToken,
+  type AnthropicTokenPayload,
+} from "../../agent-runtime/anthropicOAuth";
 import { startCallbackServer } from "../callback-server";
 import { generatePkcePair } from "../pkce";
 import type { OAuthCredential, OAuthFlowDeps } from "../types";
 
-export const ANTHROPIC_OAUTH_CLIENT_ID =
-  "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-export const ANTHROPIC_OAUTH_AUTHORIZE_URL =
-  "https://claude.ai/oauth/authorize";
-export const ANTHROPIC_OAUTH_TOKEN_URL =
-  "https://api.anthropic.com/v1/oauth/token";
-export const ANTHROPIC_OAUTH_CALLBACK_PORT = 54545;
-export const ANTHROPIC_OAUTH_REDIRECT_URI =
-  `http://localhost:${ANTHROPIC_OAUTH_CALLBACK_PORT}/callback`;
-export const ANTHROPIC_OAUTH_SCOPES = [
-  "org:create_api_key",
-  "user:profile",
-  "user:inference",
-  "user:sessions:claude_code",
-  "user:mcp_servers",
-  "user:file_upload",
-];
-
-const ACCESS_TOKEN_CLIENT_SKEW_MS = 5 * 60 * 1000;
-
-type AnthropicTokenPayload = {
-  access_token?: unknown;
-  refresh_token?: unknown;
-  expires_in?: unknown;
-  scope?: unknown;
-  account?: { uuid?: unknown; email_address?: unknown };
-  organization?: { uuid?: unknown; name?: unknown };
-  error?: unknown;
-  error_description?: unknown;
+export {
+  ANTHROPIC_ACCESS_TOKEN_CLIENT_SKEW_MS,
+  ANTHROPIC_OAUTH_AUTHORIZE_URL,
+  ANTHROPIC_OAUTH_CALLBACK_PORT,
+  ANTHROPIC_OAUTH_CLIENT_ID,
+  ANTHROPIC_OAUTH_REDIRECT_URI,
+  ANTHROPIC_OAUTH_SCOPES,
+  ANTHROPIC_OAUTH_TOKEN_URL,
+  anthropicRefresh,
+  refreshAnthropicToken,
 };
 
 export function buildAnthropicAuthorizeUrl(args: {
@@ -115,46 +109,15 @@ export async function exchangeAnthropicAuthorizationCode(args: {
   });
   const payload = (await response.json().catch(() => ({}))) as AnthropicTokenPayload;
   if (!response.ok) throw new Error(tokenError(payload, response.status));
-  if (typeof payload.access_token !== "string" || !payload.access_token) {
+  if (typeof payload.access_token !== "string" || !payload.access_token.trim()) {
     throw new Error("Claude OAuth token exchange response missing access_token.");
   }
 
   const now = args.now?.() ?? Date.now();
-  const expiresIn =
-    typeof payload.expires_in === "number" && Number.isFinite(payload.expires_in)
-      ? payload.expires_in
-      : undefined;
-  const accountId =
-    typeof payload.account?.uuid === "string" ? payload.account.uuid : undefined;
-  const email =
-    typeof payload.account?.email_address === "string"
-      ? payload.account.email_address
-      : undefined;
-  const organizationId =
-    typeof payload.organization?.uuid === "string"
-      ? payload.organization.uuid
-      : undefined;
-  const organizationName =
-    typeof payload.organization?.name === "string"
-      ? payload.organization.name
-      : undefined;
-
-  return {
-    provider: "claude",
-    accessToken: payload.access_token,
-    ...(typeof payload.refresh_token === "string" && payload.refresh_token
-      ? { refreshToken: payload.refresh_token }
-      : {}),
-    ...(expiresIn !== undefined
-      ? { expiresAt: now + expiresIn * 1000 - ACCESS_TOKEN_CLIENT_SKEW_MS }
-      : {}),
-    ...(typeof payload.scope === "string" ? { scope: payload.scope } : {}),
-    ...(accountId ? { accountId } : {}),
-    ...(email || organizationId || organizationName
-      ? { metadata: { email, organizationId, organizationName } }
-      : {}),
-    obtainedAt: now,
-  };
+  return normalizeAnthropicTokenPayload({
+    payload,
+    now,
+  });
 }
 
 async function defaultReadLine(prompt: string): Promise<string> {

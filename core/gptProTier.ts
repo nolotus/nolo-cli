@@ -1,4 +1,7 @@
-import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
+// GPT Pro tier 纯函数：模型判定 + 客户端拦截逻辑。
+// 从 auth/gptProTier.ts 下沉到 core，使公开集消费方无需依赖 auth 包。
+// auth/gptProTier.ts 改为 re-export 本文件，私有侧 import 路径不变。
+import { asTrimmedLowercaseString } from ".//trimmedLowercaseString";
 
 export const ADVANCED_FEATURE_MIN_BALANCE = 19;
 export const GPT_PRO_REQUIRED_RECHARGE_AMOUNT = 199;

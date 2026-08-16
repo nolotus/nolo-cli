@@ -29,7 +29,7 @@ import type { Agent, DialogConfig } from "../../app/types";
 import type { Contexts } from "../types";
 import { getModelContextWindow } from "../llm/getModelContextWindow";
 import { projectToolMessageContent } from "./toolOutputPolicy";
-import { selectCurrentUserBalance } from "../../auth/authSlice";
+import { selectIdentityUserBalance } from "identity/selectors";
 import { selectIdentityUserId } from "identity/selectors";
 import {
     getModelPricing,
@@ -408,7 +408,7 @@ export const validateAccessAndBalance = (
     agentConfig: Agent,
     state: RootState,
 ): string | null => {
-    const userBalance = selectCurrentUserBalance(state);
+    const userBalance = selectIdentityUserBalance(state);
     const currentUserId = selectIdentityUserId(state);
 
     const isCustomApi = agentConfig.apiSource === "custom";

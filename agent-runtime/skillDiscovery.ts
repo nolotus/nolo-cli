@@ -11,7 +11,11 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { load as loadYaml } from "js-yaml";
-import { buildSkillDiscoveryLayer, type DiscoveredSkill } from "./turnContext";
+import {
+  buildSkillDiscoveryLayer,
+  type DiscoveredSkill,
+  type TurnContextLayer,
+} from "./turnContext";
 
 // Discovery only scans `.agents/skills` — the single skill source-of-truth.
 // Each skill lives at `.agents/skills/<name>/SKILL.md`; `resolveSkillByName`
@@ -163,13 +167,24 @@ export function resolveSkillByName(cwd: string, name: string): string | null {
  * Returns the layer content string ready to push into extraContextBlocks,
  * or null when no skills were found / the scan failed.
  */
-export function buildSkillDiscoveryContextBlock(cwd: string): string | null {
+export function buildSkillDiscoveryContextLayer(
+  cwd: string,
+): TurnContextLayer | null {
   try {
-    const discovered = discoverSkills(cwd);
-    const layer = buildSkillDiscoveryLayer(discovered, cwd);
-    return layer?.content ?? null;
+    return buildSkillDiscoveryLayer(discoverSkills(cwd), cwd);
   } catch {
     // Skill discovery is best-effort; a scan failure must not abort the run.
     return null;
   }
+}
+
+/**
+ * Content-only variant for hosts that still assemble plain string blocks.
+ *
+ * Prefer `buildSkillDiscoveryContextLayer`: the layer carries its own
+ * cacheScope, so callers don't have to string-match the block marker to work
+ * out where it belongs in the prompt.
+ */
+export function buildSkillDiscoveryContextBlock(cwd: string): string | null {
+  return buildSkillDiscoveryContextLayer(cwd)?.content ?? null;
 }

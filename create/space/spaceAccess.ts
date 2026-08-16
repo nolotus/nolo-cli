@@ -48,6 +48,11 @@ export const membershipBelongsToUser = (
 // （实测 getUserSpaceMemberships ×3），同一 server+userId 只发一次请求。
 // 只读数据 + 30s TTL，副作用低。
 const membershipFetchCache = new Map<string, Promise<RemoteMembershipFetchResult>>();
+
+/** 测试隔离用：清空 membership 远程拉取缓存（30s TTL 跨测试会污染断言）。 */
+export const clearMembershipFetchCache = (): void => {
+  membershipFetchCache.clear();
+};
 const MEMBERSHIP_FETCH_CACHE_TTL_MS = 30_000;
 
 async function fetchMembershipsFromServer(

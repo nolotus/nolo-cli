@@ -8,6 +8,7 @@ import { asOptionalTrimmedString } from "../../core/optionalString";
 import { normalizeServerOrigin } from "../../core/serverOrigin";
 import { asTrimmedString } from "../../core/trimmedString";
 import { redactAgentRecordForWorkspaceTool } from "../../agent-runtime/runtimeToolSurface";
+import { buildAgentRuntimeAgentLookupKeys } from "../../agent-runtime/agentRecordKeys";
 import {
   clampNoloPositiveInteger,
   buildNoloSubjectRefQueryTarget,
@@ -612,9 +613,7 @@ export async function readAgentFunc(args: any, thunkApi: any): Promise<ToolResul
   const raw = rawAgent.startsWith("http://") || rawAgent.startsWith("https://")
     ? new URL(rawAgent).pathname.split("/").filter(Boolean).at(-1) ?? rawAgent
     : rawAgent;
-  const candidates = raw.startsWith("agent-")
-    ? [raw]
-    : [`agent-${userId}-${raw}`, `agent-pub-${raw}`];
+  const candidates = buildAgentRuntimeAgentLookupKeys({ agentRef: raw, userId });
   for (const candidate of candidates) {
     const record = await readBestRecord(thunkApi, candidate, true);
     if (record) {

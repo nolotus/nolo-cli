@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { getCliLocale, setCliLocale } from "../tui/i18n";
 import { displayWidth } from "../tui/tuiAnsi";
+import { themeColorSequence } from "../tui/theme";
+import { detectCodeLangFromPath } from "./assistantOutput";
 import {
   createSseToolEventAdapter,
   createToolEventFormatter,
@@ -13,6 +15,7 @@ import {
   formatToolEventForCli,
   clipPathAware,
   normalizeToolDisplayMode,
+  resolveEditSnippetMaxWidth,
   resolveToolDisplayMode,
   shouldEmitToolEvents,
 } from "./toolOutput";
@@ -667,6 +670,83 @@ describe("toolOutput", () => {
     }
   });
 
+  test("detectCodeLangFromPath recognizes supported file extensions", () => {
+    expect(detectCodeLangFromPath("file.ts")).toBe("js");
+    expect(detectCodeLangFromPath("file.tsx")).toBe("js");
+    expect(detectCodeLangFromPath("file.js")).toBe("js");
+    expect(detectCodeLangFromPath("file.mjs")).toBe("js");
+    expect(detectCodeLangFromPath("file.cjs")).toBe("js");
+    expect(detectCodeLangFromPath("script.py")).toBe("py");
+    expect(detectCodeLangFromPath("build.sh")).toBe("sh");
+    expect(detectCodeLangFromPath("data.json")).toBe("json");
+    expect(detectCodeLangFromPath("notes.txt")).toBe("unknown");
+    expect(detectCodeLangFromPath(undefined)).toBe("unknown");
+  });
+
+  test("editFile diff detail applies syntax highlighting while preserving background tint in truecolor", () => {
+    const env = { COLORTERM: "truecolor", TERM: "xterm-256color", FORCE_COLOR: "1" } as Record<string, string>;
+    const original = { ...process.env };
+    Object.assign(process.env, env);
+    try {
+      const out = formatToolEventForCli(
+        toolEvent({
+          type: "tool-result",
+          toolName: "editFile",
+          argumentsPreview: "src/server.ts",
+          metadata: {
+            path: "src/server.ts",
+            oldSnippet: "const port = 3000;",
+            newSnippet: "const port = 8080;\nreturn port;",
+          },
+        }),
+        "compact",
+        true
+      );
+      // Contains truecolor background wash
+      expect(out).toContain("48;2");
+      // Accent token for 'const' and 'return'
+      const accentSeq = themeColorSequence("accent", env);
+      expect(out).toContain(`${accentSeq}const\x1b[0m`);
+      expect(out).toContain(`${accentSeq}return\x1b[0m`);
+      // Numbers are warning token
+      const warningSeq = themeColorSequence("warning", env);
+      expect(out).toContain(`${warningSeq}8080\x1b[0m`);
+    } finally {
+      for (const k of Object.keys(env)) delete process.env[k];
+      Object.assign(process.env, original);
+    }
+  });
+
+  test("editFile diff detail falls back to plain foreground on non-truecolor terminal without syntax pollution", () => {
+    const env = { NOLO_TUI_TRUECOLOR: "0", COLORTERM: "", TERM: "xterm", FORCE_COLOR: "1" } as Record<string, string>;
+    const original = { ...process.env };
+    Object.assign(process.env, env);
+    try {
+      const out = formatToolEventForCli(
+        toolEvent({
+          type: "tool-result",
+          toolName: "editFile",
+          argumentsPreview: "src/server.ts",
+          metadata: {
+            path: "src/server.ts",
+            oldSnippet: "const port = 3000;",
+            newSnippet: "const port = 8080;",
+          },
+        }),
+        "compact",
+        true
+      );
+      // No 48;2 background wash in 16-color degraded terminal
+      expect(out).not.toContain("48;2");
+      // Contains standard success/danger foreground fallback, no double/broken syntax resets
+      expect(out).toContain("- const port = 3000;\x1b[39m");
+      expect(out).toContain("+ const port = 8080;\x1b[39m");
+    } finally {
+      for (const k of Object.keys(env)) delete process.env[k];
+      Object.assign(process.env, original);
+    }
+  });
+
   test("old === new yields no detail block (returns undefined upstream)", () => {
     // No change → formatEditFileSnippet returns undefined → no detail lines
     // in the compact output, just the main tool trace line.
@@ -684,6 +764,69 @@ describe("toolOutput", () => {
     expect(out).toContain("▸ Edit app.ts  ✓");
     expect(out).not.toContain("+ ");
     expect(out).not.toContain("- ");
+  });
+
+  test("editFile displays line change stats in inline suffix", () => {
+    const out = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "app.ts",
+        metadata: {
+          oldSnippet: "const a = 1;\nconst b = 2;",
+          newSnippet: "const a = 1;\nconst b = 3;\nconst c = 4;",
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(out).toContain("▸ Edit app.ts  ✓ (+2, -1)");
+  });
+
+  test("writeFile displays line count stats in inline suffix when metadata is available", () => {
+    const out = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "writeFile",
+        argumentsPreview: "newFile.ts",
+        metadata: {
+          totalLines: 42,
+        },
+      }),
+      "compact",
+      false
+    );
+    expect(out).toContain("▸ Write newFile.ts  ✓ (+42)");
+  });
+
+  test("resolveEditSnippetMaxWidth respects NOLO_TEST_DIFF_WIDTH and fallback boundaries", () => {
+    expect(resolveEditSnippetMaxWidth({ NOLO_TEST_DIFF_WIDTH: "120" })).toBe(120);
+    expect(resolveEditSnippetMaxWidth({ NOLO_TEST_DIFF_WIDTH: "invalid" }, 0)).toBe(96);
+    expect(resolveEditSnippetMaxWidth({}, 120)).toBe(112);
+    expect(resolveEditSnippetMaxWidth({}, 200)).toBe(160);
+    expect(resolveEditSnippetMaxWidth({}, 60)).toBe(80);
+  });
+
+  test("diff window accommodates larger changes up to 24 lines without premature truncation", () => {
+    const oldLines = Array.from({ length: 15 }, (_, i) => `old line ${i + 1}`);
+    const newLines = Array.from({ length: 15 }, (_, i) => `new line ${i + 1}`);
+    const out = formatToolEventForCli(
+      toolEvent({
+        type: "tool-result",
+        toolName: "editFile",
+        argumentsPreview: "app.ts",
+        metadata: {
+          oldSnippet: oldLines.join("\n"),
+          newSnippet: newLines.join("\n"),
+        },
+      }),
+      "compact",
+      false
+    );
+    // All 15 removed and 15 added are within 24 (window centers on first change),
+    // and omitted lines marker is appended only if truncated.
+    expect(out).toContain("- old line 1");
+    expect(out).toContain("+ new line 1");
   });
 
   test("clipPathAware elides the middle of a long path, keeping leading dirs and the filename", () => {
@@ -1191,6 +1334,7 @@ describe("toolOutput", () => {
               model: "model-x",
               apiSource: "platform",
               isFavorite: true,
+              agentKey: "agent-pub-a",
               publicKey: "agent-pub-a",
             },
           ],
@@ -1200,7 +1344,7 @@ describe("toolOutput", () => {
       false
     );
     expect(listLine).toBe(
-      "● listAgents\n  Agents (1)\n  ★  Agent A  model-x  platform\n"
+      "● listAgents\n  Agents (1)\n  ★  Agent A  model-x  platform  agent-pub-a\n"
     );
 
     const startLine = formatToolEventForCli(

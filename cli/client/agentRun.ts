@@ -290,36 +290,201 @@ function isMissingLocalAgentConfigError(error: unknown, agentRef: string) {
 }
 
 /**
- * Detect failures raised by the platform-proxy transport
- * (`platform provider failed: HTTP <status> ...`), i.e. errors that happened
- * on the nolo server / upstream gateway while forwarding the chat request —
- * NOT on the local credential/config side. Empty body (`{}`) is typical of a
- * gateway 502/504, not of an application-layer nolo error (which always
- * returns a JSON `{error:{message,code}}`).
+ * Detect failures raised by a provider HTTP transport. A provider transport
+ * is anything that called an upstream chat-completions endpoint and got a
+ * non-OK response — that includes the local runtime calling an upstream
+ * directly (`local provider failed:`, `local antigravity provider failed:`,
+ * `local Claude OAuth provider failed:`, `local Codex OAuth provider
+ * failed:`, `gemini native tool provider failed:`) and the nolo server
+ * proxying the chat request (`platform provider failed:`, `desktop platform
+ * provider failed:`).
  *
- * Such failures should be reported as transient upstream issues and should
- * suggest retry / `--server`, NOT "fix the local credential/config".
+ * All of these mean the *upstream* returned non-OK, NOT that the local OS
+ * credential broker is broken — so they should never be reported as "fix
+ * the local credential/config" unless the status is an explicit auth failure
+ * (401/403).
+ *
+ * The regex matches the common shape `<label> provider failed: HTTP <status>`
+ * shared by every adapter, so newly added transports are covered without
+ * editing this function. `scripts/benchmarks/localAgentToolsetBenchmark.ts`
+ * uses the same shape.
+ *
+ * Empty body (`{}`) is typical of a gateway 502/504, not of an application-
+ * layer nolo error (which always returns a JSON `{error:{message,code}}`).
  */
-const PLATFORM_PROVIDER_FAILED_RE =
-  /platform provider failed:\s*HTTP\s+(\d+)\b/i;
+const PROVIDER_HTTP_FAILED_RE =
+  /(.+?) provider failed:\s*HTTP\s+(\d+)\b/i;
 
-function classifyLocalRunError(message: string): {
-  kind: "platform-proxy-transient" | "platform-proxy-upstream" | "generic";
-  status?: number;
-} {
-  const m = message.match(PLATFORM_PROVIDER_FAILED_RE);
+/**
+ * Platform transports (nolo server proxying the request) are identified by the
+ * label containing `platform provider failed`. Everything else is a local
+ * transport. `desktop platform provider failed` is the desktop-adapter flavor
+ * of the same platform hop and is intentionally covered by this substring.
+ */
+const PLATFORM_TRANSPORT_RE = /\bplatform provider failed\b/i;
+
+type ProviderTransport = "local" | "platform";
+
+type LocalRunErrorClass =
+  | { kind: "generic" }
+  | {
+      kind:
+        | "auth"
+        | "rejected-payload"
+        | "rate-limit"
+        | "transient"
+        | "upstream";
+      transport: ProviderTransport;
+      status: number;
+    };
+
+/**
+ * Classify a provider HTTP failure into a user-facing category.
+ *
+ * Status → kind mapping (applies to both local and platform transports):
+ *   401 / 403          → auth            (credential/permission — legit "fix local credential")
+ *   400 / 422          → rejected-payload (upstream rejected the *request body*; NOT a credential
+ *                                         issue — e.g. `invalid tool call arguments` when a dialog
+ *                                         history contains tool_calls from a different model after
+ *                                         `/switch`, or any `invalid_request_error`)
+ *   429                → rate-limit      (provider throttling — retry)
+ *   500–599            → transient       (gateway/upstream hiccup — retry)
+ *   other 4xx          → upstream        (provider-side rejection, not local config)
+ *   no HTTP match      → generic         (genuinely local config/runtime — "fix local credential")
+ */
+function classifyLocalRunError(message: string): LocalRunErrorClass {
+  const m = message.match(PROVIDER_HTTP_FAILED_RE);
   if (!m) return { kind: "generic" };
-  const status = Number(m[1]);
-  // 5xx from the proxy hop = transient gateway/upstream issue.
-  if (status >= 500 && status <= 599) {
-    // 502/504 with empty body = gateway layer; 503 is already retried by
-    // fetchWithTransientRetry, so seeing it here means retries exhausted.
-    return { kind: "platform-proxy-transient", status };
+  const status = Number(m[2]);
+  const transport: ProviderTransport = PLATFORM_TRANSPORT_RE.test(message)
+    ? "platform"
+    : "local";
+
+  if (status === 401 || status === 403) {
+    return { kind: "auth", transport, status };
   }
-  // 4xx from the proxy: still proxy-side (auth/quota/upstream rejected),
-  // not the local OS credential broker.
-  return { kind: "platform-proxy-upstream", status };
+  if (status === 400 || status === 422) {
+    return { kind: "rejected-payload", transport, status };
+  }
+  if (status === 429) {
+    return { kind: "rate-limit", transport, status };
+  }
+  if (status >= 500 && status <= 599) {
+    return { kind: "transient", transport, status };
+  }
+  return { kind: "upstream", transport, status };
 }
+
+/**
+ * Hint that the rejection looks like a history-replay problem (the upstream
+ * refused tool_calls / arguments carried over from a prior model), as opposed
+ * to a generic 400. Detected from the upstream `error.message` /
+ * `invalid_request_error` body that `describeProviderFailure` already inlined
+ * into the error string.
+ *
+ * Keep this narrow: only fire the history-replay hint when the body explicitly
+ * mentions `tool_call` arguments or an `invalid_request_error` type. A bare
+ * `invalid arguments` (e.g. Google's INVALID_ARGUMENT for a bad request field)
+ * is NOT necessarily a history-replay problem and should not trigger the
+ * "/switch history" lecture.
+ */
+const HISTORY_REPLAY_REJECTION_RE =
+  /invalid_request_error|invalid\s+tool\s+call\s+arguments?/i;
+
+/**
+ * Shared framing for every local-run failure message. Keeps the wording of
+ * the "auto runtime: local run unavailable" line consistent so the TUI and
+ * tests can match on a stable prefix/suffix.
+ */
+const RUN_UNAVAILABLE_PREFIX = "[nolo] auto runtime: local run unavailable";
+const NO_FALLBACK = "Not falling back to server.";
+const SERVER_FALLBACK_HINT = "or use --server to run on the server explicitly.";
+
+/**
+ * Per-kind message builders. Each is a small pure function that returns the
+ * user-facing line for one failure category. Adding a new kind (e.g. 408
+ * timeout) is now a one-line entry here + the classifyLocalRunError status
+ * map, instead of editing a 70-line switch body.
+ */
+type FailureCtx = {
+  message: string;
+  /** Human-readable transport label: "server chat proxy" or "local provider". */
+  where: "server chat proxy" | "local provider";
+  status: number;
+};
+
+function buildAuthFailure(ctx: FailureCtx): string {
+  // 401/403 is the one case where "fix the local credential" is correct.
+  // For the platform transport the credential lives on nolo.chat, not the
+  // local machine, so point there instead.
+  const fix = ctx.where === "server chat proxy"
+    ? `Check the agent's provider/api-key settings on nolo.chat`
+    : `Fix the local credential/config and retry`;
+  return (
+    `${RUN_UNAVAILABLE_PREFIX} (${ctx.where} returned HTTP ${ctx.status}, auth rejected). Detail: ${ctx.message} ` +
+    `${NO_FALLBACK} ${fix}, ${SERVER_FALLBACK_HINT}.\n`
+  );
+}
+
+function buildRejectedPayloadFailure(ctx: FailureCtx): string {
+  // 400/422: the upstream rejected the request BODY. This is never a local
+  // credential issue. The most common cause is replaying a dialog history
+  // that contains tool_calls / reasoning produced by a different model
+  // (e.g. after `/switch`), which the new provider's gateway validates more
+  // strictly and rejects with `invalid tool call arguments` /
+  // `invalid_request_error`.
+  const looksLikeHistoryReplay = HISTORY_REPLAY_REJECTION_RE.test(ctx.message);
+  const cause = looksLikeHistoryReplay
+    ? ` This usually happens when the dialog history contains tool_calls or reasoning produced by a different model/provider (e.g. after /switch); the new provider rejects that history. Start a fresh dialog, or clean the offending history.`
+    : "";
+  return (
+    `${RUN_UNAVAILABLE_PREFIX} (${ctx.where} returned HTTP ${ctx.status}, the provider rejected the request body — this is NOT a local credential/config issue). Detail: ${ctx.message}${cause} ` +
+    `${NO_FALLBACK} Use --server to run on the server explicitly, or start a fresh dialog.\n`
+  );
+}
+
+function buildRateLimitFailure(ctx: FailureCtx): string {
+  return (
+    `${RUN_UNAVAILABLE_PREFIX} (${ctx.where} returned HTTP ${ctx.status}, rate limited). Detail: ${ctx.message} ` +
+    `${NO_FALLBACK} Retry shortly, ${SERVER_FALLBACK_HINT}.\n`
+  );
+}
+
+function buildTransientFailure(ctx: FailureCtx): string {
+  return (
+    `${RUN_UNAVAILABLE_PREFIX} (${ctx.where} returned HTTP ${ctx.status}; this is an upstream/gateway issue, not your local credential or config). Detail: ${ctx.message} ` +
+    `${NO_FALLBACK} Retry shortly, ${SERVER_FALLBACK_HINT}.\n`
+  );
+}
+
+function buildUpstreamFailure(ctx: FailureCtx): string {
+  // Other 4xx (404/405/451/…): provider-side rejection that is neither auth
+  // nor a request-body validation error. For the platform transport the fix
+  // is on nolo.chat; for the local transport it's the agent's endpoint/model.
+  const fix = ctx.where === "server chat proxy"
+    ? `Check the agent's provider/api-key settings on nolo.chat`
+    : `Check the agent's endpoint/model settings`;
+  return (
+    `${RUN_UNAVAILABLE_PREFIX} (${ctx.where} returned HTTP ${ctx.status}). Detail: ${ctx.message} ` +
+    `${NO_FALLBACK} ${fix}, ${SERVER_FALLBACK_HINT}.\n`
+  );
+}
+
+/**
+ * Map each classified kind to its message builder. Keys mirror the `kind`
+ * union in LocalRunErrorClass. `auth`/`upstream` branch on transport inside
+ * their builder, so the table is a flat lookup.
+ */
+const FAILURE_BUILDERS: Record<
+  Exclude<LocalRunErrorClass, { kind: "generic" }>["kind"],
+  (ctx: FailureCtx) => string
+> = {
+  auth: buildAuthFailure,
+  "rejected-payload": buildRejectedPayloadFailure,
+  "rate-limit": buildRateLimitFailure,
+  transient: buildTransientFailure,
+  upstream: buildUpstreamFailure,
+};
 
 function describeLocalRunFailure(message: string): string {
   // Balance/402 is the common "I just topped up / please continue" case —
@@ -330,34 +495,25 @@ function describeLocalRunFailure(message: string): string {
     )
   ) {
     return (
-      `[nolo] auto runtime: local run unavailable (${message}). ` +
-      `Not falling back to server. Top up your balance, then send again ` +
-      `(or say "继续") — if a dialog was kept, context is preserved.\n`
+      `${RUN_UNAVAILABLE_PREFIX} (${message}). ${NO_FALLBACK} ` +
+      `Top up your balance, then send again (or say "继续") — if a dialog was kept, context is preserved.\n`
     );
   }
+
   const cls = classifyLocalRunError(message);
-  if (cls.kind === "platform-proxy-transient") {
+  if (cls.kind === "generic") {
     return (
-      `[nolo] auto runtime: local run unavailable (server chat proxy returned ` +
-      `HTTP ${cls.status}; this is an upstream/gateway issue, not your local ` +
-      `credential or config).${message ? ` Detail: ${message}` : ""} ` +
-      `Not falling back to server. Retry shortly, or use --server to run on ` +
-      `the server explicitly.\n`
+      `${RUN_UNAVAILABLE_PREFIX} (${message}). ${NO_FALLBACK} ` +
+      `Fix the local credential/config and retry, ${SERVER_FALLBACK_HINT}.\n`
     );
   }
-  if (cls.kind === "platform-proxy-upstream") {
-    return (
-      `[nolo] auto runtime: local run unavailable (server chat proxy returned ` +
-      `HTTP ${cls.status}).${message ? ` Detail: ${message}` : ""} ` +
-      `Not falling back to server. Check the agent's provider/api-key settings ` +
-      `on nolo.chat, or use --server to run on the server explicitly.\n`
-    );
-  }
-  return (
-    `[nolo] auto runtime: local run unavailable (${message}). ` +
-    "Not falling back to server. Fix the local credential/config and retry, " +
-    "or use --server to run on the server explicitly.\n"
-  );
+
+  const ctx: FailureCtx = {
+    message,
+    where: cls.transport === "platform" ? "server chat proxy" : "local provider",
+    status: cls.status,
+  };
+  return FAILURE_BUILDERS[cls.kind](ctx);
 }
 
 function shouldAttemptAutoLocal(options: RunAgentTurnOptions) {
@@ -779,6 +935,12 @@ async function runLocalAgentTurnForCli(
           // 不阻断当前轮——agent 拿到的是 [Image content omitted...] 占位文本，能继续跑。
           options.output.write(
             "[nolo] 当前 agent 不支持图片输入，已用占位文本替代。要完整图片理解可 /switch 到 Kimi K2.6。\n",
+          );
+        }
+        if (event.kind === "image-preprocessed") {
+          // vision 预处理成功：图片已转为文字描述，用户无需操作。
+          options.output.write(
+            `[nolo] 已用视觉模型解析 ${event.imageCount} 张图片为文字描述，供当前 agent 使用。\n`,
           );
         }
         options.onLoopEvent?.(event);

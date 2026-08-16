@@ -1,4 +1,4 @@
-// auth/routes.ts
+// authRoutes: 路由路径常量 + createPathMatcher 纯函数。
 import { API_VERSION } from "../database/config";
 
 export interface RouteParams {

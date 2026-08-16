@@ -22,7 +22,8 @@ import {
 } from "../../ai/tools/agent/agentRunDisplayHelpers";
 import { type AgentRunSnapshot, parseAgentRunEvent } from "./agentRunSnapshot";
 import { dimCliText, resolveCliColorEnabled, styleCliText } from "./terminalStyles";
-import { type DiffLineKind, renderDiffLine, themeText } from "../tui/theme";
+import { type DiffLineKind, type TuiBrightness, renderDiffLine, resolveTuiBrightness, supportsTruecolor, themeText } from "../tui/theme";
+import { type CodeLang, detectCodeLangFromPath, highlightCodeLine } from "./assistantOutput";
 import { displayWidth } from "../tui/tuiAnsi";
 import { diffLines } from "diff";
 import { agentRunCardLabels, t, toolLabel } from "../tui/i18n";
@@ -128,8 +129,22 @@ function compactResultHint(event: LocalAgentToolEvent): {
   // editFile: show the actual added/removed snippet so the user can see what
   // changed without opening the file.
   if (event.toolName === "editFile" && event.metadata) {
-    const detail = formatEditFileSnippet(event.metadata);
-    if (detail) return { inline: "", detail };
+    const res = formatEditFileSnippet(event.metadata);
+    if (res) {
+      const stats: string[] = [];
+      if (res.addedCount > 0) stats.push(`+${res.addedCount}`);
+      if (res.removedCount > 0) stats.push(`-${res.removedCount}`);
+      const inline = stats.length > 0 ? `(${stats.join(", ")})` : "";
+      return { inline, detail: res.lines };
+    }
+  }
+
+  // writeFile: show line count or size if available in metadata
+  if (event.toolName === "writeFile" && event.metadata) {
+    const totalLines = event.metadata.totalLines ?? event.metadata.lines;
+    if (typeof totalLines === "number" && totalLines > 0) {
+      return { inline: `(+${totalLines})` };
+    }
   }
 
   const summary = event.summary;
@@ -158,41 +173,82 @@ function readReadFileRange(metadata: Record<string, unknown>): string | undefine
   return `${startLine}-${endLine}/${totalLines}`;
 }
 
-const EDIT_SNIPPET_MAX_LINES = 10;
-const EDIT_SNIPPET_MAX_WIDTH = 96;
+const EDIT_SNIPPET_MAX_LINES = 24;
+const DEFAULT_EDIT_SNIPPET_MAX_WIDTH = 96;
+
+export function resolveEditSnippetMaxWidth(
+  env: Record<string, string | undefined> = process.env,
+  columns?: number
+): number {
+  if (env.NOLO_TEST_DIFF_WIDTH) {
+    const parsed = parseInt(env.NOLO_TEST_DIFF_WIDTH, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const cols =
+    typeof columns === "number"
+      ? columns
+      : typeof process !== "undefined" && typeof process.stdout?.columns === "number"
+        ? process.stdout.columns
+        : 0;
+  if (cols > 0) {
+    return Math.max(80, Math.min(160, cols - 8));
+  }
+  return DEFAULT_EDIT_SNIPPET_MAX_WIDTH;
+}
+
+interface FormattedEditSnippet {
+  lines: EditSnippetLine[];
+  addedCount: number;
+  removedCount: number;
+}
 
 function formatEditFileSnippet(
   metadata: Record<string, unknown>
-): EditSnippetLine[] | undefined {
+): FormattedEditSnippet | undefined {
   const oldSnippet = typeof metadata.oldSnippet === "string" ? metadata.oldSnippet : undefined;
   const newSnippet = typeof metadata.newSnippet === "string" ? metadata.newSnippet : undefined;
   if (!oldSnippet && !newSnippet) return undefined;
 
+  const maxWidth = resolveEditSnippetMaxWidth();
+
   // Degraded path: one side missing — show whichever side we have, tagged
   // wholesale as removed/added so the user at least sees something.
   if (oldSnippet && !newSnippet) {
-    return snippetLinesWithKind(oldSnippet, "removed");
+    const lines = snippetLinesWithKind(oldSnippet, "removed", maxWidth);
+    return { lines, addedCount: 0, removedCount: lines.length };
   }
   if (newSnippet && !oldSnippet) {
-    return snippetLinesWithKind(newSnippet, "added");
+    const lines = snippetLinesWithKind(newSnippet, "added", maxWidth);
+    return { lines, addedCount: lines.length, removedCount: 0 };
   }
 
   // Both present: produce a real line-level diff via `diffLines`.
   const parts = diffLines(oldSnippet!, newSnippet!);
   const all: EditSnippetLine[] = [];
+  let addedCount = 0;
+  let removedCount = 0;
+
   for (const part of parts) {
     const kind: DiffLineKind = part.added ? "added" : part.removed ? "removed" : "context";
     // `diffLines` values end with "\n", so split drops a trailing empty element.
     const raw = part.value.split("\n");
     if (raw.length > 0 && raw[raw.length - 1] === "") raw.pop();
-    for (const line of raw) all.push(buildEditLine(kind, line));
+    for (const line of raw) {
+      if (kind === "added") addedCount++;
+      if (kind === "removed") removedCount++;
+      all.push(buildEditLine(kind, line, maxWidth));
+    }
   }
 
   // No change at all (old === new) — nothing actionable to show.
   const changeCount = all.filter((l) => l.kind !== "context").length;
   if (changeCount === 0) return undefined;
 
-  return windowAndTruncate(all, EDIT_SNIPPET_MAX_LINES);
+  return {
+    lines: windowAndTruncate(all, EDIT_SNIPPET_MAX_LINES),
+    addedCount,
+    removedCount,
+  };
 }
 
 function prefixFor(kind: DiffLineKind): string {
@@ -204,17 +260,18 @@ function prefixFor(kind: DiffLineKind): string {
  * display width (CJK-aware) so a 60-char CJK line (120 columns) is truncated
  * where a `.length` check would have let it overflow.
  */
-function buildEditLine(kind: DiffLineKind, body: string): EditSnippetLine {
-  return { kind, text: prefixFor(kind) + truncateByDisplayWidth(body, EDIT_SNIPPET_MAX_WIDTH) };
+function buildEditLine(kind: DiffLineKind, body: string, maxWidth = resolveEditSnippetMaxWidth()): EditSnippetLine {
+  return { kind, text: prefixFor(kind) + truncateByDisplayWidth(body, maxWidth) };
 }
 
 /** One-sided fallback: tag every line of a snippet with a single kind. */
 function snippetLinesWithKind(
   snippet: string,
-  kind: DiffLineKind
+  kind: DiffLineKind,
+  maxWidth = resolveEditSnippetMaxWidth()
 ): EditSnippetLine[] {
   const lines = snippet.split(/\r?\n/).filter((line) => line.length > 0);
-  return lines.slice(0, EDIT_SNIPPET_MAX_LINES).map((line) => buildEditLine(kind, line));
+  return lines.slice(0, EDIT_SNIPPET_MAX_LINES).map((line) => buildEditLine(kind, line, maxWidth));
 }
 
 /**
@@ -1050,19 +1107,63 @@ function formatCompactToolLine(
   }
 
   if (!hint.detail?.length) return mainLine;
-  return `${mainLine}${formatEditDetailBlock(hint.detail, colorEnabled)}`;
+  const filePath = typeof event.metadata?.path === "string" ? event.metadata.path : event.argumentsPreview;
+  return `${mainLine}${formatEditDetailBlock(hint.detail, colorEnabled, filePath)}`;
 }
 
-function formatEditDetailBlock(lines: EditSnippetLine[], colorEnabled: boolean): string {
+function formatEditDetailBlock(
+  lines: EditSnippetLine[],
+  colorEnabled: boolean,
+  filePath?: string,
+  env: Record<string, string | undefined> = process.env
+): string {
   if (!colorEnabled) {
     return lines.map((line) => `  ${line.text}\n`).join("");
   }
+  const isTruecolor = supportsTruecolor(env);
+  const lang = isTruecolor ? detectCodeLangFromPath(filePath) : "unknown";
+  const brightness = resolveTuiBrightness(env);
   // Block-level padTo so every diff line forms a rectangle of equal visible
   // width (Zed-style band). Measured with CJK-aware displayWidth.
   const padTo = Math.max(...lines.map((line) => displayWidth(line.text))) + 1;
   return lines
-    .map((line) => `  ${renderDiffLine({ kind: line.kind, text: line.text, padTo, colorEnabled: true })}\n`)
+    .map((line) => `  ${renderDiffLine({
+      kind: line.kind,
+      text: line.text,
+      highlightedText: shouldHighlightEditLine(line, lang, isTruecolor)
+        ? buildHighlightedEditLine(line, lang, brightness, env)
+        : undefined,
+      padTo,
+      colorEnabled: true,
+      env,
+    })}\n`)
     .join("");
+}
+
+/** 一行是否值得语法高亮：truecolor + 已知语言 + 非 ellipsis + 有 +/- 前缀。 */
+function shouldHighlightEditLine(
+  line: EditSnippetLine,
+  lang: CodeLang,
+  isTruecolor: boolean,
+): boolean {
+  if (!isTruecolor || lang === "unknown") return false;
+  if (line.text.startsWith("  …") || line.text.startsWith("…")) return false;
+  return line.text.length >= 2;
+}
+
+/** 给 edit diff 行的前缀上色 + 对剩余部分做语法高亮。 */
+function buildHighlightedEditLine(
+  line: EditSnippetLine,
+  lang: CodeLang,
+  brightness: TuiBrightness,
+  env: Record<string, string | undefined>,
+): string {
+  const prefix = line.text.slice(0, 2);
+  const body = line.text.slice(2);
+  const prefixToken = line.kind === "added" ? "success" : line.kind === "removed" ? "danger" : "chrome";
+  const coloredPrefix = themeText(prefix, prefixToken, true, env);
+  const highlightedBody = highlightCodeLine(body, lang, brightness);
+  return `${coloredPrefix}${highlightedBody}`;
 }
 
 export function formatToolEventForCli(

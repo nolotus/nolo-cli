@@ -170,6 +170,14 @@ export function resolveLocalToolPolicy(args: {
   };
 }
 
+/**
+ * 会收到 per-turn abortSignal 的本地工具。
+ *
+ * 判据是「能长时间阻塞、且自己有办法收手」：execShell 会真被 SIGTERM 掉，
+ * controlAgentRun 的 wait 会轮询几十秒到几分钟。其余工具保持单参契约。
+ */
+const ABORT_AWARE_LOCAL_TOOLS = new Set(["execShell", "controlAgentRun"]);
+
 export async function executeLocalToolWithPolicy(args: {
   env: EnvLike;
   agentToolNames?: string[];
@@ -182,6 +190,7 @@ export async function executeLocalToolWithPolicy(args: {
    * execShell executor call so Esc aborts a stuck child process tree.
    */
   abortSignal?: AbortSignal;
+  // 见下方 ABORT_AWARE_LOCAL_TOOLS。
   /**
    * Optional override for the execShell auto-detach threshold (ms). When a
    * command runs longer than this it is promoted to a background process.
@@ -229,13 +238,17 @@ export async function executeLocalToolWithPolicy(args: {
   if (!executor) {
     throw new Error(`${decision.toolName} is allowed by policy but no local executor is registered.`);
   }
-  // When a per-turn abortSignal is present and the tool is execShell, inject
-  // the signal into the execShell executor via its optional second arg. Other
-  // executors keep their single-arg contract and ignore the extra opts.
+  // When a per-turn abortSignal is present, inject it into the executors that
+  // can actually act on it, via their optional second arg. Other executors
+  // keep their single-arg contract and ignore the extra opts.
+  //
+  // controlAgentRun 也在名单里：它的 wait 会轮询几十秒到几分钟，turn 被强停
+  // 时若拿不到 signal，raceWithAbort 只会孤儿化这个 promise——轮询继续空转，
+  // 它持有的 run 租约也迟迟不释放。能长时间阻塞的工具都该听得见 abort。
   const effectiveExecutor =
-    args.abortSignal && decision.toolName === "execShell" && args.executors
+    args.abortSignal && ABORT_AWARE_LOCAL_TOOLS.has(decision.toolName) && args.executors
       ? (call: AgentRuntimeToolCallInput) =>
-          (args.executors!.execShell as unknown as (
+          (executor as unknown as (
             call: AgentRuntimeToolCallInput,
             opts?: { abortSignal?: AbortSignal; detachMs?: number },
           ) => Promise<AgentRuntimeToolResult>)(call, {

@@ -4933,6 +4933,185 @@ describe("CLI local runtime adapter Codex OAuth branch (codex-responses) result 
   });
 });
 
+describe("CLI local runtime adapter OAuth branches surface usage (TUI context chip)", () => {
+  // 回归护栏：claude（anthropic-messages）与 antigravity（CCA）两个 OAuth 分支的
+  // complete() 曾只回 content/model/tool_calls，丢掉上游已归一化好的 usage，导致：
+  //   localLoop 的 lastUsage 无 token 数 → buildTurnTokenUsage 返回 undefined →
+  //   TUI context chip 的 turnTokens/estimatedContextTokens 都不更新（「context 不涨」）。
+  // 上游都返回 OpenAI chat.completions 形状（claude 经 mapAnthropicMessageToOpenAi、
+  // antigravity 经 accumulateGeminiChunks），adapter 必须原样透传 usage。
+  //
+  // 与 codex 组同样的凭证约束：adapter 硬构造 createOAuthApiKeyRefResolver()，os.homedir()
+  // 缓存导致无法重定向凭证目录，故退而用真实 homeDir 凭证文件——beforeEach 备份、
+  // 写入伪造凭证，afterEach 逐字节恢复，全程不碰用户真实 token。
+  const PROVIDERS = ["claude", "antigravity"] as const;
+  const originals: Array<{ path: string; raw: string | null; existed: boolean }> = [];
+
+  beforeEach(() => {
+    clearCliLocalRuntimePreparedAgentCache();
+    originals.length = 0;
+    for (const provider of PROVIDERS) {
+      const path = getCredentialPath(provider);
+      const existed = existsSync(path);
+      originals.push({
+        path,
+        raw: existed ? readFileSync(path, "utf8") : null,
+        existed,
+      });
+    }
+  });
+
+  afterEach(() => {
+    for (const original of originals) {
+      if (original.existed && original.raw !== null) {
+        writeFileSync(original.path, original.raw, { encoding: "utf8", mode: 0o600 });
+      } else if (existsSync(original.path)) {
+        unlinkSync(original.path);
+      }
+    }
+    originals.length = 0;
+  });
+
+  function writeFakeOAuthCredential(provider: "claude" | "antigravity", accessToken: string) {
+    writeOAuthCredential(provider, {
+      provider,
+      accessToken,
+      // 远期 expiresAt 让 token 始终「新鲜」（越过 5min skew），非 force 路径直接返回文件值。
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      obtainedAt: Date.now(),
+      // antigravity 分支需要 metadata.projectId 构造 CCA 请求，缺了会直接 throw。
+      ...(provider === "antigravity"
+        ? { metadata: { projectId: "projects/antigravity-proj-1" } }
+        : {}),
+    });
+  }
+
+  function createOAuthAdapter(opts: {
+    agentRecord: Record<string, unknown>;
+    fetchImpl: (url: unknown, init?: { headers?: unknown }) => Promise<Response>;
+  }) {
+    const dbKey = String(opts.agentRecord.dbKey);
+    const store = new Map<string, unknown>([[dbKey, opts.agentRecord]]);
+    return createAdapter({
+      env: { NOLO_LOCAL_USER_ID: "user-1" },
+      db: {
+        get: async (key: string) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key: string, value: unknown) => {
+          store.set(key, value);
+        },
+        batch: async (ops: Array<{ type: string; key: string; value: unknown }>) => {
+          for (const op of ops) {
+            if (op.type === "put") store.set(op.key, op.value);
+          }
+        },
+      },
+      fetchImpl: opts.fetchImpl,
+      sleep: async () => {},
+    });
+  }
+
+  test("claude OAuth branch surfaces usage on the AgentRuntimeResult", async () => {
+    writeFakeOAuthCredential("claude", "token-claude-A");
+    const requests: string[] = [];
+    const adapter = createOAuthAdapter({
+      agentRecord: {
+        dbKey: "agent-user-1-claude-oauth",
+        id: "claude-oauth",
+        prompt: "Use Claude OAuth provider.",
+        model: "claude-sonnet-5",
+        provider: "anthropic",
+        apiSource: "custom",
+        apiKeyRef: "claude",
+      },
+      fetchImpl: async (url, init) => {
+        if (String(url).includes("/v1/messages")) {
+          requests.push(String(url));
+          // fetchAnthropicMessagesCompletion 对 200 响应走 mapAnthropicMessageToOpenAi：
+          // mock 用真实 Anthropic Messages 形状（含 cache 字段），断言归一化后的 usage。
+          return Response.json({
+            id: "msg_1",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-5",
+            content: [{ type: "text", text: "claude ok" }],
+            stop_reason: "end_turn",
+            usage: {
+              input_tokens: 12,
+              output_tokens: 5,
+              cache_creation_input_tokens: 3,
+              cache_read_input_tokens: 4,
+            },
+          });
+        }
+        // loadAgentConfig 阶段的远端 record 读取等非 provider 请求：给无害响应。
+        return Response.json({ choices: [{ message: { content: "unused" } }] });
+      },
+    });
+
+    const agentConfig = await adapter.loadAgentConfig("claude-oauth");
+    const provider = await adapter.resolveProvider(agentConfig);
+    const result = await provider.complete([{ role: "user", content: "hi" }], {});
+
+    expect(result).toMatchObject({
+      content: "claude ok",
+      usage: {
+        // mapAnthropicMessageToOpenAi 的 input_tokens/prompt_tokens 是总输入
+        // （含 cache read/write）：12 非缓存 + 3 cache_creation + 4 cache_read = 19。
+        prompt_tokens: 19,
+        input_tokens: 19,
+        completion_tokens: 5,
+        output_tokens: 5,
+        total_tokens: 24,
+        cache_creation_input_tokens: 3,
+        cache_read_input_tokens: 4,
+      },
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toContain("api.anthropic.com/v1/messages");
+  });
+
+  test("antigravity OAuth branch surfaces usage on the AgentRuntimeResult", async () => {
+    writeFakeOAuthCredential("antigravity", "token-antigravity-A");
+    const requests: string[] = [];
+    const adapter = createOAuthAdapter({
+      agentRecord: {
+        dbKey: "agent-user-1-antigravity-oauth",
+        id: "antigravity-oauth",
+        prompt: "Use Antigravity OAuth provider.",
+        model: "gemini-3.1-pro",
+        provider: "google-antigravity",
+        apiSource: "custom",
+        apiKeyRef: "antigravity",
+      },
+      fetchImpl: async (url, init) => {
+        if (String(url).includes("streamGenerateContent")) {
+          requests.push(String(url));
+          // fetchAntigravityCloudCodeCompletion 走 SSE 聚合（accumulateGeminiChunks），
+          // mock 用真实 CCA 帧：usageMetadata 归一化成 prompt_tokens/completion_tokens。
+          return new Response(
+            'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"gemini ok"}]}}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":6,"totalTokenCount":26}}}\n\n',
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        }
+        return Response.json({ choices: [{ message: { content: "unused" } }] });
+      },
+    });
+
+    const agentConfig = await adapter.loadAgentConfig("antigravity-oauth");
+    const provider = await adapter.resolveProvider(agentConfig);
+    const result = await provider.complete([{ role: "user", content: "hi" }], {});
+
+    expect(result).toMatchObject({
+      content: "gemini ok",
+      usage: { prompt_tokens: 20, completion_tokens: 6, total_tokens: 26 },
+    });
+    expect(requests).toHaveLength(1);
+  });
+});
+
 /**
  * Policy 名单派生自 schema 侧：buildLocalPolicyToolNames 不再按类别独立收集，
  * 直接取 buildOpenAiTools 输出的 function.name。覆盖 startAgentRun/controlAgentRun

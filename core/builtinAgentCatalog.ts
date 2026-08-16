@@ -20,9 +20,10 @@
  * （scripts/createSpaceAgents.ts）的 provider/model 需同步改，一致性测试会
  * 提示（见 createSpaceAgents.source.test.ts）。
  *
- * 两个布尔维度：`group` 表达「builtin 平台内置 6 个 vs public 广场公开」，
- * `runtimeFallback` 表达「运行时兜底需要与否」——正交，可独立取值（如
- * @nolo 是 builtin 组但需要兜底）。agent key 前缀构造/解析统一走
+ * 两个维度：`group` 表达「builtin 平台内置 6 个 / public 广场公开（需 seed）/
+ * internal 内部管线基础设施（不上架、不需 seed）」，`runtimeFallback` 表达
+ * 「运行时兜底需要与否」——正交，可独立取值（如 @nolo 是 builtin 组但需要
+ * 兜底；Qwen 预处理器是 internal 组但同样需要兜底）。agent key 前缀构造/解析统一走
  * `core/prefix.ts`（publicAgentKey / parsePublicAgentId）。
  */
 
@@ -34,8 +35,13 @@ export type BuiltinAgentCatalogEntry = {
   model: string;
   apiSource?: string;
   useServerProxy?: boolean;
-  /** builtin = 平台内置 6 个（BUILTIN_PLATFORM_AGENT_KEYS）；public = 广场公开 */
-  group: "builtin" | "public";
+  /**
+   * builtin = 平台内置 6 个（BUILTIN_PLATFORM_AGENT_KEYS）；public = 广场公开；
+   * internal = 仅供内部管线调用的基础设施 agent（如图片预处理器），需要运行时
+   * 兜底配置，但不上架广场、不写库、不需要 createSpaceAgents seed。注意其请求
+   * 仍走平台托管路由并照常按用量计费，只是不作为独立广场商品定价/售卖。
+   */
+  group: "builtin" | "public" | "internal";
   /**
    * true = 需要运行时兜底（quick-chat 档位 / 图片档 / @nolo 引导）。
    * 记录在本地/远端缺失时，runtime 用目录合成配置，保证进站即用。
@@ -116,6 +122,16 @@ export const BUILTIN_AGENT_CATALOG: BuiltinAgentCatalogEntry[] = [
     name: "Kimi K2.6",
     provider: "nolo",
     model: "kimi-k2.6",
+    runtimeFallback: true,
+  },
+  {
+    id: "01QWEN37FLASH000000000001",
+    // 内部图片预处理器（imagePreprocessing.ts），不是广场商品：只需运行时兜底
+    // 拿到 provider/model，不应被 seed 写库、上架或计费。
+    group: "internal",
+    name: "Qwen 3.7 Flash",
+    provider: "nolo",
+    model: "qwen3.7-flash",
     runtimeFallback: true,
   },
   {

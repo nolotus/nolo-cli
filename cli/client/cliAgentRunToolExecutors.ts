@@ -27,6 +27,9 @@ import {
   type RunRecord,
   checkStaleRun,
   ackRunRecord,
+  claimRunRecord,
+  commitRunRecordClaim,
+  releaseRunRecordAck,
   finalizeRunRecord,
   findRunRecord,
   gcRunRecords,
@@ -148,6 +151,13 @@ function buildProgressField(
 const WAIT_POLL_INTERVAL_MS = 500;
 /** action="wait" 的默认等待上限（ms），与 web 端 controlAgentRun 的 timeoutMs 默认一致。 */
 const DEFAULT_WAIT_TIMEOUT_MS = 100000;
+
+/**
+ * 租约 ttl 相对本次 wait 超时的宽限：租约必须活得比这次等待久一点（否则
+ * 自己的 claim 会在还在等的时候过期），又不能久太多（进程被硬杀后要尽快
+ * 自愈）。
+ */
+const ACK_LEASE_GRACE_MS = 60_000;
 
 /** status/wait 共用的 run 结果载荷（含 dialogId/exitCode/progress；日志可选）。 */
 function buildRunStatusPayload(
@@ -326,8 +336,15 @@ export function createCliStartAgentRunExecutor(deps: CliAgentRunToolExecutorDeps
 
 /** controlAgentRun：list / status / wait / stop / todo，映射到本地 ~/.nolo/runs/ 注册表。wait 轮询记录直到终态。 */
 export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDeps = {}) {
-  return async (call: any): Promise<{ content: string; metadata?: Record<string, unknown> }> => {
+  return async (
+    call: any,
+    // localToolPolicy 把 per-turn abortSignal 注入给「能长时间阻塞」的工具，
+    // wait 是其中之一：turn 被强停时轮询必须自己收手并释放租约，否则上层
+    // raceWithAbort 只是不再等它，它仍在后台空转。
+    opts?: { abortSignal?: AbortSignal },
+  ): Promise<{ content: string; metadata?: Record<string, unknown> }> => {
     const args = parseCallArgs(call);
+    const abortSignal = opts?.abortSignal;
     const action = typeof args.action === "string" ? args.action : "";
     const tailLines = typeof args.tailLines === "number" ? args.tailLines : 0;
 
@@ -493,44 +510,96 @@ export function createCliControlAgentRunExecutor(deps: CliAgentRunToolExecutorDe
         typeof args.timeoutMs === "number" && args.timeoutMs > 0
           ? args.timeoutMs
           : DEFAULT_WAIT_TIMEOUT_MS;
-      const startMs = resolveNowMs(deps);
-      const deadline = startMs + timeoutMs;
-      const sleep =
-        deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-      let reconciled = record;
-      for (;;) {
-        reconciled = checkStaleRun(record.runId, deps) ?? record;
-        if (isAgentRunTerminalStatus(reconciled.status)) break;
-        const nowMs = resolveNowMs(deps);
-        const waitedMs = nowMs - startMs;
-        if (nowMs >= deadline) {
-          // 超时：run 仍未终态。返回 status="timeout" 标记（非失败），附带真实
-          // runStatus + progress 让调用方判断它是否还在干活。
-          return {
-            content: JSON.stringify({
-              runId: reconciled.runId,
-              found: true,
-              status: "timeout",
-              runStatus: reconciled.status,
-              pid: reconciled.pid ?? null,
-              agentKey: reconciled.agentKey,
-              ...(reconciled.agentName ? { agentName: reconciled.agentName } : {}),
-              startedAt: reconciled.startedAt,
-              waitedMs,
-              timeoutMs,
-              ...buildProgressField(reconciled, nowMs),
-            }),
-            metadata: {
-              displayData: `⏳ wait 超时（${Math.round(waitedMs / 1000)}s），run 仍在运行：可稍后再 wait，或改用 status/stop`,
-            },
-          };
+      // claim-on-start：先取一份带 token 和 ttl 的租约，再开始轮询。
+      //
+      // 拿不到租约说明已有别的同步消费者（或终局 ack）盯着这条 run，本次
+      // 不再重复 claim，也就无从释放——退化成纯读，结果照常返回。
+      //
+      // ttl 绑定本次 wait 实际使用的 timeoutMs + 宽限（缺省时为 100s + 60s ≈ 160s），
+      // 避免缺省 timeoutMs 时租约落回 15min 兜底导致崩溃自愈延迟过长。
+      const claimToken = claimRunRecord(record.runId, {
+        ...deps,
+        ttlMs: timeoutMs + ACK_LEASE_GRACE_MS,
+      });
+      // 租约必须在「本次 wait 没能把结果交出去」的每一条退出路径上释放，不
+      // 只是超时：turn 被强停时 raceWithAbort 直接孤儿化这个 promise，finally
+      // 可能很久之后才跑（甚至进程已被硬杀根本不跑）。token 保证迟到的释放
+      // 不会误删后来者的租约，ttl 保证进程被杀时租约自己过期——两者一起，
+      // 泄漏的 claim 不会再让这条 run 的完成永久静默。
+      let claimConsumed = false;
+      try {
+        const startMs = resolveNowMs(deps);
+        const deadline = startMs + timeoutMs;
+        const baseSleep =
+          deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+        // abort 要能立刻打断休眠，否则强停后仍要空转一个轮询间隔才收手。
+        // baseSleep 异常要透传，防止挂死或 unhandled rejection。
+        const sleep = abortSignal
+          ? (ms: number) =>
+              new Promise<void>((resolve, reject) => {
+                const done = () => {
+                  abortSignal.removeEventListener("abort", done);
+                  resolve();
+                };
+                abortSignal.addEventListener("abort", done, { once: true });
+                Promise.resolve(baseSleep(ms))
+                  .then(done)
+                  .catch((err) => {
+                    abortSignal.removeEventListener("abort", done);
+                    reject(err);
+                  });
+              })
+          : baseSleep;
+        let reconciled = record;
+        for (;;) {
+          reconciled = checkStaleRun(record.runId, deps) ?? record;
+          if (isAgentRunTerminalStatus(reconciled.status)) break;
+          if (abortSignal?.aborted) {
+            // turn 被强停：立刻收手，让 finally 释放租约。抛错而不是返回结
+            // 果，因为这次 wait 没有拿到任何结论——run 仍在跑，它的完成必须
+            // 重新走唤醒通道。
+            throw new Error("controlAgentRun(wait) 已被中止。");
+          }
+          const nowMs = resolveNowMs(deps);
+          const waitedMs = nowMs - startMs;
+          if (nowMs >= deadline) {
+            // 超时：run 仍未终态。返回 status="timeout" 标记（非失败），附带真实
+            // runStatus + progress 让调用方判断它是否还在干活。claim 由 finally
+            // 释放，run 之后真到终态时重新走终态唤醒通道。
+            return {
+              content: JSON.stringify({
+                runId: reconciled.runId,
+                found: true,
+                status: "timeout",
+                runStatus: reconciled.status,
+                pid: reconciled.pid ?? null,
+                agentKey: reconciled.agentKey,
+                ...(reconciled.agentName ? { agentName: reconciled.agentName } : {}),
+                startedAt: reconciled.startedAt,
+                waitedMs,
+                timeoutMs,
+                ...buildProgressField(reconciled, nowMs),
+              }),
+              metadata: {
+                displayData: `⏳ wait 超时（${Math.round(waitedMs / 1000)}s），run 仍在运行：可稍后再 wait，或改用 status/stop`,
+              },
+            };
+          }
+          await sleep(WAIT_POLL_INTERVAL_MS);
         }
-        await sleep(WAIT_POLL_INTERVAL_MS);
+        // 到达终态：失败终态同样回填熔断表（Q 接线，与 status 一致）；返回与
+        // status 相同形状的结果（含 dialogId/exitCode/progress，不带日志）。
+        // 结果确实由本次调用交出，claim 保留——这才是「已有人收走」。
+        const payload = buildRunStatusPayload(reconciled, deps);
+        if (claimToken) commitRunRecordClaim(record.runId, claimToken, deps);
+        else ackRunRecord(reconciled.runId, deps);
+        claimConsumed = true;
+        return payload;
+      } finally {
+        if (!claimConsumed && claimToken) {
+          releaseRunRecordAck(record.runId, claimToken, deps);
+        }
       }
-      // 到达终态：失败终态同样回填熔断表（Q 接线，与 status 一致）；返回与
-      // status 相同形状的结果（含 dialogId/exitCode/progress，不带日志）。
-      ackRunRecord(reconciled.runId, deps);
-      return buildRunStatusPayload(reconciled, deps);
     }
 
     // action === "stop"

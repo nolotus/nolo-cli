@@ -16,6 +16,9 @@ import {
   writeRunRecord,
   readRunRecord,
   ackRunRecord,
+  claimRunRecord,
+  releaseRunRecordAck,
+  resolveRunRecordPath,
   type RunRecord,
 } from "../agentRunControl";
 import { createCliControlAgentRunExecutor } from "../client/cliAgentRunToolExecutors";
@@ -293,6 +296,381 @@ describe("subAgent terminal event & chat queue loop", () => {
     }
   });
 
+  test("9. claim-on-start：wait 轮询期间 poller 并发看到终态也不唤醒（wait 了还收到通知的回归）", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-claim-test-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-claim-race";
+    const wokenEvents: InternalTurnEvent[] = [];
+    const watcher = createRunCompletionWatcher({
+      getCurrentDialogId: () => "dialog-parent",
+      onWake: (ev) => wokenEvents.push(createTurnRequest(ev).event),
+      now: () => T0 + 10000,
+    });
+
+    try {
+      // run 起步时仍在跑，watcher 先看到活跃状态（真实 poller 的第一 tick）。
+      writeRunRecord(
+        createRecord({
+          runId,
+          parentDialogId: "dialog-parent",
+          status: "running",
+          startedAt: new Date(T0 + 12000).toISOString(),
+        }),
+        { env },
+      );
+      watcher.observe([readRunRecord(runId, { env })!]);
+      expect(wokenEvents).toHaveLength(0);
+
+      // wait 进入轮询；第一次 sleep 时模拟两件并发的事：子进程写终态，
+      // 然后 poller 抢在 wait 的下一次读取之前 observe 到这条终态记录。
+      // 旧实现（终态后才 ack）在这里会发出唤醒——正是「wait 了还收到通知」。
+      const control = createCliControlAgentRunExecutor({
+        env,
+        nowMs: () => T0 + 10000,
+        sleep: async () => {
+          const rec = readRunRecord(runId, { env })!;
+          if (rec.status === "running") {
+            writeRunRecord(
+              {
+                ...rec,
+                status: "done",
+                exitCode: 0,
+                endedAt: new Date(T0 + 15000).toISOString(),
+              },
+              { env },
+            );
+          }
+          watcher.observe([readRunRecord(runId, { env })!]);
+        },
+      });
+
+      const waitRes = await control({
+        arguments: JSON.stringify({ action: "wait", runId, timeoutMs: 60_000 }),
+      });
+      expect(waitRes.content).toContain('"status":"done"');
+      // 结果由 wait 这一条通道返回，唤醒通道必须全程沉默。
+      expect(wokenEvents).toHaveLength(0);
+
+      // wait 之后 poller 继续 observe 同一条记录，也不得补发。
+      watcher.observe([readRunRecord(runId, { env })!]);
+      expect(wokenEvents).toHaveLength(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("10. wait 超时释放 claim：放弃同步等待后，真终态仍能唤醒（结果不静默）", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-claim-release-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-claim-release";
+    const wokenEvents: InternalTurnEvent[] = [];
+    const watcher = createRunCompletionWatcher({
+      getCurrentDialogId: () => "dialog-parent",
+      onWake: (ev) => wokenEvents.push(createTurnRequest(ev).event),
+      now: () => T0 + 10000,
+    });
+
+    try {
+      writeRunRecord(
+        createRecord({
+          runId,
+          parentDialogId: "dialog-parent",
+          status: "running",
+          startedAt: new Date(T0 + 12000).toISOString(),
+        }),
+        { env },
+      );
+      watcher.observe([readRunRecord(runId, { env })!]);
+
+      // wait 超时：run 全程 running，nowMs 每次读都推进到超过 deadline。
+      let nowMs = T0 + 10000;
+      const control = createCliControlAgentRunExecutor({
+        env,
+        nowMs: () => nowMs,
+        sleep: async () => {
+          nowMs += 5000;
+          // claim 期间 poller 照常 observe（仍是 running，不该唤醒）。
+          watcher.observe([readRunRecord(runId, { env })!]);
+        },
+      });
+      const timeoutRes = await control({
+        arguments: JSON.stringify({ action: "wait", runId, timeoutMs: 1000 }),
+      });
+      expect(timeoutRes.content).toContain('"status":"timeout"');
+      // 放弃同步等待 → claim 必须释放，否则这条 run 的结果永远没人来收。
+      expect(readRunRecord(runId, { env })?.ack).toBeUndefined();
+      expect(wokenEvents).toHaveLength(0);
+
+      // 稍后 run 真的完成：唤醒通道重新接管。
+      writeRunRecord(
+        {
+          ...readRunRecord(runId, { env })!,
+          status: "done",
+          exitCode: 0,
+          endedAt: new Date(T0 + 40000).toISOString(),
+        },
+        { env },
+      );
+      watcher.observe([readRunRecord(runId, { env })!]);
+      expect(wokenEvents).toHaveLength(1);
+      expect((wokenEvents[0] as ChildRunCompletedTurnEvent).runs[0]?.runId).toBe(runId);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("12. ghost 释放：被孤儿化的旧 wait 迟到 finally 不会删掉新 wait 的租约", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-claim-ghost-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-claim-ghost";
+    try {
+      writeRunRecord(
+        createRecord({ runId, parentDialogId: "dialog-parent", status: "running" }),
+        { env },
+      );
+
+      // 旧 wait 取得租约后被强停（token 记在手里，finally 迟迟未跑）。
+      const ghostToken = claimRunRecord(runId, { env })!;
+      expect(ghostToken).toBeTruthy();
+      // 旧 wait 放弃，租约回到未持有。
+      releaseRunRecordAck(runId, ghostToken, { env });
+      expect(readRunRecord(runId, { env })?.ack).toBeUndefined();
+
+      // 新 wait 取得新租约。
+      const freshToken = claimRunRecord(runId, { env })!;
+      expect(freshToken).not.toBe(ghostToken);
+
+      // 迟到的 ghost 释放到达：token 不匹配，必须放手，否则新 wait 的 claim
+      // 被删掉，「wait 了还收到通知」在窄窗口复现。
+      releaseRunRecordAck(runId, ghostToken, { env });
+      const rec = readRunRecord(runId, { env });
+      expect(rec?.ack).toBe(true);
+      expect(rec?.ackLease?.token).toBe(freshToken);
+
+      // 唤醒通道此刻仍应让路（租约有效）。
+      const wokenEvents: InternalTurnEvent[] = [];
+      const watcher = createRunCompletionWatcher({
+        getCurrentDialogId: () => "dialog-parent",
+        onWake: (ev) => wokenEvents.push(createTurnRequest(ev).event),
+        now: () => T0 + 10000,
+      });
+      watcher.observe([rec!]);
+      writeRunRecord({ ...rec!, status: "done", exitCode: 0 }, { env });
+      watcher.observe([readRunRecord(runId, { env })!]);
+      expect(wokenEvents).toHaveLength(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("13. crash 粘滞自愈：持有者进程被硬杀，过期租约不再永久静默这条 run", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-claim-expiry-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-claim-expired";
+    try {
+      writeRunRecord(
+        createRecord({ runId, parentDialogId: "dialog-parent", status: "running" }),
+        { env },
+      );
+      // wait 取得短租约后进程被杀：finally 永远不会跑。
+      const token = claimRunRecord(runId, {
+        env,
+        ttlMs: 1000,
+        now: () => new Date(T0),
+      });
+      expect(token).toBeTruthy();
+
+      const rec = readRunRecord(runId, { env })!;
+      expect(rec.ack).toBe(true);
+
+      // 租约仍在有效期内：唤醒通道让路。
+      const early: InternalTurnEvent[] = [];
+      const earlyWatcher = createRunCompletionWatcher({
+        getCurrentDialogId: () => "dialog-parent",
+        onWake: (ev) => early.push(createTurnRequest(ev).event),
+        now: () => T0 + 500,
+      });
+      earlyWatcher.observe([rec]);
+      writeRunRecord({ ...rec, status: "done", exitCode: 0 }, { env });
+      earlyWatcher.observe([readRunRecord(runId, { env })!]);
+      expect(early).toHaveLength(0);
+
+      // 租约过期后：没有任何人来清理，但读者一律视为未被 claim，
+      // 这条 run 的完成重新可被唤醒通道收走。
+      const late: InternalTurnEvent[] = [];
+      const lateWatcher = createRunCompletionWatcher({
+        getCurrentDialogId: () => "dialog-parent",
+        onWake: (ev) => late.push(createTurnRequest(ev).event),
+        now: () => T0 + 60_000,
+      });
+      const doneRec = readRunRecord(runId, { env })!;
+      lateWatcher.observe([{ ...doneRec, status: "running" }]);
+      lateWatcher.observe([doneRec]);
+      expect(late).toHaveLength(1);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("14. abort 收手：wait 收到 abortSignal 立刻退出并释放租约", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-claim-signal-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-claim-signal";
+    try {
+      writeRunRecord(
+        createRecord({ runId, parentDialogId: "dialog-parent", status: "running" }),
+        { env },
+      );
+      const controller = new AbortController();
+      const control = createCliControlAgentRunExecutor({
+        env,
+        nowMs: () => T0 + 10000,
+        // 第一次休眠时 turn 被强停（真实路径：用户 Esc / 强制收尾）。
+        sleep: async () => controller.abort(),
+      });
+
+      await expect(
+        control(
+          { arguments: JSON.stringify({ action: "wait", runId, timeoutMs: 60_000 }) },
+          { abortSignal: controller.signal },
+        ),
+      ).rejects.toThrow(/中止/);
+
+      // 租约释放，run 之后完成仍能被唤醒通道收走。
+      expect(readRunRecord(runId, { env })?.ack).toBeUndefined();
+      const woken: InternalTurnEvent[] = [];
+      const watcher = createRunCompletionWatcher({
+        getCurrentDialogId: () => "dialog-parent",
+        onWake: (ev) => woken.push(createTurnRequest(ev).event),
+        now: () => T0 + 10000,
+      });
+      watcher.observe([readRunRecord(runId, { env })!]);
+      writeRunRecord(
+        { ...readRunRecord(runId, { env })!, status: "done", exitCode: 0 },
+        { env },
+      );
+      watcher.observe([readRunRecord(runId, { env })!]);
+      expect(woken).toHaveLength(1);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("15. W1 回归：子进程已终态但 wait 在 commit 前 abort 并释放租约，watcher 仍能唤醒（不提前永久静默）", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-w1-race-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-w1-race";
+    const wokenEvents: InternalTurnEvent[] = [];
+    const watcher = createRunCompletionWatcher({
+      getCurrentDialogId: () => "dialog-parent",
+      onWake: (ev) => wokenEvents.push(createTurnRequest(ev).event),
+      now: () => T0 + 10000,
+    });
+
+    try {
+      writeRunRecord(
+        createRecord({
+          runId,
+          parentDialogId: "dialog-parent",
+          status: "running",
+          startedAt: new Date(T0 + 1000).toISOString(),
+        }),
+        { env },
+      );
+      watcher.observe([readRunRecord(runId, { env })!]);
+
+      // wait 拿到租约。
+      const token = claimRunRecord(runId, { env, now: () => new Date(T0 + 2000) })!;
+      expect(token).toBeTruthy();
+
+      // 子进程落终态（done）；此时 wait 还没来得及 commit。
+      writeRunRecord(
+        {
+          ...readRunRecord(runId, { env })!,
+          status: "done",
+          exitCode: 0,
+          endedAt: new Date(T0 + 3000).toISOString(),
+        },
+        { env },
+      );
+
+      // Poller 在此交错时刻 tick：看到「终态 + 有效租约」。
+      // W1 的 bug 在这里：旧代码因为看到终态就把 runId 推进 notifiedRunIds。
+      const claimedDoneRec = readRunRecord(runId, { env })!;
+      watcher.observe([claimedDoneRec]);
+      // 唤醒通道当前确实让路（租约仍在）。
+      expect(wokenEvents).toHaveLength(0);
+
+      // 关键交错：wait 因 abort/超时/异常而退出，释放了租约，结果未被交付。
+      releaseRunRecordAck(runId, token, { env });
+      expect(readRunRecord(runId, { env })?.ack).toBeUndefined();
+
+      // 下一次 poller tick：租约已不在，这次完成必须能重新触发唤醒。
+      // 旧代码因提前 notifiedRunIds.add 会在这里永久静默。
+      watcher.observe([readRunRecord(runId, { env })!]);
+      expect(wokenEvents).toHaveLength(1);
+      expect((wokenEvents[0] as ChildRunCompletedTurnEvent).runs[0]?.runId).toBe(runId);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  // 真实强停路径见测试 14（abortSignal）。这条覆盖的是另一类退出：轮询中
+  // 任意异常（IO 错误等）抛出时 finally 仍须释放租约。
+  test("11. wait 轮询中途抛异常不泄漏租约：结果仍能被唤醒通道收走", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-claim-abort-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-claim-abort";
+    const wokenEvents: InternalTurnEvent[] = [];
+    const watcher = createRunCompletionWatcher({
+      getCurrentDialogId: () => "dialog-parent",
+      onWake: (ev) => wokenEvents.push(createTurnRequest(ev).event),
+      now: () => T0 + 10000,
+    });
+
+    try {
+      writeRunRecord(
+        createRecord({
+          runId,
+          parentDialogId: "dialog-parent",
+          status: "running",
+          startedAt: new Date(T0 + 12000).toISOString(),
+        }),
+        { env },
+      );
+      watcher.observe([readRunRecord(runId, { env })!]);
+
+      // wait 在轮询途中被打断（turn 强停 / abort 会以抛错形式离开循环）。
+      const control = createCliControlAgentRunExecutor({
+        env,
+        nowMs: () => T0 + 10000,
+        sleep: async () => {
+          throw new Error("turn aborted");
+        },
+      });
+      await expect(
+        control({ arguments: JSON.stringify({ action: "wait", runId, timeoutMs: 60_000 }) }),
+      ).rejects.toThrow("turn aborted");
+
+      // 异常路径同样必须释放 claim，否则这条 run 完成后永久静默、跨重启粘滞。
+      expect(readRunRecord(runId, { env })?.ack).toBeUndefined();
+
+      writeRunRecord(
+        {
+          ...readRunRecord(runId, { env })!,
+          status: "done",
+          exitCode: 0,
+          endedAt: new Date(T0 + 40000).toISOString(),
+        },
+        { env },
+      );
+      watcher.observe([readRunRecord(runId, { env })!]);
+      expect(wokenEvents).toHaveLength(1);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("8. 队列暂停/恢复机制下事件不丢失，且恢复后正确定向执行", async () => {
     let activeDialogId: string | null = "parent-dialog-1";
     const executedTurns: TurnRequest[] = [];
@@ -325,5 +703,41 @@ describe("subAgent terminal event & chat queue loop", () => {
     await binding.notifyTurnEnd({ ok: true, aborted: false });
     expect(executedTurns).toHaveLength(1);
     expect((executedTurns[0]?.event as ChildRunCompletedTurnEvent).runs[0]?.runId).toBe("run-paused-1");
+  });
+
+  test("16. strict claim 原子性：锁竞争时只有一个 wait 拿到 token，另一个 null 退出", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "nolo-run-claim-strict-"));
+    const env = { NOLO_HOME: tempDir };
+    const runId = "run-claim-strict";
+    try {
+      writeRunRecord(
+        createRecord({ runId, parentDialogId: "dialog-parent", status: "running" }),
+        { env },
+      );
+
+      // 模拟两个并发 wait 拿同一个 lock 文件：第一个拿到 wx 锁，第二个
+      // 在 strict 模式下必须返回 null（而非裸执行读-检查-写后也返回 token）。
+      const fs = require("node:fs");
+      const lockPath = `${resolveRunRecordPath(runId, env)}.lock`;
+      // 预占 lock 文件，模拟另一个 wait 正持有锁。
+      fs.writeFileSync(lockPath, String(process.pid), { flag: "wx" });
+
+      // strict 模式：锁被占 → claimRunRecord 返回 null，不裸执行。
+      const token = claimRunRecord(runId, { env });
+      expect(token).toBeNull();
+
+      // 记录未被修改（claim 未写入）。
+      const rec = readRunRecord(runId, { env });
+      expect(rec?.ack).toBeUndefined();
+      expect(rec?.ackLease).toBeUndefined();
+
+      // 释放预占的锁后 claim 可以正常获取。
+      fs.unlinkSync(lockPath);
+      const token2 = claimRunRecord(runId, { env });
+      expect(token2).toBeTruthy();
+      expect(readRunRecord(runId, { env })?.ackLease?.token).toBe(token2);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

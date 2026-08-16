@@ -35,10 +35,12 @@ export const resolveDialogAutoTier = (
   dialog: Partial<DialogAgentPolicyShape> | null | undefined,
 ): AutoExecutionTier | undefined => {
   const tier = asOptionalTrimmedString(dialog?.autoRoute?.stickyTier);
+  // "image" → "flash": 图片档已移除，旧持久化 dialog 的 stickyTier="image"
+  // 映射到 flash 档（预处理管道负责图片描述）。
+  if (tier === "image") return "flash";
   return tier === "flash" ||
     tier === "balanced" ||
-    tier === "quality" ||
-    tier === "image"
+    tier === "quality"
     ? tier
     : undefined;
 };

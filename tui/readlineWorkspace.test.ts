@@ -669,7 +669,7 @@ describe("renderHistory", () => {
     expect(stdout).toContain("\x1b[1;1H");
     expect(stdout).toContain("\x1b[2K");
     expect(stdout).not.toContain("\x1b[J");
-    expect(stdout).toContain("❯"); // user marker (theme-colored)
+    expect(stdout).toContain("┃"); // user marker (solid gutter)
     expect(stdout).toContain("hello"); // user content
     expect(stdout).toContain("◈ "); // assistant anchor marker
     expect(stdout).toContain("hi there");

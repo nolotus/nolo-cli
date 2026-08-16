@@ -6,6 +6,7 @@
 // to `console.error` for diagnostic purposes, the artifact builder does
 // not touch disk, and the policy parsers are pure.
 
+import { ownedAgentKey } from "../core/prefix";
 import type { MachineRunPermissionPolicy } from "../ai/agent/machineRunPermissions";
 import { runLocalAgentTurn, type LocalAgentToolEvent } from "../agent-runtime/localLoop";
 import { resolveLocalRuntimeEnvFromPolicy } from "../agent-runtime/runtimeToolPolicy";
@@ -374,10 +375,21 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
     toolNames,
     ...(policy ? { runtimeToolPolicy: policy } : {}),
   };
+  // 同一条记录挂多个别名，让下游按任意候选 key 查都能命中。
+  // 用 ownedAgentKey（对同一 userId 的已带前缀 key 幂等）而非手拼：agentKey
+  // 常常已经是完整的 agent-{uid}-{id}，手拼必然产出
+  // agent-{uid}-agent-{uid}-{id} 这种永不被查到的死条目。
+  // 注意幂等只在 userId 相同时成立——env 里的 userId 与 agentKey 内的 uid
+  // 不一致时仍会多挂一个查不中的别名，那是别名表「宁可多挂」的既有语义。
+  // Map 自身去重，两个 userId 相同时只留一条。
+  const dispatchUserId = String(args.runtimeEnv.NOLO_USER_ID || "local");
+  const localUserId = String(
+    args.runtimeEnv.NOLO_LOCAL_USER_ID || args.runtimeEnv.NOLO_USER_ID || "local"
+  );
   const store = new Map<string, unknown>([
     [agentKey, agentRecord],
-    [`agent-${args.runtimeEnv.NOLO_USER_ID || "local"}-${agentKey}`, agentRecord],
-    [`agent-${args.runtimeEnv.NOLO_LOCAL_USER_ID || args.runtimeEnv.NOLO_USER_ID || "local"}-${agentKey}`, agentRecord],
+    [ownedAgentKey(dispatchUserId, agentKey), agentRecord],
+    [ownedAgentKey(localUserId, agentKey), agentRecord],
   ]);
   const env = localRuntimeEnvFromPolicy(
     withForwardedUserAuthToken(args.runtimeEnv, args.parsed),

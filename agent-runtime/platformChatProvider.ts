@@ -8,6 +8,7 @@ import {
   shouldStripReasoningContentForOutbound,
   toOpenAiCompatibleMessages,
 } from "./openAiCompatibleMessages";
+import { sanitizeForOutbound } from "./outboundHistorySanitize";
 import {
   convertMessagesToResponsesInput,
   extractTextFromResponseOutput,
@@ -171,14 +172,25 @@ export function buildPlatformChatCompletionRequest(args: {
     args.providerConfig.provider,
     args.providerConfig.model,
   );
+  // Sanitize cross-wire history BEFORE the wire-specific converter turns it
+  // into the request body: pair tool_calls with results, and downgrade
+  // tool_calls whose name is not in the current `tools` array to text
+  // (gateways like ollama reject unknown tool names on inbound history with
+  // HTTP 400). Doing it here covers both the completions and responses wire,
+  // so the two converters below only shape, never sanitize.
+  //
+  // NOTE: reasoning_content stripping is deliberately NOT done by sanitize —
+  // it is a wire-specific concern applied by the converters below
+  // (toOpenAiCompatibleMessages / convertMessagesToResponsesInput).
+  const sanitizedMessages = sanitizeForOutbound(args.messages, args.tools);
   const body = {
     model: args.providerConfig.model,
     ...(usesResponsesApi
       ? {
-          input: convertMessagesToResponsesInput(args.messages as any),
+          input: convertMessagesToResponsesInput(sanitizedMessages as any),
         }
       : {
-          messages: toOpenAiCompatibleMessages(args.messages, {
+          messages: toOpenAiCompatibleMessages(sanitizedMessages, {
             stripReasoningContent: shouldStripReasoning,
           }),
         }),

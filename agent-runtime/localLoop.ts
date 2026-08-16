@@ -20,6 +20,12 @@ import { sanitizeToolCallPairing } from "./toolCallPairing";
 import { summarizeToolArguments } from "./summarizeToolArguments";
 import { buildIdentityBlock } from "./identityBlock";
 import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
+import {
+  preprocessImagesForTextOnlyAgent,
+  describeImageWithLocalProvider,
+  hasImageInRuntimeMessages,
+  extractImageUrlsFromMessages,
+} from "../ai/agent/imagePreprocessing";
 import { buildRuntimeGuidanceBlocks } from "./runtimeGuidance";
 import { resolveToolGuidedSections } from "../ai/agent/toolGuidedSections";
 import { canonicalizeToolNames } from "./toolNameAliases";
@@ -161,7 +167,8 @@ export type LocalAgentLoopEvent =
     }
   | { kind: "tool-start"; name: string; atMs: number }
   | { kind: "tool-end"; name: string; atMs: number; ok: boolean }
-  | { kind: "image-downgraded"; reason: "no-vision"; atMs: number };
+  | { kind: "image-downgraded"; reason: "no-vision"; atMs: number }
+  | { kind: "image-preprocessed"; atMs: number; imageCount: number };
 
 export type LocalAgentActionGate = ActionGate & {
   toolName: string;
@@ -1357,7 +1364,7 @@ export async function runLocalAgentTurn(
     contextReferenceResolver:
       input.adapter.host === "cli" ? input.contextReferenceResolver : undefined,
   });
-  const messages = builtMessages.messages;
+  let messages = builtMessages.messages;
   // vision 能力检测：catalog 已知模型按 hasVision 判定，未知模型默认 true。
   // 不支持图片时，buildMessages 产出的 image_url parts 必须在发给 provider 前剥离，
   // 否则上游 400 "this model does not support image input" → local 判失败 → fallback
@@ -1369,6 +1376,33 @@ export async function runLocalAgentTurn(
     model: agentConfig.model,
     hasVision: (agentConfig as any).hasVision,
   });
+
+  // 纯文本模型 + 有图：在进入循环前先用 vision 模型描述图片，替换 image_url 为文字。
+  // 预处理失败（vision 不可用/超时）时 fallback 到剥离占位符。
+  // 提前预处理避免了多轮 tool call 循环中重复调 vision 模型导致的延迟和开销。
+  if (!supportsImages && hasImageInRuntimeMessages(messages)) {
+    const imageUrls = extractImageUrlsFromMessages(messages);
+    const preprocessed = await preprocessImagesForTextOnlyAgent(
+      messages,
+      (urls) => describeImageWithLocalProvider(input.adapter, urls),
+    );
+    if (preprocessed !== messages) {
+      messages = preprocessed;
+      emitLoopEvent(input, {
+        kind: "image-preprocessed",
+        atMs: Date.now(),
+        imageCount: imageUrls.length,
+      });
+    } else {
+      messages = filterImagePartsFromMessages(messages, false);
+      emitLoopEvent(input, {
+        kind: "image-downgraded",
+        reason: "no-vision",
+        atMs: Date.now(),
+      });
+    }
+  }
+
   const userInputText = extractUserInputText(input.input);
   let toolCallCount = 0;
   let result: AgentRuntimeResult;
@@ -1382,8 +1416,6 @@ export async function runLocalAgentTurn(
   //   repairUsed     → 已用过 repair，二次仍空则 fallback
   let emptyAssistantRepairPending = false;
   let emptyAssistantRepairUsed = false;
-  // 首次图片降级通知标志——每轮可能都带图，但只通知一次，避免刷屏。
-  let imageDowngradeNotified = false;
   // provider（如 Cursor）在流内执行完所有工具时，output blocks 已含全部
   // 文本块（含最后一段）。break 后跳过通用最终 assistant 消息追加。
   let skipFinalAppend = false;
@@ -1405,20 +1437,6 @@ export async function runLocalAgentTurn(
         preparedMessages.messages,
         supportsImages,
       );
-      // 首次实际降级（模型不支持图片且本轮消息里确实含 image_url part）时通知一次，
-      // 让 CLI 层写「推荐切到 vision agent」提示。不在 supportsImages===true 或无图时触发。
-      if (
-        !supportsImages &&
-        !imageDowngradeNotified &&
-        messages.some((m) => Array.isArray(m.content) && m.content.some((p: any) => p?.type === "image_url"))
-      ) {
-        imageDowngradeNotified = true;
-        emitLoopEvent(input, {
-          kind: "image-downgraded",
-          reason: "no-vision",
-          atMs: Date.now(),
-        });
-      }
       const requestMessages: AgentRuntimeChatMessage[] = emptyAssistantRepairPending
         ? [...baseRequestMessages, { role: "user", content: EMPTY_ASSISTANT_REPAIR_PROMPT }]
         : baseRequestMessages;

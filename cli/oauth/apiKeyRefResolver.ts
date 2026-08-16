@@ -6,9 +6,7 @@ import {
 } from "./token-store";
 import { refreshAntigravityOAuthToken } from "./flows/antigravity";
 import { refreshOpenAiCodexToken } from "./flows/openai-codex";
-import { refreshXaiOAuthToken } from "./flows/xai";
-import { cursorRefresh } from "./flows/cursor";
-import { anthropicRefresh } from "../../agent-runtime/oauthProviders";
+import { anthropicRefresh, cursorRefresh, xaiRefresh } from "../../agent-runtime/oauthProviders";
 import type { OAuthProvider, OAuthRefreshFn } from "./types";
 
 const REFRESH_BY_PROVIDER: Partial<Record<OAuthProvider, OAuthRefreshFn>> = {
@@ -17,7 +15,7 @@ const REFRESH_BY_PROVIDER: Partial<Record<OAuthProvider, OAuthRefreshFn>> = {
   // surfaced as "OAuth credential not found" even when ~/.nolo/credentials
   // still held a valid refresh_token.
   antigravity: refreshAntigravityOAuthToken,
-  xai: refreshXaiOAuthToken,
+  xai: xaiRefresh,
   claude: anthropicRefresh,
   cursor: cursorRefresh,
 };

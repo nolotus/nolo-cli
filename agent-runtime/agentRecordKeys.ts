@@ -1,3 +1,5 @@
+import { ownedAgentKey, publicAgentKey } from "../core/prefix";
+
 /**
  * Build candidate dbKeys for an agentRef (alias/handle/id).
  *
@@ -21,7 +23,10 @@ export function buildAgentRuntimeAgentLookupKeys(args: {
   if (/^agent(-pub)?-/.test(args.agentRef)) {
     return [args.agentRef];
   }
-  return [`agent-${args.userId}-${args.agentRef}`, `agent-pub-${args.agentRef}`];
+  return [
+    ownedAgentKey(args.userId, args.agentRef),
+    publicAgentKey(args.agentRef),
+  ];
 }
 
 export function shouldFetchAgentRuntimeRecordRemotely(dbKey: string) {

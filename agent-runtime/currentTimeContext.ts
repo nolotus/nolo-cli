@@ -51,15 +51,31 @@ const timeZoneOffset = (date: Date, timeZone: string): string => {
   return `UTC${sign}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
 };
 
+/**
+ * Truncate a `YYYY-MM-DD HH:MM:SS` / `YYYY-MM-DDTHH:MM:SSZ` string to hour
+ * precision, preserving whatever separator sits at index 10 (space or `T`).
+ *
+ * Prompt-cache rationale: this block sits in the *dynamic* suffix of the system
+ * message, ahead of the conversation history. Minute precision changed the
+ * prefix every 60s, invalidating the downstream cache breakpoint on almost
+ * every turn of a long session. Hour precision keeps the block byte-identical
+ * across a typical 5-minute ephemeral cache window while still telling the
+ * model the time of day. Exact minute/second is available on demand via a
+ * shell `date` call.
+ */
+const toHourPrecision = (dateTime: string): string =>
+  `${dateTime.slice(0, 13)}:00`;
+
 export const buildCurrentTimeBlock = (
   now: Date = new Date(),
   timeZone: string = resolveDefaultTimeZone(),
 ): string => [
   "--- 当前时间 ---",
   `当前日期: ${zonedDateTime(now, timeZone).slice(0, 10)}`,
-  `当前本地时间: ${zonedDateTime(now, timeZone).slice(0, 16)}`, // HH:MM only, no seconds
+  `当前本地时间: ${toHourPrecision(zonedDateTime(now, timeZone))}`, // hour precision — see toHourPrecision
   `本地时区: ${timeZone} / ${timeZoneOffset(now, timeZone)}`,
-  `UTC 时间: ${now.toISOString().slice(0, 16)}`, // YYYY-MM-DDTHH:MM only
+  `UTC 时间: ${toHourPrecision(now.toISOString())}`, // hour precision; slice keeps the "T"
+  "注意：上面的时间只精确到小时（为命中 prompt 缓存而降低粒度）。需要精确到分钟或秒时，用 shell 执行 `date` 获取。",
   "当用户问“现在”“当前时间”“北京时间”等时间问题时，直接使用这里的当前时间；不要只回答日期。",
   "当用户说“今天”“今日”或 today 时，默认指当前本地日期，除非用户明确给出其它日期。",
 ].join("\n");

@@ -1,4 +1,5 @@
 import { isRecord } from "../core/isRecord";
+import { isOwnedAgentKey } from "../core/prefix";
 import { asTrimmedNonEmptyStringArray } from "../core/stringArray";
 
 export const DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOLS = [
@@ -139,7 +140,7 @@ export function resolveRuntimeToolSurfaceForAgent(
   const currentUserId = typeof args.currentUserId === "string" ? args.currentUserId : "";
   const inferredOwnerId =
     args.agentOwnerId ??
-    (currentUserId && agentKey.startsWith(`agent-${currentUserId}-`)
+    (currentUserId && isOwnedAgentKey(agentKey, currentUserId)
       ? currentUserId
       : inferOwnerIdFromRuntimeAgentKey(agentKey));
   const publicRef = isPublicRuntimeAgentRef(agentKey);

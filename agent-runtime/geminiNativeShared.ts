@@ -109,7 +109,7 @@ export function convertOpenAiMessagesToGemini(
 ): { contents: GeminiContent[]; systemTexts: string[] } {
   const contents: GeminiContent[] = [];
   const systemTexts: string[] = [];
-  const toolNamesById = new Map<string, string>();
+  let toolCallIndex = 0;
   let pendingFunctionCalls: Array<{ name: string; id: string }> = [];
 
   const pushOrMergeContent = (role: "user" | "model", parts: GeminiPart[]) => {
@@ -125,8 +125,12 @@ export function convertOpenAiMessagesToGemini(
   const flushPendingFunctionCalls = () => {
     if (pendingFunctionCalls.length === 0) return;
     const dummyResponses: GeminiPart[] = pendingFunctionCalls.map(
-      ({ name }) => ({
-        functionResponse: { name, response: { output: "{}" } },
+      ({ name, id }) => ({
+        functionResponse: {
+          name,
+          response: { output: "{}" },
+          ...(id ? { id } : {}),
+        },
       }),
     );
     pendingFunctionCalls = [];
@@ -175,27 +179,20 @@ export function convertOpenAiMessagesToGemini(
           ? ((raw as { tool_calls: AgentRuntimeToolCall[] }).tool_calls ?? [])
           : [];
 
-      // Cloud Code Assist validates a function-call model turn against the
-      // immediately preceding turn. Historical TUI messages can contain two
-      // assistant records in a row (for example, text followed by a tool call)
-      // after a partial sync or a retry. Keep ordinary assistant text and the
-      // function call in separate model turns; bridge them with an explicit
-      // empty user turn so Gemini sees `user -> model(functionCall)`.
-      if (text) pushOrMergeContent("model", [{ text }]);
-      if (
-        toolCalls.length > 0 &&
-        contents.length > 0 &&
-        contents[contents.length - 1]?.role !== "user"
-      ) {
-        contents.push({ role: "user", parts: [{ text: "" }] });
+      // Gemini 原生 generateContent 支持在同一个 model turn 内同时包含 text 和 functionCall。
+      // 历史上的 commit (0cf98483c) 曾尝试用空 user 轮 `{ role: "user", parts: [{ text: "" }] }` 桥接，
+      // 但 Google Antigravity / Gemini 网关会过滤掉空文本 user turn，导致连续两个 model turn 直接相撞，
+      // 触发 HTTP 400 "Please ensure that function call turn comes immediately after a user turn..."。
+      // 因此将 text 与 tool_calls 统一放入当前 model turn，由 pushOrMergeContent 保持标准 user ↔ model 交替。
+      const parts: GeminiPart[] = [];
+      if (text) {
+        parts.push({ text });
       }
 
-      const parts: GeminiPart[] = [];
       for (const call of toolCalls) {
         const name = call?.function?.name?.trim();
         if (!name) continue;
-        const id = call.id?.trim() || `${name}_${toolNamesById.size}`;
-        toolNamesById.set(id, name);
+        const id = call.id?.trim() || `${name}_${toolCallIndex++}`;
         pendingFunctionCalls.push({ name, id });
 
         const realSignature =

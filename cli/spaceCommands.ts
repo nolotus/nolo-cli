@@ -1,5 +1,5 @@
 import { MemberRole, SpaceVisibility, ContentType } from "../app/types";
-import { authRoutes } from "../auth/routes";
+import { authRoutes } from "../core/authRoutes";
 import { DataType } from "../create/types";
 import { createSpaceKey, normalizeSpaceId } from "../create/space/spaceKeys";
 import {

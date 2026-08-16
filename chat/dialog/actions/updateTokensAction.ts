@@ -10,7 +10,7 @@ import {
   saveTokenRecord,
 } from "../../../ai/token/saveTokenRecord";
 import { createClientLogger } from "../../../core/clientLogger";
-import { deductBalance } from "../../../auth/authSlice"; // <--- 1. 导入新的 deductBalance action
+import { deductBalance } from "identity/actions"; // <--- 1. 导入新的 deductBalance action
 import { prepareTokenUsageData } from "../../../ai/token/prepareTokenUsageData";
 import { findModelConfig } from "../../../ai/llm/providers";
 import { resolveMessageOwner } from "../../messages/resolveMessageOwner";

@@ -31,11 +31,17 @@ import {
 import { formatAssistantDisplay } from "../client/assistantOutput";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
 
-export type TurnRole = "user" | "assistant";
+export type TurnRole = "user" | "assistant" | "local";
 
 export type Turn = {
   role: TurnRole;
   content: string;
+  /**
+   * 本地命令/事件回显专用（role === "local"）：触发它的命令原文，例如
+   * "/switch 2"。为空字符串表示无对应命令的系统反馈（如 "Turn stopped"），
+   * 渲染时省略 `› ` 前缀，只显示内容行。
+   */
+  command?: string;
 };
 
 export type TurnHistory = {
@@ -128,6 +134,31 @@ export function finalizeCurrentTurn(history: TurnHistory) {
   }
 }
 
+/**
+ * 追加一条本地命令/事件回显 turn。用于 slash 命令回显（/switch、/context
+ * 等）以及异步系统反馈（Turn stopped、Quota exhausted 等）——这些都不
+ * 是真实对话，用 `local` 角色与 user/assistant 视觉区分。
+ *
+ * 先收尾任何进行中的 streaming turn，再追加 finalized 的 local turn。
+ * `command` 为空字符串时表示无对应命令的系统反馈，渲染时省略 `› ` 前缀。
+ */
+export function appendLocalTurn(
+  history: TurnHistory,
+  command: string,
+  output: string,
+) {
+  finalizeCurrentTurn(history);
+  history.turns.push({
+    role: "local",
+    command,
+    content: output,
+  });
+  if (history.turns.length > MAX_TUI_HISTORY_TURNS) {
+    history.turns = history.turns.slice(history.turns.length - MAX_TUI_HISTORY_TURNS);
+  }
+  resetStreamingTurnCache();
+}
+
 export function applyOutputChunkToCurrentTurn(
   history: TurnHistory,
   chunk: string
@@ -187,6 +218,7 @@ export function renderTurnBlock(
   content: string,
   contentWidth: number,
   colorEnabled: boolean,
+  command?: string,
 ): string[] {
   // Normalize line endings before splitting: CRLF (\r\n) and lone CR (\r,
   // legacy Mac) both collapse to LF. Without this, a stray \r survives the
@@ -220,6 +252,23 @@ export function renderTurnBlock(
       lines.push(
         ...(surfaceSeq ? rows.map((row) => fillUserBubbleRow(row, surfaceSeq, contentWidth)) : rows),
       );
+    }
+  } else if (role === "local") {
+    // 本地命令/事件回显：暗色、无头像，与对话明显区分。
+    // 有 command 时首行显示 `› /switch 2`，否则只显示内容（系统反馈）。
+    const dimSeq = colorEnabled ? "\x1b[2m" : "";
+    const resetSeq = colorEnabled ? "\x1b[0m" : "";
+    if (command) {
+      lines.push(
+        ...wrapTranscriptLine(`${dimSeq}› ${command}${resetSeq}`, contentWidth),
+      );
+    }
+    if (content) {
+      for (const line of content.split("\n")) {
+        lines.push(
+          ...wrapTranscriptLine(`${dimSeq}  ${line}${resetSeq}`, contentWidth),
+        );
+      }
     }
   } else {
     const styledEntry = styleAssistantTurn(content, colorEnabled);
@@ -441,13 +490,24 @@ function getAssistantPlainLines(content: string): string[] {
 export function countTurnLines(
   role: TurnRole,
   content: string,
-  contentWidth: number
+  contentWidth: number,
+  command?: string,
 ): number {
   content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   let count = 0;
   if (role === "user") {
     for (const line of content.split("\n")) {
       count += wrapTranscriptLine(`┃  ${line}`, contentWidth, "┃  ").length;
+    }
+  } else if (role === "local") {
+    // 与 renderTurnBlock 的 local 分支保持一致的行数估算。
+    if (command) {
+      count += wrapTranscriptLine(`› ${command}`, contentWidth).length;
+    }
+    if (content) {
+      for (const line of content.split("\n")) {
+        count += wrapTranscriptLine(`  ${line}`, contentWidth).length;
+      }
     }
   } else {
     const plainLines = getAssistantPlainLines(content);
@@ -500,7 +560,7 @@ export function buildTurnOffsets(
     if (cached && cached.width === contentWidth) {
       lineCount = cached.count;
     } else {
-      lineCount = countTurnLines(turn.role, turn.content, contentWidth);
+      lineCount = countTurnLines(turn.role, turn.content, contentWidth, turn.command);
       turnLineCountCache.set(turn, { width: contentWidth, count: lineCount });
     }
     entries.push({ startRow: offset, lineCount, separatorAbove });
@@ -530,7 +590,16 @@ export function buildCopyViewLines(history: TurnHistory): string[] {
     // a stray \r in copied content would either vanish or render as a row
     // rewind, corrupting both the copy-view display and the copied text.
     const normalized = stripAnsi(turn.content).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    lines.push(...normalized.split("\n"));
+    if (turn.role === "local") {
+      // 本地命令回显：带 `› ` 前缀输出命令行，让 copy 出去的文本保留
+      // "这是一条命令不是对话" 的可读线索。
+      if (turn.command) {
+        lines.push(`› ${stripAnsi(turn.command)}`);
+      }
+      lines.push(...normalized.split("\n"));
+    } else {
+      lines.push(...normalized.split("\n"));
+    }
   }
   return lines;
 }
@@ -566,7 +635,7 @@ export function buildHistoryLines(history: TurnHistory, contentWidth: number): s
     ) {
       wrapped.push(...cached.lines);
     } else {
-      const lines = renderTurnBlock(turn.role, turn.content, contentWidth, colorEnabled);
+      const lines = renderTurnBlock(turn.role, turn.content, contentWidth, colorEnabled, turn.command);
       turnLineCache.set(turn, {
         width: contentWidth,
         color: colorEnabled,
@@ -685,7 +754,7 @@ export function renderHistory(
       lines = cached.lines;
     } else {
       renderCacheMissCount += 1;
-      lines = renderTurnBlock(turn.role, turn.content, contentWidth, colorEnabled);
+      lines = renderTurnBlock(turn.role, turn.content, contentWidth, colorEnabled, turn.command);
       turnLineCache.set(turn, {
         width: contentWidth,
         color: colorEnabled,

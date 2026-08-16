@@ -55,3 +55,32 @@ export const parsePublicAgentId = (key: string): string | null =>
   key.startsWith(PUBLIC_AGENT_KEY_PREFIX)
     ? key.slice(PUBLIC_AGENT_KEY_PREFIX.length)
     : null;
+
+/**
+ * 某用户自建 agent 的 key 前缀：`agent-{userId}-`。
+ *
+ * 必须整体比较该前缀，不能按 "-" 分段解析——userId 本身可能含连字符
+ * （如 `user-1`），分段会截成 `user` 从而漏判自建 agent。
+ *
+ * 注意 "-" 分隔符本身有歧义：`agent-user-1-x` 同时匹配 userId `user-1`
+ * 与 `user`。调用方必须传该 key 所归属的 userId（登录用户，或记录自带的
+ * owner/属主 id），不能拿任意用户 id 来试探归属。
+ */
+export const ownedAgentKeyPrefix = (userId: string): string =>
+  `agent-${userId}-`;
+
+/** 构造自建 agent key：`agent-{userId}-{id}`；id 已含前缀时原样返回。 */
+export const ownedAgentKey = (userId: string, id: string): string =>
+  id.startsWith(ownedAgentKeyPrefix(userId))
+    ? id
+    : `${ownedAgentKeyPrefix(userId)}${id}`;
+
+/** key 是否为该用户的自建 agent key。 */
+export const isOwnedAgentKey = (key: unknown, userId: string): key is string =>
+  typeof key === "string" && key.startsWith(ownedAgentKeyPrefix(userId));
+
+/** 从自建 agent key 解析出 id；非该用户的 key 返回 null。 */
+export const parseOwnedAgentId = (key: string, userId: string): string | null =>
+  isOwnedAgentKey(key, userId)
+    ? key.slice(ownedAgentKeyPrefix(userId).length) || null
+    : null;

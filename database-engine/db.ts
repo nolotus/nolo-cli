@@ -64,6 +64,12 @@ export type ServerDbOpenRetryOptions = {
   sleep?: (ms: number) => Promise<void>;
   /** 可注入的时钟，测试用 */
   now?: () => number;
+  /**
+   * 静默重试日志。用于 CLI/TUI 的只读兜底：抢不到锁是预期内的常见情况，
+   * 逐秒打 warn 只会刷屏（一次失败刷 90 行），且调用方会退回更有用的
+   * HTTP 错误。服务器启动路径保持默认 false —— 那里的等待需要可观测。
+   */
+  quiet?: boolean;
 };
 
 const DEFAULT_SERVER_DB_OPEN_LOCK_TIMEOUT_MS = 90_000;
@@ -106,23 +112,27 @@ export async function ensureServerDbOpen(options?: ServerDbOpenRetryOptions) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       await ensureDbOpen(authorityStore);
-      if (status !== "opening") {
+      if (status !== "opening" && !options?.quiet) {
         console.log("✅ LevelDB 已打开");
       }
       return;
     } catch (err) {
       if (!isServerDbLockError(err)) {
-        console.error("❌ 打开 LevelDB 失败:", err);
+        if (!options?.quiet) console.error("❌ 打开 LevelDB 失败:", err);
         throw err;
       }
       const remainingMs = deadline - now();
       if (remainingMs <= 0) {
-        console.error("❌ 打开 LevelDB 失败: 数据库已被其他进程占用");
+        if (!options?.quiet) {
+          console.error("❌ 打开 LevelDB 失败: 数据库已被其他进程占用");
+        }
         throw err;
       }
-      console.warn(
-        `⚠️ LevelDB 被其他进程占用（第 ${attempt} 次尝试，距超时约 ${Math.max(1, Math.ceil(remainingMs / 1000))}s），${intervalMs}ms 后重试`
-      );
+      if (!options?.quiet) {
+        console.warn(
+          `⚠️ LevelDB 被其他进程占用（第 ${attempt} 次尝试，距超时约 ${Math.max(1, Math.ceil(remainingMs / 1000))}s），${intervalMs}ms 后重试`
+        );
+      }
       await sleep(intervalMs);
     }
   }

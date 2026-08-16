@@ -7,7 +7,7 @@ import { selectAllMemberSpaces, addContentToSpace } from "../../../create/space/
 import { ContentType } from "../../../app/types";
 import { createAgentKey, } from "../../../database/keys";
 import type { FormData as AgentFormData } from "../../agent/createAgentSchema";
-import { selectCurrentUserBalance } from "../../../auth/authSlice";
+import { selectIdentityUserBalance } from "identity/selectors";
 import { selectIdentityUserId } from "identity/selectors";
 import type { ModelWithProvider } from "../../llm/models";
 import i18n from "../../../app/i18n";
@@ -438,7 +438,7 @@ export async function createAgentToolFunc(
 ): Promise<{ rawData: Agent; displayData: string }> {
     const state = thunkApi.getState() as RootState;
     const currentUserId = selectIdentityUserId(state);
-    const currentBalance = selectCurrentUserBalance(state);
+    const currentBalance = selectIdentityUserBalance(state);
 
     // 获取当前用户的所有 Space (from create/space/spaceSlice)
     const allSpaces = selectAllMemberSpaces(state);

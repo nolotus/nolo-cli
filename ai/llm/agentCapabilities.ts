@@ -13,12 +13,6 @@ export type AgentCapabilityConfig = {
   useServerProxy?: boolean | null;
 };
 
-const isCustomAgent = (agent: AgentCapabilityConfig): boolean => {
-  const apiSource = agent.apiSource?.toLowerCase();
-  const provider = agent.provider?.toLowerCase();
-  return apiSource === "custom" || provider === "custom";
-};
-
 /**
  * 剥离 Antigravity 等 wire 层的 effort 后缀，得到 catalog 基础模型名。
  * 能力检测只看基础模型的多模态能力，与 effort（-low/-medium/-high/-extra-low）无关；
@@ -69,9 +63,9 @@ const lookupKnownModelVision = (
   if (strippedPreview !== model) candidates.push(strippedPreview);
 
   for (const candidate of candidates) {
-    if (provider) {
+    if (provider && provider !== "custom") {
       const direct = findModelConfig(provider, candidate);
-      if (direct) return direct.hasVision;
+      if (direct && typeof direct.hasVision === "boolean") return direct.hasVision;
     }
 
     const detected = getProviderByModelName(candidate);
@@ -80,12 +74,12 @@ const lookupKnownModelVision = (
       if (found !== undefined) return found;
     }
 
-    if (!provider && candidate.includes("/")) {
+    if (candidate.includes("/")) {
       const slash = candidate.indexOf("/");
       const modelProvider = candidate.slice(0, slash).toLowerCase();
       const modelName = candidate.slice(slash + 1);
       const nested = findModelConfig(modelProvider, modelName);
-      if (nested) return nested.hasVision;
+      if (nested && typeof nested.hasVision === "boolean") return nested.hasVision;
     }
   }
 
@@ -99,19 +93,13 @@ export const resolveAgentImageInputSupport = (
 
   const provider = asTrimmedLowercaseString(agent.provider) || null;
   const model = asOptionalTrimmedString(agent.model) ?? "";
-  const custom = isCustomAgent(agent);
   const catalogHasVision = lookupKnownModelVision(
-    custom ? null : provider,
+    provider,
     model,
   );
 
-  if (!custom && catalogHasVision !== undefined) {
+  if (catalogHasVision !== undefined) {
     return catalogHasVision;
-  }
-
-  if (custom) {
-    if (catalogHasVision === true) return true;
-    return true;
   }
 
   if (typeof agent.hasVision === "boolean") {

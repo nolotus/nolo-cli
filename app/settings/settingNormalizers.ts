@@ -90,7 +90,7 @@ export const selectResolvedDefaultAgentId = (value: unknown): string => {
  */
 export const selectResolvedTierAgentId = (
   value: unknown,
-  tier: "flash" | "balanced" | "quality" | "image",
+  tier: "flash" | "balanced" | "quality",
 ): string => {
   const normalizedValue = resolveDefaultAgentIdSetting(value);
   return normalizedValue === SYSTEM_DEFAULT_AGENT_ID

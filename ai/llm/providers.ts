@@ -46,6 +46,7 @@ import {
   PLATFORM_HOSTED_KIMI_K26_MODEL,
   PLATFORM_HOSTED_KIMI_PROVIDER,
 } from "./kimi";
+import { opencodeGoModels } from "../../integrations/opencode/models";
 export { supportedReasoningModels } from "./reasoningModels";
 export { getCloudflareWorkersAiChatCompletionsUrl } from "./cloudflare";
 
@@ -74,10 +75,12 @@ const MODEL_MAP = {
 export const MODEL_LOOKUP_MAP = {
   anthropic: [...anthropicModels, ...anthropicOAuthModels],
   xai: xaiModels,
+  "opencode-go": opencodeGoModels,
+  opencode: opencodeGoModels,
   ...MODEL_MAP,
 } as const;
 
-type LookupProvider = keyof typeof MODEL_LOOKUP_MAP;
+export type LookupProvider = keyof typeof MODEL_LOOKUP_MAP;
 
 type ModelLookupCandidate = Model & {
   id?: string;
@@ -268,7 +271,7 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
  * ────────────────────────────────────────── */
 
 /** 根据 provider & name 获取模型配置 */
-export function getModelConfig(provider: Provider | "anthropic", name: string): Model {
+export function getModelConfig(provider: Provider | LookupProvider | string, name: string): Model {
   const model = findModelConfig(provider, name);
   if (!model) {
     throw new Error(`Model ${name} not found for provider ${provider}`);
@@ -276,16 +279,20 @@ export function getModelConfig(provider: Provider | "anthropic", name: string): 
   return model;
 }
 
-/** 获取某 provider 全量模型 */
-export function getModelsByProvider(provider: Provider): Model[] {
-  return MODEL_MAP[provider] ?? [];
+/** 获取某 provider 全量模型（支持 MODEL_LOOKUP_MAP 扩展 provider） */
+export function getModelsByProvider(provider: Provider | LookupProvider | string): Model[] {
+  const normalized = normalizeLookupProvider(provider);
+  if (normalized && normalized in MODEL_LOOKUP_MAP) {
+    return MODEL_LOOKUP_MAP[normalized] as unknown as Model[];
+  }
+  return [];
 }
 
 /** 通过模型名反查 provider（跨所有 provider 搜索） */
-export function getProviderByModelName(modelName: string): Provider | undefined {
-  for (const [provider, models] of Object.entries(MODEL_MAP)) {
+export function getProviderByModelName(modelName: string): LookupProvider | undefined {
+  for (const [provider, models] of Object.entries(MODEL_LOOKUP_MAP)) {
     if (models.some((m) => m.name === modelName)) {
-      return provider as Provider;
+      return provider as LookupProvider;
     }
   }
   return undefined;

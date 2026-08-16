@@ -1,9 +1,14 @@
 import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
 } from "../core/builtinAgents";
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 
+/**
+ * 图片档已移除：有图时统一走 flash 档 + vision 预处理管道
+ * （packages/ai/agent/imagePreprocessing.ts），不再自动切 Kimi。
+ * 保留 "image" 在类型里以兼容旧持久化 dialog（resolveDialogAutoTier
+ * 会把 "image" 映射为 "flash"）。
+ */
 export type AutoExecutionTier = "flash" | "balanced" | "quality" | "image";
 
 export type AutoExecutionProfile = AgentRuntimeAgentConfig & {
@@ -47,18 +52,15 @@ const FLASH_PROFILE = createProfile({
   model: "deepseek-v4-flash",
 });
 
-const IMAGE_PROFILE = createProfile({
-  id: "builtin:auto:kimi-k2.6",
-  tier: "image",
-  legacyAgentKey: PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
-  name: "Kimi K2.6",
-  model: "kimi-k2.6",
-});
-
 /**
  * Code-owned execution truth for dialogs in auto mode. These profiles do not
  * require a persisted Agent entity. Balanced/quality intentionally share the
  * current Flash runtime profile until product routing changes.
+ *
+ * "image" tier maps to flash — image input is now handled by the vision
+ * preprocessing pipeline, not by switching to a vision model. The key
+ * remains in the Record for backward compat with persisted dialogs that
+ * have stickyTier="image".
  */
 export const AUTO_EXECUTION_PROFILES: Readonly<
   Record<AutoExecutionTier, AutoExecutionProfile>
@@ -66,7 +68,7 @@ export const AUTO_EXECUTION_PROFILES: Readonly<
   flash: FLASH_PROFILE,
   balanced: { ...FLASH_PROFILE, tier: "balanced" },
   quality: { ...FLASH_PROFILE, tier: "quality" },
-  image: IMAGE_PROFILE,
+  image: { ...FLASH_PROFILE, tier: "image" },
 };
 
 export const DEFAULT_AUTO_EXECUTION_TIER: AutoExecutionTier = "flash";

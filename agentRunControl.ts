@@ -59,8 +59,29 @@ export type RunRecord = {
   /** OS-reported start time of the spawned process, when the platform exposes it. */
   processStartedAt?: string;
   activity?: RunActivity;
-  /** True when the run output has been acknowledged/consumed (e.g. via wait:true). */
+  /**
+   * True 表示该 run 处于已被同步消费者 claim、或结果已被最终消费（终局 ack）的状态。
+   *
+   * 有 ackLease 且未过期时表示「有人在尝试同步读它」；ackLease 被删且 ack:true
+   * 时表示「结果已正式交付，claim 从此不可再释放」。
+   */
   ack?: boolean;
+  /**
+   * 同步消费者（controlAgentRun wait）对这条 run 的租约。
+   *
+   * 只有 ack 这个布尔时，claim 既没有主也没有期限：一个被 abort 孤儿化的
+   * 旧 wait 稍后醒来会删掉「别人的」claim，而进程被硬杀则让 claim 永久粘在
+   * 磁盘上、这条 run 的完成永远没人来收。租约把两者都关掉——release 必须
+   * 出示自己的 token，过期的租约任何读者都可以视为不存在。
+   */
+  ackLease?: {
+    /** 持有者标识；release 时不匹配则说明租约已易主，不得删除。 */
+    token: string;
+    /** 租约获取时刻（epoch ms）。 */
+    claimedAt: number;
+    /** 租约有效期（ms）；超过即视为失效，无需任何人来清理。 */
+    ttlMs: number;
+  };
   /** True when run does not persist a child dialog. */
   ephemeral?: boolean;
 };
@@ -198,7 +219,12 @@ const LOCK_STALE_MS = 5_000;
  */
 const TMP_STALE_MS = 60_000;
 
-function withRunRecordLock<T>(runId: string, deps: AgentRunControlDeps, fn: () => T): T {
+function withRunRecordLock<T>(
+  runId: string,
+  deps: AgentRunControlDeps,
+  fn: () => T,
+  opts: { strict?: boolean } = {},
+): T | undefined {
   const fs = deps.fs ?? nodeFs;
   const now = deps.now ?? (() => new Date());
   const lockPath = `${resolveRunRecordPath(runId, deps.env, deps.homedir)}.lock`;
@@ -219,9 +245,14 @@ function withRunRecordLock<T>(runId: string, deps: AgentRunControlDeps, fn: () =
           held = true;
         }
       } catch {
-        // Someone else won the race; proceed unlocked.
+        // Someone else won the race.
       }
     }
+    // strict 模式：锁拿不到时不执行 callback，返回 undefined 让调用者知道
+    // 仲裁失败。claim 必须用 strict——两个并发 wait 都裸执行读-检查-写会
+    // 各自拿到 token，后者覆盖前者，但两个调用者都认为自己持有 claim。
+    // 非严格模式（默认）仍裸执行：best-effort 状态更新丢仲裁好过丢更新。
+    if (!held && opts.strict) return undefined;
     return fn();
   } finally {
     if (held) {
@@ -848,6 +879,124 @@ export function ackRunRecord(
     if (!record) return;
     if (record.ack) return;
     record.ack = true;
+    // 终局 ack（结果已交付）没有主也没有期限——它就是终点，不该再被释放。
+    delete record.ackLease;
+    writeRunRecord(record, deps);
+  });
+}
+
+/** 同步消费者租约的默认有效期：足够长于一次 wait，短到崩溃后能自愈。 */
+export const DEFAULT_ACK_LEASE_TTL_MS = 15 * 60 * 1000;
+
+/** 租约是否已过期（过期租约任何读者都可视为不存在，无需谁来清理）。 */
+export function isAckLeaseExpired(
+  lease: NonNullable<RunRecord["ackLease"]> | undefined,
+  nowMs: number
+): boolean {
+  if (!lease) return true;
+  const ttl = typeof lease.ttlMs === "number" && lease.ttlMs > 0 ? lease.ttlMs : DEFAULT_ACK_LEASE_TTL_MS;
+  const claimedAt = typeof lease.claimedAt === "number" ? lease.claimedAt : 0;
+  return nowMs - claimedAt >= ttl;
+}
+
+/**
+ * run 记录当前是否被「有效」claim 住（供唤醒观察器判断该不该让路）。
+ *
+ * 终局 ack（wait 已把结果交出去）永远算数；租约则要没过期才算数——否则
+ * 一次崩溃就能让这条 run 的完成永远没人来收。
+ */
+export function isRunRecordClaimed(
+  record: Pick<RunRecord, "ack" | "ackLease"> | undefined,
+  nowMs: number
+): boolean {
+  if (!record) return false;
+  if (record.ack === true && !record.ackLease) return true;
+  return !isAckLeaseExpired(record.ackLease, nowMs);
+}
+
+/**
+ * 获取一份同步消费者租约，返回释放时要出示的 token；已被他人持有则返回 null。
+ *
+ * 为什么不是一个布尔：布尔 claim 既无主也无期限。被 abort 孤儿化的旧 wait
+ * 稍后醒来会删掉后来者的 claim（「wait 了还收到通知」在窄窗口复现），而进程
+ * 被硬杀则让 claim 永久粘在磁盘上（run 完成后永久静默）。token 关掉前者，
+ * ttl 关掉后者。
+ */
+export function claimRunRecord(
+  runId: string,
+  deps: AgentRunControlDeps & { ttlMs?: number } = {}
+): string | null {
+  const now = deps.now ?? (() => new Date());
+  const nowMs = now().getTime();
+  // strict: 锁拿不到时返回 undefined → claim 失败返回 null。
+  // 两个并发 wait 抢同一 run 的 claim 时，只有一个能拿到锁并写入 token，
+  // 另一个直接 null 退出，不会出现「都认为自己持有 claim」的窄窗口。
+  return withRunRecordLock(
+    runId,
+    deps,
+    () => {
+      const record = readRunRecord(runId, deps);
+      if (!record) return null;
+      if (record.ack === true && !record.ackLease) return null;
+      if (!isAckLeaseExpired(record.ackLease, nowMs)) return null;
+      const token = `${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      record.ack = true;
+      record.ackLease = {
+        token,
+        claimedAt: nowMs,
+        ttlMs: deps.ttlMs && deps.ttlMs > 0 ? deps.ttlMs : DEFAULT_ACK_LEASE_TTL_MS,
+      };
+      writeRunRecord(record, deps);
+      return token;
+    },
+    { strict: true },
+  ) ?? null;
+}
+
+/**
+ * 把租约升级为终局 ack：结果确实由本次 wait 交付，claim 从此不再可释放。
+ * token 不匹配（租约已易主）时什么都不做。
+ */
+export function commitRunRecordClaim(
+  runId: string,
+  token: string,
+  deps: AgentRunControlDeps = {}
+): void {
+  withRunRecordLock(runId, deps, () => {
+    const record = readRunRecord(runId, deps);
+    if (!record) return;
+    if (record.ackLease && record.ackLease.token !== token) return;
+    record.ack = true;
+    delete record.ackLease;
+    writeRunRecord(record, deps);
+  });
+}
+
+
+/**
+ * 释放自己持有的租约（恢复到「未被 claim」）。
+ *
+ * 与 claimRunRecord 配对：wait 没能把结果交出去时释放——这次同步等待放弃
+ * 了，run 之后真到终态必须重新走唤醒通道，否则结果永久静默、没人来收。
+ *
+ * 必须出示 token：一个被 abort 孤儿化的旧 wait 可能在很久之后才醒来执行
+ * finally，那时租约早已属于新的 wait，无主释放会把后来者的 claim 删掉。
+ *
+ * 删字段而非写 `ack: false`：ack 语义是「结果已被谁收走」，未被收走的状态就
+ * 是字段不存在，磁盘上不该留一个伪值让后来的读者去分辨 false 和 undefined。
+ */
+export function releaseRunRecordAck(
+  runId: string,
+  token: string,
+  deps: AgentRunControlDeps = {}
+): void {
+  withRunRecordLock(runId, deps, () => {
+    const record = readRunRecord(runId, deps);
+    if (!record) return;
+    // 租约已易主或已升级为终局 ack：这次释放不是我的事，放手。
+    if (!record.ackLease || record.ackLease.token !== token) return;
+    delete record.ackLease;
+    delete record.ack;
     writeRunRecord(record, deps);
   });
 }

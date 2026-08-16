@@ -1,4 +1,5 @@
 import { getModelAbility, type ModelAbility } from "../llm/modelAbility";
+import { isOwnedAgentKey, ownedAgentKey, publicAgentKey } from "../../core/prefix";
 import { isOAuthApiKeyRef } from "../../agent-runtime/serverProxyPolicy";
 
 export interface SafeAgentSummary {
@@ -100,9 +101,9 @@ export function resolveFavoriteStatus(
   if (typeof record?.publicKey === "string" && record.publicKey) candidateKeys.push(record.publicKey);
   if (typeof record?.id === "string" && record.id) {
     candidateKeys.push(record.id);
-    candidateKeys.push(`agent-pub-${record.id}`);
+    candidateKeys.push(publicAgentKey(record.id));
     if (options?.userId) {
-      candidateKeys.push(`agent-${options.userId}-${record.id}`);
+      candidateKeys.push(ownedAgentKey(options.userId, record.id));
     }
   }
 
@@ -153,7 +154,7 @@ export function toSafeAgentSummary(
     publicKey = record.publicKey;
   } else if (publicRecordConfirmed && id) {
     // Caller confirmed the public record exists — safe to derive the well-known key.
-    publicKey = `agent-pub-${id}`;
+    publicKey = publicAgentKey(id);
   }
   // Otherwise: omit entirely so models never see a key that cannot resolve.
 
@@ -208,21 +209,27 @@ export function toSafeAgentSummary(
     Boolean(currentUserId) &&
     ((typeof record?.userId === "string" && record.userId === currentUserId) ||
       (typeof record?.ownerId === "string" && record.ownerId === currentUserId));
-  const isOwnedByDbKey =
-    Boolean(currentUserId) &&
-    typeof record?.dbKey === "string" &&
-    record.dbKey.startsWith(`agent-${currentUserId}-`);
-  const isOwned = isOwnedByRecord || isOwnedByDbKey;
+  // dbKey 与 privateKey 是同一个 agent-<userId>-<id> 键的两种字段名（CLI/TUI
+  // 传 ListedAgent，只有 privateKey；web 传原始 record，带 dbKey），两者都要
+  // 认——否则 CLI `agent list --safe` 会把自建 agent 全判成非自建、省略 agentKey。
+  const ownedKey = currentUserId
+    ? [record?.dbKey, record?.privateKey].find((key) =>
+        isOwnedAgentKey(key, currentUserId)
+      )
+    : undefined;
+  const isOwned = isOwnedByRecord || Boolean(ownedKey);
   const isOAuth = isOAuthApiKeyRef(record?.apiKeyRef);
 
   // Runnable agentKey for delegation: owned agents → agent-<userId>-<id> (the
   // current user can always resolve these); confirmed public agents → their
   // publicKey. Omitted when there is no signed-in user or the key cannot resolve,
   // so models never see a key that would 404 in startAgentRun.
+  // 优先用记录自带的真实 key，只有拿不到时才由 id 拼。record.id 在真实数据里
+  // 有时就是整条 dbKey，盲目重拼会产出 agent-<uid>-agent-<uid>-<id> 这种 404 key。
   let agentKey: string | undefined;
-  if (Boolean(currentUserId) && id) {
+  if (currentUserId) {
     if (isOwned) {
-      agentKey = `agent-${currentUserId}-${id}`;
+      agentKey = ownedKey ?? (id ? ownedAgentKey(currentUserId, id) : undefined);
     } else if (publicKey) {
       agentKey = publicKey;
     }

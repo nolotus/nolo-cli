@@ -55,6 +55,20 @@ export type CompiledContext = {
     stablePrefixLayerIds: string[];
     stablePrefixCharCount: number;
     stablePrefixEstimatedTokens: number;
+    /**
+     * static/session 层因为排在某个 turn 层之后而掉出稳定前缀的 id 列表。
+     *
+     * 稳定前缀是**连续**的：一旦出现 turn 层，其后所有层——哪怕标了
+     * static/session——都不再进入前缀。这类错序不会报错，只会静默让
+     * prefix cache 命中率下降，事后极难归因。把它显式算出来，调用方
+     * 可以断言为空（见 buildSystemPrompt.test.ts）或落到观测里。
+     *
+     * 非空时有两种成因，排查需同时考虑：
+     * 1. 某个 static/session 层被排到了 turn 层之后；
+     * 2. 某个本应稳定的层被**误标成 turn**，于是它之后的稳定层全部掉出前缀。
+     *    （此时列出的是受害者，真正的元凶是它前面那个新变成 turn 的层。）
+     */
+    misorderedLayerIds: string[];
   };
 };
 
@@ -110,6 +124,11 @@ export const compileContextLayers = (
     .map((layer) => layer.content)
     .join("\n\n");
 
+  // 掉出前缀的 static/session 层 = 排序错误的证据（见 misorderedLayerIds 注释）。
+  const misorderedLayerIds = dynamicLayers
+    .filter((layer) => layer.cacheScope !== "turn")
+    .map((layer) => layer.id);
+
   return {
     content: compiledLayers.map((layer) => layer.content).join("\n\n"),
     stablePrefixContent,
@@ -122,6 +141,7 @@ export const compileContextLayers = (
       stablePrefixLayerIds: stablePrefixLayers.map((layer) => layer.id),
       stablePrefixCharCount: stablePrefixContent.length,
       stablePrefixEstimatedTokens: estimateContextTokens(stablePrefixContent),
+      misorderedLayerIds,
     },
   };
 };

@@ -79,15 +79,17 @@ function readFenceLanguage(line: string): string {
   return m ? (m[1] ?? "").toLowerCase() : "";
 }
 
-type CodeLang = "js" | "py" | "sh" | "json" | "diff" | "unknown";
+export type CodeLang = "js" | "py" | "sh" | "json" | "diff" | "unknown";
 
-/** Normalize a fence language hint into one of the supported highlight langs. */
-function normalizeCodeLang(raw: string): CodeLang {
-  switch (raw) {
+/** Normalize a fence language hint or file extension into one of the supported highlight langs. */
+export function normalizeCodeLang(raw: string): CodeLang {
+  switch (raw.toLowerCase()) {
     case "js":
     case "jsx":
     case "ts":
     case "tsx":
+    case "mjs":
+    case "cjs":
     case "javascript":
     case "typescript":
       return "js";
@@ -132,10 +134,10 @@ const KEYWORDS: Record<Exclude<CodeLang, "unknown">, ReadonlySet<string>> = {
 // between string/comment regions. We collect string+comment regions first, then
 // scan the gaps for keywords/numbers. This ordering is what keeps `"def"` from
 // being colored as a keyword — strings are carved out before keyword matching.
-type Region = { start: number; end: number; kind: "string" | "comment" };
+export type Region = { start: number; end: number; kind: "string" | "comment" };
 
 /** Find string and comment regions in a line for the given language. */
-function scanStringCommentRegions(line: string, lang: CodeLang): Region[] {
+export function scanStringCommentRegions(line: string, lang: CodeLang): Region[] {
   const regions: Region[] = [];
   const n = line.length;
   let i = 0;
@@ -182,12 +184,18 @@ function scanStringCommentRegions(line: string, lang: CodeLang): Region[] {
   return regions;
 }
 
+export function detectCodeLangFromPath(filePath?: string): CodeLang {
+  if (!filePath) return "unknown";
+  const ext = filePath.split(".").pop() ?? "";
+  return normalizeCodeLang(ext);
+}
+
 /**
  * Highlight a single code line with theme tokens. Line-local only.
  * `lang === "unknown"` returns the EXACT pre-change result (whole line in info),
  * so unannotated code blocks are byte-identical to before — zero regression.
  */
-function highlightCodeLine(line: string, lang: CodeLang, brightness: TuiBrightness): string {
+export function highlightCodeLine(line: string, lang: CodeLang, brightness: TuiBrightness): string {
   const info = colorSeq("info", brightness);
   if (lang === "unknown") {
     return `${info}${line}${STYLE.reset}`;

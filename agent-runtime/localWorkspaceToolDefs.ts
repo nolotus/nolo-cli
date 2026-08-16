@@ -53,7 +53,7 @@ function buildWorkspacePathProperty() {
     type: "string",
     minLength: 1,
     description:
-      "Path relative to the workspace root. Required and must be non-empty for readFile/writeFile/editFile; for listFiles/searchFiles/globFiles it is optional and defaults to the workspace root when omitted.",
+      "Path relative to the workspace root. Defaults to workspace root when omitted.",
   };
 }
 
@@ -465,19 +465,17 @@ function buildExecShellTool(toolName: string): OpenAiCompatibleTool {
     function: {
       name: toolName,
       description:
-        `Execute a shell command from the workspace root. Prefer one compound command (e.g. 'git status && git diff --stat') to perform complete verification instead of multiple small roundtrips. Do not cd into guessed paths (e.g. /workspace, /repo, /home/user); commands already run from the workspace root. Use portable POSIX commands for macOS/BSD shells; do not use cat -A or brittle byte-offset tools such as xxd -s -32. For text-file content or trailing-newline checks, prefer readFile over shell byte inspection. After a successful command returned the needed status/commit info, do not run repeated git status/log/rev-parse checks; use one final verification command. Commands block until exit. Long-running commands (sleep over ${IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS}s, dev servers, watchers) automatically detach to background returning {detached: true, pid, label}; for persistent services, prefer launchProcess.`,
+        `Execute a shell command from the workspace root. Prefer one compound command (e.g. 'git status && git diff --stat') to perform complete verification in one step instead of multiple small roundtrips. Do not cd into guessed paths; commands already run from the workspace root. Commands block until exit. Long-running commands (sleep over ${IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS}s, dev servers, watchers) automatically detach to background returning {detached: true, pid, label}; for persistent services, prefer launchProcess.`,
       parameters: {
         type: "object",
         properties: {
           cmd: {
             type: "string",
-            description:
-              "Shell command to run. Must be a non-empty command string — never pass an empty string, whitespace-only text, or null.",
+            description: "Shell command to run (non-empty).",
           },
           command: {
             type: "string",
-            description:
-              "Shell command to run. Compatibility field for providers that model the command under this name; the executor reads cmd first, then falls back to command. Must also be non-empty when used.",
+            description: "Compatibility alias for cmd.",
           },
         },
       },

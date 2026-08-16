@@ -129,7 +129,15 @@ export const inlineCssUrlAssets = async (args: {
     const assetUrl = new URL(rawRef, args.cssUrl).toString();
     if (!replacements.has(rawRef)) {
       const bytes = await fetchBytes(assetUrl, args.fetchImpl);
-      const base64 = Buffer.from(bytes).toString("base64");
+      // 用 btoa 替代 Buffer.from(bytes).toString("base64")，避免浏览器 Buffer 全局缺失。
+      // 分块处理避免 spread 操作符参数限制（大文件栈溢出）。
+      // chunk size 必须是 3 的倍数（base64 按 3 字节编码），否则跨 chunk 边界会产生错误输出。
+      const chunkSize = 0x7ffe; // 32766 = 3 × 10922
+      let base64 = "";
+      const u8 = new Uint8Array(bytes);
+      for (let i = 0; i < u8.length; i += chunkSize) {
+        base64 += btoa(String.fromCharCode(...u8.subarray(i, i + chunkSize)));
+      }
       replacements.set(
         rawRef,
         `data:${guessMimeType(assetUrl)};base64,${base64}`,

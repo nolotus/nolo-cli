@@ -17,6 +17,7 @@ export type AgentRunCompletionShape = {
   note?: string;
   error?: string;
   ack?: boolean;
+  ackLease?: { token: string; claimedAt: number; ttlMs: number };
   activity?: {
     counters?: {
       toolCalls?: number;
@@ -29,7 +30,16 @@ export type AgentRunCompletionShape = {
 export type ChildRunCompletedTurnEvent = {
   kind: "child-run-completed";
   runs: AgentRunCompletionShape[];
+  /** 送进模型上下文的完整摘要。 */
   text: string;
+  /**
+   * 屏幕上要显示的紧凑单行（transcript / 队列预览）。
+   *
+   * 终态唤醒是 out-of-band 的系统事件，不是用户消息：完整摘要只该进模型
+   * 上下文，屏幕上一行就够（详情本来就在 dock 面板和子 dialog 里）。缺省
+   * 时调用方回落到 text。
+   */
+  displayText?: string;
 };
 
 export type UserTurnEvent = {

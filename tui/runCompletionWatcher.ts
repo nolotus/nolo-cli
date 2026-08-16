@@ -19,7 +19,7 @@
  * - ephemeral 或结果缺失的 run 提供 fallback 说明，防止 readDialog 坍塌。
  */
 
-import type { RunRecord } from "../agentRunControl";
+import { isRunRecordClaimed, type RunRecord } from "../agentRunControl";
 import { readTimestamp } from "../client/agentRunSnapshot";
 import {
   clipText,
@@ -64,13 +64,29 @@ export function createRunCompletionWatcher(
   const lastStatusByRunId = new Map<string, string>();
   const notifiedRunIds = new Set<string>();
 
+  const runDuration = (record: RunRecord | AgentRunCompletionShape): string =>
+    formatRunAge(
+      {
+        startedAt: readTimestamp(record.startedAt as any),
+        finishedAt: readTimestamp((record as any).endedAt ?? (record as any).finishedAt),
+      },
+      now()
+    ) ?? "";
+
+  const isFailureStatus = (status: unknown): boolean =>
+    typeof status === "string" && status !== "done";
+
   const describeRun = (record: RunRecord | AgentRunCompletionShape): string[] => {
     const lines = [
       `runId: ${record.runId}`,
       `agent: ${resolveRunLabel(record as any)}`,
       `status: ${record.status}`,
     ];
-    if (typeof record.exitCode === "number") {
+    // 正常完成的 run 不报 exitCode / 活动计数：那是诊断信息，成功时模型要
+    // 的只是「谁干完了、结果去哪取」。「结果去哪取」（childDialogId /
+    // ephemeral）任何状态都要给，否则模型会去 readDialog 一个不存在的对话。
+    const verbose = isFailureStatus(record.status);
+    if (verbose && typeof record.exitCode === "number") {
       lines.push(`exitCode: ${record.exitCode}`);
     }
     if (record.dialogId) {
@@ -80,13 +96,7 @@ export function createRunCompletionWatcher(
     } else {
       lines.push(`childDialogId: missing (result unpersisted or ephemeral)`);
     }
-    const duration = formatRunAge(
-      {
-        startedAt: readTimestamp(record.startedAt as any),
-        finishedAt: readTimestamp((record as any).endedAt ?? (record as any).finishedAt),
-      },
-      now()
-    );
+    const duration = runDuration(record);
     if (duration) lines.push(`duration: ${duration}`);
     const recordError =
       "error" in record && typeof record.error === "string" ? record.error : undefined;
@@ -97,7 +107,7 @@ export function createRunCompletionWatcher(
         ? clipText(recordError, WAKE_NOTE_MAX_CHARS)
         : "";
     if (note) lines.push(`note: ${note}`);
-    const counters = record.activity?.counters;
+    const counters = verbose ? record.activity?.counters : undefined;
     if (
       counters &&
       typeof counters.toolCalls === "number" &&
@@ -125,6 +135,27 @@ export function createRunCompletionWatcher(
     return lines.join("\n");
   };
 
+  /**
+   * 屏幕上那一行。
+   *
+   * 终态唤醒不是用户说的话，却一直被当成 user message 整段印进 transcript
+   * （runId/exitCode/childDialogId/activity 全文），还得在文案里自辩「这是系
+   * 统内部事件」——那句自辩本身就是渲染漏了一层的证据。这里给 UI 一行紧凑
+   * 摘要，详情留在 dock 面板和子 dialog。
+   */
+  const buildWakeDisplayText = (
+    finished: (RunRecord | AgentRunCompletionShape)[]
+  ): string => {
+    const parts = finished.map((record) => {
+      const mark = isFailureStatus(record.status) ? "✗" : "✓";
+      const duration = runDuration(record);
+      const label = resolveRunLabel(record as any);
+      const status = isFailureStatus(record.status) ? ` ${record.status}` : "";
+      return `${mark} ${label}${status}${duration ? ` · ${duration}` : ""}`;
+    });
+    return `${finished.length} 条后台 run 已完成 · ${parts.join(" · ")}`;
+  };
+
   return {
     observe(records: (RunRecord | AgentRunCompletionShape | Record<string, any>)[]): void {
       const finished: (RunRecord | AgentRunCompletionShape)[] = [];
@@ -134,13 +165,30 @@ export function createRunCompletionWatcher(
           if (!rawRecord || typeof rawRecord.runId !== "string" || !rawRecord.runId) continue;
           const record = rawRecord as RunRecord;
           if (notifiedRunIds.has(record.runId)) continue;
-          if (record.ack === true) {
-            notifiedRunIds.add(record.runId);
-            continue;
-          }
           const status = record.status;
           if (typeof status !== "string") continue;
           if (record.parentDialogId !== currentDialogId) continue;
+          if (isRunRecordClaimed(record, now())) {
+            // claim 生效中：有同步消费者（wait）盯着这条 run，唤醒通道让路。
+            // 「有效」很关键——过期的租约（持有者进程已被杀）不算数，否则这
+            // 条 run 的完成永远没人来收。
+            //
+            // 关键：已终态 + 仍在租约期内【不得】提前写入 notifiedRunIds，
+            // 且【不得】把 status 记录为终态。
+            //
+            // 为什么不能记录为终态：若在此处把 lastStatus 记为 "done"，租约
+            // 释放后的下一次 tick 读到的 previous 也是 "done"（即终态→终态），
+            // 下方 `isAgentRunTerminalStatus(previous)` 会判定「已处理过」并
+            // 直接 continue 跳过——结果仍然是永久静默！
+            //
+            // 只有当这次观察真正进入下方消费流程时，lastStatus 才能被推进到
+            // 终态。在租约生效期间，lastStatus 最多停留在它进入租约之前的状
+            // 态（或未定义）。
+            if (!isAgentRunTerminalStatus(status)) {
+              lastStatusByRunId.set(record.runId, status);
+            }
+            continue;
+          }
           const previous = lastStatusByRunId.get(record.runId);
           lastStatusByRunId.set(record.runId, status);
           if (!isAgentRunTerminalStatus(status)) continue;
@@ -164,6 +212,7 @@ export function createRunCompletionWatcher(
         kind: "child-run-completed",
         runs: shapes,
         text: summaryText,
+        displayText: buildWakeDisplayText(finished),
       };
 
       deps.onWake(event);

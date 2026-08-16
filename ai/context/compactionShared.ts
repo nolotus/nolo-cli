@@ -21,7 +21,7 @@
 
 import { serializeMessageContent } from "../../chat/messages/messageContent";
 import { estimateTokenCount } from "./tokenUtils";
-import { getMessageTokenCount } from "./planCompression";
+import { getMessageTokenCount, type TokenCountableMessage } from "./planCompression";
 
 // --- 摘要 prompt ---
 
@@ -295,12 +295,12 @@ export interface CompactionMetrics {
 export function buildCompactionMetrics(args: {
   reason: string;
   previousSummary: string;
-  msgsToCompress: unknown[];
-  msgsToKeep: unknown[];
+  msgsToCompress: TokenCountableMessage[];
+  msgsToKeep: TokenCountableMessage[];
   newSummary: string;
   summaryUsage?: Record<string, unknown>;
   estimateTokens: (text: string) => number;
-  estimateMessageTokens: (msg: unknown) => number;
+  estimateMessageTokens: (msg: TokenCountableMessage) => number;
 }): CompactionMetrics {
   const {
     reason, previousSummary, msgsToCompress, msgsToKeep,
@@ -329,7 +329,7 @@ export function buildCompactionMetrics(args: {
 export function buildCompactionMetricsFromPlan(args: {
   reason: string;
   previousSummary: string;
-  plan: { msgsToCompress: unknown[]; msgsToKeep: unknown[] };
+  plan: { msgsToCompress: TokenCountableMessage[]; msgsToKeep: TokenCountableMessage[] };
   newSummary: string;
   summaryUsage?: Record<string, unknown>;
 }): CompactionMetrics {

@@ -3,6 +3,7 @@ import { buildMemoryOverlay } from "./overlay";
 import { rankMemoryCandidates, type MemoryRankContext } from "./rank";
 import { chooseMemoryOwners, loadMemoryCandidatesFromDb } from "./queryShared";
 import { buildMemorySubjectsForAgent, resolveAgentMemoryPolicy } from "./policy";
+import { EXPLICIT_REMEMBER_PREFIX_REGEX } from "./constants";
 import type { MemoryRuntimeResolution } from "./types";
 
 /** Below this confidence a memory is frozen out of retrieval entirely. */
@@ -17,7 +18,7 @@ export const MEMORY_OVERLAY_TOKEN_BUDGET = 800;
 const normalizeSelectedContent = (text: string): string =>
   text
     .trim()
-    .replace(/^(你要记住|请记住|以后记住|记住)[，,。.\s:：]*/u, "")
+    .replace(EXPLICIT_REMEMBER_PREFIX_REGEX, "")
     .replace(/[。！？!?]+$/u, "")
     .trim();
 

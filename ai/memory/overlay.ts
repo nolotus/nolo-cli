@@ -1,4 +1,5 @@
-import type { MemoryItem } from "./types";
+import type { MemoryItem, MemoryFacet } from "./types";
+import { EXPLICIT_REMEMBER_PREFIX_REGEX } from "./constants";
 
 const KIND_TITLES: Record<MemoryItem["kind"], string> = {
   episodic: "Episodic",
@@ -47,29 +48,40 @@ export interface BuildMemoryOverlayOptions {
   perKindLimit?: number;
 }
 
+/**
+ * facet → 显示文本的映射表。semantic 和 episodic 共用同一张表，
+ * 只是前缀不同（semantic 用"用户当前…"，episodic 用"最近一次对话显示：用户…"）。
+ *
+ * `strip` 是 content 里可能带的前缀词，显示时去掉避免重复（如 "在权衡：在权衡 X" → "在权衡 X"）。
+ */
+const FACET_DISPLAY: Record<MemoryFacet, { label: string; strip: string }> = {
+  unfinished: { label: "还没定下", strip: "还没决定" },
+  tension:    { label: "在权衡",   strip: "在权衡" },
+  preference: { label: "更在意",   strip: "更在意" },
+  style:      { label: "更偏好",   strip: "更喜欢" },
+  goal:       { label: "想推进",   strip: "想推进" },
+};
+
+const formatFacetContent = (
+  facet: MemoryFacet,
+  normalized: string,
+  prefix: string,
+): string => {
+  const { label, strip } = FACET_DISPLAY[facet];
+  const stripped = normalized.startsWith(strip) ? normalized.slice(strip.length).trim() : normalized;
+  return `${prefix}${label} ${stripped}`;
+};
+
 const normalizeDisplayContent = (item: MemoryItem): string => {
   const normalized = item.content
     .trim()
-    .replace(/^(你要记住|请记住|以后记住|记住)[，,。.\s:：]*/u, "")
+    .replace(EXPLICIT_REMEMBER_PREFIX_REGEX, "")
     .replace(/[。！？!?]+$/u, "")
     .trim();
-  const stripPrefix = (prefix: string) =>
-    normalized.startsWith(prefix) ? normalized.slice(prefix.length).trim() : normalized;
 
   if (item.kind === "semantic") {
-    if (item.tags?.includes("understanding-memory")) {
-      switch (item.facet) {
-        case "unfinished":
-          return `用户仍未定下：${stripPrefix("还没决定")}`;
-        case "tension":
-          return `用户当前在权衡：${stripPrefix("在权衡")}`;
-        case "preference":
-          return `用户当前更在意：${stripPrefix("更在意")}`;
-        case "style":
-          return `用户互动偏好：${stripPrefix("更喜欢")}`;
-        case "goal":
-          return `用户当前目标：${stripPrefix("想推进")}`;
-      }
+    if (item.tags?.includes("understanding-memory") && item.facet) {
+      return formatFacetContent(item.facet, normalized, "用户当前");
     }
     return `用户长期偏好/事实：${normalized}`;
   }
@@ -81,19 +93,8 @@ const normalizeDisplayContent = (item: MemoryItem): string => {
     return `用户明确要求你记住：${normalized}`;
   }
 
-  if (item.kind === "episodic" && item.tags?.includes("understanding-memory")) {
-    switch (item.facet) {
-      case "unfinished":
-        return `最近一次对话显示：用户还没定下 ${stripPrefix("还没决定")}`;
-      case "tension":
-        return `最近一次对话显示：用户还在权衡 ${stripPrefix("在权衡")}`;
-      case "preference":
-        return `最近一次对话显示：用户更在意 ${stripPrefix("更在意")}`;
-      case "style":
-        return `最近一次对话显示：用户更偏好 ${stripPrefix("更喜欢")}`;
-      case "goal":
-        return `最近一次对话显示：用户想推进 ${stripPrefix("想推进")}`;
-    }
+  if (item.kind === "episodic" && item.tags?.includes("understanding-memory") && item.facet) {
+    return formatFacetContent(item.facet, normalized, "最近一次对话显示：用户");
   }
 
   return normalized;
@@ -117,41 +118,22 @@ export const buildMemoryOverlay = (
     byKind[item.kind].push(item);
   }
 
-  // 每个 kind 取 top-N（保持传入的 rank 顺序）
-  const cappedByKind: Array<[string, MemoryItem[]]> = Object.entries(byKind)
-    .filter(([, list]) => list.length > 0)
-    .map(([kind, list]) => [kind, list.slice(0, perKindLimit)] as [string, MemoryItem[]]);
-
   // 按预算截断：先固定开销，再按 kind 优先级 + 传入顺序逐条加入
   const remainingBudget = maxTokens - OVERLAY_HEADER_TOKENS;
   if (remainingBudget <= 0) {
-    // 预算太小，连头部都放不下——只返回头部 + 空内容
     return OVERLAY_HEADER_LINES.join("\n");
   }
 
-  // 把所有候选行展开成 [kind, lineText, lineTokens] 列表，按 kind 优先级排序
-  interface CandidateLine {
-    kind: string;
-    lineText: string;
-    lineTokens: number;
-  }
-  const allLines: CandidateLine[] = [];
-  for (const [kind, list] of cappedByKind) {
-    for (const item of list) {
-      const lineText = `- ${normalizeDisplayContent(item)}`;
-      allLines.push({
-        kind,
-        lineText,
-        lineTokens: estimateTokens(lineText),
-      });
-    }
-  }
-  // 按 kind 优先级排序（semantic 先），同 kind 保持原 rank 顺序
-  allLines.sort((a, b) => {
-    const pa = KIND_PRIORITY[a.kind as MemoryItem["kind"]] ?? 99;
-    const pb = KIND_PRIORITY[b.kind as MemoryItem["kind"]] ?? 99;
-    return pa - pb;
-  });
+  // 把所有候选行展开，按 kind 优先级排序（semantic 先），同 kind 保持原 rank 顺序
+  const allLines = (Object.entries(byKind) as [MemoryItem["kind"], MemoryItem[]][])
+    .filter(([, list]) => list.length > 0)
+    .flatMap(([kind, list]) =>
+      list.slice(0, perKindLimit).map((item) => {
+        const lineText = `- ${normalizeDisplayContent(item)}`;
+        return { kind, lineText, lineTokens: estimateTokens(lineText) };
+      })
+    )
+    .sort((a, b) => (KIND_PRIORITY[a.kind] ?? 99) - (KIND_PRIORITY[b.kind] ?? 99));
 
   // 预算内逐条加入；超预算的丢弃
   let usedTokens = 0;

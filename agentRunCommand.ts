@@ -66,9 +66,7 @@ import {
   renderTurnContextBlocksWithScope,
   type TurnContextLayer,
 } from "./agent-runtime/turnContext";
-import { resolveMemoryRuntime } from "./ai/memory/runtime";
-import { getDefaultCliLocalRuntimeDb } from "./localRuntimeDb";
-import { resolveMachineId } from "./connector-experimental/machineInfo";
+import { resolveCliMemory } from "./memoryRecall";
 import { isSubtaskRun } from "./agent-runtime/agentRunIsolation";
 
 // Re-export the public surface so existing callers that import from
@@ -485,71 +483,21 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
   scopedLayers.push(buildSkillDiscoveryContextLayer(cliCwd));
 
   // T3456 — Memory injection route (CLI analogue of desktop T14).
-  // Local-first runs must not touch the configured server just to recall memory:
-  // a deployment/restart of nolo.chat must not produce a 502 before a local
-  // OAuth/API-key turn even starts. Only an explicit --server run uses the
-  // remote memory endpoint; local/auto runs use the local runtime store.
-  // Network/local failures are visible-but-non-fatal: we warn and omit the
-  // memory layer rather than failing the whole turn (same contract as desktop).
-  // Tests with tight watchdog budgets inject `memoryRecallDisabled: true`.
+  // Remote-first recall with local fallback. See memoryRecall.ts for details.
   if (!deps.memoryRecallDisabled) {
-  const memoryServerUrl = resolveServerUrl(env);
-  const memoryAuthToken = resolveAuthToken(args, env);
-  const memoryAgentKey = effectiveAgentKey;
-  const memorySpaceId = parsed.spaceId ?? undefined;
-  try {
-    const resolvedRuntimeMode =
-      parsed.runtimeMode ??
-      (env.NOLO_RUNTIME_MODE === "local" ||
-      env.NOLO_RUNTIME_MODE === "server" ||
-      env.NOLO_RUNTIME_MODE === "auto"
-        ? env.NOLO_RUNTIME_MODE
-        : "auto");
-    const usesExplicitServerRuntime = resolvedRuntimeMode === "server";
-    if (usesExplicitServerRuntime && memoryAuthToken && memoryServerUrl) {
-      // Explicit --server: HTTP memory query (mirrors desktop :1204-1239).
-      const memoryResponse = await fetch(`${memoryServerUrl}/api/memory/query`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${memoryAuthToken}`,
-        },
-        body: JSON.stringify({
-          agentKey: memoryAgentKey,
-          userInput: effectiveMessage,
-          ...(memorySpaceId ? { spaceId: memorySpaceId } : {}),
-        }),
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (memoryResponse.ok) {
-        const memoryPayload = (await memoryResponse.json().catch(() => null)) as
-          | { promptBlock?: unknown }
-          | null;
-        const block =
-          typeof memoryPayload?.promptBlock === "string"
-            ? memoryPayload.promptBlock.trim()
-            : "";
-        memoryPromptBlock = block || null;
-      } else {
-        console.warn("[cli-memory] memory query returned non-ok status:", memoryResponse.status);
-      }
-    } else {
-      // Local/auto (and anonymous server) runs: local direct read via resolveMemoryRuntime.
-      const localDb = await getDefaultCliLocalRuntimeDb({ env });
-      const machineId = resolveMachineId();
-      const resolution = await resolveMemoryRuntime({
-        db: localDb,
-        userId: machineId,
-        agentKey: memoryAgentKey,
+    try {
+      memoryPromptBlock = await resolveCliMemory({
+        serverUrl: resolveServerUrl(env),
+        authToken: resolveAuthToken(args, env),
+        agentKey: effectiveAgentKey,
         userInput: effectiveMessage,
-        ...(memorySpaceId ? { spaceId: memorySpaceId } : {}),
+        ...(parsed.spaceId ? { spaceId: parsed.spaceId } : {}),
+        env,
       });
-      memoryPromptBlock = resolution.promptBlock;
+    } catch (memoryError) {
+      console.warn("[cli-memory] memory recall failed, omitting memory layer:", memoryError);
     }
-  } catch (memoryError) {
-    console.warn("[cli-memory] memory recall failed, omitting memory layer:", memoryError);
   }
-  } // end if (!deps.memoryRecallDisabled)
 
   memoryOverlayLayer = buildMemoryOverlayLayer({ promptBlock: memoryPromptBlock });
   memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });

@@ -1,17 +1,71 @@
+import { createHash } from "crypto";
 import { ulid } from "../../database/utils/ulid";
 import {
   createMemoryKey,
   createMemoryOwnerIndexKey,
   createMemorySubjectKindIndexKey,
 } from "../../database/keys";
-import type { MemoryItem } from "./types";
+import type {
+  MemoryItem,
+  MemoryKind,
+  MemoryOwnerType,
+  MemorySubjectType,
+} from "./types";
+
+/**
+ * 计算记忆的语义内容标识（contentKey）。
+ *
+ * 输入：ownerType + ownerId + subjectType + subjectId + kind + content
+ * 输出：`mem-{sha256 前 16 字符 hex}`
+ *
+ * 64 位空间，百万条碰撞概率 2.7e-8——远超实际数据量需求。
+ * 同一条记忆无论在本地还是远程生成，只要内容相同，contentKey 相同，
+ * `mergeAndDedupUserData` 据此跨实例去重。
+ *
+ * 用 JSON.stringify 做无歧义序列化——字段值里的冒号不会造成碰撞。
+ */
+export const computeMemoryContentKey = (input: {
+  ownerType: MemoryOwnerType;
+  ownerId: string;
+  subjectType: MemorySubjectType;
+  subjectId: string;
+  kind: MemoryKind;
+  content: string;
+}): string => {
+  const seed = JSON.stringify([
+    input.ownerType,
+    input.ownerId,
+    input.subjectType,
+    input.subjectId,
+    input.kind,
+    input.content,
+  ]);
+  const hash = createHash("sha256").update(seed).digest("hex").slice(0, 16);
+  return `mem-${hash}`;
+};
+
+/**
+ * 从 MemoryItem 提取 contentKey 计算所需的 6 个字段。
+ * 避免在各调用处手动展开同 6 个字段——改字段时只改这里。
+ */
+export const memoryContentKeyInput = (
+  item: Pick<MemoryItem, "ownerType" | "ownerId" | "subjectType" | "subjectId" | "kind" | "content">,
+) => ({
+  ownerType: item.ownerType,
+  ownerId: item.ownerId,
+  subjectType: item.subjectType,
+  subjectId: item.subjectId,
+  kind: item.kind,
+  content: item.content,
+});
 
 export const createMemoryItem = (
-  input: Omit<MemoryItem, "id" | "createdAt" | "lastActivatedAt" | "activationCount">
+  input: Omit<MemoryItem, "id" | "createdAt" | "lastActivatedAt" | "activationCount" | "contentKey">
 ): MemoryItem => {
   const now = new Date().toISOString();
   return {
     id: ulid(),
+    contentKey: computeMemoryContentKey(input),
     createdAt: now,
     lastActivatedAt: now,
     activationCount: 0,

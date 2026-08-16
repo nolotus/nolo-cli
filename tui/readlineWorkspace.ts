@@ -512,16 +512,21 @@ async function runAgentChat(
     buildSkillDiscoveryContextLayer(state.cwd),
   ];
 
-  // Memory overlay: remote-first recall with local fallback (mirrors
-  // agentRunCommand.ts). TUI dialog was previously missing this layer —
-  // memory was only injected for `nolo agent run`, not for TUI conversations.
-  const memoryPromptBlock = await resolveCliMemory({
-    serverUrl: state.serverUrl,
-    authToken: resolvePlatformAuthToken(env),
-    agentKey: effectiveAgentKey,
-    userInput: effectiveMessage,
-    env,
-  }).catch(() => null);
+  // Memory overlay: session-scoped — load once per dialog, reuse across turns.
+  // New memories written via rememberMemory tool are for FUTURE dialogs, not
+  // the current one (the model already has the context from the conversation).
+  // /new or dialog switch clears cachedMemoryOverlay so the next dialog reloads.
+  let memoryPromptBlock = state.cachedMemoryOverlay;
+  if (memoryPromptBlock === undefined) {
+    memoryPromptBlock = await resolveCliMemory({
+      serverUrl: state.serverUrl,
+      authToken: resolvePlatformAuthToken(env),
+      agentKey: effectiveAgentKey,
+      userInput: effectiveMessage,
+      env,
+    }).catch(() => null);
+    // Cache will be propagated to TUI state by the caller via runResult.cachedMemoryOverlay.
+  }
   const memoryOverlayLayer = buildMemoryOverlayLayer({ promptBlock: memoryPromptBlock });
   const memoryUseGuidanceLayer = buildMemoryUseGuidanceLayer({ promptBlock: memoryPromptBlock });
 
@@ -620,6 +625,7 @@ async function runAgentChat(
       agentName: effectiveAgentName,
       autoRouteDefault: env.NOLO_AUTO_ROUTE !== "0",
     }),
+    cachedMemoryOverlay: memoryPromptBlock,
   };
 }
 
@@ -1463,6 +1469,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                 }
               : {}),
             ...(runResult.turnTokens ? { turnTokens: runResult.turnTokens } : {}),
+            ...(runResult.cachedMemoryOverlay !== undefined ? { cachedMemoryOverlay: runResult.cachedMemoryOverlay } : {}),
           };
         }
         return { ok: false, aborted: true };
@@ -1525,6 +1532,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(runResult.turnTokens && runResult.turnTokens.input > 0
             ? { estimatedContextTokens: runResult.turnTokens.input }
             : {}),
+          ...(runResult.cachedMemoryOverlay !== undefined ? { cachedMemoryOverlay: runResult.cachedMemoryOverlay } : {}),
         };
       }
       // 把失败原因翻成人话：余额 / 额度 / 「对话已保留」/ 「本轮未入档」。
@@ -1674,6 +1682,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       state = {
         ...state,
         turnTokens: undefined,
+        cachedMemoryOverlay: undefined, // 新对话重新加载记忆
         estimatedContextTokens: estimateDefaultCliContextTokens({
           cwd: state.cwd,
           agentKey: state.agentKey,
@@ -1728,6 +1737,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           // composer chip falls back to the default CLI surface estimate and
           // the context percentage visibly drops. Mirrors the /clear reset.
           turnTokens: undefined,
+          cachedMemoryOverlay: undefined, // compact 创建新 dialog，重新加载记忆
           estimatedContextTokens: estimateDefaultCliContextTokens({
             cwd: state.cwd,
             agentKey: state.agentKey,
@@ -1838,6 +1848,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               model: pickResult.model,
             }),
             ...(pickResult.apiSource ? { apiSource: pickResult.apiSource } : {}),
+            cachedMemoryOverlay: undefined, // 切换 agent 后重新加载记忆
           };
           // 用户显式切换 agent：清掉这条对话首轮 auto-route 的缓存，否则
           // 下一轮会被缓存切回原 agent（典型场景：原 agent 429 后想换一个）。
@@ -1954,6 +1965,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             dialogLabel: pickResult.dialog.title || pickResult.dialog.id,
             dialogTitle: pickResult.dialog.title,
             turnTokens: undefined,
+            cachedMemoryOverlay: undefined, // 切换对话后重新加载记忆
           };
           clearCollapsedPasteStore(pasteStore);
           emitCommandOutput(

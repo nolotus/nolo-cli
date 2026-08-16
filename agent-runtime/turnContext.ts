@@ -525,10 +525,10 @@ export interface BuildMemoryOverlayLayerArgs {
 }
 
 /**
- * Memory overlay layer: the actual memory content (turn-scope, changes when
- * memory updates). Does NOT include the memory-use guidance — that is a
- * separate session-scope layer (buildMemoryUseGuidanceLayer) so the 92-token
- * fixed guidance text enters the stable prefix instead of causing cache miss.
+ * Memory overlay layer: the actual memory content (session-scope — loaded once
+ * per dialog, reused across turns). New memories written during the dialog are
+ * for future dialogs, not the current one. /new or dialog switch clears the
+ * cached overlay so the next dialog reloads.
  *
  * Null when there is no memory promptBlock.
  */
@@ -537,7 +537,7 @@ export const buildMemoryOverlayLayer = (
 ): TurnContextLayer | null => {
   const promptBlock = asTrimmed(args.promptBlock);
   if (!promptBlock) return null;
-  return makeLayer("memory-overlay", promptBlock);
+  return makeLayer("memory-overlay", promptBlock, "session");
 };
 
 /**

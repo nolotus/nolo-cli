@@ -13,7 +13,7 @@ export const COLD_STORAGE_CONFIDENCE = 0.3;
  * Memory overlay 的软上限 token 预算（粗估）。
  * 防止记忆膨胀吃掉 context window；超出时按 kind 优先级截断。
  */
-export const MEMORY_OVERLAY_TOKEN_BUDGET = 1200;
+export const MEMORY_OVERLAY_TOKEN_BUDGET = 2000;
 
 const normalizeSelectedContent = (text: string): string =>
   text
@@ -134,7 +134,7 @@ const selectRuntimeMemoryItems = (
   const selected: typeof unique = [];
   const selectedIds = new Set<string>();
   const add = (item: typeof unique[number] | undefined) => {
-    if (!item || selectedIds.has(item.id) || selected.length >= 10) return;
+    if (!item || selectedIds.has(item.id) || selected.length >= 20) return;
     selected.push(item);
     selectedIds.add(item.id);
   };

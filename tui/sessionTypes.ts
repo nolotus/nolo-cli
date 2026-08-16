@@ -67,6 +67,12 @@ export type TuiState = {
   contextWindow?: number;
   /** 执行来源：platform=平台API(计费) custom=自定义API cli=订阅制。platform 时状态行显示积分。 */
   apiSource?: string;
+  /**
+   * 会话级记忆缓存——对话开始时加载一次，后续轮次复用。
+   * /new 或切换对话时清空，下一轮重新加载。
+   * null = 已加载但无记忆；undefined = 尚未加载。
+   */
+  cachedMemoryOverlay?: string | null;
 };
 
 export type TuiAction =

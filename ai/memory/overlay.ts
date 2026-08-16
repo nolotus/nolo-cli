@@ -40,15 +40,15 @@ const KIND_PRIORITY: Record<MemoryItem["kind"], number> = {
 };
 
 export interface BuildMemoryOverlayOptions {
-  /** 软上限 token 预算（粗估）。默认 800。超出时按 kind 优先级 + 传入顺序截断。 */
+  /** 软上限 token 预算（粗估）。默认 2000。超出时按 kind 优先级 + 传入顺序截断。 */
   maxTokens?: number;
-  /** 每个 kind 最多显示几条。默认 3（向后兼容）。 */
+  /** 每个 kind 最多显示几条。默认 3。 */
   perKindLimit?: number;
 }
 
 /**
- * facet → 显示文本的映射表。semantic 和 episodic 共用同一张表，
- * 只是前缀不同（semantic 用"用户当前…"，episodic 用"最近一次对话显示：用户…"）。
+ * facet → 显示文本的映射表。semantic 和 episodic 共用同一张表。
+ * semantic 不加前缀（稳定事实，内容本身已说明）；episodic 加 "上次: " 前缀。
  *
  * `strip` 是 content 里可能带的前缀词，显示时去掉避免重复（如 "在权衡：在权衡 X" → "在权衡 X"）。
  */
@@ -104,7 +104,7 @@ export const buildMemoryOverlay = (
 ): string | null => {
   if (items.length === 0) return null;
 
-  const maxTokens = options?.maxTokens ?? 800;
+  const maxTokens = options?.maxTokens ?? 2000;
   const perKindLimit = options?.perKindLimit ?? 3;
 
   const byKind: Record<string, MemoryItem[]> = {

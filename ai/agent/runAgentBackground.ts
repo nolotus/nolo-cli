@@ -156,11 +156,13 @@ export async function listenToDialogEvents(
     onStatusChange?: (status: DialogStatus) => void,
     onDone?: (result: { dialogId: string; content?: string; usage?: unknown }) => void,
     onFailed?: (error: string) => void,
+    cursor: { value?: string } = {},
 ): Promise<RunAgentBackgroundResult> {
     let eventsRes: Response;
     try {
+        const query = cursor.value ? `?lastEventId=${encodeURIComponent(cursor.value)}` : "";
         eventsRes = await fetch(
-            `${currentServer}/api/events/dialog-${dialogId}`,
+            `${currentServer}/api/events/dialog-${dialogId}${query}`,
             {
                 method: "GET",
                 headers: {
@@ -204,6 +206,8 @@ export async function listenToDialogEvents(
                     const events = parseSSE(chunk);
 
                     for (const event of events) {
+                        const eventId = event.msgId ?? event.messageId;
+                        if (typeof eventId === "string" && eventId) cursor.value = eventId;
                         const type = event.type as string;
 
                         if (type === "status") {
@@ -382,6 +386,7 @@ export const runAgentBackground = createAsyncThunk<
     // 与 run start 及 TUI/Web chat 对齐）；其余 retryable 错误保持默认 3 次。
     let lastError: Error | undefined;
     let maxSseRetries = MAX_SSE_RETRIES;
+    const cursor = { value: undefined as string | undefined };
 
     const eventServer = normalizeServerOrigin(routedServerBase) || currentServer;
 
@@ -389,7 +394,7 @@ export const runAgentBackground = createAsyncThunk<
         try {
             return await listenToDialogEvents(
                 dialogId, eventServer, authHeader, effectiveSignal,
-                onStatusChange, onDone, onFailed,
+                onStatusChange, onDone, onFailed, cursor,
             );
         } catch (e: any) {
             if (isAbortError(e)) throw e;          // 用户主动取消，不重试

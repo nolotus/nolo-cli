@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.30.0-alpha.14",
+  "version": "0.30.0-alpha.15",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -1103,8 +1103,8 @@
     "@bufbuild/protobuf": "2.13.0",
     "js-yaml": "^4.1.0",
     "@reduxjs/toolkit": "^2.5.0",
+    "valibot": "^1.4.2",
     "i18next": "^23.11.5",
-    "zod": "^3.25.20",
     "iztro": "^2.5.8",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-gfm": "^3.0.0",

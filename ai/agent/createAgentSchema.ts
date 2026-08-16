@@ -1,10 +1,37 @@
 // 路径: ai/agent/createAgentSchema.ts
+//
+// valibot 版（原 zod 版迁移）：函数式 pipe 写法，Standard Schema 兼容。
+// 与自研 useForm（packages/form/useForm.ts）配套：schema["~standard"].validate(values)。
 
+import {
+  object,
+  looseObject,
+  string,
+  number,
+  boolean,
+  picklist,
+  literal,
+  union,
+  array,
+  record,
+  optional,
+  nullable,
+  nullish,
+  transform,
+  pipe,
+  trim,
+  minLength,
+  maxLength,
+  minValue,
+  maxValue,
+  check,
+  forward,
+  type InferOutput,
+} from "valibot";
 import { ReferenceItem } from "../../app/types"; // 确保 app/types 里有 ReferenceItem 定义
 import { isRecord } from "../../core/isRecord";
 import { isLoopbackUrl } from "../../core/localOrigins";
 import { TFunction } from "i18next";
-import { z } from "zod";
 import { CLI_PROVIDER_VALUES } from "./cliProviders";
 
 // Re-export form-facing CLI list from the single browser-safe authority.
@@ -84,11 +111,8 @@ export const PROVIDER_REASONING_EFFORT_VALUES: Record<string, ReasoningEffort[]>
  * 根据 provider 返回 UI 中可选的 reasoning_effort 选项列表。
  * 用于下拉框动态过滤：只显示当前 provider 实际支持的值。
  *
- * - openai → 全部 7 个
- * - deepseek → low / high / max
- * - kimi/moonshot → none / low / high / max
+ * - anthropic/google → 空数组（走 thinking 机制，不用 reasoning_effort）
  * - xai/grok → low / medium / high
- * - anthropic/google → 空数组（走 thinking 机制）
  * - 未知 provider → low / medium / high（保守默认）
  */
 export function getAvailableReasoningEfforts(
@@ -99,36 +123,34 @@ export function getAvailableReasoningEfforts(
   return PROVIDER_REASONING_EFFORT_VALUES[p] ?? ["low", "medium", "high"];
 }
 
-const greetingMenuItemSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  userMessage: z.string().optional(),
+const greetingMenuItemSchema = object({
+  id: pipe(string(), minLength(1)),
+  label: pipe(string(), minLength(1)),
+  userMessage: optional(string()),
 });
 
-const greetingConfigSchema = z.object({
-  text: z.string().trim().optional(),
-  menu: z.array(greetingMenuItemSchema).optional(),
+const greetingConfigSchema = object({
+  text: optional(pipe(string(), trim())),
+  menu: optional(array(greetingMenuItemSchema)),
 });
 
-const runtimeToolPolicySchema = z
-  .object({
-    version: z.literal(1).optional(),
-    agentTools: z.array(z.string()).optional(),
-    runtimeTools: z.array(z.string()).optional(),
-    workspace: z
-      .object({
-        mode: z.enum(["none", "current", "lease"]).optional(),
-        writableRoots: z.array(z.string()).optional(),
-        cwd: z.string().optional(),
-      })
-      .optional(),
-    shell: z.record(z.unknown()).optional(),
-    isolation: z.record(z.unknown()).optional(),
-    git: z.record(z.unknown()).optional(),
-    budget: z.record(z.unknown()).optional(),
-    audit: z.record(z.unknown()).optional(),
-  })
-  .passthrough();
+const runtimeToolPolicySchema = looseObject({
+  version: optional(literal(1)),
+  agentTools: optional(array(string())),
+  runtimeTools: optional(array(string())),
+  workspace: optional(
+    object({
+      mode: optional(picklist(["none", "current", "lease"] as const)),
+      writableRoots: optional(array(string())),
+      cwd: optional(string()),
+    }),
+  ),
+  shell: optional(record(string(), string())),
+  isolation: optional(record(string(), string())),
+  git: optional(record(string(), string())),
+  budget: optional(record(string(), string())),
+  audit: optional(record(string(), string())),
+});
 
 export function isLocalCustomProviderUrl(value: unknown): boolean {
   return isLoopbackUrl(value);
@@ -148,252 +170,261 @@ export function runtimePolicyAllowsHostedExec(value: unknown): boolean {
   );
 }
 
-const referenceItemSchema = z
-  .object({
-    dbKey: z.string(),
-    title: z.string(),
-    type: z.enum(["knowledge", "instruction", "page"]),
-  })
-  .transform((data) => ({
+const referenceItemSchema = pipe(
+  object({
+    dbKey: string(),
+    title: string(),
+    type: picklist(["knowledge", "instruction", "page"] as const),
+  }),
+  transform((data) => ({
     ...data,
-    type: data.type === "page" ? "knowledge" : data.type,
-  }));
+    type: data.type === "page" ? ("knowledge" as const) : data.type,
+  })),
+);
+
+// 可选字符串：undefined | null | "" 或 trim 后的非空串。等价原 zod 的
+// `.nullable().optional().or(z.literal(""))`（zod 里 `.or(literal(""))` 是冗余的，
+// 因为 trim 后的 string 已接受 ""）。valibot 用 nullish + trim。
+const optionalTrimmedString = () => nullish(pipe(string(), trim()));
 
 // --- 核心 schema ---
-export const getCreateAgentSchema = (t: TFunction) =>
-  z
-    .object({
-      name: z
-        .string()
-        .trim()
-        .max(50, t("validation.nameTooLong"))
-        .optional()
-        .or(z.literal("")),
+export const getCreateAgentSchema = (t: TFunction) => {
+  const base = object({
+    name: nullish(
+      pipe(string(), trim(), maxLength(50, t("validation.nameTooLong"))),
+    ),
 
-      /**
-       * Stable machine-callable name for agent routing. Unlike name, this is
-       * not a display label and should stay unique within the user's agent set.
-       */
-      handle: z.string().trim().nullable().optional().or(z.string().length(0)),
+    /**
+     * Stable machine-callable name for agent routing. Unlike name, this is
+     * not a display label and should stay unique within the user's agent set.
+     */
+    handle: optionalTrimmedString(),
 
-      /**
-       * provider 不再必填：只是一个可选的标识字段
-       */
-      provider: z.string().trim().nullable().optional().or(z.string().length(0)),
+    /**
+     * provider 不再必填：只是一个可选的标识字段
+     */
+    provider: optionalTrimmedString(),
 
-      /**
-       * 模型：所有模式下必须选择（通过 refine 条件校验）
-       */
-      model: z.string().trim().nullable().optional().or(z.string().length(0)),
+    /**
+     * 模型：所有模式下必须选择（通过 refine 条件校验）
+     */
+    model: optionalTrimmedString(),
 
-      /**
-       * 模型是否支持图像（来自模型元数据，方便持久化 / 服务端快速判断）
-       */
-      hasVision: z.boolean().optional().default(false),
+    /**
+     * 模型是否支持图像（来自模型元数据，方便持久化 / 服务端快速判断）
+     */
+    hasVision: optional(boolean(), false),
 
-      /**
-       * API 来源：平台 / 自定义 / CLI
-       */
-      apiSource: z.enum(["platform", "custom", "cli"]).default("platform"),
+    /**
+     * API 来源：平台 / 自定义 / CLI
+     */
+    apiSource: optional(picklist(["platform", "custom", "cli"] as const), "platform"),
 
-      /**
-       * 默认交互模式：文本聊天 / 实时语音通话
-       */
-      defaultInteractionMode: z.enum(["text", "live_audio"]).default("text"),
+    /**
+     * 默认交互模式：文本聊天 / 实时语音通话
+     */
+    defaultInteractionMode: optional(
+      picklist(["text", "live_audio"] as const),
+      "text",
+    ),
 
-      /**
-       * 语音配置：例如预设音色
-       */
-      voiceConfig: z
-        .object({
-          voiceId: z.string().optional(),
-        })
-        .nullable()
-        .optional(),
+    /**
+     * 语音配置：例如预设音色
+     */
+    voiceConfig: nullish(
+      object({
+        voiceId: optional(string()),
+      }),
+    ),
 
-      /**
-       * CLI provider（apiSource=cli 时有效）：见 CLI_PROVIDER_VALUES
-       */
-      cliProvider: z
-        .enum(CLI_PROVIDER_VALUES)
-        .nullable()
-        .optional()
-        .or(z.literal("")),
+    /**
+     * CLI provider（apiSource=cli 时有效）：见 CLI_PROVIDER_VALUES
+     */
+    cliProvider: nullish(picklist(CLI_PROVIDER_VALUES)),
 
-      /**
-       * Optional machine binding for CLI agents. Empty means use the server/local
-       * CLI runtime; a value means dispatch the CLI run to a connected machine.
-       */
-      machineId: z.string().trim().nullable().optional().or(z.string().length(0)),
+    /**
+     * Optional machine binding for CLI agents. Empty means use the server/local
+     * CLI runtime; a value means dispatch the CLI run to a connected machine.
+     */
+    machineId: optionalTrimmedString(),
 
-      customProviderUrl: z
-        .string()
-        .trim()
-        .nullable()
-        .optional()
-        .or(z.string().length(0))
-        .refine((val) => !val || z.string().url().safeParse(val).success, {
-          message: t("validation.invalidUrl"),
-        }),
+    customProviderUrl: pipe(
+      optionalTrimmedString(),
+      check(
+        (val) => !val || /^https?:\/\/.+/.test(val),
+        t("validation.invalidUrl"),
+      ),
+    ),
 
-      /**
-       * API Key：完全可选（本地 / 无鉴权的自定义接口不需要）
-       */
-      apiKey: z.string().trim().nullable().optional().or(z.string().length(0)),
+    /**
+     * API Key：完全可选（本地 / 无鉴权的自定义接口不需要）
+     */
+    apiKey: optionalTrimmedString(),
 
-      /**
-       * apiKeyRef：指向 OAuth 凭据库的 provider 名称（例如 "chatgpt"）。
-       * 设置后由 provider 解析层加载对应 OAuth token 作为 Bearer 鉴权，
-       * 与静态 apiKey 互斥优先使用 apiKeyRef。
-       */
-      apiKeyRef: z.string().trim().nullable().optional().or(z.string().length(0)),
+    /**
+     * apiKeyRef：指向 OAuth 凭据库的 provider 名称（例如 "chatgpt"）。
+     * 设置后由 provider 解析层加载对应 OAuth token 作为 Bearer 鉴权，
+     * 与静态 apiKey 互斥优先使用 apiKeyRef。
+     */
+    apiKeyRef: optionalTrimmedString(),
 
-      /**
-       * credentialSynced：是否把 custom api-key 同步到用户服务端账户（可选 opt-in）。
-       * 开启后各端 local broker miss 时 fallback 到服务端读取 + 本机缓存。
-       * 仅对 custom apiSource + 非 OAuth 凭证的 agent 有意义。
-       */
-      credentialSynced: z.boolean().optional(),
+    /**
+     * credentialSynced：是否把 custom api-key 同步到用户服务端账户（可选 opt-in）。
+     * 开启后各端 local broker miss 时 fallback 到服务端读取 + 本机缓存。
+     * 仅对 custom apiSource + 非 OAuth 凭证的 agent 有意义。
+     */
+    credentialSynced: optional(boolean()),
 
-      /**
-       * apiKeyHeader：自定义鉴权 header 名（例如 "x-api-key"）。
-       * 不传时按 endpoint 自动推断，通常为 "Authorization"。
-       */
-      apiKeyHeader: z.string().trim().nullable().optional().or(z.string().length(0)),
+    /**
+     * apiKeyHeader：自定义鉴权 header 名（例如 "x-api-key"）。
+     * 不传时按 endpoint 自动推断，通常为 "Authorization"。
+     */
+    apiKeyHeader: optionalTrimmedString(),
 
-      useServerProxy: z.boolean().default(true),
-      prompt: z.string().trim().nullable().optional().or(z.string().length(0)),
+    useServerProxy: optional(boolean(), true),
+    prompt: optionalTrimmedString(),
 
-      tools: z.array(z.string()).default([]),
+    /**
+     * 工具列表（tools 字段）
+     */
+    tools: optional(array(string()), []),
 
-      disabledTools: z.array(z.string()).default([]),
+    disabledTools: optional(array(string()), []),
 
-      enabledPacks: z.array(z.string()).default([]),
+    enabledPacks: optional(array(string()), []),
 
-      /**
-       * 三态能力配置：slug → "required"（完整启用）/ "recommended"（启用）。
-       * 缺席即禁用。与 enabledPacks 双写——后者是给尚未迁移的读取方与旧客户端的
-       * 有损降级（recommended 在旧模型没有对应物），见 ai/tools/agentSkillConfig。
-       */
-      skills: z
-        .record(z.string(), z.enum(["required", "recommended"]))
-        .optional(),
+    /**
+     * 三态能力配置：slug → "required"（完整启用）/ "recommended"（启用）。
+     * 缺席即禁用。与 enabledPacks 双写——后者是给尚未迁移的读取方与旧客户端的
+     * 有损降级（recommended 在旧模型没有对应物），见 ai/tools/agentSkillConfig。
+     */
+    skills: optional(record(string(), picklist(["required", "recommended"] as const))),
 
-      runtimeToolPolicy: runtimeToolPolicySchema.nullable().optional(),
+    runtimeToolPolicy: nullish(runtimeToolPolicySchema),
 
-      isPublic: z.boolean().default(false),
-      allowFork: z.boolean().default(false),
+    isPublic: optional(boolean(), false),
+    allowFork: optional(boolean(), false),
 
-      greeting: z
-        .union([z.string(), greetingConfigSchema])
-        .nullable()
-        .optional(),
+    greeting: nullish(union([string(), greetingConfigSchema])),
 
-      introduction: z.string().trim().nullable().optional().or(z.string().length(0)),
+    introduction: optionalTrimmedString(),
 
-      inputPrice: z.number().min(0, t("validation.priceMin")).default(0),
+    inputPrice: pipe(
+      optional(number(), 0),
+      minValue(0, t("validation.priceMin")),
+    ),
 
-      outputPrice: z.number().min(0, t("validation.priceMin")).default(0),
+    outputPrice: pipe(
+      optional(number(), 0),
+      minValue(0, t("validation.priceMin")),
+    ),
 
-      sharingLevel: z.enum(["default", "split", "full"]).nullable().optional(),
+    sharingLevel: nullish(picklist(["default", "split", "full"] as const)),
 
-      avatarFileId: z.string().nullable().optional().or(z.string().length(0)),
+    avatarFileId: optionalTrimmedString(),
 
-      tags: z.string().trim().nullable().optional().or(z.string().length(0)),
+    tags: optionalTrimmedString(),
 
-      references: z
-        .array(referenceItemSchema)
-        .optional()
-        .default([])
-        .refine(
-          (refs) => {
-            const dbKeys = refs?.map((ref) => ref.dbKey) || [];
-            return dbKeys.length === new Set(dbKeys).size;
-          },
-          { message: t("validation.duplicateReferences") }
-        ),
+    references: pipe(
+      optional(array(referenceItemSchema), []),
+      check(
+        (refs) => {
+          const dbKeys = (refs ?? []).map((ref) => ref.dbKey);
+          return dbKeys.length === new Set(dbKeys).size;
+        },
+        t("validation.duplicateReferences"),
+      ),
+    ),
 
-      temperature: z
-        .number()
-        .min(0, t("validation.temperatureRange"))
-        .max(2, t("validation.temperatureRange"))
-        .nullable()
-        .optional(),
+    temperature: nullish(
+      pipe(
+        number(),
+        minValue(0, t("validation.temperatureRange")),
+        maxValue(2, t("validation.temperatureRange")),
+      ),
+    ),
 
-      top_p: z
-        .number()
-        .min(0, t("validation.topPRange"))
-        .max(1, t("validation.topPRange"))
-        .nullable()
-        .optional(),
+    top_p: nullish(
+      pipe(
+        number(),
+        minValue(0, t("validation.topPRange")),
+        maxValue(1, t("validation.topPRange")),
+      ),
+    ),
 
-      frequency_penalty: z
-        .number()
-        .min(-2, t("validation.frequencyPenaltyRange"))
-        .max(2, t("validation.frequencyPenaltyRange"))
-        .nullable()
-        .optional(),
+    frequency_penalty: nullish(
+      pipe(
+        number(),
+        minValue(-2, t("validation.frequencyPenaltyRange")),
+        maxValue(2, t("validation.frequencyPenaltyRange")),
+      ),
+    ),
 
-      presence_penalty: z
-        .number()
-        .min(-2, t("validation.presencePenaltyRange"))
-        .max(2, t("validation.presencePenaltyRange"))
-        .nullable()
-        .optional(),
+    presence_penalty: nullish(
+      pipe(
+        number(),
+        minValue(-2, t("validation.presencePenaltyRange")),
+        maxValue(2, t("validation.presencePenaltyRange")),
+      ),
+    ),
 
-      max_tokens: z
-        .number()
-        .min(1, t("validation.maxTokensMin"))
-        .max(MAX_TOKENS_LIMIT, t("validation.maxTokensMax"))
-        .nullable()
-        .optional(),
+    max_tokens: nullish(
+      pipe(
+        number(),
+        minValue(1, t("validation.maxTokensMin")),
+        maxValue(MAX_TOKENS_LIMIT, t("validation.maxTokensMax")),
+      ),
+    ),
 
-      reasoning_effort: z
-        .enum(REASONING_EFFORT_OPTIONS, {
-          errorMap: () => ({ message: t("validation.reasoningEffortInvalid") }),
-        })
-        .nullable()
-        .optional()
-        .transform((v) => v ?? DEFAULT_REASONING_EFFORT),
+    reasoning_effort: pipe(
+      nullish(picklist(REASONING_EFFORT_OPTIONS)),
+      transform((v) => v ?? DEFAULT_REASONING_EFFORT),
+    ),
 
-      /**
-       * enableThinking：是否开启模型思考模式
-       * - Ollama/Qwen3: delta.reasoning 字段会流式返回思考过程
-       * - Anthropic Claude: 注入 thinking: { type:"enabled", budget_tokens }
-       * - DeepSeek: delta.reasoning_content
-       */
-      enableThinking: z.boolean().optional().default(false),
+    /**
+     * enableThinking：是否开启模型思考模式
+     * - Ollama/Qwen3: delta.reasoning 字段会流式返回思考过程
+     * - Anthropic Claude: 注入 thinking: { type:"enabled", budget_tokens }
+     * - DeepSeek: delta.reasoning_content
+     */
+    enableThinking: optional(boolean(), false),
 
-      /**
-       * thinkingBudget：思考 token 预算（仅对支持 budget_tokens 的 provider 生效，如 Anthropic）
-       * Ollama/DeepSeek 等不支持 budget_tokens 的 provider 忽略此字段
-       */
-      thinkingBudget: z
-        .number()
-        .min(1024, t("validation.thinkingBudgetMin"))
-        .max(32000, t("validation.thinkingBudgetMax"))
-        .nullable()
-        .optional(),
+    /**
+     * thinkingBudget：思考 token 预算（仅对支持 budget_tokens 的 provider 生效，如 Anthropic）
+     * Ollama/DeepSeek 等不支持 budget_tokens 的 provider 忽略此字段
+     */
+    thinkingBudget: nullish(
+      pipe(
+        number(),
+        minValue(1024, t("validation.thinkingBudgetMin")),
+        maxValue(32000, t("validation.thinkingBudgetMax")),
+      ),
+    ),
 
-      /**
-       * whitelist：白名单
-       */
-      whitelist: z.array(z.string().trim().min(1)).optional().default([]),
+    /**
+     * whitelist：白名单
+     */
+    whitelist: optional(array(pipe(string(), trim(), minLength(1))), []),
 
-      /**
-       * linkedSpaces：关联的其他 Space ID 列表
-       * Agent 可以访问这些 Space 的目录结构作为粗略上下文
-       */
-      linkedSpaces: z.array(z.string().trim().min(1)).optional().default([]),
-    })
-    // --- refine 逻辑 ---
-    // 1) 自定义 URL 必填：
-    //    - 只要 apiSource === "custom"，必须填写 customProviderUrl
-    //    - 例外：apiKeyRef 是已知 OAuth provider（如 claude、chatgpt、xai、
-    //      cursor、antigravity）时跳过——这些 agent 的 endpoint
-    //      由 agentCallPlan 或 OAuth flow 内部解析，不需要用户手填 URL。
-    .refine(
-      (data) => {
+    /**
+     * linkedSpaces：关联的其他 Space ID 列表
+     * Agent 可以访问这些 Space 的目录结构作为粗略上下文
+     */
+    linkedSpaces: optional(array(pipe(string(), trim(), minLength(1))), []),
+  });
+
+  // --- 跨字段校验 ---
+  // 1) 自定义 URL 必填：
+  //    - 只要 apiSource === "custom"，必须填写 customProviderUrl
+  //    - 例外：apiKeyRef 是已知 OAuth provider（如 claude、chatgpt、xai、
+  //      cursor、antigravity）时跳过——这些 agent 的 endpoint
+  //      由 agentCallPlan 或 OAuth flow 内部解析，不需要用户手填 URL。
+  // 2) model 必填规则：platform / custom 模式必填；cli 模式有默认值，不强制
+  // 3) machineId 绑定校验：仅 cli 或 custom+本地 URL 可用 machine 绑定
+  return pipe(
+    base,
+    forward(
+      check((data) => {
         if (data.apiSource === "custom") {
           const oauthRefs = new Set([
             "chatgpt", "xai", "antigravity", "claude", "cursor",
@@ -404,39 +435,31 @@ export const getCreateAgentSchema = (t: TFunction) =>
           return !!data.customProviderUrl;
         }
         return true;
-      },
-      {
-        message: t("validation.customUrlRequired"),
-        path: ["customProviderUrl"],
-      }
-    )
-    // 2) model 必填规则：
-    //    - platform / custom 模式必填；cli 模式有默认值，不强制
-    .refine(
-      (data) => {
+      }, t("validation.customUrlRequired")),
+      ["customProviderUrl"],
+    ),
+    forward(
+      check((data) => {
         if (data.apiSource === "cli") return true;
         return !!data.model?.trim();
-      },
-      {
-        message: t("validation.modelRequired"),
-        path: ["model"],
-      }
-    )
-    .superRefine((data, ctx) => {
-      if (!data.machineId?.trim()) return;
-      const canUseMachineBinding =
-        data.apiSource === "cli" ||
-        (data.apiSource === "custom" &&
-          isLocalCustomProviderUrl(data.customProviderUrl));
-      if (canUseMachineBinding) return;
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["machineId"],
-        message: t("validation.machineBindingRequiresCliOrLocalCustom"),
-      });
-    });
+      }, t("validation.modelRequired")),
+      ["model"],
+    ),
+    forward(
+      check((data) => {
+        if (!data.machineId?.trim()) return true;
+        const canUseMachineBinding =
+          data.apiSource === "cli" ||
+          (data.apiSource === "custom" &&
+            isLocalCustomProviderUrl(data.customProviderUrl));
+        return canUseMachineBinding;
+      }, t("validation.machineBindingRequiresCliOrLocalCustom")),
+      ["machineId"],
+    ),
+  );
+};
 
-export type FormData = z.infer<ReturnType<typeof getCreateAgentSchema>>;
+export type FormData = InferOutput<ReturnType<typeof getCreateAgentSchema>>;
 
 export const normalizeReferences = (references: any[]): ReferenceItem[] => {
   if (!Array.isArray(references)) return [];

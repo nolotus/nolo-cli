@@ -9,12 +9,15 @@ import type { CliFetchImpl } from "../cliFetch";
 import type { Message } from "../../chat/messages/types";
 import { planCompression } from "../../ai/context/planCompression";
 import { getModelContextWindow, DEFAULT_CONTEXT_WINDOW } from "../../ai/llm/getModelContextWindow";
-import { serializeMessageContent } from "../../chat/messages/messageContent";
 import { extractReferenceKeysFromMessage } from "../../chat/dialog/actions/extractReferenceKeys";
 import {
-  buildBuiltinSummaryContent,
-  BUILTIN_SUMMARY_LLM_CONFIG,
-} from "../../chat/dialog/actions/builtinDialogLlm";
+  COMPACTION_SUMMARY_SYSTEM_PROMPT,
+  formatMessagesForSummaryWithTruncation,
+  formatFileOperationsFromMessages,
+  buildCompactionUserContent,
+  buildCompactionMetricsFromPlan,
+  formatCompactionMetricsLog,
+} from "../../ai/context/compactionShared";
 
 const DB_PATH = "/api/v1/db";
 
@@ -234,14 +237,7 @@ export type CompactDialogResult = {
  */
 export type SummaryLlmCaller = (content: string) => Promise<string | null>;
 
-function formatMessagesForSummary(msgs: Message[]): string {
-  return msgs
-    .map((m) => {
-      const content = serializeMessageContent(m.content) || "[非文本内容]";
-      return `${m.role}: ${content}`;
-    })
-    .join("\n");
-}
+// formatMessagesForSummary 已迁移到 compactionShared.formatMessagesForSummaryWithTruncation
 
 /**
  * Resolve the agent's context window from the dialog's cybots[0] agent record.
@@ -341,11 +337,16 @@ export async function compactDialog(options: {
 
       if (plan.shouldCompress && plan.msgsToCompress.length > 0) {
         const previousSummary = (current.summary as string) || "";
-        const messagesText = formatMessagesForSummary(plan.msgsToCompress);
-        const promptContent = buildBuiltinSummaryContent(
-          previousSummary,
-          messagesText
+        const messagesText = formatMessagesForSummaryWithTruncation(plan.msgsToCompress);
+        const fileOpsText = formatFileOperationsFromMessages(
+          plan.msgsToCompress,
+          (name) => name, // CLI 端无 tool alias 系统，直接用原始名
         );
+        const promptContent = buildCompactionUserContent({
+          previousSummary,
+          messagesText,
+          fileOpsText,
+        });
 
         try {
           const newSummary = await options.summaryLlmCaller(promptContent);
@@ -385,9 +386,14 @@ export async function compactDialog(options: {
 
             summaryGenerated = true;
             compactedMessageCount = plan.compressCount;
-            console.log(
-              `[nolo] compact: compressed ${plan.compressCount} messages into summary (len: ${newSummary.trim().length})`
-            );
+            // P1-8 压缩埋点
+            const metrics = buildCompactionMetricsFromPlan({
+              reason: "manual",
+              previousSummary: (current.summary as string) || "",
+              plan,
+              newSummary: newSummary.trim(),
+            });
+            console.log(formatCompactionMetricsLog(metrics));
           }
         } catch (error) {
           // Summary generation failed — continue with fork without compression.

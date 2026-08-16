@@ -16,6 +16,7 @@ import {
   parsePlatformChatCompletionResponse,
   canUsePlatformChatProvider,
 } from "../agent-runtime/platformChatProvider";
+import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../ai/context/compactionShared";
 import { BUILTIN_SUMMARY_LLM_CONFIG } from "../chat/dialog/actions/builtinDialogLlm";
 import type { AgentRuntimeChatMessage, EnvLike } from "../agent-runtime/types";
 
@@ -57,6 +58,7 @@ export function createTuiSummaryLlmCaller(
       }
 
       const messages: AgentRuntimeChatMessage[] = [
+        { role: "system", content: COMPACTION_SUMMARY_SYSTEM_PROMPT },
         { role: "user", content },
       ];
 

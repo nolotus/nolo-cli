@@ -19,10 +19,16 @@ export const BUILTIN_SUMMARY_LLM_CONFIG = {
   id: "builtin-dialog-summary-llm",
   name: "Builtin Dialog Summary LLM",
   model: "deepseek-v4-flash",
+  // @deprecated 用 COMPACTION_SUMMARY_SYSTEM_PROMPT（packages/ai/context/compactionShared.ts）。
+  // 生产代码已全部迁移；此旧两段式 prompt 仅被 scripts/probes/dialog 探针脚本使用，待探针迁移后删除。
   prompt:
     "你是一个专业的对话记忆助理。请基于【现有记忆】和【新增对话】，输出一份更新后的对话记忆档案。严格只输出下面两部分，标题必须完全一致：\n关键事实档案\n- ...\n对话剧情摘要\n- ...\n要求：1) 使用对话主语言；混合语言时优先跟随用户主要语言，专有名词保留原文。2) 关键事实档案只保留之后继续对话仍有价值的信息，例如用户偏好、目标、约束、技术栈、确定的文件名/变量名、核心决策、待办事项。3) 对话剧情摘要先极简概括旧上下文，再更详细记录最近新增的进展、分歧、结论和下一步。4) 忽略寒暄、重复尝试、已放弃方案和无价值废话。5) 不要编造未出现的信息，不要输出开场白、结束语、markdown 代码块或额外章节。",
 };
 
+/**
+ * @deprecated 用 buildCompactionUserContent（packages/ai/context/compactionShared.ts）。
+ * 生产代码已全部迁移；此旧两段式 builder 仅被 scripts/probes/dialog 探针脚本使用，待探针迁移后删除。
+ */
 export const buildBuiltinSummaryContent = (
   previousSummary: string,
   messagesText: string

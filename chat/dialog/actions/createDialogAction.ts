@@ -261,6 +261,11 @@ export const createDialogAction = async (
   let referenceKeys: string[] | undefined;
   let inheritedFromDialogKey: string | undefined;
   let inheritedFromDialogTitle: string | undefined;
+  // 压缩状态继承：fork 时带上 summary/summarizedBeforeId/compressionCount，
+  // 让新对话继续用压缩后的上下文（与 CLI compactDialog 的 FORKED_CARRY_FIELDS 对齐）。
+  let inheritedSummary: string | undefined;
+  let inheritedSummarizedBeforeId: string | undefined;
+  let inheritedCompressionCount: number | undefined;
 
 
 
@@ -294,6 +299,20 @@ export const createDialogAction = async (
       ) {
         referenceKeys = candidate;
       }
+
+      // 继承压缩状态（与 CLI FORKED_CARRY_FIELDS 对齐）
+      const sourceSummary = (sourceDialog as { summary?: unknown }).summary;
+      if (typeof sourceSummary === "string" && sourceSummary.trim()) {
+        inheritedSummary = sourceSummary.trim();
+      }
+      const sourceSummarizedBeforeId = (sourceDialog as { summarizedBeforeId?: unknown }).summarizedBeforeId;
+      if (typeof sourceSummarizedBeforeId === "string" && sourceSummarizedBeforeId.trim()) {
+        inheritedSummarizedBeforeId = sourceSummarizedBeforeId.trim();
+      }
+      const sourceCompressionCount = (sourceDialog as { compressionCount?: unknown }).compressionCount;
+      if (typeof sourceCompressionCount === "number") {
+        inheritedCompressionCount = sourceCompressionCount;
+      }
     }
   }
 
@@ -312,6 +331,10 @@ export const createDialogAction = async (
     ...(spaceId && { spaceId }),
     category,
     referenceKeys,
+    // 压缩状态继承
+    ...(inheritedSummary && { summary: inheritedSummary }),
+    ...(inheritedSummarizedBeforeId && { summarizedBeforeId: inheritedSummarizedBeforeId }),
+    ...(inheritedCompressionCount !== undefined && { compressionCount: inheritedCompressionCount }),
     ...(args.extraReferences && args.extraReferences.length > 0 && { extraReferences: args.extraReferences }),
     ...(inheritedFromDialogKey && { inheritedFromDialogKey }),
     ...(inheritedFromDialogTitle && { inheritedFromDialogTitle }),

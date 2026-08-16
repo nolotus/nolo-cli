@@ -2,18 +2,23 @@
 
 import type { RootState } from "../../../app/store";
 import { runLlm } from "../../../ai/agent/agentSlice";
-import {
-    buildBuiltinSummaryContent,
-    BUILTIN_SUMMARY_LLM_CONFIG,
-} from "./builtinDialogLlm";
+import { BUILTIN_SUMMARY_LLM_CONFIG } from "./builtinDialogLlm";
 import { patch, selectById } from "../../../database/dbSlice";
-import { serializeMessageContent } from "../../messages/messageContent";
 import { DialogConfig, Agent } from "../../../app/types";
 import { getModelContextWindow, DEFAULT_CONTEXT_WINDOW } from "../../../ai/llm/getModelContextWindow";
 import { extractCustomId } from "../../../core/prefix";
 import type { Message } from "../../messages/types";
 import { planCompression } from "../../../ai/context/planCompression";
+import { estimateTokenCount } from "../../../ai/context/tokenUtils";
 import { extractReferenceKeysFromMessage } from "./extractReferenceKeys";
+import {
+    COMPACTION_SUMMARY_SYSTEM_PROMPT,
+    formatMessagesForSummaryWithTruncation,
+    formatFileOperationsFromMessages,
+    buildCompactionUserContent,
+    buildCompactionMetricsFromPlan,
+    formatCompactionMetricsLog,
+} from "../../../ai/context/compactionShared";
 
 // --- 辅助函数 ---
 
@@ -30,13 +35,11 @@ const getMessagesForDialogFromState = (
     });
 };
 
-const formatMessagesForSummary = (msgs: Message[]): string =>
-    msgs
-        .map(m => {
-            const content = serializeMessageContent(m.content) || "[非文本内容]";
-            return `${m.role}: ${content}`;
-        })
-        .join("\n");
+/**
+ * Web 端没有 tool name alias 系统，直接用原始 tool name。
+ * readFile/writeFile/editFile 是 bun-nolo 的标准工具名，无需 canonicalize。
+ */
+const identityCanonicalName = (name: string): string => name;
 
 
 const summarizingDialogs = new Set<string>();
@@ -86,6 +89,10 @@ export const updateDialogSummaryAction = async (
             contextWindow,
             force,
             reason: args.reason,
+            // 防死亡螺旋：用 summary 长度作为上次压缩后的基线。
+            lastCompactedTokenCount: dialogConfig.summary
+                ? estimateTokenCount(dialogConfig.summary)
+                : undefined,
         });
 
         if (!plan.shouldCompress) return;
@@ -103,19 +110,27 @@ export const updateDialogSummaryAction = async (
             }
         }
 
-        // 5. 生成新 Summary
+        // 5. 生成新 Summary（统一用共享模块的三段式 prompt + 截断 + 文件操作清单）
         const previousSummary = dialogConfig.summary || "";
-        const messagesText = formatMessagesForSummary(msgsToCompress);
-        const promptContent = buildBuiltinSummaryContent(
-            previousSummary,
-            messagesText
+        const messagesText = formatMessagesForSummaryWithTruncation(msgsToCompress);
+        const fileOpsText = formatFileOperationsFromMessages(
+            msgsToCompress,
+            identityCanonicalName,
         );
+        const promptContent = buildCompactionUserContent({
+            previousSummary,
+            messagesText,
+            fileOpsText,
+        });
 
         try {
-            // 调用内置 Summary LLM
+            // 调用内置 Summary LLM，用统一的 system prompt 覆盖原 BUILTIN_SUMMARY_LLM_CONFIG.prompt
             const newSummary = await dispatch(
                 runLlm({
-                    llmConfig: BUILTIN_SUMMARY_LLM_CONFIG,
+                    llmConfig: {
+                        ...BUILTIN_SUMMARY_LLM_CONFIG,
+                        prompt: COMPACTION_SUMMARY_SYSTEM_PROMPT,
+                    },
                     content: promptContent,
                     billingDialogKey: dialogKey,
                 })
@@ -137,7 +152,16 @@ export const updateDialogSummaryAction = async (
                     })
                 ).unwrap();
 
-                console.log(`[ContextCompression] Compressed ${plan.compressCount} messages. New summary len: ${newSummary.length}`);
+                // P1-8 压缩埋点
+                const metrics = buildCompactionMetricsFromPlan({
+                    reason: args.reason || "context_budget",
+                    previousSummary: dialogConfig.summary || "",
+                    plan,
+                    newSummary: newSummary.trim(),
+                    // web 端 runLlm 只返回摘要字符串，不含 usage。
+                    // summaryUsage 需要 runLlm 改造才能获取，当前留空。
+                });
+                console.log(formatCompactionMetricsLog(metrics));
             }
         } catch (err) {
             console.error("[ContextCompression] Failed:", err);

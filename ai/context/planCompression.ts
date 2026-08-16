@@ -33,6 +33,21 @@ export interface CompressionInput {
   force?: boolean;
   reason?: CompressionReason;
   realContextUsagePercent?: number;
+  /**
+   * 防死亡螺旋守卫的基线 token 数。
+   *
+   * 当前调用方传的是 `estimateTokenCount(currentSummary)`——当前 summary 的
+   * token 估算。因为 totalUsed = summaryTokens + pendingTokens，而基线也是
+   * summaryTokens，守卫不等式 `totalUsed < baseline + minNew` 精确等价于
+   * `pendingTokens < minNew`，即「上次压缩点之后新增消息不足 minNew tokens
+   * 则不压缩」。这是守卫的实际语义，与字面含义（上次压缩的 totalUsed）不同
+   * 但方向安全：基线低估（忽略保留尾部）→ 守卫更宽松 → 不会误拦必要压缩。
+   *
+   * force=true 或 realContextUsagePercent >= 78% 的紧急路径绕过此守卫。
+   * 注意：78% 紧急出口依赖调用方传入真实遥测；若调用方不传 realContextUsagePercent，
+   * 紧急出口只剩 force（cold-resume 需 60 分钟空闲，活跃对话不命中）。
+   */
+  lastCompactedTokenCount?: number;
 }
 
 export interface CompressionPlan {
@@ -45,14 +60,45 @@ export interface CompressionPlan {
   startIndex: number;
 }
 
-// --- 辅助函数（纯函数，模块内部私有） ---
+// --- 辅助函数（纯函数） ---
 
-const getMessageTokenCount = (msg: any): number => {
-  if (msg.usage?.completion_tokens) {
-    return msg.usage.completion_tokens;
-  }
+/** getMessageTokenCount 接受的最小消息形状。 */
+export interface TokenCountableMessage {
+  content?: unknown;
+  tool_calls?: Array<{
+    function?: { name?: string; arguments?: unknown };
+  }>;
+}
+
+/**
+ * 估算一条消息在 context 窗口里占用的 token 数（输入侧）。
+ *
+ * 注意：不能用 `usage.completion_tokens`——那是模型生成回复消耗的输出侧
+ * token，不等于这条消息在 context 里占多少。用 completion_tokens 会导致
+ * assistant 消息的 context 占用被严重低估（例如回复 200 token 但 content
+ * 实际 5000 token），进而让压缩决策错过该压缩的时机。
+ *
+ * 正确做法：从 content + tool_calls 结构估算输入侧占用。
+ *
+ * 导出供 compactionShared 的 metrics 复用，确保埋点和决策用同一套口径。
+ */
+export const getMessageTokenCount = (msg: TokenCountableMessage): number => {
   const content = serializeMessageContent(msg.content) || "";
-  return estimateTokenCount(content);
+  let tokens = estimateTokenCount(content);
+  // tool_calls 的函数名 + arguments JSON 也占 context token
+  if (Array.isArray(msg.tool_calls)) {
+    for (const call of msg.tool_calls) {
+      const fn = call?.function;
+      if (fn?.name) tokens += estimateTokenCount(fn.name);
+      const args = fn?.arguments;
+      if (args) {
+        tokens += estimateTokenCount(
+          typeof args === "string" ? args : JSON.stringify(args),
+        );
+      }
+    }
+  }
+  return tokens;
 };
 
 const hasOpenEndedToolCall = (msg: Message | undefined): boolean =>
@@ -114,140 +160,161 @@ const emptyPlan = (startIndex: number): CompressionPlan => ({
 
 // --- 决策核心 ---
 
-export function planCompression(input: CompressionInput): CompressionPlan {
-  const {
-    allMsgs,
-    summarizedBeforeId,
-    summary,
-    contextWindow,
-    force = false,
-    reason,
-    realContextUsagePercent,
-  } = input;
-
-  // 1. 找到最后一次压缩的位置
+/**
+ * 找到上次压缩边界后的待处理消息。
+ */
+function findPendingMessages(
+  allMsgs: Message[],
+  summarizedBeforeId?: string,
+): { pendingMsgs: Message[]; startIndex: number } {
   let startIndex = 0;
   if (summarizedBeforeId) {
     const found = allMsgs.findIndex((m) => m.id === summarizedBeforeId);
-    if (found !== -1) {
-      startIndex = found + 1;
-    }
+    if (found !== -1) startIndex = found + 1;
   }
+  return { pendingMsgs: allMsgs.slice(startIndex), startIndex };
+}
 
-  // 待处理的消息（尚未被压缩进 summary）
-  const pendingMsgs = allMsgs.slice(startIndex);
-  if (pendingMsgs.length === 0) {
-    return emptyPlan(startIndex);
-  }
+/**
+ * 判断是否应该触发压缩（预算/遥测/主动归档）。
+ */
+function shouldTriggerCompaction(args: {
+  pendingTokens: number;
+  summaryTokens: number;
+  contextWindow: number;
+  historyBudget: number;
+  force: boolean;
+  reason?: CompressionReason;
+  realContextUsagePercent?: number;
+  lastCompactedTokenCount?: number;
+  lastMsg?: Message;
+}): { trigger: boolean; triggeredByRealUsage: boolean; shouldRunActiveSummary: boolean } {
+  const {
+    pendingTokens, summaryTokens, contextWindow, historyBudget,
+    force, reason, realContextUsagePercent, lastCompactedTokenCount, lastMsg,
+  } = args;
 
-  // 2. 计算当前总开销 = 已有 Summary + 待处理消息
-  const summaryTokens = estimateTokenCount(summary || "");
-  const pendingTokens = pendingMsgs.reduce(
-    (sum, msg) => sum + getMessageTokenCount(msg),
-    0
-  );
   const totalUsed = summaryTokens + pendingTokens;
-
-  // 3. 基于模型窗口 / slider / 近期负载，规划历史预算
-  const adjustedSummaryTokens = Math.max(summaryTokens, 1000);
-  const recentLoad = classifyConversationLoad(pendingMsgs);
-  const { historyBudget, rawMessageBudget } = planContextUsage({
-    contextWindow,
-    summaryTokens: adjustedSummaryTokens,
-    recentLoad,
-  });
+  const usageRatio = normalizeContextUsageRatio(realContextUsagePercent);
 
   let shouldTriggerByUsage = false;
-  const usageRatio = normalizeContextUsageRatio(realContextUsagePercent);
   if (usageRatio !== undefined) {
     if (usageRatio >= 0.78) {
       shouldTriggerByUsage = true;
-    } else if (
-      usageRatio >= 0.65 &&
-      isActiveSummaryWorthDoing(pendingTokens, contextWindow)
-    ) {
+    } else if (usageRatio >= 0.65 && isActiveSummaryWorthDoing(pendingTokens, contextWindow)) {
       shouldTriggerByUsage = true;
     }
   }
-  // 估算安全网始终兜底：真实占用率可能是「合法但错误」的遥测（例如上报偏低
-  // 导致压缩被抑制、上下文无限增长），不能因为它的存在就禁用基于预算的估算
-  // 触发。usageRatio 分支只负责「真实占用率触发的额外压缩」，估算兜底不变。
   if (totalUsed >= historyBudget) {
     shouldTriggerByUsage = true;
   }
 
-  const shouldRunActiveSummary =
-    force &&
-    reason === "manual" &&
-    !hasOpenEndedToolCall(pendingMsgs[pendingMsgs.length - 1]) &&
-    isActiveSummaryWorthDoing(pendingTokens, contextWindow);
-
-  // 既未达到使用率/用量门槛，也没有明确的主动归档信号，不触发压缩
-  if (!shouldTriggerByUsage && !shouldRunActiveSummary) {
-    return emptyPlan(startIndex);
+  // 防死亡螺旋守卫
+  if (
+    typeof lastCompactedTokenCount === "number" &&
+    Number.isFinite(lastCompactedTokenCount) &&
+    lastCompactedTokenCount >= 0 &&
+    !force &&
+    !(usageRatio !== undefined && usageRatio >= 0.78)
+  ) {
+    const minNewTokensToCompress = Math.min(40_000, Math.max(5_000, Math.floor(contextWindow * 0.03)));
+    if (totalUsed < lastCompactedTokenCount + minNewTokensToCompress) {
+      return { trigger: false, triggeredByRealUsage: false, shouldRunActiveSummary: false };
+    }
   }
 
-  // 4. 需要压缩：决定把哪些消息压进去
-  // 目标：压缩后，summary + 保留的原始消息 ≈ historyBudget，
-  // 且尽量保留最近的若干条消息。
+  const shouldRunActiveSummary =
+    force && reason === "manual" && !hasOpenEndedToolCall(lastMsg) && isActiveSummaryWorthDoing(pendingTokens, contextWindow);
+
+  const triggeredByRealUsage = usageRatio !== undefined && shouldTriggerByUsage;
+  return { trigger: shouldTriggerByUsage || shouldRunActiveSummary, triggeredByRealUsage, shouldRunActiveSummary };
+}
+
+/**
+ * 从后往前保留消息直到填满 rawMessageBudget，返回应压缩的条数。
+ */
+function calculateCompressCount(
+  pendingMsgs: Message[],
+  rawMessageBudget: number,
+  opts: { keepTailCount: boolean; totalUsed: number; historyBudget: number },
+): number {
+  const { keepTailCount, totalUsed, historyBudget } = opts;
+
+  if (keepTailCount && totalUsed < historyBudget) {
+    return Math.max(0, pendingMsgs.length - ACTIVE_SUMMARY_TAIL_KEEP_COUNT);
+  }
+
   let tokensToKeep = 0;
   let keepCount = 0;
-
-  // 从后往前数，保留最近的消息直到填满 rawMessageBudget
   for (let i = pendingMsgs.length - 1; i >= 0; i--) {
     const t = getMessageTokenCount(pendingMsgs[i]);
     if (tokensToKeep + t > rawMessageBudget) break;
     tokensToKeep += t;
     keepCount++;
   }
+  return pendingMsgs.length - keepCount;
+}
 
-  const triggeredByRealUsage =
-    usageRatio !== undefined && shouldTriggerByUsage;
-
-  // 主动归档或真实占用率触发时，若估算开销低于 historyBudget，保留最后两条原文
-  let compressCount =
-    (shouldRunActiveSummary || triggeredByRealUsage) && totalUsed < historyBudget
-      ? Math.max(0, pendingMsgs.length - ACTIVE_SUMMARY_TAIL_KEEP_COUNT)
-      : pendingMsgs.length - keepCount;
-
-  // Guard: Prevent breaking tool chains or compressing open-ended tool calls
-  // OpenAI requires: Assistant(tool_calls) -> Tool(output) must be contiguous.
-  // 1. Ensure we do not cut immediately before a 'tool' message.
-  // If pendingMsgs[compressCount] (the first kept message) is 'tool',
-  // it means we are summarizing its parent 'assistant'. This is illegal.
-  while (
-    compressCount > 0 &&
-    compressCount < pendingMsgs.length &&
-    pendingMsgs[compressCount].role === "tool"
-  ) {
-    compressCount--;
+/**
+ * 保护 tool chain 边界：不切断 assistant(tool_calls) → tool(result) 配对。
+ */
+function guardToolChainBoundary(pendingMsgs: Message[], compressCount: number): number {
+  let count = compressCount;
+  // 不让保留的第一条是 tool（它的 assistant 被压缩了就是孤儿）
+  while (count > 0 && count < pendingMsgs.length && pendingMsgs[count].role === "tool") {
+    count--;
   }
-
-  // 2. Ensure the last compressed message is not an assistant with tool_calls that needs a future tool output
-  // (This is implicitly covered by #1 if tool output exists, but if tool output hasn't arrived yet,
-  // we must check the last message itself).
-  if (compressCount > 0) {
-    const lastCompressed = pendingMsgs[compressCount - 1];
-    const hasToolCalls =
-      Array.isArray((lastCompressed as any).tool_calls) &&
-      (lastCompressed as any).tool_calls.length > 0;
-    if (hasToolCalls) {
-      // If we are chopping off the end of the conversation, and it ends with a tool call,
-      // we must preserve it until tool output arrives.
-      // Actually, just to be safe, never compress an active tool call.
-      compressCount--;
+  // 最后一条被压缩的不能是带 tool_calls 的 assistant（output 还没来）
+  if (count > 0) {
+    const lastCompressed = pendingMsgs[count - 1];
+    if (hasOpenEndedToolCall(lastCompressed)) {
+      count--;
     }
   }
+  return count;
+}
 
-  // 5. 可压缩的消息太少，不值得压缩
-  if (compressCount < MIN_COMPRESS_COUNT) {
-    return emptyPlan(startIndex);
-  }
+export function planCompression(input: CompressionInput): CompressionPlan {
+  const {
+    allMsgs, summarizedBeforeId, summary, contextWindow,
+    force = false, reason, realContextUsagePercent,
+  } = input;
+
+  // 1. 找待处理消息
+  const { pendingMsgs, startIndex } = findPendingMessages(allMsgs, summarizedBeforeId);
+  if (pendingMsgs.length === 0) return emptyPlan(startIndex);
+
+  // 2. 算 token 开销 + 预算
+  const summaryTokens = estimateTokenCount(summary || "");
+  const pendingTokens = pendingMsgs.reduce((sum, msg) => sum + getMessageTokenCount(msg), 0);
+  const totalUsed = summaryTokens + pendingTokens;
+  const adjustedSummaryTokens = Math.max(summaryTokens, 1000);
+  const recentLoad = classifyConversationLoad(pendingMsgs);
+  const { historyBudget, rawMessageBudget } = planContextUsage({
+    contextWindow, summaryTokens: adjustedSummaryTokens, recentLoad,
+  });
+
+  // 3. 判断是否触发
+  const { trigger, triggeredByRealUsage, shouldRunActiveSummary } = shouldTriggerCompaction({
+    pendingTokens, summaryTokens, contextWindow, historyBudget,
+    force, reason, realContextUsagePercent,
+    lastCompactedTokenCount: input.lastCompactedTokenCount,
+    lastMsg: pendingMsgs[pendingMsgs.length - 1],
+  });
+  if (!trigger) return emptyPlan(startIndex);
+
+  // 4. 算压缩条数 + 保护 tool chain
+  let compressCount = calculateCompressCount(pendingMsgs, rawMessageBudget, {
+    keepTailCount: shouldRunActiveSummary || triggeredByRealUsage,
+    totalUsed, historyBudget,
+  });
+  compressCount = guardToolChainBoundary(pendingMsgs, compressCount);
+
+  // 5. 太少不值得压缩
+  if (compressCount < MIN_COMPRESS_COUNT) return emptyPlan(startIndex);
 
   const msgsToCompress = pendingMsgs.slice(0, compressCount);
   const msgsToKeep = pendingMsgs.slice(compressCount);
-
-  // 最后一条被压缩的消息
   const newSummarizedBeforeId = msgsToCompress[msgsToCompress.length - 1].id;
 
   return {

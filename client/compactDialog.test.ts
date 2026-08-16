@@ -238,13 +238,15 @@ describe("parseTokenUserId", () => {
 
 describe("compactDialog with summary compression", () => {
   test("generates summary, patches old dialog, and fork inherits compressed state", async () => {
-    // Build messages with enough tokens to trigger compression
+    // Build messages with enough tokens to trigger compression.
+    // P-1 后 token 从 content 估算（英文 4 字符 ≈ 1 token）。
     // manual force needs isActiveSummaryWorthDoing: pendingTokens >= max(10000, contextWindow*0.05)
-    // DEFAULT_CONTEXT_WINDOW=256000 → minTokens=12800 → need >= 128 msgs * 100 tokens
+    // DEFAULT_CONTEXT_WINDOW=256000 → minTokens=12800 → need >= 12800 tokens
+    // 140 msgs × 100 tokens = 14000 > 12800. 用 400 字符 padding 模拟 100 token/msg。
     const msgs = Array.from({ length: 140 }, (_, i) => ({
       id: `m${i + 1}`,
       role: i % 2 === 0 ? "user" : "assistant",
-      content: `message ${i + 1} with enough text to have tokens`,
+      content: `message ${i + 1} ` + "x".repeat(396), // ~400 chars ≈ 100 tokens
       usage: { completion_tokens: 100 },
     }));
 

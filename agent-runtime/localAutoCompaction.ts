@@ -10,9 +10,18 @@
  */
 
 import { planCompression } from "../ai/context/planCompression";
+import { estimateTokenCount } from "../ai/context/tokenUtils";
 import { getModelContextWindow } from "../ai/llm/getModelContextWindow";
 import { canonicalizeToolName } from "./toolNameAliases";
-import { serializeMessageContent } from "../core/chat/messageContentSerialize";
+import {
+  COMPACTION_SUMMARY_SYSTEM_PROMPT,
+  formatMessagesForSummaryWithTruncation,
+  formatFileOperationsFromMessages,
+  buildCompactionUserContent,
+  buildCompactionMetricsFromPlan,
+  formatCompactionMetricsLog,
+  type CompactionMetrics,
+} from "../ai/context/compactionShared";
 import type {
   AgentRuntimeHostAdapter,
   AgentRuntimeProvider,
@@ -26,159 +35,31 @@ export type PlanCompressionBridgeMessage = {
   role: AgentRuntimeChatMessage["role"];
   content: AgentRuntimeChatMessage["content"];
   tool_calls?: AgentRuntimeChatMessage["tool_calls"];
-  usage?: { completion_tokens?: number };
 };
 
 /**
- * 摘要 system prompt。产出可替代原始消息的事实性要点，不是文学性总结。
- * 明确禁止调工具，避免对话 agent 的 tool schema 干扰单次 complete。
+ * 保留向下兼容的 re-export：外部可能仍 import LOCAL_AUTO_COMPACTION_SYSTEM_PROMPT
+ * 或 FileOperation，统一指向共享模块的同名常量。
  */
-export const LOCAL_AUTO_COMPACTION_SYSTEM_PROMPT = `你是对话上下文压缩器。根据【现有记忆】和【新增对话】，输出可替代原始消息的事实性要点，供后续对话直接使用。
-
-严格只输出下面三部分，标题必须完全一致：
-关键事实档案
-- ...
-对话进展与待办
-- ...
-文件操作清单
-- ...
-
-要求：
-1) 使用对话主语言；混合语言时优先用户主要语言；专有名词、文件路径、标识符、命令保留原文。
-2) 关键事实档案只保留之后继续对话仍有价值的信息：用户目标/偏好、约束、技术栈、确定的文件路径、核心决策、未完成待办。
-3) 对话进展与待办：先极简概括旧上下文，再更详细记录最近进展、结论、分歧与下一步。
-4) 文件操作清单：列出本次压缩范围内读取、写入、编辑过的文件路径及操作类型（如: - 读取: path/to/file；若未涉及文件操作写"无"）。
-5) 忽略寒暄、重复尝试、已放弃方案和无价值废话。
-6) 不要编造未出现的信息；不要开场白、结束语、markdown 代码块或额外章节；不要调用任何工具。`;
-
-export type FileOperation = {
-  type: "read" | "write" | "edit";
-  path: string;
-};
-
-export function extractFileOperations(
-  msgs: PlanCompressionBridgeMessage[],
-): FileOperation[] {
-  const result: FileOperation[] = [];
-  const seen = new Set<string>();
-
-  for (const msg of msgs) {
-    if (!Array.isArray(msg.tool_calls)) continue;
-    for (const call of msg.tool_calls) {
-      const name =
-        call.function?.name || (call as { name?: string }).name || "";
-      if (!name) continue;
-
-      // Canonicalize model aliases first, then classify only local file tools.
-      // This preserves read/edit/write tool calls without misclassifying
-      // readDoc/readAgent/writeRow as filesystem operations.
-      const canonicalName = canonicalizeToolName(name);
-      const fileOperationByTool: Record<string, FileOperation["type"]> = {
-        readFile: "read",
-        writeFile: "write",
-        editFile: "edit",
-      };
-      const opType = fileOperationByTool[canonicalName];
-
-      if (!opType) continue;
-
-      let rawArgs =
-        call.function?.arguments ??
-        (call as { arguments?: unknown }).arguments;
-      let parsedArgs: Record<string, unknown> | null = null;
-
-      if (typeof rawArgs === "string") {
-        try {
-          parsedArgs = JSON.parse(rawArgs);
-        } catch {
-          // ignore invalid JSON
-        }
-      } else if (typeof rawArgs === "object" && rawArgs !== null) {
-        parsedArgs = rawArgs as Record<string, unknown>;
-      }
-
-      const path =
-        parsedArgs?.path ?? parsedArgs?.filePath ?? parsedArgs?.file;
-      if (typeof path === "string" && path.trim()) {
-        const key = `${opType}:${path.trim()}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          result.push({ type: opType, path: path.trim() });
-        }
-      }
-    }
-  }
-
-  return result;
-}
-
-export function formatFileOperations(
-  msgs: PlanCompressionBridgeMessage[],
-): string {
-  const ops = extractFileOperations(msgs);
-  if (ops.length === 0) {
-    return "无";
-  }
-  const typeLabelMap = {
-    read: "读取",
-    write: "写入",
-    edit: "编辑",
-  };
-  return ops
-    .map((op) => `- ${typeLabelMap[op.type]}: ${op.path}`)
-    .join("\n");
-}
-
-export function buildLocalAutoCompactionUserContent(
-  previousSummary: string,
-  messagesText: string,
-  fileOpsText?: string,
-): string {
-  const parts = [`【现有记忆】：\n${previousSummary || "(无)"}`];
-  if (fileOpsText !== undefined) {
-    parts.push(`【文件操作清单】：\n${fileOpsText || "无"}`);
-  }
-  parts.push(`【新增对话】：\n${messagesText}`);
-  return parts.join("\n\n").trim();
-}
+export { COMPACTION_SUMMARY_SYSTEM_PROMPT as LOCAL_AUTO_COMPACTION_SYSTEM_PROMPT } from "../ai/context/compactionShared";
 
 /**
  * AgentRuntimeChatMessage → planCompression 输入桥接。
- * 只映射判定所需字段：id / role / content / tool_calls / usage.completion_tokens。
+ * 只映射判定所需字段：id / role / content / tool_calls。
  * id 用稳定的位置索引（历史只追加不重排），以便 summarizedBeforeId 跨轮对齐。
+ * P-1 后不再映射 usage.completion_tokens（getMessageTokenCount 从 content 估算）。
  */
 export function toPlanCompressionMessages(
   history: AgentRuntimeChatMessage[],
 ): PlanCompressionBridgeMessage[] {
-  return history.map((message, index) => {
-    const usage = (message as { usage?: { completion_tokens?: number } }).usage;
-    return {
-      id: `local-${index}`,
-      role: message.role,
-      content: message.content,
-      ...(Array.isArray(message.tool_calls)
-        ? { tool_calls: message.tool_calls }
-        : {}),
-      ...(usage?.completion_tokens != null
-        ? { usage: { completion_tokens: usage.completion_tokens } }
-        : {}),
-    };
-  });
-}
-
-export function formatMessagesForLocalSummary(
-  msgs: PlanCompressionBridgeMessage[],
-): string {
-  return msgs
-    .map((msg) => {
-      const content =
-        serializeMessageContent(msg.content) ||
-        (Array.isArray(msg.tool_calls)
-          ? `[tool_calls:${msg.tool_calls.map((c) => c.function?.name).filter(Boolean).join(",")}]`
-          : "[非文本内容]");
-      return `${msg.role}: ${content}`;
-    })
-    .join("\n");
+  return history.map((message, index) => ({
+    id: `local-${index}`,
+    role: message.role,
+    content: message.content,
+    ...(Array.isArray(message.tool_calls)
+      ? { tool_calls: message.tool_calls }
+      : {}),
+  }));
 }
 
 export function buildLocalSummaryHistoryMessage(
@@ -245,6 +126,8 @@ export type LocalAutoCompactionResult = {
    * 形成计费盲区（本轮改动的主题恰恰是成本可观测）。
    */
   usage?: Record<string, unknown>;
+  /** P1-8: 压缩 metrics（仅在 summaryGenerated=true 时有值） */
+  metrics?: CompactionMetrics;
 };
 
 export async function maybeAutoCompactLocalHistory(args: {
@@ -311,6 +194,11 @@ export async function maybeAutoCompactLocalHistory(args: {
     summarizedBeforeId,
     summary: existingSummary,
     contextWindow,
+    // 防死亡螺旋：用 summary 长度作为上次压缩后的基线。如果新内容没让
+    // totalUsed 比 summary 本身增长超过 minNewTokens，不重复触发。
+    lastCompactedTokenCount: existingSummary
+      ? estimateTokenCount(existingSummary)
+      : undefined,
     ...(coldResume ? { force: true, reason: "context_budget" as const } : {}),
   });
 
@@ -335,15 +223,19 @@ export async function maybeAutoCompactLocalHistory(args: {
     const provider = await args.resolveProvider();
     const msgsToCompress =
       plan.msgsToCompress as PlanCompressionBridgeMessage[];
-    const messagesText = formatMessagesForLocalSummary(msgsToCompress);
-    const fileOpsText = formatFileOperations(msgsToCompress);
-    const promptContent = buildLocalAutoCompactionUserContent(
-      existingSummary,
+    // 用共享模块的截断版格式化，避免大工具结果撑爆摘要请求（P0-2）。
+    const messagesText = formatMessagesForSummaryWithTruncation(msgsToCompress);
+    const fileOpsText = formatFileOperationsFromMessages(
+      msgsToCompress,
+      canonicalizeToolName,
+    );
+    const promptContent = buildCompactionUserContent({
+      previousSummary: existingSummary,
       messagesText,
       fileOpsText,
-    );
+    });
     const result = await provider.complete([
-      { role: "system", content: LOCAL_AUTO_COMPACTION_SYSTEM_PROMPT },
+      { role: "system", content: COMPACTION_SUMMARY_SYSTEM_PROMPT },
       { role: "user", content: promptContent },
     ]);
     const newSummary =
@@ -361,6 +253,16 @@ export async function maybeAutoCompactLocalHistory(args: {
       summarizedBeforeId: plan.newSummarizedBeforeId,
     });
 
+    // P1-8 压缩埋点：记录 metrics 并日志
+    const metrics = buildCompactionMetricsFromPlan({
+      reason: coldResume ? "cold_resume" : "context_budget",
+      previousSummary: existingSummary,
+      plan,
+      newSummary,
+      summaryUsage: result.usage as Record<string, unknown> | undefined,
+    });
+    console.log(formatCompactionMetricsLog(metrics));
+
     return {
       history: projectHistoryWithSummary({
         history,
@@ -370,6 +272,7 @@ export async function maybeAutoCompactLocalHistory(args: {
       compressed: true,
       summaryGenerated: true,
       ...(result.usage ? { usage: result.usage as Record<string, unknown> } : {}),
+      metrics,
     };
   } catch (error) {
     // 观测/优化功能：摘要失败绝不能让本轮对话失败。

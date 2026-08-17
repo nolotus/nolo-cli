@@ -166,7 +166,11 @@ export const updateTokensAction = async (
     agentConfig: callAgentConfig,
     userId: ownerUserId,
     username: currentUser?.username,
-    agentId: agentConfig.id,
+    // agentConfig.id is the canonical ulid; dbKey (agent-<userId>-<id>) is
+    // always present on db records. Quick-chat may construct agentConfig with
+    // only dbKey, so fall back to keep billing working (matches serverTokenWriter
+    // which passes agentKey = dbKey directly).
+    agentId: agentConfig.id || agentConfig.dbKey,
     dialogId,
     timestamp,
     entry_path: "web-chat",

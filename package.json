@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.32.0-alpha.3",
+  "version": "0.32.0-alpha.4",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -965,6 +965,7 @@
     "chat/messages/messageStreamEndBilling.ts",
     "chat/messages/messageStreamEndFinalMetadata.ts",
     "chat/messages/messageStreamEndPostWritePolicy.ts",
+    "chat/messages/messageStreamEndBillingDispatch.ts",
     "chat/messages/messageStreamEndPersistPrep.ts",
     "chat/messages/messageUnderstandingCapture.ts",
     "chat/messages/messageSessionStore.ts",

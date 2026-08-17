@@ -51,6 +51,7 @@ import { applyMessageStreamingUpsert } from "./messageStreamApply";
 import { resolveStreamEndBillingUsages } from "./messageStreamEndBilling";
 import { resolveStreamEndFinalMetadata } from "./messageStreamEndFinalMetadata";
 import { resolveStreamEndPostWritePolicy } from "./messageStreamEndPostWritePolicy";
+import { dispatchStreamEndBilling } from "./messageStreamEndBillingDispatch";
 import { prepareStreamEndPersistInputs } from "./messageStreamEndPersistPrep";
 import {
   captureUnderstandingFromCompletedUiTurn as captureUnderstandingFromCompletedUiTurnCore,
@@ -1004,37 +1005,21 @@ export const messageSlice = createSliceWithThunks({
           toolCalls,
         });
 
-        if (billingMode === "reported") {
-          const usageRecords = billingUsageRecords?.length
-            ? billingUsageRecords
-            : [{ callId: undefined, usage: billedUsage }];
-          for (const usageRecord of usageRecords) {
-            await dispatch(
-              (updateTokens as any)({
-                dialogId,
-                dialogKey,
-                usageRecord,
-                agentConfig,
-              })
-            ).unwrap();
-          }
-        } else if (billingMode === "estimated") {
-          await dispatch(
-            (updateTokens as any)({
-              dialogId,
-              dialogKey,
-              usage: billedEstimatedUsage,
-              agentConfig,
-            })
-          ).unwrap();
-          console.warn("[billing] Missing usage at messageStreamEnd; using estimated token update", {
-            dialogId,
-            dialogKey,
-            provider: agentConfig.provider,
-            model: agentConfig.model,
-            endpointKey: agentConfig.endpointKey,
-          });
-        }
+        // Wave21: billing dispatch extracted to messageStreamEndBillingDispatch.
+        // Best-effort: the terminal assistant write already settled above.
+        // A token-accounting failure must not reject the whole thunk and stamp
+        // "[Failed to save message]" — the message IS saved.
+        await dispatchStreamEndBilling({
+          dispatch,
+          updateTokensAction: updateTokens as any,
+          billingMode,
+          billingUsageRecords,
+          billedUsage,
+          billedEstimatedUsage,
+          dialogId,
+          dialogKey,
+          agentConfig,
+        });
 
         if (updateTitle) {
           dispatch((updateDialogTitle as any)({ dialogKey, agentConfig }));

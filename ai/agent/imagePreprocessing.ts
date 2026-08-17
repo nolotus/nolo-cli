@@ -190,9 +190,11 @@ export async function describeImageViaServerProxy(
       stream: false,
       provider: visionProvider,
       agentKey,
-      // server proxy 需要 url 字段，但 nolo 平台 agent 的上游由 server 端路由，
-      // 这里放一个占位 url，server 端会根据 provider/model 覆盖。
-      url: "https://api.ollama.com/v1/chat/completions",
+      // server proxy 需要 url 字段，但 nolo 平台 agent 的上游由 server 端路由。
+      // 留空让 server 端根据 provider/model 解析真实上游；非空时 server 直接使用，
+      // 因此绝不能放占位 url（历史 bug：api.ollama.com 占位被当真实上游，把
+      // 用户图片和平台 key 发到非标准主机）。
+      url: "",
     };
 
     const response = await fetch(`${serverUrl}/api/chat`, {

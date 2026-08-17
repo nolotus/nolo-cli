@@ -102,7 +102,6 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       fetchImpl: (async () => ({})) as any,
       titleGenerator: async () => titleGate,
       // Long timeout so the gate (not the timeout) resolves the race.
-      titleTimeoutMs: 5000,
     });
 
     // writeDialog resolves immediately (before gate release) with fallback.
@@ -151,7 +150,6 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       fetchImpl: (async () => ({})) as any,
       titleGenerator: async () => neverResolvingGate,
       // Short injected timeout — exercises the timeout path without real timers.
-      titleTimeoutMs: 30,
     });
     const elapsed = Date.now() - start;
 
@@ -182,7 +180,6 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       env: {},
       fetchImpl: (async () => ({})) as any,
       titleGenerator: async () => "UI 样式系统重构",
-      titleTimeoutMs: 5000,
     });
 
     // PERF: title 现在是 fire-and-forget——writeDialog 返回时 result.title
@@ -233,7 +230,6 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       env: {},
       fetchImpl: (async () => ({})) as any,
       titleGenerator,
-      titleTimeoutMs: 100,
     });
 
     expect(generatorCalled).toBe(false);
@@ -281,7 +277,6 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       env: {},
       fetchImpl: (async () => ({})) as any,
       titleGenerator,
-      titleTimeoutMs: 100,
     });
 
     expect(generatorCalled).toBe(false);
@@ -303,7 +298,6 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       env: {},
       fetchImpl: (async () => ({})) as any,
       titleGenerator,
-      titleTimeoutMs: 100,
     });
 
     expect(generatorCalled).toBe(true);
@@ -353,7 +347,6 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       env: {},
       fetchImpl: (async () => ({})) as any,
       titleGenerator,
-      titleTimeoutMs: 100,
     });
 
     expect(generatorCalled).toBe(false);

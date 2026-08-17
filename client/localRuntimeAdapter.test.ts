@@ -1260,18 +1260,29 @@ describe("CLI local runtime adapter", () => {
       input: "hello",
     });
 
+    // PERF: title patch + remote sync are now fire-and-forget. Wait for
+    // pending background I/O (title gen + remote writes) to settle before
+    // asserting request order.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
     expect(result.content).toBe("cluster cache ok");
-    expect(requests).toEqual([
+    // PERF: title gen + remote sync are now fire-and-forget, so the title
+    // fallback request may land before or after the remote writes. Assert
+    // the ordered prefix (turn-critical requests) + unordered background set.
+    const orderedPrefix = requests.slice(0, 4);
+    expect(orderedPrefix).toEqual([
       "http://127.0.0.1:38123/api/v1/db/read/agent-user-1-cluster",
       "https://nolo.chat/api/v1/db/read/agent-user-1-cluster",
       "http://127.0.0.1:11434/v1/chat/completions",
-      // 标题生成：平台 proxy 不可达（404）→ fallback 本地 OpenAI-compatible
       "http://127.0.0.1:38123/api/v1/chat",
+    ]);
+    const backgroundRequests = requests.slice(4).sort();
+    expect(backgroundRequests).toEqual([
       "http://127.0.0.1:11434/v1/chat/completions",
       "http://127.0.0.1:38123/api/v1/db/write/",
       "http://127.0.0.1:38123/api/v1/db/write/",
       "http://127.0.0.1:38123/api/v1/db/write/",
-    ]);
+    ].sort());
     expect(memory.get("agent-user-1-cluster")).toMatchObject({
       name: "Cluster cached",
       serverOrigin: "https://nolo.chat",
@@ -4478,6 +4489,9 @@ describe("CLI local runtime adapter remote sync fetch timeout", () => {
 
       // Turn completes despite the hung remote sync.
       expect(result.dialogId).toBe("01ABORT");
+      // PERF: remote sync is now fire-and-forget — the warning lands after
+      // the turn returns. Wait for the sync timeout + catch to settle.
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
       expect(warnings.some((w) => w.includes("Remote dialog evidence sync failed"))).toBe(true);
     } finally {
       setRemoteDialogSyncTimeoutForTest(undefined);

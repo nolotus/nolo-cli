@@ -77,13 +77,12 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
     expect(dialogRecord.title).toBe("UI 样式系统重构");
   });
 
-  test("HIGH-2: writeDialog awaits the LLM title before returning (no longer fire-and-forget)", async () => {
+  test("HIGH-2: writeDialog returns immediately with fallback; LLM title patches in background", async () => {
     const store = createMockStore();
     const nowCounter = 1710000000000;
 
     // titleGenerator that resolves only when we release the gate — proving
-    // writeDialog now WAITS for the title (previous fire-and-forget behavior
-    // lost the title on one-shot CLI process exit).
+    // writeDialog no longer waits (PERF: fire-and-forget avoids 2.5s stall).
     let releaseTitle: (() => void) | null = null;
     const titleGate = new Promise<string>((resolve) => {
       releaseTitle = () => resolve("延迟生成标题");
@@ -106,15 +105,19 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       titleTimeoutMs: 5000,
     });
 
-    // Release the gate; writeDialog should then resolve with the LLM title.
-    releaseTitle!();
+    // writeDialog resolves immediately (before gate release) with fallback.
     const result = await writePromise;
+    expect(typeof result.title).toBe("string");
+    expect(result.title.length).toBeGreaterThan(0);
 
-    // HIGH-2(c): the return value reflects the final LLM title.
-    expect(result.title).toBe("延迟生成标题");
-    // HIGH-2(b): the persisted record carries the LLM title (no background
-    // patch needed — the title is written in the same batch via titleOverride).
-    const dialogRecord = store.getData()["dialog-local-user-d-block"];
+    // Before gate release: dialog record has fallback title.
+    let dialogRecord = store.getData()["dialog-local-user-d-block"];
+    expect(dialogRecord.title).not.toBe("延迟生成标题");
+
+    // Release the gate; titlePatchPromise settles with the LLM title.
+    releaseTitle!();
+    await result.titlePatchPromise;
+    dialogRecord = store.getData()["dialog-local-user-d-block"];
     expect(dialogRecord.title).toBe("延迟生成标题");
   });
 
@@ -182,7 +185,12 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
       titleTimeoutMs: 5000,
     });
 
-    expect(result.title).toBe("UI 样式系统重构");
+    // PERF: title 现在是 fire-and-forget——writeDialog 返回时 result.title
+    // 是 fallback（从用户首句提取），LLM title 后台 patch 进 dialog record。
+    expect(typeof result.title).toBe("string");
+    expect(result.title.length).toBeGreaterThan(0);
+    // 等 patch 完成后，持久化记录里的 title 才是 LLM 生成的。
+    await result.titlePatchPromise;
     const dialogRecord = store.getData()["dialog-local-user-d-llm"];
     expect(dialogRecord.title).toBe("UI 样式系统重构");
   });
@@ -281,7 +289,7 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
 
     // 35 minutes later (>= 30 min): regenerate.
     const ThirtyFiveMinutesMs = 35 * 60 * 1000;
-    await writeDialog({
+    const result35 = await writeDialog({
       store: store as any,
       input: {
         agentKey: "agent-local",
@@ -299,6 +307,8 @@ describe("localRuntimeDialog writeDialog title behavior", () => {
     });
 
     expect(generatorCalled).toBe(true);
+    // title 现在是 fire-and-forget patch，等它完成再检查持久化记录。
+    await result35.titlePatchPromise;
     const dialogRecord = store.getData()["dialog-local-user-d-throttle"];
     expect(dialogRecord.title).toBe("更新后的新标题");
     // titleUpdatedAt is refreshed to the new turn time.

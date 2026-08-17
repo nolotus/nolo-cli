@@ -241,23 +241,27 @@ export async function writeDialog(args: {
     fallbackTitle: string;
   }) => Promise<string | null>) | null;
   /**
-   * HIGH-2(a): how long writeDialog waits for the LLM title before returning
-   * with the fallback title. Defaults to 2500ms. Injectable for tests so the
-   * timeout path can be exercised deterministically without real timers.
+   * @deprecated title 生成现在是 fire-and-forget，此参数不再阻塞 turn
+   * 返回。保留声明仅为向后兼容（测试注入用），实际值不再被使用。
    */
   titleTimeoutMs?: number;
 }) {
+  const __perfEnabled = args.env?.NOLO_CLI_PERF === "1";
+  const __perfT0 = __perfEnabled ? performance.now() : 0;
   let existingDialog: any = null;
   if (args.input.continueDialogId) {
     const dialogKey = `dialog-${args.userId}-${args.input.continueDialogId}`;
     existingDialog = await args.store.read(dialogKey);
+  }
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog A:read-dialog: ${ms}ms\n`);
   }
 
   const nowMs = args.now();
   const existingTitle =
     typeof existingDialog?.title === "string" ? existingDialog.title.trim() : "";
   const existingTitleSource = existingDialog?.titleSource;
-  const titleTimeoutMs = args.titleTimeoutMs ?? 2500;
 
   // MEDIUM-1(a): throttle title regeneration by titleUpdatedAt (not updatedAt,
   // which is bumped every turn for unrelated fields). A manual title
@@ -286,6 +290,12 @@ export async function writeDialog(args: {
     }
   }
 
+  // PERF: title 生成改为 fire-and-forget。不再 await Promise.race 阻塞 turn
+  // 返回——实测 title LLM 调用稳定撞穿 2500ms 超时（见 baseline），用户白白
+  // 等 2.5 秒却什么都没拿到。现在先用 fallback title 写入并立即返回，title
+  // 回来后后台 patch dialog 记录。one-shot CLI 进程退出时 title 可能丢失，
+  // 但 TUI 是长驻进程，patch 几乎总能完成；即使丢失，下一轮 title 节流逻辑
+  // 会重新生成（needsTitleUpdate 仍为 true，因为 titleUpdatedAt 未刷新）。
   let titlePromise: Promise<string | null> | undefined;
   if (needsTitleUpdate && args.titleGenerator) {
     const rawLastUserText = extractLastUserText(args.input.messages);
@@ -296,31 +306,7 @@ export async function writeDialog(args: {
       .catch(() => null as string | null);
   }
 
-  // HIGH-2(a): wait for the LLM title with a bounded timeout so a one-shot CLI
-  // process does not exit before the title lands (the previous fire-and-forget
-  // patch was lost on process exit). On timeout we keep the fallback title and
-  // proceed — never hang. The race resolves to null on timeout / failure.
-  let resolvedTitle: string | null = null;
-  if (titlePromise) {
-    let timeoutId: any;
-    const timeoutPromise = new Promise<null>((resolve) => {
-      timeoutId = setTimeout(() => resolve(null), titleTimeoutMs);
-    });
-    try {
-      resolvedTitle = await Promise.race([titlePromise, timeoutPromise]);
-    } catch {
-      resolvedTitle = null;
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  }
-
-  // MEDIUM-2 (plan a): feed the LLM title through titleOverride so the contract
-  // (titleOverride drives the persisted title) actually holds in production,
-  // not just in tests. buildLocalDialogWritePlan → buildAgentRuntimeDialogWritePlan
-  // applies titleOverride while respecting manual titles (MEDIUM-1). This also
-  // means the persisted record AND the remote-sync ops carry the LLM title
-  // (HIGH-2b), so no separate background patch is needed.
+  // 不再 await title——用 fallback title 走 plan，立即持久化并返回。
   const plan = buildLocalDialogWritePlan({
     input: args.input,
     userId: args.userId,
@@ -328,9 +314,12 @@ export async function writeDialog(args: {
     createId: args.createId,
     existingDialog,
     cwd: args.cwd,
-    ...(resolvedTitle ? { titleOverride: resolvedTitle } : {}),
   });
   await args.store.batch(plan.ops);
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog C:store-batch (cumulative): ${ms}ms\n`);
+  }
 
   let tokenOps: Array<{ type: "put"; key: string; value: any }> = [];
   try {
@@ -348,38 +337,94 @@ export async function writeDialog(args: {
       `[nolo] Token usage record write failed (non-fatal): ${toErrorMessage(error)}\n`,
     );
   }
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog D:token-record (cumulative): ${ms}ms\n`);
+  }
 
   const hasSubjectRefs = localTurnHasSubjectRefs(args.input);
   const isLocalUser = args.userId === "local";
+  // PERF: 暴露 remote sync promise 让测试可等待；调用方不 await（subjectRef 除外）。
+  let remoteSyncPromise: Promise<void> | undefined;
   if (!isLocalUser) {
-    try {
-      const syncResult = await syncLocalDialogEvidenceToRemote({
+    if (hasSubjectRefs) {
+      // subjectRef 场景保留 await + throw：task 关联的对话证据必须远端
+      // 可查，失败时让 turn 失败比静默丢证据更安全。
+      remoteSyncPromise = (async () => {
+        const syncResult = await syncLocalDialogEvidenceToRemote({
+          env: args.env,
+          fetchImpl: args.fetchImpl,
+          input: args.input,
+          ops: [...plan.ops, ...tokenOps],
+          output: args.output,
+          userId: args.userId,
+        });
+        if (!syncResult.attempted) {
+          args.output?.write(
+            "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n",
+          );
+        }
+      })();
+      await remoteSyncPromise;
+    } else {
+      // PERF: 非 subjectRef 场景的 remote-sync 改为 fire-and-forget。实测
+      // 每轮 1-1.9 秒网络 I/O，是后续轮次"最后一句话后等待"的主要原因。
+      // sync 结果不进 writeDialog 返回值，只用于远端备份——不值得阻塞 turn。
+      // 失败时只提示用户，不 throw。
+      remoteSyncPromise = syncLocalDialogEvidenceToRemote({
         env: args.env,
         fetchImpl: args.fetchImpl,
         input: args.input,
         ops: [...plan.ops, ...tokenOps],
         output: args.output,
         userId: args.userId,
+      }).catch((error) => {
+        args.output?.write(
+          `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(error)}\n`,
+        );
       });
-      if (!syncResult.attempted) {
-        if (hasSubjectRefs) {
-          args.output?.write(
-            "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n",
-          );
-        }
-      }
-    } catch (error) {
-      if (hasSubjectRefs) {
-        throw error;
-      }
-      args.output?.write(
-        `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(
-          error,
-        )}\n`,
-      );
     }
   }
-  return { dialogId: plan.dialogId, title: plan.title };
+
+  // PERF: title 后台 patch——titlePromise resolve 后读回 dialog 记录、
+  // patch title + titleSource + titleUpdatedAt，再 write 回去。
+  // 不阻塞 writeDialog 返回；失败静默（下一轮节流会重试）。
+  // 返回 titlePatchPromise 让测试可等待 patch 完成；调用方（saveTurn）
+  // 不 await 它——patch 完成与否不影响 turn 返回。
+  let titlePatchPromise: Promise<void> | undefined;
+  if (titlePromise) {
+    const dialogKey = `dialog-${args.userId}-${plan.dialogId}`;
+    titlePatchPromise = titlePromise.then(async (resolvedTitle) => {
+      if (!resolvedTitle) return;
+      try {
+        const existing = await args.store.read(dialogKey);
+        if (!existing || typeof existing !== "object") return;
+        // 尊重 manual title：用户手动设的标题不被 LLM 覆盖。
+        if (existing?.titleSource === "manual") return;
+        // H-1 修复：竞态保护——如果 patch 读回的 record 的 titleUpdatedAt
+        // 比本轮（nowMs）更新，说明已有更新的 turn 写过这条 dialog。跳过
+        // patch 避免用旧 turn 的 titleUpdatedAt 覆盖新 turn 的值（会污染
+        // 新 turn 的 title 30 分钟节流判断）。
+        const existingTitleUpdatedAtMs = parseTitleUpdatedAtMs(existing);
+        if (existingTitleUpdatedAtMs > nowMs) return;
+        await args.store.write(dialogKey, {
+          ...existing,
+          title: resolvedTitle,
+          titleSource: "auto",
+          titleUpdatedAt: new Date(nowMs).toISOString(),
+        });
+      } catch {
+        // 静默失败：下一轮 needsTitleUpdate 仍为 true（titleUpdatedAt 未刷新），
+        // 会重新生成。不值得为此打扰用户。
+      }
+    });
+  }
+
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog total (blocking): ${ms}ms\n`);
+  }
+  return { dialogId: plan.dialogId, title: plan.title, titlePatchPromise, remoteSyncPromise };
 }
 
 export function resolveCliDialogRecordKey(userId: string, dialogId: string): string {

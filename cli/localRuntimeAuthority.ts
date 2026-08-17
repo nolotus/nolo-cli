@@ -64,12 +64,19 @@ type CliAuthorityBrokerConnectDeps = {
   createClient: (options: CliAuthorityBrokerClientOptions) => AuthorityStore;
   startBroker: (options: CliAuthorityBrokerServerOptions) => Promise<unknown>;
   sleep: (ms: number) => Promise<void>;
+  /**
+   * PERF: 快速路径开关——先尝试直接 open 连到已有 broker，跳过 startBroker
+   * 的 LevelDB open + lock 检测。生产默认 true；测试 mock 的 open 不做真实
+   * socket 连接，传 false 跳过快速路径走原有 startBroker 流程。
+   */
+  useFastPath?: boolean;
 };
 
 const defaultCliAuthorityBrokerConnectDeps: CliAuthorityBrokerConnectDeps = {
   createClient: (options) => createCliAuthorityBrokerClient(options),
   startBroker: (options) => getOrCreateCliAuthorityBrokerServer(options),
   sleep,
+  useFastPath: true,
 };
 
 export async function connectCliAuthorityBroker(args: {
@@ -101,6 +108,23 @@ export async function connectCliAuthorityBroker(args: {
         }
       }
       return false;
+    }
+
+    // PERF: 快速路径——先尝试直接 open 连到已有 broker。如果 broker 已
+    // 存在（TUI/daemon/之前的 agent run 启动的），open 会立即成功，跳过
+    // startBroker 的 LevelDB open + lock 检测（实测撞锁路径 ~800ms，
+    // 直接 open ~10ms）。如果 broker 不存在，open 会快速失败
+    // (ECONNREFUSED)，然后走下面的 startBroker 正常启动路径。
+    if (deps.useFastPath) {
+      try {
+        await client.open();
+        return client;
+      } catch (error) {
+        // H-1: 只在 broker 不可用（ECONNREFUSED / ENOENT 等）时 fallback
+        // 到 startBroker。其他 error（如 5s 超时、协议错误）直接 throw，
+        // 避免不健康的 broker 导致快速路径等 5s 后再走 fallback 又等 5s。
+        if (!isCliAuthorityBrokerUnavailableError(error)) throw error;
+      }
     }
 
     try {

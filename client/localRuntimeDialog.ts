@@ -27,6 +27,7 @@ import { prepareTokenUsageData } from "../ai/token/prepareTokenUsageData";
 import { applyTokenUsageToDayStats } from "../ai/token/applyTokenUsageToDayStats";
 import { createTokenKey, createTokenStatsKey } from "../database/keys";
 import { runKeyed } from "../core/keyedTaskQueue";
+import { createConcurrencyLimiter } from "../core/concurrencyLimiter";
 import { format } from "date-fns";
 import { type EnvLike } from "./localRuntimeHelpers";
 import {
@@ -39,6 +40,16 @@ import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
 import { buildDialogFallbackTitleFromUserInput } from "../chat/dialog/dialogTitle";
 import { toErrorMessage } from "../core/errorMessage";
 import type { CliFetchImpl } from "../cliFetch";
+
+// PERF: title patch 的并发限制器——title patch 做 read-modify-write
+// (2 次 broker IPC)，大批量 turn 时 25k 个后台 patch 会和前台 turn 争抢
+// broker。限 2 并发，让前台 turn 的 IPC 优先。
+const titlePatchLimiter = createConcurrencyLimiter(2);
+// 通过它排队，避免大批量 turn（如 5 agent × 50 分支 × 100 turn = 25k turns）
+// 的 25k 个并发 HTTP POST 打爆远端 server。最多 3 个 sync 同时在飞，
+// 其余排队等空位。syncLocalDialogEvidenceToRemote 内部已有批内节流
+// (4 并发 + 300ms gap)，这是跨 turn 的外层背压。
+const remoteSyncLimiter = createConcurrencyLimiter(3);
 
 export async function resolveStore(deps: CliLocalRuntimeAdapterDeps) {
   if (deps.store) return deps.store;
@@ -251,7 +262,11 @@ export async function writeDialog(args: {
   let existingDialog: any = null;
   if (args.input.continueDialogId) {
     const dialogKey = `dialog-${args.userId}-${args.input.continueDialogId}`;
-    existingDialog = await args.store.read(dialogKey);
+    // PERF: 只读本地——这里读 existing dialog 是为了 title 节流判断
+    // (titleUpdatedAt)。本地有就用、本地没有就是新对话。远端 fetch
+    // 实测 ~1.2s 且对新对话必然 miss（dialog 刚由本轮创建，远端还没
+    // 同步），完全白费。
+    existingDialog = await args.store.read(dialogKey, { remote: false });
   }
   if (__perfEnabled) {
     const ms = (performance.now() - __perfT0).toFixed(1);
@@ -371,14 +386,18 @@ export async function writeDialog(args: {
       // 每轮 1-1.9 秒网络 I/O，是后续轮次"最后一句话后等待"的主要原因。
       // sync 结果不进 writeDialog 返回值，只用于远端备份——不值得阻塞 turn。
       // 失败时只提示用户，不 throw。
-      remoteSyncPromise = syncLocalDialogEvidenceToRemote({
-        env: args.env,
-        fetchImpl: args.fetchImpl,
-        input: args.input,
-        ops: [...plan.ops, ...tokenOps],
-        output: args.output,
-        userId: args.userId,
-      }).catch((error) => {
+      // 通过 remoteSyncLimiter 限流（最多 3 并发），防止大批量 turn 的
+      // fire-and-forget 堆积打爆远端 server。
+      remoteSyncPromise = remoteSyncLimiter.run(() =>
+        syncLocalDialogEvidenceToRemote({
+          env: args.env,
+          fetchImpl: args.fetchImpl,
+          input: args.input,
+          ops: [...plan.ops, ...tokenOps],
+          output: args.output,
+          userId: args.userId,
+        })
+      ).catch((error) => {
         args.output?.write(
           `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(error)}\n`,
         );
@@ -396,27 +415,28 @@ export async function writeDialog(args: {
     const dialogKey = `dialog-${args.userId}-${plan.dialogId}`;
     titlePatchPromise = titlePromise.then(async (resolvedTitle) => {
       if (!resolvedTitle) return;
-      try {
-        const existing = await args.store.read(dialogKey);
-        if (!existing || typeof existing !== "object") return;
-        // 尊重 manual title：用户手动设的标题不被 LLM 覆盖。
-        if (existing?.titleSource === "manual") return;
-        // H-1 修复：竞态保护——如果 patch 读回的 record 的 titleUpdatedAt
-        // 比本轮（nowMs）更新，说明已有更新的 turn 写过这条 dialog。跳过
-        // patch 避免用旧 turn 的 titleUpdatedAt 覆盖新 turn 的值（会污染
-        // 新 turn 的 title 30 分钟节流判断）。
-        const existingTitleUpdatedAtMs = parseTitleUpdatedAtMs(existing);
-        if (existingTitleUpdatedAtMs > nowMs) return;
-        await args.store.write(dialogKey, {
-          ...existing,
-          title: resolvedTitle,
-          titleSource: "auto",
-          titleUpdatedAt: new Date(nowMs).toISOString(),
-        });
-      } catch {
-        // 静默失败：下一轮 needsTitleUpdate 仍为 true（titleUpdatedAt 未刷新），
-        // 会重新生成。不值得为此打扰用户。
-      }
+      // 通过 limiter 限流，防止大批量 turn 的 title patch 打爆 broker。
+      await titlePatchLimiter.run(async () => {
+        try {
+          const existing = await args.store.read(dialogKey);
+          if (!existing || typeof existing !== "object") return;
+          // 尊重 manual title：用户手动设的标题不被 LLM 覆盖。
+          if (existing?.titleSource === "manual") return;
+          // H-1 修复：竞态保护——如果 patch 读回的 record 的 titleUpdatedAt
+          // 比本轮（nowMs）更新，说明已有更新的 turn 写过这条 dialog。跳过
+          // patch 避免用旧 turn 的 titleUpdatedAt 覆盖新 turn 的值。
+          const existingTitleUpdatedAtMs = parseTitleUpdatedAtMs(existing);
+          if (existingTitleUpdatedAtMs > nowMs) return;
+          await args.store.write(dialogKey, {
+            ...existing,
+            title: resolvedTitle,
+            titleSource: "auto",
+            titleUpdatedAt: new Date(nowMs).toISOString(),
+          });
+        } catch {
+          // 静默失败：下一轮 needsTitleUpdate 仍为 true，会重新生成。
+        }
+      });
     });
   }
 

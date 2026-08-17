@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.31.0-alpha.9",
+  "version": "0.32.0-alpha.1",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -548,7 +548,6 @@
     "core/fetchWebpageShaping.ts",
     "core/internalHostname.ts",
     "core/keyedTaskQueue.ts",
-    "core/concurrencyLimiter.ts",
     "core/collapsedPaste.ts",
     "core/noloServerUrl.ts",
     "core/clipCompactText.ts",

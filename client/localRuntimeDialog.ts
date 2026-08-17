@@ -27,7 +27,6 @@ import { prepareTokenUsageData } from "../ai/token/prepareTokenUsageData";
 import { applyTokenUsageToDayStats } from "../ai/token/applyTokenUsageToDayStats";
 import { createTokenKey, createTokenStatsKey } from "../database/keys";
 import { runKeyed } from "../core/keyedTaskQueue";
-import { createConcurrencyLimiter } from "../core/concurrencyLimiter";
 import { format } from "date-fns";
 import { type EnvLike } from "./localRuntimeHelpers";
 import {
@@ -40,31 +39,6 @@ import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
 import { buildDialogFallbackTitleFromUserInput } from "../chat/dialog/dialogTitle";
 import { toErrorMessage } from "../core/errorMessage";
 import type { CliFetchImpl } from "../cliFetch";
-
-// PERF: fire-and-forget 路径的并发限制常量。
-// title patch 做 read-modify-write (2 次 broker IPC)，限 2 并发让前台 turn 优先。
-const MAX_TITLE_PATCH_CONCURRENT = 2;
-// remote sync 是 HTTP POST，限 3 并发避免大批量 turn 打爆远端 server。
-// syncLocalDialogEvidenceToRemote 内部已有批内节流 (4 并发 + 300ms gap)，
-// 这是跨 turn 的外层背压。
-const MAX_REMOTE_SYNC_CONCURRENT = 3;
-const titlePatchLimiter = createConcurrencyLimiter(MAX_TITLE_PATCH_CONCURRENT);
-const remoteSyncLimiter = createConcurrencyLimiter(MAX_REMOTE_SYNC_CONCURRENT);
-
-// PERF: 诊断打桩 helper——NOLO_CLI_PERF=1 时输出耗时到 stderr，生产零成本。
-function createPerfTracker(env: EnvLike) {
-  const enabled = env?.NOLO_CLI_PERF === "1";
-  const t0 = enabled ? performance.now() : 0;
-  return {
-    enabled,
-    mark(label: string, since?: number) {
-      if (!enabled) return;
-      const ms = (performance.now() - (since ?? t0)).toFixed(1);
-      process.stderr.write(`[nolo-perf] writeDialog ${label}: ${ms}ms\n`);
-    },
-    t0,
-  };
-}
 
 export async function resolveStore(deps: CliLocalRuntimeAdapterDeps) {
   if (deps.store) return deps.store;
@@ -151,113 +125,6 @@ export function createLocalDialogTitleGenerator(
     });
     return result.source === "llm" ? result.title : null;
   };
-}
-
-/**
- * PERF: title 后台 patch——titlePromise resolve 后读回 dialog 记录、
- * patch title + titleSource + titleUpdatedAt，再 write 回去。
- * 不阻塞 writeDialog 返回；失败静默（下一轮节流会重试）。
- * 通过 limiter 限流，防止大批量 turn 的 title patch 打爆 broker。
- *
- * 竞态保护（H-1）：如果 patch 读回的 record 的 titleUpdatedAt 比本轮
- * (nowMs) 更新，说明已有更新的 turn 写过这条 dialog。跳过 patch 避免
- * 用旧 turn 的 titleUpdatedAt 覆盖新 turn 的值。
- */
-export function patchDialogTitleInBackground(args: {
-  store: HybridRecordStore;
-  dialogKey: string;
-  titlePromise: Promise<string | null>;
-  nowMs: number;
-  limiter?: { run<T>(task: () => Promise<T>): Promise<T> };
-}): Promise<void> {
-  return args.titlePromise.then(async (resolvedTitle) => {
-    if (!resolvedTitle) return;
-    const limiter = args.limiter ?? titlePatchLimiter;
-    await limiter.run(async () => {
-      try {
-        const existing = await args.store.read(args.dialogKey);
-        if (!existing || typeof existing !== "object") return;
-        if (existing?.titleSource === "manual") return;
-        const existingTitleUpdatedAtMs = parseTitleUpdatedAtMs(existing);
-        if (existingTitleUpdatedAtMs > args.nowMs) return;
-        await args.store.write(args.dialogKey, {
-          ...existing,
-          title: resolvedTitle,
-          titleSource: "auto",
-          titleUpdatedAt: new Date(args.nowMs).toISOString(),
-        });
-      } catch {
-        // 静默失败：下一轮 needsTitleUpdate 仍为 true，会重新生成。
-      }
-    });
-  });
-}
-
-/**
- * PERF: remote-sync 封装——subjectRef 场景 await+throw（task 证据必须
- * 远端可查），非 subjectRef 场景 fire-and-forget（通过 limiter 限流，
- * 失败只提示不 throw）。消除 writeDialog 里两个分支的重复参数构造。
- */
-export function syncDialogEvidence(args: {
-  env: EnvLike;
-  fetchImpl: CliFetchImpl;
-  input: AgentRuntimeSaveTurnInput;
-  ops: Array<{ type: string; key: string; value: any }>;
-  output?: { write(chunk: string): unknown };
-  userId: string;
-  hasSubjectRefs: boolean;
-  limiter?: { run<T>(task: () => Promise<T>): Promise<T> };
-}): Promise<void> {
-  const syncArgs = {
-    env: args.env,
-    fetchImpl: args.fetchImpl,
-    input: args.input,
-    ops: args.ops,
-    output: args.output,
-    userId: args.userId,
-  };
-  if (args.hasSubjectRefs) {
-    // subjectRef 场景：await + throw，证据必须远端可查。
-    return (async () => {
-      const syncResult = await syncLocalDialogEvidenceToRemote(syncArgs);
-      if (!syncResult.attempted) {
-        args.output?.write(
-          "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n",
-        );
-      }
-    })();
-  }
-  // 非 subjectRef 场景：fire-and-forget，限流 + 失败只提示。
-  const limiter = args.limiter ?? remoteSyncLimiter;
-  return limiter
-    .run(() => syncLocalDialogEvidenceToRemote(syncArgs))
-    .catch((error) => {
-      args.output?.write(
-        `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(error)}\n`,
-      );
-    });
-}
-
-/**
- * MEDIUM-1: 判断是否需要重新生成 LLM 标题。
- * 节流规则（与 dialogWritePlan.ts 的 pickDialogTitle 共享 titleUpdatedAt 语义，
- * 但职责不同：这里决定"要不要花 LLM 调用生成"，pickDialogTitle 决定"用哪个 title"）：
- * - manual title 永不重生成
- * - 无 title → 需要生成
- * - titleUpdatedAt 超过 30 分钟 → 需要重生成
- * - titleUpdatedAt 缺失但有非空 title → 保守不重生成（旧记录兼容）
- */
-function shouldRegenerateTitle(existingDialog: any, nowMs: number): boolean {
-  const existingTitle =
-    typeof existingDialog?.title === "string" ? existingDialog.title.trim() : "";
-  const existingTitleSource = existingDialog?.titleSource;
-  if (existingTitleSource === "manual") return false;
-  if (!existingTitle) return true;
-  const titleUpdatedAtMs = parseTitleUpdatedAtMs(existingDialog);
-  if (titleUpdatedAtMs > 0) {
-    return nowMs - titleUpdatedAtMs >= 30 * 60 * 1000;
-  }
-  return false;
 }
 
 export async function writeLocalTokenRecord(args: {
@@ -373,24 +240,62 @@ export async function writeDialog(args: {
     messages: AgentRuntimeChatMessage[];
     fallbackTitle: string;
   }) => Promise<string | null>) | null;
+  /**
+   * @deprecated title 生成现在是 fire-and-forget，此参数不再阻塞 turn
+   * 返回。保留声明仅为向后兼容（测试注入用），实际值不再被使用。
+   */
+  titleTimeoutMs?: number;
 }) {
-  const perf = createPerfTracker(args.env);
-
-  // A: 读已有 dialog（仅本地）——用于 title 节流判断 (titleUpdatedAt)。
-  // PERF: remote: false——远端 fetch 对新对话必然 miss (dialog 刚由本轮
-  // 创建)，实测白费 ~1.2s。
+  const __perfEnabled = args.env?.NOLO_CLI_PERF === "1";
+  const __perfT0 = __perfEnabled ? performance.now() : 0;
   let existingDialog: any = null;
   if (args.input.continueDialogId) {
     const dialogKey = `dialog-${args.userId}-${args.input.continueDialogId}`;
-    existingDialog = await args.store.read(dialogKey, { remote: false });
+    existingDialog = await args.store.read(dialogKey);
   }
-  perf.mark("A:read-dialog");
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog A:read-dialog: ${ms}ms\n`);
+  }
 
   const nowMs = args.now();
-  const needsTitleUpdate = shouldRegenerateTitle(existingDialog, nowMs);
+  const existingTitle =
+    typeof existingDialog?.title === "string" ? existingDialog.title.trim() : "";
+  const existingTitleSource = existingDialog?.titleSource;
 
-  // PERF: title 生成 fire-and-forget——先用 fallback title 写入返回，
-  // title 回来后后台 patch (patchDialogTitleInBackground)。
+  // MEDIUM-1(a): throttle title regeneration by titleUpdatedAt (not updatedAt,
+  // which is bumped every turn for unrelated fields). A manual title
+  // (titleSource:"manual") is never regenerated. When titleUpdatedAt is
+  // missing we are conservative: only regenerate when there is no existing
+  // non-empty title — this avoids re-running the LLM on every turn for old
+  // records that predate titleUpdatedAt.
+  let needsTitleUpdate = false;
+  if (existingTitleSource === "manual") {
+    // MEDIUM-1(b): manual titles are never overwritten by LLM regeneration.
+    needsTitleUpdate = false;
+  } else if (!existingTitle) {
+    needsTitleUpdate = true;
+  } else {
+    const titleUpdatedAtMs = parseTitleUpdatedAtMs(existingDialog);
+    if (titleUpdatedAtMs > 0) {
+      // 30-minute window (titleUpdated semantics: "idle 30 minutes").
+      if (nowMs - titleUpdatedAtMs >= 30 * 60 * 1000) {
+        needsTitleUpdate = true;
+      }
+    } else {
+      // titleUpdatedAt missing → conservative: keep the existing non-empty
+      // title, do NOT regenerate. (Old behavior treated missing as 0 → always
+      // true → regenerated every turn, which was a regression.)
+      needsTitleUpdate = false;
+    }
+  }
+
+  // PERF: title 生成改为 fire-and-forget。不再 await Promise.race 阻塞 turn
+  // 返回——实测 title LLM 调用稳定撞穿 2500ms 超时（见 baseline），用户白白
+  // 等 2.5 秒却什么都没拿到。现在先用 fallback title 写入并立即返回，title
+  // 回来后后台 patch dialog 记录。one-shot CLI 进程退出时 title 可能丢失，
+  // 但 TUI 是长驻进程，patch 几乎总能完成；即使丢失，下一轮 title 节流逻辑
+  // 会重新生成（needsTitleUpdate 仍为 true，因为 titleUpdatedAt 未刷新）。
   let titlePromise: Promise<string | null> | undefined;
   if (needsTitleUpdate && args.titleGenerator) {
     const rawLastUserText = extractLastUserText(args.input.messages);
@@ -401,7 +306,7 @@ export async function writeDialog(args: {
       .catch(() => null as string | null);
   }
 
-  // C: 写 dialog 记录 + 消息（用 fallback title，不阻塞等 LLM title）。
+  // 不再 await title——用 fallback title 走 plan，立即持久化并返回。
   const plan = buildLocalDialogWritePlan({
     input: args.input,
     userId: args.userId,
@@ -411,9 +316,11 @@ export async function writeDialog(args: {
     cwd: args.cwd,
   });
   await args.store.batch(plan.ops);
-  perf.mark("C:store-batch (cumulative)");
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog C:store-batch (cumulative): ${ms}ms\n`);
+  }
 
-  // D: 写 token 用量记录。
   let tokenOps: Array<{ type: "put"; key: string; value: any }> = [];
   try {
     tokenOps = await writeLocalTokenRecord({
@@ -430,38 +337,93 @@ export async function writeDialog(args: {
       `[nolo] Token usage record write failed (non-fatal): ${toErrorMessage(error)}\n`,
     );
   }
-  perf.mark("D:token-record (cumulative)");
-
-  // E: 远端同步——subjectRef 场景 await+throw，非 subjectRef fire-and-forget。
-  const hasSubjectRefs = localTurnHasSubjectRefs(args.input);
-  const isLocalUser = args.userId === "local";
-  let remoteSyncPromise: Promise<void> | undefined;
-  if (!isLocalUser) {
-    remoteSyncPromise = syncDialogEvidence({
-      env: args.env,
-      fetchImpl: args.fetchImpl,
-      input: args.input,
-      ops: [...plan.ops, ...tokenOps],
-      output: args.output,
-      userId: args.userId,
-      hasSubjectRefs,
-    });
-    if (hasSubjectRefs) await remoteSyncPromise;
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog D:token-record (cumulative): ${ms}ms\n`);
   }
 
-  // title 后台 patch——不阻塞 writeDialog 返回。
+  const hasSubjectRefs = localTurnHasSubjectRefs(args.input);
+  const isLocalUser = args.userId === "local";
+  // PERF: 暴露 remote sync promise 让测试可等待；调用方不 await（subjectRef 除外）。
+  let remoteSyncPromise: Promise<void> | undefined;
+  if (!isLocalUser) {
+    if (hasSubjectRefs) {
+      // subjectRef 场景保留 await + throw：task 关联的对话证据必须远端
+      // 可查，失败时让 turn 失败比静默丢证据更安全。
+      remoteSyncPromise = (async () => {
+        const syncResult = await syncLocalDialogEvidenceToRemote({
+          env: args.env,
+          fetchImpl: args.fetchImpl,
+          input: args.input,
+          ops: [...plan.ops, ...tokenOps],
+          output: args.output,
+          userId: args.userId,
+        });
+        if (!syncResult.attempted) {
+          args.output?.write(
+            "[nolo] Local dialog evidence is local-only; set NOLO_SERVER and AUTH_TOKEN to make subjectRefs remotely queryable.\n",
+          );
+        }
+      })();
+      await remoteSyncPromise;
+    } else {
+      // PERF: 非 subjectRef 场景的 remote-sync 改为 fire-and-forget。实测
+      // 每轮 1-1.9 秒网络 I/O，是后续轮次"最后一句话后等待"的主要原因。
+      // sync 结果不进 writeDialog 返回值，只用于远端备份——不值得阻塞 turn。
+      // 失败时只提示用户，不 throw。
+      remoteSyncPromise = syncLocalDialogEvidenceToRemote({
+        env: args.env,
+        fetchImpl: args.fetchImpl,
+        input: args.input,
+        ops: [...plan.ops, ...tokenOps],
+        output: args.output,
+        userId: args.userId,
+      }).catch((error) => {
+        args.output?.write(
+          `[nolo] Remote dialog evidence sync failed; local dialog only: ${toErrorMessage(error)}\n`,
+        );
+      });
+    }
+  }
+
+  // PERF: title 后台 patch——titlePromise resolve 后读回 dialog 记录、
+  // patch title + titleSource + titleUpdatedAt，再 write 回去。
+  // 不阻塞 writeDialog 返回；失败静默（下一轮节流会重试）。
+  // 返回 titlePatchPromise 让测试可等待 patch 完成；调用方（saveTurn）
+  // 不 await 它——patch 完成与否不影响 turn 返回。
   let titlePatchPromise: Promise<void> | undefined;
   if (titlePromise) {
     const dialogKey = `dialog-${args.userId}-${plan.dialogId}`;
-    titlePatchPromise = patchDialogTitleInBackground({
-      store: args.store,
-      dialogKey,
-      titlePromise,
-      nowMs,
+    titlePatchPromise = titlePromise.then(async (resolvedTitle) => {
+      if (!resolvedTitle) return;
+      try {
+        const existing = await args.store.read(dialogKey);
+        if (!existing || typeof existing !== "object") return;
+        // 尊重 manual title：用户手动设的标题不被 LLM 覆盖。
+        if (existing?.titleSource === "manual") return;
+        // H-1 修复：竞态保护——如果 patch 读回的 record 的 titleUpdatedAt
+        // 比本轮（nowMs）更新，说明已有更新的 turn 写过这条 dialog。跳过
+        // patch 避免用旧 turn 的 titleUpdatedAt 覆盖新 turn 的值（会污染
+        // 新 turn 的 title 30 分钟节流判断）。
+        const existingTitleUpdatedAtMs = parseTitleUpdatedAtMs(existing);
+        if (existingTitleUpdatedAtMs > nowMs) return;
+        await args.store.write(dialogKey, {
+          ...existing,
+          title: resolvedTitle,
+          titleSource: "auto",
+          titleUpdatedAt: new Date(nowMs).toISOString(),
+        });
+      } catch {
+        // 静默失败：下一轮 needsTitleUpdate 仍为 true（titleUpdatedAt 未刷新），
+        // 会重新生成。不值得为此打扰用户。
+      }
     });
   }
 
-  perf.mark("total (blocking)");
+  if (__perfEnabled) {
+    const ms = (performance.now() - __perfT0).toFixed(1);
+    process.stderr.write(`[nolo-perf] writeDialog total (blocking): ${ms}ms\n`);
+  }
   return { dialogId: plan.dialogId, title: plan.title, titlePatchPromise, remoteSyncPromise };
 }
 

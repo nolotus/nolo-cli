@@ -295,7 +295,7 @@ export const selectCurrentSpace = createSelector(
  */
 export const selectSpaceById = createSelector(
   [
-    selectEntities,
+    (state: any) => selectEntities(state),
     (_state: any, spaceId: string | null | undefined) => spaceId,
   ],
   (entities, spaceId) => {
@@ -402,13 +402,13 @@ export const selectIsDialogUnread = (dialogId: string) =>
  * dialog 终态时服务端写 unreadAt + status，进入对话 markDialogRead 清零 unreadAt。
  */
 export const selectDialogStatusFromEntity = (dialogKey: string) =>
-  createSelector(selectEntities, (entities) => {
+  createSelector((state: any) => selectEntities(state), (entities) => {
     const entity = entities[dialogKey];
     return (entity as { status?: string } | undefined)?.status;
   });
 
 export const selectIsDialogUnreadFromEntity = (dialogKey: string) =>
-  createSelector(selectEntities, (entities) => {
+  createSelector((state: any) => selectEntities(state), (entities) => {
     const entity = entities[dialogKey] as { unreadAt?: number | null } | undefined;
     return typeof entity?.unreadAt === "number" && entity.unreadAt > 0;
   });

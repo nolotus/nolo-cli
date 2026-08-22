@@ -25,12 +25,37 @@ interface DeleteMemoryFilters {
   tags?: string[];
   contentSubstring?: string;
   limit?: number;
+  dryRun?: boolean;
+  deletionToken?: string;
 }
 
 export interface DeleteMemoryResult {
   deletedCount: number;
   deletedIds: string[];
   matchedItems: MemoryItem[];
+  deletionToken?: string;
+}
+
+export function hasExplicitDeleteFilters(filters: DeleteMemoryFilters): boolean {
+  return Boolean(
+    (filters.ids && filters.ids.length > 0) ||
+    (typeof filters.contentSubstring === "string" && filters.contentSubstring.trim().length > 0) ||
+    (filters.tags && filters.tags.length > 0) ||
+    (typeof filters.sourceDialogId === "string" && filters.sourceDialogId.trim().length > 0) ||
+    (typeof filters.patternKeyPrefix === "string" && filters.patternKeyPrefix.trim().length > 0) ||
+    (filters.facets && filters.facets.length > 0) ||
+    (typeof filters.subjectId === "string" && filters.subjectId.trim().length > 0)
+  );
+}
+
+export function generateMemoryDeletionToken(ownerId: string, itemIds: string[]): string {
+  const sorted = [...itemIds].sort().join(",");
+  const seed = `${ownerId}:${sorted}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  return `tok-${Math.abs(hash).toString(36)}-${itemIds.length}`;
 }
 
 const normalizeSet = (values?: string[]): Set<string> | null => {
@@ -107,6 +132,12 @@ export const deleteMemoriesForOwnerFromDb = async (
   owner: MemoryOwnerRef,
   filters: DeleteMemoryFilters = {}
 ): Promise<DeleteMemoryResult> => {
+  if (!hasExplicitDeleteFilters(filters)) {
+    throw new Error(
+      "At least one filter is required; delete operation will not delete all memory implicitly."
+    );
+  }
+
   const range = memoryOwnerRange(owner.ownerType, owner.ownerId);
   const matchedItems: MemoryItem[] = [];
   const limit = typeof filters.limit === "number" && filters.limit > 0
@@ -133,6 +164,26 @@ export const deleteMemoriesForOwnerFromDb = async (
     return { deletedCount: 0, deletedIds: [], matchedItems: [] };
   }
 
+  const token = generateMemoryDeletionToken(
+    owner.ownerId,
+    matchedItems.map((i) => i.id)
+  );
+
+  if (filters.dryRun) {
+    return {
+      deletedCount: 0,
+      deletedIds: [],
+      matchedItems,
+      deletionToken: token,
+    };
+  }
+
+  if (filters.deletionToken && filters.deletionToken !== token) {
+    throw new Error(
+      "deletionToken mismatch: memory dataset changed since preview; please rerun dry-run preview before confirming."
+    );
+  }
+
   const batch = db.batch();
   for (const item of matchedItems) {
     deleteMemoryItemWithIndexesInBatch(batch, item);
@@ -143,6 +194,7 @@ export const deleteMemoriesForOwnerFromDb = async (
     deletedCount: matchedItems.length,
     deletedIds: matchedItems.map((item) => item.id),
     matchedItems,
+    deletionToken: token,
   };
 };
 

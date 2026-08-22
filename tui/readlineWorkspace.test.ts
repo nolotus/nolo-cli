@@ -3285,4 +3285,45 @@ describe("pinned agent notice", () => {
     expect(renderPinnedAgentNotice(appBuilder, { NOLO_AGENT_SOURCE: "env" })).toBe("");
     expect(renderPinnedAgentNotice(appBuilder, {})).toBe("");
   });
+
+  test("localRuntimeAdapterFactory wires confirmDestructiveAction to created adapters", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+    input.setRawMode = () => {};
+
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let factoryReceived: any = null;
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        if (opt.localRuntimeAdapterFactory) {
+          factoryReceived = opt.localRuntimeAdapterFactory(opt.env, { cwd: opt.localRuntimeCwd });
+        }
+        return { exitCode: 0, dialogId: "test-dialog" };
+      },
+    });
+
+    input.write("hello\r");
+    await tick(100);
+
+    expect(factoryReceived).not.toBeNull();
+    expect(typeof factoryReceived.executeTool).toBe("function");
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, tick(2000)]);
+  });
 });

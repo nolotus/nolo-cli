@@ -112,8 +112,9 @@ describe("CLI local runtime adapter", () => {
   const DEFAULT_PRIVATE_LOCAL_TOOL_NAMES = [
     ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
     // long-term-memory 是 always-on 能力包：CLI 每个未 ablation 的 agent 都能看到
-    // rememberMemory，TUI 的「记住 X」才会走 tool call 而非 shell 兜底。
+    // rememberMemory + deleteMemory，TUI 的「记住 X」才会走 tool call 而非 shell 兜底。
     "rememberMemory",
+    "deleteMemory",
     "exa_search",
     "fetchWebpage",
     ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
@@ -1496,6 +1497,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toEqual([
       ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
+      "deleteMemory",
       "exa_search",
       "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
@@ -2437,6 +2439,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toEqual([
       ...SHELL_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
+      "deleteMemory",
       "exa_search",
       "fetchWebpage",
       ...DEFAULT_PRIVATE_NOLO_WORKSPACE_TOOL_NAMES,
@@ -2498,6 +2501,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNamesFromRequest(requests[0])).toEqual([
       ...LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
+      "deleteMemory",
       "exa_search",
       "fetchWebpage",
       // CLI 空配置默认补 agent-orchestration 能力包：listAgents 候选发现 +

@@ -45,6 +45,7 @@ export const LOCAL_SERVER_WEB_TOOL_NAME_SET = new Set<string>(
 export const LOCAL_SERVER_MEMORY_TOOL_NAMES = [
   "queryMemory",
   "rememberMemory",
+  "deleteMemory",
 ] as const;
 export const LOCAL_SERVER_MEMORY_TOOL_NAME_SET = new Set<string>(
   LOCAL_SERVER_MEMORY_TOOL_NAMES,

@@ -563,6 +563,13 @@ async function runAgentChat(
       createCliLocalRuntimeAdapter({
         env: factoryEnv,
         cwd: factoryOptions?.cwd ?? state.cwd,
+        output,
+        ...(options.confirmDestructiveAction
+          ? { confirmDestructiveAction: options.confirmDestructiveAction }
+          : {}),
+        ...(options.requestUserChoice
+          ? { requestUserChoice: options.requestUserChoice }
+          : {}),
         ...(options.pastedTextStore
           ? { pastedTextStore: options.pastedTextStore }
           : {}),

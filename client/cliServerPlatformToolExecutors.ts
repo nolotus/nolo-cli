@@ -240,5 +240,52 @@ export function buildServerPlatformToolExecutors(args: {
     };
   };
 
-  return { ...tableExecutors, ...webExecutors, queryMemory, rememberMemory };
+  const deleteMemory = async (call: any) => {
+    const parsed = parseNoloWorkspaceToolArguments(call.arguments);
+    const reason =
+      typeof parsed.reason === "string" ? parsed.reason.trim() : "";
+    if (!reason && !parsed.ids && !parsed.contentKeyword && !parsed.query) {
+      return {
+        content: JSON.stringify({
+          error: "deleteMemory 需要用户明确的删除原因或过滤条件。",
+        }),
+        metadata: { serverPlatformTool: true, memoryDelete: false },
+      };
+    }
+    const isConfirmed = parsed.confirmed === true;
+    if (isConfirmed && !parsed.deletionToken?.trim()) {
+      return {
+        content: JSON.stringify({
+          error:
+            "deleteMemory 在确认删除阶段（confirmed: true）必须提供预检阶段获取的 deletionToken。请先调用本工具进行预检预览。",
+        }),
+        metadata: { serverPlatformTool: true, memoryDelete: false },
+      };
+    }
+    const body: Record<string, unknown> = {
+      ids: parsed.ids,
+      contentSubstring: parsed.contentKeyword ?? parsed.query,
+      kinds: parsed.kinds,
+      tags: parsed.tags,
+      dryRun: !isConfirmed,
+      deletionToken: parsed.deletionToken,
+      reason,
+    };
+    if (args.agentKey) body.agentKey = args.agentKey;
+    const raw = await postServer("/api/memory/delete", body, {
+      retryTransient: true,
+    });
+    return {
+      content: raw,
+      metadata: { serverPlatformTool: true, memoryDelete: true },
+    };
+  };
+
+  return {
+    ...tableExecutors,
+    ...webExecutors,
+    queryMemory,
+    rememberMemory,
+    deleteMemory,
+  };
 }

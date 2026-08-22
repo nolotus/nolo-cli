@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.33.0-alpha.11",
+  "version": "0.33.0-alpha.12",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -616,6 +616,7 @@
     "ai/tools/readXhsProfileTool.ts",
     "ai/tools/readXPostTool.ts",
     "ai/tools/rememberMemoryToolSchema.ts",
+    "ai/tools/deleteMemoryToolSchema.ts",
     "ai/agent/cliPrompt.ts",
     "ai/token/prepareTokenUsageData.ts",
     "ai/token/applyTokenUsageToDayStats.ts",
@@ -755,6 +756,7 @@
     "ai/tools/chatgptWebImageTool.ts",
     "ai/tools/remotionVideoTool.ts",
     "ai/tools/rememberMemoryTool.ts",
+    "ai/tools/deleteMemoryTool.ts",
     "ai/tools/queryMemoryTool.ts",
     "ai/tools/execShellTool.ts",
     "ai/tools/checkEnvTool.ts",

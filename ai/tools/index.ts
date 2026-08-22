@@ -323,6 +323,10 @@ import {
   rememberMemoryFunctionSchema,
 } from "./rememberMemoryTool";
 import {
+  deleteMemoryFunc,
+  deleteMemoryFunctionSchema,
+} from "./deleteMemoryTool";
+import {
   queryMemoryFunc,
   queryMemoryFunctionSchema,
 } from "./queryMemoryTool";
@@ -667,6 +671,17 @@ const baseToolDefinitions: ToolDefinition[] = [
     description: {
       name: "rememberMemory",
       description: "将值得长期保留的用户偏好或空间共识写入一条 episodic memory。",
+      category: "记忆 / 长期上下文",
+    },
+    behavior: "action",
+  },
+  {
+    id: "deleteMemory",
+    schema: deleteMemoryFunctionSchema,
+    executor: deleteMemoryFunc,
+    description: {
+      name: "deleteMemory",
+      description: "在用户明确/强制要求下，删除用户权限范围内的长期记忆。",
       category: "记忆 / 长期上下文",
     },
     behavior: "action",

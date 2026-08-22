@@ -266,3 +266,101 @@ describe("rememberMemory bridge", () => {
     expect(JSON.parse(result.content).error).toContain("content");
   });
 });
+
+describe("deleteMemory bridge", () => {
+  it("posts to /api/memory/delete with dryRun: true when unconfirmed", async () => {
+    const { fetchImpl, calls } = buildFetchRecorder({
+      bridge: () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            dryRun: true,
+            matchedCount: 1,
+            deletedCount: 0,
+            deletedIds: [],
+            preview: [{ id: "m1", content: "小明", kind: "semantic" }],
+          }),
+          { status: 200 }
+        ),
+    });
+    const executors = buildServerPlatformToolExecutors({
+      env: ENV,
+      fetchImpl,
+      agentKey: "agent-42",
+    });
+
+    const result = await executors.deleteMemory({
+      arguments: JSON.stringify({
+        contentKeyword: "小明",
+        reason: "用户明确要求删除小明相关的记忆",
+      }),
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://nolo.test/api/memory/delete");
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body.contentSubstring).toBe("小明");
+    expect(body.dryRun).toBe(true);
+    expect(body.agentKey).toBe("agent-42");
+    expect(result.metadata?.memoryDelete).toBe(true);
+  });
+
+  it("posts to /api/memory/delete with dryRun: false and deletionToken when confirmed: true", async () => {
+    const { fetchImpl, calls } = buildFetchRecorder({
+      bridge: () =>
+        new Response(
+          JSON.stringify({ success: true, dryRun: false, deletedCount: 1, deletedIds: ["m1"] }),
+          { status: 200 }
+        ),
+    });
+    const executors = buildServerPlatformToolExecutors({
+      env: ENV,
+      fetchImpl,
+      agentKey: "agent-42",
+    });
+
+    const result = await executors.deleteMemory({
+      arguments: JSON.stringify({
+        contentKeyword: "小明",
+        confirmed: true,
+        deletionToken: "tok-test-1",
+        reason: "用户确认删除",
+      }),
+    });
+
+    expect(calls).toHaveLength(1);
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body.contentSubstring).toBe("小明");
+    expect(body.dryRun).toBe(false);
+    expect(body.deletionToken).toBe("tok-test-1");
+    expect(result.metadata?.memoryDelete).toBe(true);
+  });
+
+  it("rejects confirmed: true when deletionToken is missing without calling server", async () => {
+    const { fetchImpl, calls } = buildFetchRecorder({});
+    const executors = buildServerPlatformToolExecutors({ env: ENV, fetchImpl });
+
+    const result = await executors.deleteMemory({
+      arguments: JSON.stringify({
+        contentKeyword: "小明",
+        confirmed: true,
+        reason: "确认删除",
+      }),
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(JSON.parse(result.content).error).toContain("必须提供预检阶段获取的 deletionToken");
+  });
+
+  it("rejects empty reason and filters without calling the server", async () => {
+    const { fetchImpl, calls } = buildFetchRecorder({});
+    const executors = buildServerPlatformToolExecutors({ env: ENV, fetchImpl });
+
+    const result = await executors.deleteMemory({
+      arguments: JSON.stringify({ reason: "   " }),
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(JSON.parse(result.content).error).toContain("deleteMemory 需要用户明确的删除原因或过滤条件");
+  });
+});

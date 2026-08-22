@@ -47,6 +47,7 @@ import {
 import { readXhsProfileFunctionSchema } from "../../ai/tools/readXhsProfileTool";
 import { readXPostFunctionSchema } from "../../ai/tools/readXPostTool";
 import { rememberMemoryFunctionSchema } from "../../ai/tools/rememberMemoryToolSchema";
+import { deleteMemoryFunctionSchema } from "../../ai/tools/deleteMemoryToolSchema";
 import {
   parseJsonObject,
   buildDelegatedTaskContent,
@@ -297,6 +298,14 @@ export function buildServerPlatformOpenAiTools(args: { toolNames?: string[] }) {
           {
             type: "function",
             function: rememberMemoryFunctionSchema,
+          },
+        ]
+      : []),
+    ...(toolNameSet.has("deleteMemory")
+      ? [
+          {
+            type: "function",
+            function: deleteMemoryFunctionSchema,
           },
         ]
       : []),

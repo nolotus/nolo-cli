@@ -4,8 +4,8 @@ import {
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 
 /**
- * 图片档已移除：有图时统一走 flash 档 + vision 预处理管道
- * （packages/ai/agent/imagePreprocessing.ts），不再自动切 Kimi。
+ * 图片档已移除：有图时统一走 flash 档（纯文本模型收到图片时仅剥离为占位文本，
+ * 见 packages/ai/agent/imagePreprocessing.ts），不再自动切 Kimi。
  * 保留 "image" 在类型里以兼容旧持久化 dialog（resolveDialogAutoTier
  * 会把 "image" 映射为 "flash"）。
  */

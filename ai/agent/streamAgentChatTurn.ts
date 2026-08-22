@@ -124,7 +124,7 @@ import {
     appendCliCapabilityWarnings,
 } from "./streamTurnMessageBuild";
 import {
-    tryPreprocessWebImageOrReject,
+    stripImagePartsForTextOnlyAgent,
 } from "./imagePreprocessing";
 import {
     consumeAgentRunStream,
@@ -2139,14 +2139,9 @@ export const streamAgentChatTurnHandler = async (
                 const summaryTokenCount = contexts.dialogSummary
                     ? estimateTokenCount(contexts.dialogSummary)
                     : 0;
-                const serverUrl = selectCurrentServer(loopState);
-                const authToken = selectIdentityToken(loopState);
-                const preprocessedResult = await tryPreprocessWebImageOrReject(
+                const preprocessedResult = await stripImagePartsForTextOnlyAgent(
                     compressOldToolResults(cleanedMessages) as any,
                     agentConfigForCall as any,
-                    initialHistoryIds,
-                    serverUrl,
-                    authToken,
                 );
                 let processedMessages = trimMessagesWithSummary(
                     preprocessedResult.messages as any,
@@ -2453,14 +2448,9 @@ export const streamAgentChatTurnHandler = async (
                 ? estimateTokenCount(contexts.dialogSummary)
                 : 0;
 
-            const serverUrl = selectCurrentServer(loopState);
-            const authToken = selectIdentityToken(loopState);
-            const preprocessedResult = await tryPreprocessWebImageOrReject(
+            const preprocessedResult = await stripImagePartsForTextOnlyAgent(
                 compressOldToolResults(cleanedMessages) as any,
                 agentConfigForCall as any,
-                initialHistoryIds,
-                serverUrl,
-                authToken,
             );
             let processedMessages = trimMessagesWithSummary(
                 preprocessedResult.messages as any,

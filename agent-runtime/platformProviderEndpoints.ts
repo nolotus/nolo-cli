@@ -13,7 +13,6 @@ import {
   isPlatformHostedGrokModel,
   isPlatformHostedKimiK26Model,
   isPlatformHostedGlmModel,
-  isPlatformHostedQwen37FlashModel,
   isPlatformHostedGeminiModel,
 } from "../ai/llm/platformHosted";
 import { PLATFORM_HOSTED_KIMI_K3_MODEL } from "../ai/llm/kimi";
@@ -132,11 +131,10 @@ export function resolvePlatformChatCompletionsEndpoint(
   ) {
     return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS.crof;
   }
-  // 平台托管 Gemini 3.7 Flash / Qwen 3.7 Flash：实际上游 Google
+  // 平台托管 Gemini 3.7 Flash：实际上游 Google
   if (
     aliased === "nolo" &&
-    (isPlatformHostedGeminiModel(model) ||
-      isPlatformHostedQwen37FlashModel(model))
+    isPlatformHostedGeminiModel(model)
   ) {
     return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS.google;
   }
@@ -178,7 +176,7 @@ export function resolvePlatformHostedCredentialProvider(
   if (asTrimmedLowercaseString(model) === PLATFORM_HOSTED_KIMI_K3_MODEL) {
     return "crof";
   }
-  if (isPlatformHostedGeminiModel(model) || isPlatformHostedQwen37FlashModel(model)) {
+  if (isPlatformHostedGeminiModel(model)) {
     return "google";
   }
   if (isPlatformHostedDeepseekModel(model)) return "deepseek";

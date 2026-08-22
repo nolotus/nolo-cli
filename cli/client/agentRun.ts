@@ -938,12 +938,6 @@ async function runLocalAgentTurnForCli(
             "[nolo] 当前 agent 不支持图片输入，已用占位文本替代。要完整图片理解可 /switch 到 Kimi K2.6。\n",
           );
         }
-        if (event.kind === "image-preprocessed") {
-          // vision 预处理成功：图片已转为文字描述，用户无需操作。
-          options.output.write(
-            `[nolo] 已用视觉模型解析 ${event.imageCount} 张图片为文字描述，供当前 agent 使用。\n`,
-          );
-        }
         options.onLoopEvent?.(event);
       },
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),

@@ -205,16 +205,6 @@ export const BUILTIN_AGENT_CATALOG: BuiltinAgentCatalogEntry[] = [
     runtimeFallback: true,
   },
   {
-    id: "01QWEN37FLASH000000000001",
-    // 内部图片预处理器（imagePreprocessing.ts），不是广场商品：只需运行时兜底
-    // 拿到 provider/model，不应被 seed 写库、上架或计费。
-    group: "internal",
-    name: "Qwen 3.7 Flash",
-    provider: "nolo",
-    model: "qwen3.7-flash",
-    runtimeFallback: true,
-  },
-  {
     id: "01GPTIMG2GEN00000000SSEBOS",
     group: "public",
     name: "GPT Image 2 图片生成器",

@@ -21,12 +21,7 @@ import { summarizeToolArguments } from "./summarizeToolArguments";
 import { buildIdentityBlock } from "./identityBlock";
 import { buildUserResponseLanguageContext } from "./userResponseLanguage";
 import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
-import {
-  preprocessImagesForTextOnlyAgent,
-  describeImageWithLocalProvider,
-  hasImageInRuntimeMessages,
-  extractImageUrlsFromMessages,
-} from "../ai/agent/imagePreprocessing";
+import { hasImageInRuntimeMessages, stripImagePartsFromMessages } from "../ai/agent/imagePreprocessing";
 import { buildRuntimeGuidanceBlocks } from "./runtimeGuidance";
 import { resolveToolGuidedSections } from "../ai/agent/toolGuidedSections";
 import { canonicalizeToolNames } from "./toolNameAliases";
@@ -172,8 +167,7 @@ export type LocalAgentLoopEvent =
     }
   | { kind: "tool-start"; name: string; atMs: number }
   | { kind: "tool-end"; name: string; atMs: number; ok: boolean }
-  | { kind: "image-downgraded"; reason: "no-vision"; atMs: number }
-  | { kind: "image-preprocessed"; atMs: number; imageCount: number };
+  | { kind: "image-downgraded"; reason: "no-vision"; atMs: number };
 
 export type LocalAgentActionGate = ActionGate & {
   toolName: string;
@@ -961,25 +955,6 @@ function prepareHistoryForNextTurn(
 }
 
 /**
- * 剥离单条消息 content 里的 image_url parts。模型不支持图片输入时，发上去会 400
- * "this model does not support image input"，把本来能成功的 local 轮判成失败、
- * fallback 到 server——而 server 端没有 local code 工具，agent 报 blocker。
- * 过滤后空数组返回占位文本（不是 ""），因为主流 Provider API 要求 user 消息
- * content 非空，空串会触发 400 "content is required and must be non-empty"，
- * 又回到误 fallback 的老问题。
- */
-const IMAGE_OMITTED_PLACEHOLDER = "[Image content omitted: model does not support image input]";
-
-function stripImagePartsFromContent(
-  content: AgentRuntimeMessageContent,
-): AgentRuntimeMessageContent {
-  if (!Array.isArray(content)) return content;
-  const filtered = content.filter((part) => part?.type !== "image_url");
-  if (filtered.length === 0) return IMAGE_OMITTED_PLACEHOLDER;
-  return filtered as AgentRuntimeMessageContent;
-}
-
-/**
  * 按 vision 能力过滤整条消息数组。supportsImages 为 true 时原样返回（catalog 默认）；
  * 为 false 时逐条剥离 image_url parts，保留 text/tool_calls 等其他内容。
  */
@@ -988,10 +963,7 @@ function filterImagePartsFromMessages(
   supportsImages: boolean,
 ): AgentRuntimeChatMessage[] {
   if (supportsImages) return messages;
-  return messages.map((msg) => ({
-    ...msg,
-    content: stripImagePartsFromContent(msg.content),
-  }));
+  return stripImagePartsFromMessages(messages);
 }
 
 type BuiltMessages = {
@@ -1385,30 +1357,14 @@ export async function runLocalAgentTurn(
     hasVision: (agentConfig as any).hasVision,
   });
 
-  // 纯文本模型 + 有图：在进入循环前先用 vision 模型描述图片，替换 image_url 为文字。
-  // 预处理失败（vision 不可用/超时）时 fallback 到剥离占位符。
-  // 提前预处理避免了多轮 tool call 循环中重复调 vision 模型导致的延迟和开销。
+  // 纯文本模型 + 有图：无 vision 能力时剥离 image_url 为占位符，避免上游 400。
   if (!supportsImages && hasImageInRuntimeMessages(messages)) {
-    const imageUrls = extractImageUrlsFromMessages(messages);
-    const preprocessed = await preprocessImagesForTextOnlyAgent(
-      messages,
-      (urls) => describeImageWithLocalProvider(input.adapter, urls),
-    );
-    if (preprocessed !== messages) {
-      messages = preprocessed;
-      emitLoopEvent(input, {
-        kind: "image-preprocessed",
-        atMs: Date.now(),
-        imageCount: imageUrls.length,
-      });
-    } else {
-      messages = filterImagePartsFromMessages(messages, false);
-      emitLoopEvent(input, {
-        kind: "image-downgraded",
-        reason: "no-vision",
-        atMs: Date.now(),
-      });
-    }
+    messages = filterImagePartsFromMessages(messages, false);
+    emitLoopEvent(input, {
+      kind: "image-downgraded",
+      reason: "no-vision",
+      atMs: Date.now(),
+    });
   }
 
   const userInputText = extractUserInputText(input.input);

@@ -425,9 +425,8 @@ async function runAgentChat(
   const effectiveAgentName = state.agentName;
   const continueId = state.dialogId;
   // 图片输入：图片档已移除，不再自动切换到 Kimi K2.6。
-  // 纯文本模型收到图片时，vision 预处理管道（localLoop 中的
-  // preprocessImagesForTextOnlyAgent）会先用 Qwen 3.7 Flash 描述图片为文字，
-  // 替换 image_url part 后继续对话。用户如需精确视觉可手动 /switch 到 Kimi。
+  // 纯文本模型收到图片时，会剥离 image_url part 为占位文本（见
+  // imagePreprocessing.ts），避免上游 400。用户如需完整视觉可手动 /switch 到支持视觉的模型。
   // Resolve attached skill references (dbKey, .agents/skills/<name>/SKILL.md)
   // and inject as system context blocks — same
   // mechanism as `nolo agent run --skill <ref>`.

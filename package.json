@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.33.0-alpha.13",
+  "version": "0.33.0-alpha.14",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -687,9 +687,6 @@
     "ai/agent/contextCompiler.ts",
     "ai/agent/currentTimeContext.ts",
     "ai/types.ts",
-    "ai/llm/platformHosted.ts",
-    "ai/llm/kimi.ts",
-    "ai/llm/deepinfra.ts",
     "ai/chat/streamReader.ts",
     "ai/chat/sseClient.ts",
     "ai/token/types.ts",
@@ -793,6 +790,9 @@
     "ai/memory/recentRelationshipRecap.ts",
     "ai/memory/understandingGreeting.ts",
     "ai/skills/builtinObjectSkills.ts",
+    "ai/llm/platformHosted.ts",
+    "ai/llm/kimi.ts",
+    "ai/llm/deepinfra.ts",
     "ai/tools/agent/agentUpdateShared.ts",
     "ai/tools/agent/skillAgentArgs.ts",
     "ai/agent/guidedCreation/capabilities.ts",

@@ -139,12 +139,6 @@ export const isPlatformHostedGeminiModel = (
   model?: string | null,
 ): boolean => asTrimmedLowercaseString(model) === PLATFORM_HOSTED_GEMINI_37_FLASH_MODEL;
 
-/** @deprecated Legacy alias, mapped to gemini-3.7-flash */
-export const PLATFORM_HOSTED_QWEN_37_FLASH_MODEL = "qwen3.7-flash";
-export const PLATFORM_HOSTED_QWEN_37_FLASH_GOOGLE_MODEL_ID = "gemini-3.7-flash";
-export const isPlatformHostedQwen37FlashModel = (model?: string | null): boolean =>
-  asTrimmedLowercaseString(model) === PLATFORM_HOSTED_QWEN_37_FLASH_MODEL;
-
 /**
  * Platform hosted DeepSeek V4 Flash / Pro. Same model id as official DeepSeek.
  */
@@ -177,9 +171,23 @@ export const PLATFORM_HOSTED_DEEPSEEK_PRO_OFF_PEAK_PRICE = {
 } as const;
 
 export const isDeepSeekOffPeakBeijingTime = (nowMs = Date.now()): boolean => {
-  const beijingHour =
-    (new Date(nowMs).getUTCHours() + 8 + 24) % 24;
-  return beijingHour >= 0 && beijingHour < 8;
+  // 旧实现只按北京钟点判断（00:00-08:00 为低谷），缺少星期维度，导致周末白天
+  // 误按高峰计费。这里改用 +8h 后的 UTC 读取"北京日期/星期/小时"，确保星期与
+  // 小时都取自北京时间。北京无夏令时（全年 UTC+8），该移位是精确的。
+  const beijing = new Date(nowMs + 8 * 60 * 60 * 1000);
+  const beijingDay = beijing.getUTCDay(); // 0=周日, 6=周六
+  const beijingHour = beijing.getUTCHours();
+
+  // 官方 2026-08-23（周日）00:00 起：周末（周六/周日）全天不再区分峰谷，
+  // 统一按低谷价收费，故周末任何时刻都算低谷。
+  if (beijingDay === 0 || beijingDay === 6) return true;
+
+  // 工作日高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲时段；
+  // 空闲时段价格 = 高峰价格的一半。
+  const isPeakWindow =
+    (beijingHour >= 9 && beijingHour < 12) ||
+    (beijingHour >= 14 && beijingHour < 18);
+  return !isPeakWindow;
 };
 
 export const getPlatformHostedDeepSeekV4Price = (

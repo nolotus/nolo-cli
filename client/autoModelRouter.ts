@@ -2,7 +2,7 @@
  * CLI `nolo chat --auto-route` 的路由目标。
  *
  * 「自动路由」早已不再分类：没有 LLM 分类器、没有复杂度分档、没有图片档
- * （图片交给 vision 预处理管道，见 localLoop 的 preprocessImagesForTextOnlyAgent）。
+ * （纯文本模型收到图片时仅剥离为占位文本，见 imagePreprocessing.ts）。
  * 剩下的全部语义就是一句「走默认档」，所以这里只留一个常量。
  *
  * 曾经这里有 `CLI_AUTO_TIER_AGENT_KEYS` / `CLI_AUTO_TIER_MODELS` 两张三档表

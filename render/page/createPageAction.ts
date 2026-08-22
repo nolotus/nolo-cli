@@ -2,7 +2,6 @@
 import { selectIdentityUserId } from "identity/selectors";
 import {
   addContentToSpace,
-  selectCurrentSpaceId,
 } from "../../create/space/spaceSlice";
 import { createPageKey } from "../../database/keys";
 import i18n from "../../app/i18n/client";
@@ -22,6 +21,7 @@ import {
 import { slateToRenderMarkdown } from "../../create/editor/transforms/slateToRenderMarkdown";
 import { parseSkillDocProtocol } from "../../ai/skills/skillDocProtocol";
 import { buildSkillSummaryMarker } from "../../ai/skills/skillSummaryMarker";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 
 /**
  * 归一化 / 过滤 categoryId
@@ -80,7 +80,7 @@ export const createPageAction = async (
   // This action must preserve explicit caller intent:
   // - if `spaceId` is provided, use it;
   // - otherwise only fall back to the current selected space.
-  const spaceId = customSpaceId ?? selectCurrentSpaceId(state);
+  const spaceId = customSpaceId ?? getCurrentSpaceId();
   const { dbKey, id } = createPageKey.create(userId);
 
   const now = new Date();

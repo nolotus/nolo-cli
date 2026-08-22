@@ -1,4 +1,4 @@
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import { callToolApi } from "./toolApiClient";
 import type { RememberMemoryScope } from "../memory/remember";
 import type { MemoryKind } from "../memory/types";
@@ -18,7 +18,7 @@ export async function rememberMemoryFunc(
   thunkApi: any
 ): Promise<{ rawData: unknown; displayData: string }> {
   const state = thunkApi.getState();
-  const spaceId = selectCurrentSpaceId(state) || undefined;
+  const spaceId = getCurrentSpaceId() || undefined;
   const content = String(args.content ?? "").trim();
   const scope = args.scope ?? "auto";
   const kind = args.kind ?? "episodic";

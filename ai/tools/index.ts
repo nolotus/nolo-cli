@@ -2289,7 +2289,8 @@ const ALL_TOOL_FUNCTION_NAMES: string[] = toolDefinitions
   .map((tool) => tool.schema?.name)
   .filter((name): name is string => Boolean(name));
 
-// Agent 可用的工具名：保留 ask_user，排除 toolquery 和默认开启的浏览器/搜索工具
+// Agent 可用的工具名：ask_user 保留在可选列表（显式声明才注入，不再随
+// CORE/FORCED 默认下发），排除 toolquery 和默认开启的浏览器/搜索工具。
 const AGENT_AVAILABLE_TOOL_NAMES = ALL_TOOL_FUNCTION_NAMES.filter(
   (name) =>
     name !== "toolquery" &&

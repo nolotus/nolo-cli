@@ -61,7 +61,7 @@ export const BUILTIN_AGENT_CATALOG: BuiltinAgentCatalogEntry[] = [
     group: "builtin",
     name: "nolo",
     provider: "nolo",
-    model: "deepseek-v4-flash",
+    model: "deepseek-v4-flash-vision-exp",
     runtimeFallback: true,
   },
   {
@@ -103,9 +103,9 @@ export const BUILTIN_AGENT_CATALOG: BuiltinAgentCatalogEntry[] = [
   {
     id: "01DSV4FLASHPB00000000JFPFD",
     group: "public",
-    name: "DeepSeek V4 Flash",
+    name: "DeepSeek V4 Flash Vision Exp",
     provider: "nolo",
-    model: "deepseek-v4-flash",
+    model: "deepseek-v4-flash-vision-exp",
     runtimeFallback: true,
   },
   {
@@ -118,10 +118,82 @@ export const BUILTIN_AGENT_CATALOG: BuiltinAgentCatalogEntry[] = [
   },
   {
     id: "01KIMIK26OLLAMA0000000001",
-    group: "public",
-    name: "Kimi K2.6",
+    // 已下架的公共入口：保留 internal catalog entry 仅用于旧 Agent 记录的运行时兼容。
+    // 旧 nolo/kimi-k2.6 请求由 platformHosted 路由到 OpenRouter qwen/qwen3.8-27b。
+    group: "internal",
+    name: "Kimi K2.6（兼容）",
     provider: "nolo",
     model: "kimi-k2.6",
+    runtimeFallback: true,
+  },
+  // ── 广场公开聊天档（从 createSpaceAgents PUBLIC_AGENT_DEFS 收编，2026-08-19）──
+  // ID 与 createSpaceAgents 的 deterministicId 结果一致；provider 按 agentSeedBuilder
+  // 默认规则：显式 provider 用显式值，未写则 openai。
+  {
+    id: "01GPT56SOLPB00000000VXMGCW",
+    group: "public",
+    name: "GPT-5.6 Sol",
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    runtimeFallback: true,
+  },
+  {
+    id: "01GPT56TERPB00000001UX7RKW",
+    group: "public",
+    name: "GPT-5.6 Terra",
+    provider: "openai",
+    model: "gpt-5.6-terra",
+    runtimeFallback: true,
+  },
+  {
+    id: "01GPT56LUNPB00000001VVVZHS",
+    group: "public",
+    name: "GPT-5.6 Luna",
+    provider: "openai",
+    model: "gpt-5.6-luna",
+    runtimeFallback: true,
+  },
+  {
+    id: "01GPT55PROPUB00000000IV47M",
+    group: "public",
+    name: "GPT-5.5 Pro",
+    provider: "openai",
+    model: "gpt-5.5-pro",
+    runtimeFallback: true,
+  },
+  {
+    id: "01CLSO50DIPB00000000A1DVVU",
+    group: "public",
+    name: "Claude Sonnet 5",
+    provider: "deepinfra",
+    model: "anthropic/claude-sonnet-5",
+    runtimeFallback: true,
+  },
+  {
+    id: "01CLOP48DIPB0000000001OI1W",
+    group: "public",
+    name: "Claude Opus 5",
+    provider: "deepinfra",
+    model: "anthropic/claude-opus-5",
+    runtimeFallback: true,
+  },
+  {
+    id: "01FABLE5DIPB00000001VJBKM4",
+    group: "public",
+    name: "Claude Fable 5",
+    provider: "deepinfra",
+    model: "anthropic/claude-fable-5",
+    runtimeFallback: true,
+  },
+  // Gemini 文本档只上架最新一代：旧版留在广场只会分散选择、拉长列表，而
+  // 用户想要的是「最新的那个 Gemini」。gemini-3.6-flash 这个**模型**仍然保留
+  // （modelAbility / 定价表照旧），下架的只是广场入口。
+  {
+    id: "01GEM37FLPB00000000FJCRNC",
+    group: "public",
+    name: "Gemini 3.7 Flash",
+    provider: "google",
+    model: "gemini-3.7-flash",
     runtimeFallback: true,
   },
   {

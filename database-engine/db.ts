@@ -38,6 +38,23 @@ export function isServerDbLockError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Blue-green two-phase drain: thrown when ensureServerDbOpen() is called
+ * after markServerDbShuttingDown(). Phase-2 in-flight streams that try to
+ * (re)open the DB get this tagged error instead of silently reacquiring the
+ * LevelDB file lock (which would steal it back from the canary process).
+ */
+export class ServerDbShuttingDownError extends Error {
+  readonly code = "SERVER_DB_SHUTTING_DOWN" as const;
+  // advisory-only：现有调用方检查 isLevelLifecycleError（匹配 LEVEL_*_NOT_OPEN），
+  // 不消费此字段。保留是为了未来可能的 shutdown-aware retry 逻辑。
+  readonly retryable = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "ServerDbShuttingDownError";
+  }
+}
+
 const {
   authorityStore,
   serverDb,
@@ -99,7 +116,32 @@ export type ServerDbOpenRetryOptions = {
  * 否则新进程会在旧进程正常 drain 期间被误判为抢锁失败而反复重启。
  */
 const DEFAULT_SERVER_DB_OPEN_LOCK_TIMEOUT_MS = 8_000;
-const DEFAULT_SERVER_DB_OPEN_LOCK_INTERVAL_MS = 1_000;
+// 100ms 轮询：蓝绿部署时 canary 等旧进程释放 LevelDB 锁，
+// 锁释放后平均等 50ms 而非 500ms，减少 canary /ready 延迟。
+// 25ms 轮询：这个间隔直接进部署窗口——旧进程释放锁到 canary 拿到锁之间，
+// 平均要等半个间隔。100ms → 25ms 把这一项从平均 50ms 降到 ~12ms。
+// 抢锁失败是廉价的 open() 尝试，25ms 的重试频率对 8s 预算不构成压力。
+const DEFAULT_SERVER_DB_OPEN_LOCK_INTERVAL_MS = 25;
+
+/**
+ * Shutdown flag：两阶段 drain 在 phase 1 释放 LevelDB 锁后，
+ * phase 2 的在途流可能调用 ensureServerDbOpen() 懒加载重新打开 DB。
+ * 这会重新获取 LevelDB 文件锁——把刚释放给 canary 的锁抢回来，
+ * 导致 canary 等锁超时 + 旧进程被 PM2 SIGKILL。
+ * 设置此 flag 后 ensureServerDbOpen() 拒绝重新打开，抛出 tagged retryable 错误。
+ *
+ * 可重置：--hot 模块热替换和 desktop restart 会复用同一进程，
+ * 新的 bootstrapServer 调用 clearServerDbShuttingDown() 重置此 flag。
+ */
+let serverDbShuttingDown = false;
+
+export function markServerDbShuttingDown() {
+  serverDbShuttingDown = true;
+}
+
+export function clearServerDbShuttingDown() {
+  serverDbShuttingDown = false;
+}
 
 function resolveServerDbOpenLockTimeoutMs(
   env: NodeJS.ProcessEnv = process.env
@@ -127,6 +169,15 @@ export async function ensureServerDbOpen(options?: ServerDbOpenRetryOptions) {
   const status = authorityStore.status;
   if (status === "open") return;
 
+  // 蓝绿两阶段 drain：phase 1 已关闭 DB 并释放锁，phase 2 的在途流
+  // 不能重新打开 DB（会抢回 canary 正在等的 LevelDB 锁）。
+  // 抛出 tagged retryable 错误，让调用方知道这是 shutdown 期间的可重试状态。
+  if (serverDbShuttingDown) {
+    throw new ServerDbShuttingDownError(
+      "Server DB is shutting down (blue-green phase 2 drain); cannot reopen LevelDB"
+    );
+  }
+
   const timeoutMs = options?.timeoutMs ?? resolveServerDbOpenLockTimeoutMs();
   const intervalMs =
     options?.intervalMs ?? DEFAULT_SERVER_DB_OPEN_LOCK_INTERVAL_MS;
@@ -134,8 +185,18 @@ export async function ensureServerDbOpen(options?: ServerDbOpenRetryOptions) {
   const now = options?.now ?? Date.now;
 
   const deadline = now() + timeoutMs;
+  // -Infinity 而不是 0：注入时钟的测试从 t=0 起步，用 0 会把**第一条**警告吞掉——
+  // 而第一条恰恰是最该出现的（「开始等锁了」）。
+  let lastLockWarnAt = Number.NEGATIVE_INFINITY;
 
   for (let attempt = 1; ; attempt += 1) {
+    // Retry loop 内也要 recheck：canary 等锁期间如果收到 shutdown 信号
+    // （虽然正常流程不会发生，但防止 race），不再继续尝试打开。
+    if (serverDbShuttingDown) {
+      throw new ServerDbShuttingDownError(
+        "Server DB shutdown signaled during lock retry; aborting reopen"
+      );
+    }
     try {
       await ensureDbOpen(authorityStore);
       if (status !== "opening" && !options?.quiet) {
@@ -160,9 +221,12 @@ export async function ensureServerDbOpen(options?: ServerDbOpenRetryOptions) {
         }
         throw err;
       }
-      if (!options?.quiet) {
+      // 25ms 重试意味着 90s 预算下最多 3600 次；每次都打一行会把部署日志淹掉。
+      // 按秒聚合：信息量（还在等、还剩多久）一点没少，行数回到 ~90。
+      if (!options?.quiet && now() - lastLockWarnAt >= 1_000) {
+        lastLockWarnAt = now();
         console.warn(
-          `⚠️ LevelDB 被其他进程占用（第 ${attempt} 次尝试，距超时约 ${Math.max(1, Math.ceil(remainingMs / 1000))}s），${intervalMs}ms 后重试`
+          `⚠️ LevelDB 被其他进程占用（已尝试 ${attempt} 次，距超时约 ${Math.max(1, Math.ceil(remainingMs / 1000))}s），${intervalMs}ms 后继续`
         );
       }
       await sleep(intervalMs);
@@ -181,6 +245,19 @@ export async function openServerDb() {
  * 优雅关机时关闭 DB
  */
 export async function closeServerDb() {
+  // 先标记 shutdown：即使 DB 不在 open 状态（如刚启动就 shutdown），
+  // 也要阻止后续 ensureServerDbOpen 重新打开。
+  // 放在 status check 之前，确保所有路径都设 flag。
+  markServerDbShuttingDown();
+
+  // WARNING D 修复：如果 DB 正在 opening（phase-2 懒加载 ensureDbOpen 在途），
+  // 等它离开 opening 状态再决定是否关闭。否则 open 完成后 DB 持有锁但不会被关闭。
+  for (let i = 0; i < 50; i++) {
+    const s = authorityStore.status;
+    if (s !== "opening") break;
+    await defaultSleep(100);
+  }
+
   const status = authorityStore.status;
   if (status !== "open") return;
 

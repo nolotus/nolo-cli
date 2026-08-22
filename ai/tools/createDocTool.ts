@@ -1,7 +1,7 @@
 // 文件路径: ai/tools/createDocTool.ts
 
 import { createDocState } from "../../render/page/docStore";
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import type { RootState } from "../../app/store";
 
 export interface CreateDocToolArgs {
@@ -85,7 +85,7 @@ export async function createDocFunc(
   const categoryId = rawCategoryId || undefined;
 
   const explicitSpaceId = (args.spaceId ?? "").trim() || undefined;
-  const currentSpaceId = selectCurrentSpaceId(state) || undefined;
+  const currentSpaceId = getCurrentSpaceId() || undefined;
   const spaceId = explicitSpaceId ?? currentSpaceId;
 
   const rawContent = (args.content ?? "").trim();

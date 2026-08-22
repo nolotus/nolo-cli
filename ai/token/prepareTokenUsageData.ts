@@ -7,7 +7,7 @@ import { isOAuthApiKeyRef } from "../../agent-runtime/serverProxyPolicy";
 
 type SharingLevel = "default" | "split" | "full";
 
-interface BillingAgentConfig {
+export interface BillingAgentConfig {
   model: string;
   provider?: string;
   apiSource?: string;
@@ -17,6 +17,70 @@ interface BillingAgentConfig {
   sharingLevel?: SharingLevel;
   id?: string;
   userId?: string;
+}
+
+export interface ResolvedTokenUsagePricing {
+  usage: ReturnType<typeof normalizeUsage>;
+  billedProvider?: string;
+  billedModel: string;
+  billedServiceTier?: string;
+  cost: number;
+  pay: Record<string, number>;
+  /** true when the agent config carries explicit input/output prices. */
+  hasExternalPrice: boolean;
+}
+
+/**
+ * 唯一定价决策点（不含 billable 判定）：按 billing target（provider/model/
+ * serviceTier）+ 外部价格换算 USD cost。记账（prepareTokenUsageData）与
+ * 响应透传（chat proxy 注入 usage.cost 供 TUI 显示积分）共用同一实现，
+ * 保证「展示值 == 记账值」，消除 dual-rate seam。
+ */
+export function resolveTokenUsagePricing(args: {
+  rawUsage: RawUsage;
+  agentConfig: BillingAgentConfig;
+  nowMs?: number;
+}): ResolvedTokenUsagePricing {
+  const { rawUsage, agentConfig, nowMs } = args;
+  const usage = normalizeUsage(rawUsage);
+  const billingTarget = resolveBillingTarget({
+    usage,
+    fallbackProvider: agentConfig.provider,
+    fallbackModel: agentConfig.model,
+  });
+  const billedProvider = billingTarget.provider;
+  const billedModel = billingTarget.model;
+  const billedServiceTier = billingTarget.serviceTier;
+
+  const hasExternalPrice =
+    (agentConfig.inputPrice !== undefined && agentConfig.inputPrice > 0) ||
+    (agentConfig.outputPrice !== undefined && agentConfig.outputPrice > 0);
+
+  const { cost, pay } = calculatePrice({
+    provider: billedProvider,
+    modelName: billedModel,
+    billingServiceTier: billedServiceTier,
+    usage,
+    externalPrice: hasExternalPrice
+      ? {
+          input: agentConfig.inputPrice ?? 0,
+          output: agentConfig.outputPrice ?? 0,
+          creatorId: agentConfig.userId ?? (agentConfig.id ? extractUserId(agentConfig.id) : ""),
+        }
+      : undefined,
+    sharingLevel: agentConfig.sharingLevel,
+    nowMs,
+  });
+
+  return {
+    usage,
+    billedProvider,
+    billedModel,
+    billedServiceTier,
+    cost,
+    pay,
+    hasExternalPrice,
+  };
 }
 
 interface PrepareTokenUsageDataParams {
@@ -91,6 +155,33 @@ export function resolveBillable(input: {
   return false;
 }
 
+/**
+ * resolveBillable 的 agent-config 便捷封装：从 BillingAgentConfig 组装
+ * apiSource/apiKeyRef/hasExternalPrice 参数。记账（prepareTokenUsageData）
+ * 与响应透传（resolveChatProxyUsageCost）共用，避免两处手抄五参组装。
+ */
+export function resolveBillableForAgent(input: {
+  usage: { billing_estimated?: boolean };
+  cost: number;
+  userId?: string;
+  agentConfig: BillingAgentConfig;
+  hasExternalPrice?: boolean;
+}): boolean {
+  const { usage, cost, userId, agentConfig } = input;
+  const hasExternalPrice =
+    input.hasExternalPrice ??
+    ((agentConfig.inputPrice !== undefined && agentConfig.inputPrice > 0) ||
+      (agentConfig.outputPrice !== undefined && agentConfig.outputPrice > 0));
+  return resolveBillable({
+    usage,
+    userId,
+    apiSource: agentConfig.apiSource,
+    apiKeyRef: agentConfig.apiKeyRef,
+    cost,
+    hasExternalPrice,
+  });
+}
+
 export const prepareTokenUsageData = ({
   rawUsage,
   agentConfig,
@@ -113,43 +204,20 @@ export const prepareTokenUsageData = ({
       "prepareTokenUsageData requires a non-empty agentId or cybotId"
     );
   }
-  const usage = normalizeUsage(rawUsage);
-  const billingTarget = resolveBillingTarget({
-    usage,
-    fallbackProvider: agentConfig.provider,
-    fallbackModel: agentConfig.model,
-  });
-  const billedProvider = billingTarget.provider;
-  const billedModel = billingTarget.model;
-  const billedServiceTier = billingTarget.serviceTier;
+  const { usage, billedProvider, billedModel, billedServiceTier, cost, pay, hasExternalPrice } =
+    resolveTokenUsagePricing({
+      rawUsage,
+      agentConfig,
+      nowMs: timestamp,
+    });
+
   const recordProvider = billedProvider ?? agentConfig.provider ?? "unknown";
 
-  const hasExternalPrice =
-    (agentConfig.inputPrice !== undefined && agentConfig.inputPrice > 0) ||
-    (agentConfig.outputPrice !== undefined && agentConfig.outputPrice > 0);
-
-  const { cost, pay } = calculatePrice({
-    provider: billedProvider,
-    modelName: billedModel,
-    billingServiceTier: billedServiceTier,
+  const billable = resolveBillableForAgent({
     usage,
-    externalPrice: hasExternalPrice
-      ? {
-          input: agentConfig.inputPrice ?? 0,
-          output: agentConfig.outputPrice ?? 0,
-          creatorId: agentConfig.userId ?? (agentConfig.id ? extractUserId(agentConfig.id) : ""),
-        }
-      : undefined,
-    sharingLevel: agentConfig.sharingLevel,
-    nowMs: timestamp,
-  });
-
-  const billable = resolveBillable({
-    usage,
-    userId,
-    apiSource: agentConfig.apiSource,
-    apiKeyRef: agentConfig.apiKeyRef,
     cost,
+    userId,
+    agentConfig,
     hasExternalPrice,
   });
 

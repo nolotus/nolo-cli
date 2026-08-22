@@ -1,78 +1,20 @@
 /**
- * CLI 版 quick-chat 自动路由。
- * 图片档已移除：有图无图都走 flash 档，vision 预处理管道负责把图片描述成文字。
- * 不再调 LLM 分类器，无复杂度兜底、无专职 agent 路由。
+ * CLI `nolo chat --auto-route` 的路由目标。
+ *
+ * 「自动路由」早已不再分类：没有 LLM 分类器、没有复杂度分档、没有图片档
+ * （图片交给 vision 预处理管道，见 localLoop 的 preprocessImagesForTextOnlyAgent）。
+ * 剩下的全部语义就是一句「走默认档」，所以这里只留一个常量。
+ *
+ * 曾经这里有 `CLI_AUTO_TIER_AGENT_KEYS` / `CLI_AUTO_TIER_MODELS` 两张三档表
+ * （flash/balanced/quality 三个值完全相同）、一个把三档判成同一件事的
+ * `resolveCliAutoAgentModel`，以及 `classifyCliAutoRoute`——它忽略入参、恒定
+ * 返回 flash，而调用方只读 `agentKey` 一个字段。档位是历史形状，不是功能。
+ *
+ * 目标与 web 首页默认档保持一致（app/settings/quickChatTierDefaults.ts）：
+ * 都指向内置 nolo 本体，它的 provider/model 由 builtinAgentCatalog 托管。
  */
 
-import {
-  PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-} from "../core/builtinAgents";
+import { BUILTIN_NOLO_AGENT_KEY } from "../core/builtinAgents";
 
-/**
- * CLI 自动路由的 tier agent（与 web quickChatTierDefaults 对齐）。
- * 无图时一律走 flash 档；balanced/quality 保留别名以兼容下游查表
- * （resolveCliAutoAgentModel）。
- */
-export const CLI_AUTO_TIER_AGENT_KEYS = {
-  flash: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  balanced: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-  quality: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
-} as const;
-
-/**
- * Tier agent → catalog model id. Used by TUI context-window resolution so
- * status chips show the routed model's window (e.g. flash → 1M) instead of
- * falling back through the default "nolo" display name to 256k.
- */
-export const CLI_AUTO_TIER_MODELS = {
-  flash: "deepseek-v4-flash",
-  balanced: "deepseek-v4-flash",
-  quality: "deepseek-v4-flash",
-} as const;
-
-/** Resolve the catalog model id for a known auto-route agent key. */
-export function resolveCliAutoAgentModel(agentKey: string): string | undefined {
-  if (agentKey === CLI_AUTO_TIER_AGENT_KEYS.flash) return CLI_AUTO_TIER_MODELS.flash;
-  if (agentKey === CLI_AUTO_TIER_AGENT_KEYS.balanced) {
-    return CLI_AUTO_TIER_MODELS.balanced;
-  }
-  if (agentKey === CLI_AUTO_TIER_AGENT_KEYS.quality) {
-    return CLI_AUTO_TIER_MODELS.quality;
-  }
-  return undefined;
-}
-
-export type CliAutoTier = keyof typeof CLI_AUTO_TIER_AGENT_KEYS;
-
-export interface CliAutoRouteResult {
-  /** 命中的 agent key（内置档）。 */
-  agentKey: string;
-  tier: CliAutoTier;
-  /** 协议保留字段：恒为 true（非兜底结果）。 */
-  classified: boolean;
-}
-
-export interface ClassifyCliAutoRouteOptions {
-  /** 保留以兼容调用方签名。 */
-  serverUrl: string;
-  /** 保留以兼容调用方签名。 */
-  authToken: string;
-  /** @deprecated 图片档已移除，有图无图都走 flash。保留以兼容调用方签名。 */
-  hasImages?: boolean;
-}
-
-/**
- * 自动路由：有图无图都走 flash 档。
- * 图片由 vision 预处理管道处理（localLoop 中的 preprocessImagesForTextOnlyAgent）。
- * 同步执行（无 I/O），不调 LLM 分类器。
- */
-export function classifyCliAutoRoute(
-  _text: string,
-  options: ClassifyCliAutoRouteOptions,
-): CliAutoRouteResult {
-  return {
-    agentKey: CLI_AUTO_TIER_AGENT_KEYS.flash,
-    tier: "flash",
-    classified: true,
-  };
-}
+/** `--auto-route` / `NOLO_AUTO_ROUTE=1` 时实际使用的 agent。 */
+export const CLI_AUTO_ROUTE_AGENT_KEY = BUILTIN_NOLO_AGENT_KEY;

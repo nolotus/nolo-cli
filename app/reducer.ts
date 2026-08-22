@@ -16,11 +16,12 @@ import messageReducer from "../chat/messages/messageSlice";
 
 // Explicit Record type so composite/declaration checks do not require naming
 // private slice state interfaces from other packages (TS4023).
+// Using property getters guards against circular import TDZ during module evaluation.
 export const reducer: Record<string, any> = {
-  message: messageReducer,
-  auth: authReducer,
-  db: databaseReducer,
-  settings: settingReducer,
-  space: spaceReducer,
-  table: tableReducer,
+  get message() { return messageReducer; },
+  get auth() { return authReducer; },
+  get db() { return databaseReducer; },
+  get settings() { return settingReducer; },
+  get space() { return spaceReducer; },
+  get table() { return tableReducer; },
 };

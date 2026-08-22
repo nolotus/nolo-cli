@@ -11,7 +11,8 @@ import {
 } from "../../database/keys";
 import { deleteDialog } from "../../chat/dialog/dialogSlice";
 import { deleteTable } from "../../render/table/tableSlice";
-import { deleteContentFromSpace, selectAllMemberSpaces } from "../../create/space/spaceSlice";
+import { deleteContentFromSpace } from "../../create/space/spaceSlice";
+import { getAllMemberSpaces } from "../../create/space/spaceMembershipStore";
 import { read, remove, selectById } from "../../database/dbSlice";
 import { removeFavoriteLocally } from "../favorite/favoriteStore";
 import { resolveDeletedFavoriteProjectionRemoval } from "../favorite/deletedFavoriteProjection";
@@ -303,7 +304,7 @@ export const deleteDbKey =
                 const spaceIds = isAppKey(contentKey)
                     ? new Set([
                         effectiveSpaceId,
-                        ...selectAllMemberSpaces(getState() as RootState).map((space) => space.spaceId),
+                        ...getAllMemberSpaces().map((space) => space.spaceId),
                     ])
                     : new Set([effectiveSpaceId]);
                 await Promise.all(

@@ -469,13 +469,13 @@ function buildExecShellTool(toolName: string): OpenAiCompatibleTool {
       parameters: {
         type: "object",
         properties: {
-          cmd: {
+          command: {
             type: "string",
             description: "Shell command to run (non-empty).",
           },
-          command: {
+          cmd: {
             type: "string",
-            description: "Compatibility alias for cmd.",
+            description: "Compatibility alias for command.",
           },
         },
       },

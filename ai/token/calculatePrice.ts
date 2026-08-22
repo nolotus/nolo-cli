@@ -376,10 +376,11 @@ const calculateOpenRouterFallbackCost = (
 // Both OpenRouter and xAI report per-request cost in their usage payload.
 // OpenRouter usage.cost is in USD; xAI usage.cost is converted from
 // cost_in_usd_ticks in normalizeUsage. In this billing bucket
-// (non-GPT / non-Claude) 1 USD = 7 credits. If either provider's
-// multiplier diverges, split this into OPENROUTER_COST_MULTIPLIER and
-// XAI_COST_MULTIPLIER and add a per-case switch before the helper call.
-export const API_REPORTED_COST_MULTIPLIER = 7;
+// (non-GPT / non-Claude) 1 USD = 8 credits, aligned with the nolo catalog
+// (PLATFORM_CREDITS_PER_USD = 8). If either provider's multiplier diverges,
+// split this into OPENROUTER_COST_MULTIPLIER and XAI_COST_MULTIPLIER and add
+// a per-case switch before the helper call.
+export const API_REPORTED_COST_MULTIPLIER = 8;
 
 const zeroCostBreakdown = (): CostBreakdown => ({
   regular: 0,
@@ -453,8 +454,10 @@ const calculateBasicCost = (
       return calculateCacheBasedCost(resolvedPrice, usage, externalPrice);
 
     // nolo/crof: honor inputCacheHit only when the model defines it (K3 has
-    // inputCacheHit=2). Models without it (e.g. K2.6) keep simple full-price
-    // billing so cached tokens are not priced at 0.
+    // inputCacheHit=2, K2.6 has 0.32 from its OpenRouter upstream). Models
+    // without it keep simple full-price billing so cached tokens are not
+    // priced at 0 — but a platform-hosted model用于 agentic 循环时必须补上
+    // 这一项，否则每轮重放的上下文会被按 input 原价重复计费。
     case "nolo":
     case "crof":
       return typeof resolvedPrice.inputCacheHit === "number"
@@ -480,7 +483,7 @@ const calculateBasicCost = (
     case "xai": {
       // xAI returns cost_in_usd_ticks in usage. normalizeUsage already
       // converted to USD and stored it in usage.cost (same multiplier as
-      // OpenRouter: 1 USD = 7 credits in this bucket).
+      // OpenRouter: 1 USD = 8 credits in this bucket, aligned with catalog.
       const reported = calculateApiReportedCost(usage);
       if (reported.regular > 0) return reported;
       return calculateSimpleCost(resolvedPrice, usage, externalPrice);

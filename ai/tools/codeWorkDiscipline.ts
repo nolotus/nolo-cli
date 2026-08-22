@@ -19,7 +19,7 @@
 export const CODE_WORK_DISCIPLINE_BODY = `## 效率优先（省 token）
 - 不复述需求，不解释「打算怎么做」，直接动手。改完只用一两句话说清「改了什么、去哪看」。
 - 思考简短：定位问题即可，不做长篇推演。
-- 小改动走最短路径：searchFiles/globFiles 定位 → readFile 确认 → editFile 精确替换。能一次命中就不要反复读文件。
+- 小改动走最短路径：优先用 \`rg\` 搜代码/文本、\`find\`/\`fd\` 定位文件 → readFile 确认 → editFile 精确替换。能一次命中就不要反复读文件。
 - 已经知道文件和位置时，跳过多余的 search/read，直接 edit。
 - 禁止为一个小改动整页重写或连带改动未命中的部分。
 
@@ -28,6 +28,9 @@ export const CODE_WORK_DISCIPLINE_BODY = `## 效率优先（省 token）
 - 只碰任务书列出的文件；改完用 \`git status --short\` 自查，若改到清单外文件，如实报告。
 - 不要 \`git add\` / \`git commit\` / \`git push\` / \`git stash\` / \`git reset\` / \`git checkout\` / \`git clean\`——改动留在工作区，提交由调用方验收后处理。仓库常有多个会话共用一个 checkout，你一提交就会把别人的在途文件卷进来。
 - 只跑任务里列出的测试文件，不要跑 broader 测试（broaden 测试的失败是预存的，和你的改动无关）。
+- 同一个文件读过一次后记住内容，不要重复读取。
+- 如果 editFile 失败并提示 "expected 1 replacement but found 0"，先用 \`file <path>\` 检查是否有 CRLF。如果有，用 \`tr -d '\\r' < <path> > /tmp/clean.ts && mv /tmp/clean.ts <path>\` 转换后重试。
+- 只读任务相关的文件，不要 grep 整个 repo 查找规则或配置。
 - **建议汇报**：交付时把过程中发现的**任何值得用户知道的事**都列出来（预存无关改动、既有测试隔离问题、潜在风险、后续可优化点、需用户决策的事项），不要只报「做完了」。
 
 ## Review 纪律（commit 前硬门）

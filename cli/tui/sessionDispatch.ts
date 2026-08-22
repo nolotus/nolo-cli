@@ -27,7 +27,10 @@ import {
   THEME_PALETTES,
   themeText,
 } from "./theme";
-import { resolveAgentContextWindow } from "../client/tokenUsage";
+import {
+  resolveAgentContextWindow,
+  resolveAgentModelIdentity,
+} from "../client/tokenUsage";
 import { estimateDefaultCliContextTokens } from "../client/estimateCliContext";
 import { getProcessRegistry } from "../../agent-runtime/processRegistry";
 import { formatElapsedSeconds, renderContextPanel, renderKnownAgents, renderTuiHelp } from "./sessionRender";
@@ -60,7 +63,6 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
   const explicitDialogKey =
     asOptionalTrimmedString(env.NOLO_DIALOG_KEY) ??
     (dialogEnvValue?.startsWith("dialog-") ? dialogEnvValue : undefined);
-  const autoRouteDefault = env.NOLO_AUTO_ROUTE !== "0";
 
   return {
     agentKey,
@@ -86,18 +88,15 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
     runtimeMode,
     modeLabel:
       asOptionalTrimmedString(env.NOLO_CLI_STATUS_MODE) ?? runtimeMode,
+    userLanguage: asOptionalTrimmedString(env.NOLO_LANG),
     gitStatus: undefined,
     toolDisplay: normalizeToolDisplayMode(env.NOLO_CLI_TOOLS ?? env.NOLO_TOOLS, "compact"),
-    contextWindow: resolveAgentContextWindow({
-      agentKey,
-      agentName,
-      autoRouteDefault,
-    }),
+    contextWindow: resolveAgentContextWindow({ agentKey, agentName }),
     estimatedContextTokens: estimateDefaultCliContextTokens({
       cwd,
       agentKey,
-      agentName: autoRouteDefault ? "DeepSeek V4 Flash" : agentName,
-      model: autoRouteDefault ? "deepseek-v4-flash" : undefined,
+      userLanguage: asOptionalTrimmedString(env.NOLO_LANG),
+      ...resolveAgentModelIdentity({ agentKey, agentName }),
     }),
     apiSource: PLATFORM_AGENTS.some((entry) => entry.key === agentKey)
       ? "platform"
@@ -109,14 +108,11 @@ export function createInitialTuiState(env: EnvLike = process.env): TuiState {
 function applyAgentSwitch(
   state: TuiState,
   target: { name: string; key: string; model?: string; apiSource?: string },
-  opts?: { autoRouteDefault?: boolean },
 ) {
-  const autoRouteDefault = opts?.autoRouteDefault ?? process.env.NOLO_AUTO_ROUTE !== "0";
   const contextWindow = resolveAgentContextWindow({
     agentKey: target.key,
     agentName: target.name,
     model: target.model,
-    autoRouteDefault,
   });
   return {
     nextState: {
@@ -129,6 +125,7 @@ function applyAgentSwitch(
         agentKey: target.key,
         agentName: target.name,
         model: target.model,
+        userLanguage: state.userLanguage,
       }),
       apiSource: target.apiSource,
     },
@@ -461,7 +458,19 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
       }
       setCliLocale(locale);
       return {
-        nextState: state,
+        nextState: {
+          ...state,
+          userLanguage: locale,
+          estimatedContextTokens: estimateDefaultCliContextTokens({
+            cwd: state.cwd,
+            agentKey: state.agentKey,
+            userLanguage: locale,
+            ...resolveAgentModelIdentity({
+              agentKey: state.agentKey,
+              agentName: state.agentName,
+            }),
+          }),
+        },
         output: t("langSwitched"),
         action: { type: "set-locale", locale },
       };

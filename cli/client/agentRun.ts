@@ -888,6 +888,7 @@ async function runLocalAgentTurnForCli(
     const result = await runLocalAgentTurn({
       adapter,
       agentRef: options.agentKey,
+      userLanguage: options.userLanguage ?? options.env.NOLO_LANG ?? null,
       input: buildUserInputContent(options.message, options.imageUrls),
       ...(expandedMessage !== options.message
         ? {
@@ -966,6 +967,7 @@ async function runLocalAgentTurnForCli(
       exitCode: 0,
       dialogId: result.dialogId,
       title: result.title,
+      ...(result.titlePatchPromise ? { titlePatchPromise: result.titlePatchPromise } : {}),
       turnTokens: buildTurnTokenUsage(result.usage, result.model),
     };
   } catch (error) {
@@ -1023,6 +1025,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<RunAge
           exitCode: localResult.exitCode,
           ...(localResult.dialogId ? { dialogId: localResult.dialogId } : {}),
           title: localResult.title,
+          ...(localResult.titlePatchPromise
+            ? { titlePatchPromise: localResult.titlePatchPromise }
+            : {}),
           ...(localResult.turnTokens
             ? { turnTokens: localResult.turnTokens }
             : {}),
@@ -1054,6 +1059,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<RunAge
                   ? { dialogId: retriedLocalResult.dialogId }
                   : {}),
                 title: retriedLocalResult.title,
+                ...(retriedLocalResult.titlePatchPromise
+                  ? { titlePatchPromise: retriedLocalResult.titlePatchPromise }
+                  : {}),
                 ...(retriedLocalResult.turnTokens
                   ? { turnTokens: retriedLocalResult.turnTokens }
                   : {}),

@@ -146,17 +146,15 @@ export const CODE_PLANNER_SKILL_SEEDS: readonly CodePlannerSkillSeedDef[] = [
     ].join("\n"),
     triggerMode: "required",
     toolNames: [
-      "listFiles",
       "readFile",
       "globFiles",
-      "searchFiles",
       "editFile",
       "execShell",
     ],
     promptPatch: [
       "工作区协议：",
       "- Desktop/Space 代码对话中，用户说「当前代码」「当前改动」「当前工作区」「这个项目」「仓库里」，或点名仓库组件（如「CLI 相关」）时，默认指绑定工作区；立即用工作区/shell 工具检查。代码改动 review 时先从 git status -sb、diff/stat、相关 guidance/tests 入手。不要要求用户粘贴代码/diff，除非工作区工具确实不可用、没有绑定文件夹，或访问/命令失败——先披露失败再退回粘贴。",
-      "- 只读：listFiles、readFile、globFiles、searchFiles。没有成功结果时，禁止声称「已检查仓库/工作区/文件」。",
+      "- 只读：readFile、globFiles。目录结构与文件列表优先使用 execShell 运行 ls/find，代码/文本搜索优先使用 execShell 运行 rg/git grep。没有成功结果时，禁止声称「已检查仓库/工作区/文件」。",
       "- editFile：小范围精确替换。edit 前先 readFile 拿 exact oldText；默认 expectedReplacements=1，匹配数不符时停并报告 blocker。没有 writeFile——需要新建文件或整文件重写时 startAgentRun 派发。",
       "- execShell：优先只读/诊断。git 状态用 shell（如 git status -sb），禁止用 readFile 挖 .git 代替。破坏性命令与未批准的 push/合并禁止。",
       "- 工作区工具不可用（非 Desktop、未绑定 boundFolder、工具失败）时必须披露，并只基于用户粘贴内容与仍可用渠道继续。",

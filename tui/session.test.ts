@@ -75,6 +75,24 @@ describe("handleTuiInput - image attachments", () => {
     expect(state.attachedImages).toEqual([]);
   });
 
+  test("keeps NOLO_LANG in state so context estimates match real turns", () => {
+    const state = createInitialTuiState({ NOLO_LANG: "zh-CN" });
+    expect(state.userLanguage).toBe("zh-CN");
+    expect(state.estimatedContextTokens).toBeGreaterThan(
+      createInitialTuiState({}).estimatedContextTokens ?? 0,
+    );
+  });
+
+  test("/lang refreshes the response language and context estimate", () => {
+    const state = createInitialTuiState({});
+    const result = handleTuiInput("/lang zh", state);
+    expect(result.action).toEqual({ type: "set-locale", locale: "zh" });
+    expect(result.nextState.userLanguage).toBe("zh");
+    expect(result.nextState.estimatedContextTokens).toBeGreaterThan(
+      state.estimatedContextTokens ?? 0,
+    );
+  });
+
 
 
   test("/new clears attachedImages", () => {

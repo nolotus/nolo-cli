@@ -10,10 +10,7 @@ import './fireworks'
 import type { Model } from "./types";
 import type { Agent } from "../../app/types";
 import { fireworksModels } from "./fireworks";
-import {
-  PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
-  platformHostedModels,
-} from "./platformHosted";
+import { platformHostedModels } from "./platformHosted";
 import {
   cloudflareModels,
   getCloudflareWorkersAiChatCompletionsUrl,
@@ -46,6 +43,7 @@ import {
   PLATFORM_HOSTED_KIMI_K26_MODEL,
   PLATFORM_HOSTED_KIMI_PROVIDER,
 } from "./kimi";
+import { PLATFORM_HOSTED_DEEPSEEK_FLASH_VISION_EXP_MODEL } from "./platformHosted";
 import { opencodeGoModels } from "../../integrations/opencode/models";
 export { supportedReasoningModels } from "./reasoningModels";
 export { getCloudflareWorkersAiChatCompletionsUrl } from "./cloudflare";
@@ -96,11 +94,15 @@ const ANTHROPIC_MODEL_ALIASES: Record<string, string> = {
   "claude-sonnet-4.5": "claude-3-5-sonnet-latest",
 };
 
+const NOLO_MODEL_ALIASES: Record<string, string> = {
+  "glm-5.2": "glm-5.3",
+};
+
 const normalizeLookupProvider = (provider?: string | null): LookupProvider | null => {
   if (!provider) return null;
   const normalized = provider.toLowerCase();
   // Legacy catalog id → public product provider id
-  if (normalized === "ollama-cloud") {
+  if (normalized === "ollama-cloud" || normalized === "deepseek") {
     return "nolo" as LookupProvider;
   }
   if (normalized in MODEL_LOOKUP_MAP) {
@@ -115,6 +117,9 @@ const normalizeLookupModelName = (
 ): string => {
   if (provider === "anthropic") {
     return ANTHROPIC_MODEL_ALIASES[name] ?? name;
+  }
+  if (provider === "nolo") {
+    return NOLO_MODEL_ALIASES[name] ?? name;
   }
   return name;
 };
@@ -135,6 +140,8 @@ const toModel = (candidate: ModelLookupCandidate): Model => ({
       : !!candidate.supportVision,
   contextWindow: candidate.contextWindow,
   price: candidate.price ?? candidate.pricing ?? { input: 0, output: 0 },
+  peakPrice: candidate.peakPrice,
+  offPeakPrice: candidate.offPeakPrice,
   pricingStrategy: candidate.pricingStrategy,
   serviceTierPriceMultipliers: candidate.serviceTierPriceMultipliers,
   maxOutputTokens: candidate.maxOutputTokens ?? candidate.maxTokens,
@@ -243,13 +250,9 @@ const API_ENDPOINTS: Record<string, ProviderEndpointMap> = {
   fireworks: {
     default: "https://api.fireworks.ai/inference/v1/chat/completions"
   },
-  nolo: {
-    default: PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
-  },
-  // Legacy agent records may still store provider=ollama-cloud
-  "ollama-cloud": {
-    default: PLATFORM_HOSTED_CHAT_COMPLETIONS_URL,
-  },
+  /* 平台托管 provider（nolo / legacy ollama-cloud / deepseek）不放本地默认端点：
+   * 直连语义已移除（历史 ollama.com 兜底废弃），端点由服务端按模型决议；
+   * getApiEndpoint 对它们直接返回 ""。 */
   cloudflare: {
     default: "__cloudflare_workers_ai_chat_completions__",
   },
@@ -301,7 +304,7 @@ export function getProviderByModelName(modelName: string): LookupProvider | unde
 /** 默认模型配置（provider + model 成对出现，避免分散硬编码） */
 export const DEFAULT_MODEL = {
   provider: PLATFORM_HOSTED_KIMI_PROVIDER as Provider,
-  name: PLATFORM_HOSTED_KIMI_K26_MODEL,
+  name: PLATFORM_HOSTED_DEEPSEEK_FLASH_VISION_EXP_MODEL,
 } as const;
 
 /** 统一获取 ChatCompletion / Responses 等端点 */
@@ -342,6 +345,15 @@ export function getApiEndpoint(agent: Agent): string {
   const OAUTH_API_KEY_REFS = new Set([
     "chatgpt", "xai", "antigravity", "claude", "cursor",
   ]);
+  // 平台托管（nolo）与 legacy（ollama-cloud / deepseek）供应商：本地无默认端点，
+  // 统一由服务端按模型决议（chatHandler / loopUpstream 共享平台路由），直连返回 ""。
+  if (
+    effectiveProvider === "nolo" ||
+    effectiveProvider === "ollama-cloud" ||
+    effectiveProvider === "deepseek"
+  ) {
+    return "";
+  }
   if (
     !effectiveProvider ||
     effectiveProvider.toLowerCase() === "custom" ||

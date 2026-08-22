@@ -339,3 +339,156 @@ export const extractToolCallsFromResponseOutput = (
   }
   return calls;
 };
+
+/**
+ * Inverse of {@link convertMessagesToResponsesInput}: turn a Responses-wire
+ * `input` array back into chat.completions `messages`.
+ *
+ * Needed because the *client* picks the wire format from its own model→wire
+ * table while the *server* picks the upstream endpoint. When a hosted model
+ * switches provider (e.g. DeepSeek V4 Flash: official Responses ↔ DeepInfra
+ * chat.completions) the two sides disagree for the duration of the rollout
+ * skew, and a client on the Responses wire would otherwise send a body with
+ * `input` but no `messages` to a chat.completions upstream — which rejects it
+ * (`Field required`, HTTP 422).
+ *
+ * Mapping (mirror of the forward converter):
+ *   message              → { role, content }            (parts flattened to text/image_url)
+ *   function_call        → assistant.tool_calls[]       (consecutive calls coalesce)
+ *   function_call_output → { role: "tool", tool_call_id }
+ *   reasoning            → dropped (not representable on the completions wire)
+ */
+export const convertResponsesInputToMessages = (
+  input: readonly any[],
+): Array<Record<string, any>> => {
+  const messages: Array<Record<string, any>> = [];
+
+  for (const item of input ?? []) {
+    if (!isRecord(item)) continue;
+
+    if (item.type === "function_call_output") {
+      const callId = asOptionalTrimmedString(item.call_id);
+      if (!callId) continue;
+      messages.push({
+        role: "tool",
+        tool_call_id: callId,
+        content: typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? ""),
+      });
+      continue;
+    }
+
+    if (item.type === "function_call") {
+      const callId = asOptionalTrimmedString(item.call_id);
+      const name = asOptionalTrimmedString(item.name);
+      if (!callId || !name) continue;
+      const toolCall = {
+        id: callId,
+        type: "function" as const,
+        function: {
+          name,
+          arguments:
+            typeof item.arguments === "string"
+              ? item.arguments
+              : JSON.stringify(item.arguments ?? {}),
+        },
+      };
+      // Coalesce runs of function_call items onto one assistant message, the
+      // shape the completions wire expects.
+      const last = messages.at(-1);
+      if (last?.role === "assistant" && Array.isArray(last.tool_calls)) {
+        last.tool_calls.push(toolCall);
+      } else {
+        messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+      }
+      continue;
+    }
+
+    // `reasoning` has no completions-wire equivalent: dropping it is what the
+    // forward path already does when stripReasoningContent is set.
+    if (item.type === "reasoning") continue;
+
+    if (item.type !== "message" && item.role === undefined) continue;
+
+    const role = asOptionalTrimmedString(item.role);
+    if (!role) continue;
+
+    if (typeof item.content === "string") {
+      messages.push({ role, content: item.content });
+      continue;
+    }
+
+    const textChunks: string[] = [];
+    const parts: Array<Record<string, any>> = [];
+    for (const part of item.content ?? []) {
+      if (!isRecord(part)) continue;
+      if (part.type === "input_text" || part.type === "output_text") {
+        const text = typeof part.text === "string" ? part.text : "";
+        if (!text) continue;
+        textChunks.push(text);
+        parts.push({ type: "text", text });
+        continue;
+      }
+      if (part.type === "input_image") {
+        // The Responses wire carries a bare `image_url` string, but tolerate the
+        // completions-style `{ image_url: { url } }` nesting so a mismatched
+        // client cannot make images vanish silently.
+        const rawUrl = isRecord(part.image_url) ? part.image_url.url : part.image_url;
+        const url = asOptionalTrimmedString(rawUrl);
+        if (!url) continue;
+        parts.push({
+          type: "image_url",
+          image_url: { url, ...(part.detail ? { detail: part.detail } : {}) },
+        });
+      }
+    }
+
+    if (parts.length === 0) continue;
+    // Text-only content collapses to a plain string (widest provider support);
+    // mixed content keeps the parts array.
+    const hasImage = parts.some((part) => part.type === "image_url");
+    messages.push({ role, content: hasImage ? parts : textChunks.join("") });
+  }
+
+  return messages;
+};
+
+/**
+ * Inverse of {@link toResponsesTools}: turn Responses-wire tool declarations
+ * back into the chat.completions shape.
+ *
+ * The two wires nest differently:
+ *   Responses         { type: "function", name, parameters }
+ *   chat.completions  { type: "function", function: { name, parameters } }
+ *
+ * Sending the flat form to a chat.completions upstream fails its tool union
+ * validation — DeepInfra reports `Input should be 'web_search'`, naming an
+ * unrelated built-in tool variant, which makes the real cause hard to see.
+ *
+ * Built-in Responses tools (web_search, file_search, …) have no
+ * chat.completions equivalent and are dropped rather than forwarded broken.
+ */
+export const convertResponsesToolsToChatCompletions = (
+  tools: readonly any[],
+): Array<Record<string, any>> => {
+  const out: Array<Record<string, any>> = [];
+  for (const tool of tools ?? []) {
+    if (!isRecord(tool)) continue;
+    // Already in chat.completions shape — keep as is.
+    if (isRecord(tool.function)) {
+      out.push(tool as Record<string, any>);
+      continue;
+    }
+    if (tool.type !== "function") continue;
+    const name = asOptionalTrimmedString(tool.name);
+    if (!name) continue;
+    out.push({
+      type: "function",
+      function: {
+        name,
+        ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+        ...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
+      },
+    });
+  }
+  return out;
+};

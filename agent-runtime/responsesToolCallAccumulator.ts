@@ -4,6 +4,18 @@ type State = { id: string; name: string; arguments: string };
 
 export type ResponsesToolAccumulator = Map<string, State>;
 
+export function normalizeResponsesToolArguments(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 export function createResponsesToolAccumulator(): ResponsesToolAccumulator {
   return new Map();
 }
@@ -30,8 +42,10 @@ export function applyResponsesToolEvent(
   const id = item?.call_id || item?.id || event?.call_id || key;
   const current = calls.get(key) ?? { id, name: "", arguments: "" };
   if (typeof item?.name === "string" && item.name) current.name = item.name;
-  if (typeof item?.arguments === "string") current.arguments = item.arguments;
-  if (typeof event?.arguments === "string") current.arguments = event.arguments;
+  const itemArguments = normalizeResponsesToolArguments(item?.arguments);
+  if (itemArguments !== undefined) current.arguments = itemArguments;
+  const eventArguments = normalizeResponsesToolArguments(event?.arguments);
+  if (eventArguments !== undefined) current.arguments = eventArguments;
   if (typeof event?.delta === "string") current.arguments += event.delta;
   calls.set(key, current);
 }

@@ -8,7 +8,9 @@ import {
     type PendingFile,
 } from "../../chat/dialog/dialogSlice";
 import { selectAllMsgs } from "../../chat/messages/messageSlice";
-import { selectViewMode } from "../../create/space/spaceSlice";
+// Wave A: viewMode 已剥至 module store; thunk 内通过 getViewMode() 读 module store
+// （setViewMode Redux action 会同步写 module store，两者一致）。
+import { getViewMode, getCurrentSpaceIdRaw } from "../../create/space/spaceCurrentStore";
 import {
     buildLinkedSpacesSection,
     buildSpaceContextLayer,
@@ -530,9 +532,9 @@ export const fetchMemoryOverlayContext = async (
         : JSON.stringify(userInput ?? "");
     const spaceId =
         asOptionalTrimmedString((dialogConfig as any)?.spaceId) ??
-        ((state as any)?.space?.viewMode === "all"
+        (getViewMode() === "all"
             ? undefined
-            : asOptionalTrimmedString((state as any)?.space?.currentSpaceId));
+            : asOptionalTrimmedString(getCurrentSpaceIdRaw()));
 
     try {
         const response = await fetch(`${baseUrl}/api/memory/query`, {
@@ -863,7 +865,7 @@ export const mergeAgentToolsWithRuntime = (
     }
 
     if (!isInlineVisualArtifactAgent(agentConfig)) {
-        const viewMode = state ? selectViewMode(state) : "categories";
+        const viewMode = state ? getViewMode() : "categories";
         if (viewMode === "all") {
             // 全部视图没有「当前空间」：search_workspace 移除（与历史行为一致）。
             // search_all_spaces 不再随 CORE 常驻（见 TOOL_PACKS.CORE），也不自动

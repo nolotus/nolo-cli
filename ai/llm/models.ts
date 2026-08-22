@@ -10,7 +10,7 @@ import { deepinfraModels } from "./deepinfra";
 import { xaiModels } from "../../integrations/xai/models";
 import { openrouterModels } from "./openrouterModels";
 import { fireworksModels } from "./fireworks";
-import { ollamaCloudModels } from "./ollamaCloud";
+import { platformHostedModels } from "./platformHosted";
 import { cloudflareModels } from "./cloudflare";
 import { gmiModels } from "./gmi";
 import { zaiModels } from "./zai";
@@ -37,7 +37,7 @@ const withProvider =
  * 这是整个应用中模型选择器的唯一数据源。
  */
 export const ALL_MODELS: ModelWithProvider[] = [
-  ...withProvider("nolo")(ollamaCloudModels),
+  ...withProvider("nolo")(platformHostedModels),
   ...withProvider("google")(googleModels),
   ...withProvider("openai")(openAIModels),
   ...withProvider("openrouter")(openrouterModels),

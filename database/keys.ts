@@ -478,6 +478,15 @@ export const createTokenStatsKey = Object.assign(
   }
 );
 
+/**
+ * 判断一个 dbKey 是否是 Token Stats 的 key
+ * 形如：token-stats-day-user-{userId}-{dateKey} 或任何 token-stats-* 统计 key
+ */
+export const isTokenStatsKey = (key: string): boolean => {
+  const parts = splitKey(key);
+  return parts.length >= 2 && parts[0] === "token" && parts[1] === "stats";
+};
+
 /* ---- Dialog ---- */
 // TODO(keys): Dialog 相关 key 使用 DataType.DIALOG 前缀，结构为
 //             dialog-{userId}-{dialogId} / dialog-{dialogId}-msg-{messageId}，
@@ -862,6 +871,10 @@ export function buildAgentAutomationOwnerIndexDeleteOps(args: {
     },
   ];
 }
+
+/* ---- Billing budget (US-4.2) ---- */
+export const createBudgetKey = (userId: string) =>
+  createKey("budget", userId, "monthly");
 
 /* ---- Notification ---- */
 export const createNotificationKey = {

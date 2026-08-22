@@ -16,6 +16,10 @@
 
 import { wrapHistoricalSummaryWithReplayGuard } from "./staleReplayGuard";
 import { MEMORY_USE_GUIDANCE } from "./memoryUseGuidance";
+import {
+  buildUserResponseLanguageContext,
+  buildUserResponseLanguageReadFailureContext,
+} from "./userResponseLanguage";
 
 export interface TurnContextSource {
   /** Read a persisted record by dbKey (e.g. `space-{id}`). Null when absent. */
@@ -30,6 +34,7 @@ export interface TurnContextLayer {
     | "agents-md"
     | "skill-content"
     | "user-global-prompt"
+    | "user-response-language"
     | "memory-overlay"
     | "memory-use-guidance"
     | "dialog-summary";
@@ -505,6 +510,41 @@ export const buildUserGlobalPromptLayer = async (
   return makeLayer(
     "user-global-prompt",
     `-- - 用户全局偏好-- -\n${globalPrompt}`,
+  );
+};
+
+// ============================================================================
+// Platform response language layer
+// ============================================================================
+
+export interface BuildUserResponseLanguageLayerArgs {
+  source: TurnContextSource;
+  userId: string | null | undefined;
+  settingsKey?: (userId: string) => string;
+}
+
+export const buildUserResponseLanguageLayer = async (
+  args: BuildUserResponseLanguageLayerArgs,
+): Promise<TurnContextLayer | null> => {
+  const userId = asTrimmed(args.userId);
+  if (!userId) return null;
+  const key = args.settingsKey ? args.settingsKey(userId) : `${userId}-settings`;
+  let settingsRecord: Record<string, unknown> | null;
+  try {
+    settingsRecord = await args.source.readRecord(key);
+  } catch (error) {
+    return makeLayer(
+      "user-response-language",
+      buildUserResponseLanguageReadFailureContext({ userId, error }),
+      "session",
+    );
+  }
+  const language = settingsRecord?.responseLanguage ?? settingsRecord?.language;
+  if (!asTrimmed(language)) return null;
+  return makeLayer(
+    "user-response-language",
+    buildUserResponseLanguageContext({ language }),
+    "session",
   );
 };
 

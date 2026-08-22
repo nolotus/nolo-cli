@@ -1,6 +1,13 @@
 import { configureStore, type ThunkDispatch, type UnknownAction } from "@reduxjs/toolkit";
 import { TypedUseSelectorHook, useDispatch, useSelector } from "react-redux";
 import { reducer } from "./reducer";
+import {
+  attachSessionSnapshot,
+  configureSessionSnapshot,
+} from ".//sessionSnapshot";
+import { selectRemoteServer, selectRemoteServers } from ".//settings/settingSlice";
+import { selectCurrentToken } from "../auth/authSlice";
+import { selectIdentityUserBalance, selectIdentityUserId } from "identity";
 import type { TokenManager } from "identity/authTypes";
 import type { Level } from "level";
 
@@ -80,6 +87,25 @@ interface CreateStoreOptions {
 }
 
 export const createAppStore = (options: CreateStoreOptions = {}): any => {
+  const created = createAppStoreInner(options);
+  // 会话快照桥挂载：usage 域读端（token/server/balance/userId）脱离 redux API。
+  // reader 在此组装（本文件已 import 全部 slice，无循环风险）。
+  // SSR（server/render、ssrPreload）不挂载快照：模块级单例在“每请求一个 store”
+  // 的并发下会串扰（W2，2026-08-21 review）。客户端才有 window。
+  if (typeof window !== "undefined") {
+    configureSessionSnapshot((state) => ({
+      token: selectCurrentToken(state) ?? null,
+      server: selectRemoteServer(state) || "",
+      balance: selectIdentityUserBalance(state),
+      userId: selectIdentityUserId(state) ?? null,
+      servers: selectRemoteServers(state),
+    }));
+    attachSessionSnapshot(created);
+  }
+  return created;
+};
+
+const createAppStoreInner = (options: CreateStoreOptions = {}): any => {
   const { dbInstance, tokenManager, preloadedState } = options;
 
   // Bind durable explicit-sync mapping persistence to the same client DB.

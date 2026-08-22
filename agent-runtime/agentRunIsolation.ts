@@ -73,10 +73,23 @@ export const SUBTASK_REMOVED_GIT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "commitWorkspace",
 ]);
 
-/** All tool names a subtask must NOT receive (orchestration + git write). */
+/**
+ * 需要用户交互通道才能闭环的工具。无交互通道的环境一律剥离：
+ * - 子任务（NOLO_AGENT_RUN_CHILD=1）：executor 只会回退成问题回显载荷
+ *   （raw JSON payload），模型拿到也无法闭环——即使父 agent 显式声明也剥离；
+ * - desktop 本地 runtime（无 requestUserChoice/AskChoice 面板）：见
+ *   desktopAgentRuntimeTurnService.ts 的过滤处，复用本集合。
+ * 未来新增交互类工具时加入此集合，各端剥离点自动生效。
+ */
+export const INTERACTION_REQUIRED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "ask_user",
+]);
+
+/** All tool names a subtask must NOT receive (orchestration + git write + interaction). */
 export const SUBTASK_REMOVED_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...ORCHESTRATION_TOOL_NAMES,
   ...SUBTASK_REMOVED_GIT_TOOL_NAMES,
+  ...INTERACTION_REQUIRED_TOOL_NAMES,
 ]);
 
 /**

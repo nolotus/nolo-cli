@@ -1,5 +1,5 @@
 import { callToolApi } from "./toolApiClient";
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import { selectIdentityUserId } from "identity/selectors";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentDialogConfig, selectCurrentDialogKey } from "../../chat/dialog/dialogSlice";
@@ -110,7 +110,7 @@ export const chatgptWebImageGenerateFunc = async (
     { withAuth: true, agentKey }
   );
 
-  const spaceId = selectCurrentSpaceId(state);
+  const spaceId = getCurrentSpaceId();
   const userId = selectIdentityUserId(state);
   const currentServer = selectCurrentServer(state);
 

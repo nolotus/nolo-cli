@@ -208,6 +208,12 @@ const processAgentCreateForm = (formData: AgentFormData, userId: string) => {
   if ("provider" in result) {
     result.provider = sanitizeOptionalModelString(result.provider);
   }
+  // cliProvider 空串 -> null：schema 是 nullish(picklist(...))，空串会被拒。
+  // 与 processAgentUpdateChanges 保持一致，堵住创建路径的同一类 bug。
+  if ("cliProvider" in result) {
+    const cp = (result as any).cliProvider;
+    (result as any).cliProvider = cp || null;
+  }
 
   return result;
 };
@@ -255,7 +261,9 @@ const processAgentUpdateChanges = (
     changes.apiSource = data.apiSource;
   }
   if ("cliProvider" in data) {
-    changes.cliProvider = (data as any).cliProvider || "";
+    // 空值写 null（schema 是 nullish(picklist(...))，空串 "" 会被拒）；
+    // null 在 patch deepMerge 时删除字段，等价于「此 agent 不用 CLI」。
+    changes.cliProvider = (data as any).cliProvider || null;
   }
   if ("machineId" in data) {
     const machineId = String((data as any).machineId ?? "").trim();

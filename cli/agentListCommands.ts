@@ -9,6 +9,7 @@ import {
   listRemoteAgents,
   normalizeListedAgent,
   parseAgentListArgs,
+  isAgentUnavailableNow,
   toSafeListedAgentSummary,
   type ListedAgent,
 } from "./agentListHelpers";
@@ -32,7 +33,7 @@ export async function runAgentListCommand(
 ) {
   const env = deps.env ?? process.env;
   const output = deps.output ?? process.stdout;
-  const { wantJson, wantSafe, publicOnly, idsOnly } = parseAgentListArgs(args);
+  const { wantJson, wantSafe, publicOnly, idsOnly, showUnavailable } = parseAgentListArgs(args);
   const spaceInput = readOption(args, "--space") ?? readOption(args, "--space-id");
 
   const authToken = resolveAuthToken(args, env);
@@ -122,8 +123,16 @@ export async function runAgentListCommand(
       agents = agents.filter((agent) => agent.publicRecordExists);
     }
 
+    // 429 限流中（nextAvailableAt 在未来）的 agent 默认不列出，避免误选到
+    // 打不了的 agent。--show-unavailable 可见全量（脚本/排障需要）。
+    // 在 space/publicOnly 过滤之后计算总数，避免把无关排除的 agent 计入。
+    const unavailableCount = agents.filter((agent) => isAgentUnavailableNow(agent)).length;
+    const agentsForOutput = showUnavailable
+      ? agents
+      : agents.filter((agent) => !isAgentUnavailableNow(agent));
+
     if (idsOnly) {
-      output.write(`${agents.map((agent) => agent.id).join("\n")}\n`);
+      output.write(`${agentsForOutput.map((agent) => agent.id).join("\n")}\n`);
       return 0;
     }
 
@@ -189,25 +198,33 @@ export async function runAgentListCommand(
         });
       }
 
-      let safeAgents = agents.map((agent) =>
-        toSafeListedAgentSummary(agent, { favoritesMap, userId })
-      );
-      safeAgents.push(
+      // 从完整补入后的集合（agents 已含 favkey hydration 的 norm）构建候选，
+      // 先做 publicOnly 维度过滤并计算 unavailableCount（与最终 list 同口径），
+      // 再统一执行 429 过滤。favorite-only（extraFavoriteRecords）同口径纳入。
+      let safeCandidates = [
+        ...agents.map((agent) => toSafeListedAgentSummary(agent, { favoritesMap, userId })),
         ...extraFavoriteRecords.map((record) =>
           toSafeAgentSummary(record, { favoritesMap, userId })
-        )
-      );
+        ),
+      ];
       if (publicOnly) {
-        safeAgents = safeAgents.filter((agent) => agent.isPublic);
+        safeCandidates = safeCandidates.filter((agent) => agent.isPublic);
       }
-      safeAgents = sortSafeAgentSummaries(safeAgents);
+      const safeUnavailableCount = safeCandidates.filter((agent) =>
+        isAgentUnavailableNow(agent as any)
+      ).length;
+      const safeAgents = showUnavailable
+        ? safeCandidates
+        : safeCandidates.filter((agent) => !isAgentUnavailableNow(agent as any));
+      const sortedSafeAgents = sortSafeAgentSummaries(safeAgents);
 
       output.write(JSON.stringify({
         success: true,
         userId,
         ...(resolvedSpaceId ? { spaceId: resolvedSpaceId } : {}),
-        total: safeAgents.length,
-        agents: safeAgents,
+        total: sortedSafeAgents.length,
+        unavailableCount: safeUnavailableCount,
+        agents: sortedSafeAgents,
       }, null, 2));
       output.write("\n");
       return 0;
@@ -219,10 +236,11 @@ export async function runAgentListCommand(
         ...(resolvedSpaceId ? { spaceId: resolvedSpaceId } : {}),
         targetServers: serverUrls,
         ...(serverFailures.length ? { serverFailures } : {}),
-        total: agents.length,
-        publicCount: agents.filter((agent) => agent.publicRecordExists).length,
+        total: agentsForOutput.length,
+        publicCount: agentsForOutput.filter((agent) => agent.publicRecordExists).length,
+        unavailableCount,
         source,
-        agents,
+        agents: agentsForOutput,
       }, null, 2));
       output.write("\n");
       return 0;
@@ -236,14 +254,17 @@ export async function runAgentListCommand(
     if (serverFailures.length) {
       output.write(`serverFailures: ${serverFailures.length}\n`);
     }
-    output.write(`total agents: ${agents.length}\n`);
-    output.write(`public agents: ${agents.filter((agent) => agent.publicRecordExists).length}\n`);
+    output.write(`total agents: ${agentsForOutput.length}\n`);
+    output.write(`public agents: ${agentsForOutput.filter((agent) => agent.publicRecordExists).length}\n`);
+    if (unavailableCount > 0 && !showUnavailable) {
+      output.write(`⛔ ${unavailableCount} agent(s) temporarily unavailable (429) hidden. Use --show-unavailable to list them.\n`);
+    }
     output.write(`source: ${source}\n`);
-    if (agents.length === 0) {
+    if (agentsForOutput.length === 0) {
       output.write("\n(no agents found)\n");
       return 0;
     }
-    for (const agent of agents) {
+    for (const agent of agentsForOutput) {
       const status = agent.publicRecordExists ? "public" : "private";
       const flagMismatch = agent.isPublicFlag !== agent.publicRecordExists
         ? ` flag=${agent.isPublicFlag}`

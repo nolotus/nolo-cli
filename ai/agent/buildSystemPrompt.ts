@@ -2,7 +2,6 @@
 // 平台通用 Agent System Prompt 生成器
 // 所有模型调用的 system prompt 均由此函数构建
 
-import { mapLanguage } from "../../app/i18n/mapLanguage";
 import { Agent } from "../../app/types";
 import { buildSkillGuidancePromptBlock } from "../skills/referenceRuntime";
 import { buildRuntimeGuidanceBlocks } from "../agent/runtimeGuidance";
@@ -13,6 +12,7 @@ import { wrapHistoricalSummaryWithReplayGuard } from "../context/staleReplayGuar
 // 必须带同一份指引，两处各存一份迟早漂移。
 import { MEMORY_USE_GUIDANCE } from "../../agent-runtime/memoryUseGuidance";
 import { buildIdentityBlock } from "../../agent-runtime/identityBlock";
+import { buildUserResponseLanguageContext } from "../../agent-runtime/userResponseLanguage";
 // 工具驱动指令表（编排/协作 review 硬门等）独立成模块，localLoop 复用同一份。
 import { resolveToolGuidedSections } from "./toolGuidedSections";
 
@@ -209,13 +209,11 @@ export const buildSystemPromptContext = (options: {
     (typeof navigator !== "undefined" ? navigator.language : "en");
 
   const { name, prompt: mainPrompt, dbKey, model } = agentConfig;
-  const mappedLanguage = mapLanguage(safeLanguage);
 
   const identitySection = buildIdentityBlock({
     agentName: name,
     agentId: dbKey,
     model,
-    responseLanguage: mappedLanguage,
   });
 
   const corePersonaSection = mainPrompt
@@ -272,6 +270,7 @@ export const buildSystemPromptContext = (options: {
 
   return compileContextLayers([
     { id: "identity", owner: "platform", cacheScope: "session", content: identitySection },
+    { id: "user-response-language", owner: "platform", cacheScope: "session", content: buildUserResponseLanguageContext({ language: safeLanguage }) },
     { id: "startup-protocol", owner: "platform", cacheScope: "static", content: startupProtocol },
     { id: "core-persona", owner: "agent", cacheScope: "session", content: corePersonaSection },
     { id: "agent-orchestration", owner: "platform", cacheScope: "session", content: toolSections.agentOrchestration },

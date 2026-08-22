@@ -1,10 +1,25 @@
 export const queryModelUsageFunctionSchema = {
   name: "queryModelUsage",
   description:
-    "查询模型/API 用量与费用。普通用户只能查自己的用量；系统管理员可以查指定用户或全站。费用默认返回 credits，也可附带 USD 换算。",
+    "查询模型/API 用量与费用，以及 token 使用量的分析视图（cache hit rate、output/input ratio、"
+    + "按模型/agent/入口切片、pricing what-if 模拟、break-even cache hit 计算）。"
+    + "普通用户只能查自己的用量；系统管理员可以查指定用户或全站。"
+    + "费用默认返回 credits，也可附带 USD 换算。"
+    + "数据来源是 TokenRecord 的只读投影，不影响计费。",
   parameters: {
     type: "object",
     properties: {
+      analysisType: {
+        type: "string",
+        enum: ["billing", "workload", "cacheBreakdown", "pricingReplay", "breakEven", "prefixChurn"],
+        description:
+          "分析类型。billing=用量费用统计（默认，向后兼容）；workload=cache hit/output-input ratio 指纹；"
+          + "cacheBreakdown=按模型/agent/入口的 cache hit 分组；"
+          + "pricingReplay=输入定价方案 × 历史 workload = counterfactual 成本对比；"
+          + "breakEven=两个定价方案的 break-even cache hit rate；"
+          + "prefixChurn=stable prefix 变更诊断。",
+        default: "billing",
+      },
       scope: {
         type: "string",
         enum: ["user", "all", "space"],
@@ -59,6 +74,43 @@ export const queryModelUsageFunctionSchema = {
         type: "number",
         description:
           "可选阈值，单位 USD；会按 creditsPerUsd 换算，并返回 0-100 的 threshold.usedPercent。",
+      },
+      groupBy: {
+        type: "string",
+        enum: ["model", "agent", "entry_path", "day"],
+        description: "cacheBreakdown 的分组维度。默认 model。",
+      },
+      pricingScenarios: {
+        type: "array",
+        description: "pricingReplay 用的定价方案列表。每个方案含 name 和三个单价。",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "方案名称，例如 A、B、C 或 provider 名" },
+            inputPerMillion: { type: "number", description: "miss input tokens 每百万单价（USD）" },
+            cachedInputPerMillion: { type: "number", description: "cache hit tokens 每百万单价（USD）" },
+            outputPerMillion: { type: "number", description: "output tokens 每百万单价（USD）" },
+          },
+          required: ["name", "inputPerMillion", "cachedInputPerMillion", "outputPerMillion"],
+        },
+      },
+      pricingA: {
+        type: "object",
+        description: "breakEven 分析的方案 A。",
+        properties: {
+          inputPerMillion: { type: "number" },
+          cachedInputPerMillion: { type: "number" },
+          outputPerMillion: { type: "number" },
+        },
+      },
+      pricingB: {
+        type: "object",
+        description: "breakEven 分析的方案 B。",
+        properties: {
+          inputPerMillion: { type: "number" },
+          cachedInputPerMillion: { type: "number" },
+          outputPerMillion: { type: "number" },
+        },
       },
     },
   },

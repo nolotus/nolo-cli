@@ -15,6 +15,14 @@ const entry = (id: string) => {
 
 export const BUILTIN_NOLO_AGENT_ID = entry("01NOLOAPPBLD000000019KCKT0").id;
 export const BUILTIN_NOLO_AGENT_KEY = publicAgentKey(BUILTIN_NOLO_AGENT_ID);
+/**
+ * 默认入口的展示名与实际模型 —— 各端「默认档」UI 的唯一真相源：
+ * TUI `/switch` 的平台项、web/desktop 输入框 agent 选择器的默认项，
+ * 都显示 `BUILTIN_NOLO_AGENT_NAME`（"nolo"）并指向 `BUILTIN_NOLO_AGENT_MODEL`。
+ * 模型换代只改 builtinAgentCatalog 的条目，各端跟随，不再手抄型号名。
+ */
+export const BUILTIN_NOLO_AGENT_NAME = entry("01NOLOAPPBLD000000019KCKT0").name;
+export const BUILTIN_NOLO_AGENT_MODEL = entry("01NOLOAPPBLD000000019KCKT0").model;
 export const BUILTIN_APP_BUILDER_AGENT_ID = entry("01APPBUILDER00000001YAII3I").id;
 export const BUILTIN_APP_BUILDER_AGENT_KEY = publicAgentKey(BUILTIN_APP_BUILDER_AGENT_ID);
 export const BUILTIN_ECOMMERCE_AGENT_ID = entry("01ECOMMERCEAG00000001PYQ2J").id;
@@ -66,6 +74,15 @@ export const DEFAULT_CODE_PLANNER_EXECUTOR_CANDIDATE_KEYS = [
 /**
  * Quick-chat 档位 agent：执行真相在代码里（agent-runtime/builtinPlatformAgentConfigs），
  * 对应的 agent-pub-* 记录按设计可以不存在（runtime fallback 合成配置）。
+ *
+ * 刻意不含内置 nolo：它有路由人格 prompt，记录缺失时宁可 404 也不降级成裸模型
+ * （见 agentLookup.test.ts 的 "does not extend the code-owned fallback to
+ * prompt-bearing builtin agents"）。
+ *
+ * 已知缺口：nolo 现在是各端默认档，于是「没有 seed 记录的环境」（自建 server、
+ * 全新 dev LevelDB）里首页发消息会拿到 404，而默认档指向广场档时不会——这条
+ * 路径此前有兜底。要不要为默认档破例（能用但没人格 vs 明确失败）是产品取舍，
+ * 未决，不在此单方面改。
  */
 export const PLATFORM_TIER_AGENT_KEYS = [
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,

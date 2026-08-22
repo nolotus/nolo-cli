@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { getCredentialPath, writeOAuthCredential } from "../agent-runtime/oauthTokenStore";
 
 import { runLocalAgentTurn } from "../agent-runtime/localLoop";
+import { buildLocalWorkspaceToolset } from "../agent-runtime/localWorkspaceTools";
+import { WORKSPACE_TOOL_NAMES } from "../agent-runtime/localWorkspaceToolDefs";
 import { resolveCliEffectiveEnabledPacks } from "./localRuntimeAdapter";
 import { expandEnabledPacks, applyDisabledTools } from "../ai/tools/toolPacks";
 import type { PermissionRequest } from "../agent-runtime/actionGate";
@@ -45,17 +47,9 @@ describe("CLI local runtime adapter source contract (credential broker)", () => 
     expect(source).toContain("credentialBroker,");
   });
 
-  // Regression: { hasUserChoice } shorthand is only valid inside prepareAgentConfig
-  // (where `const hasUserChoice` is in scope). resolveProvider's OAuth branches
-  // (antigravity/claude/cursor) previously used the shorthand, causing
-  // "hasUserChoice is not defined" ReferenceError. They must spell out
-  // Boolean(deps.requestUserChoice) like the platform/direct branches.
-  test("resolveProvider OAuth branches spell out hasUserChoice (no out-of-scope shorthand)", () => {
-    const bareShorthand = source.match(/\{ hasUserChoice \}/g) ?? [];
-    expect(bareShorthand.length).toBe(1);
-    const fullForm = source.match(/\{ hasUserChoice: Boolean\(deps\.requestUserChoice\) \}/g) ?? [];
-    expect(fullForm.length).toBeGreaterThanOrEqual(3);
-  });
+  // 历史回归测试已删除（2026-08-20 feat/ask-user-cleanup）：hasUserChoice
+  // 参数链整体移除（ask_user 移出 FORCED 后该参数无消费者），resolveProvider
+  // OAuth 分支不再传该选项，原「shorthand 越界」回归场景不复存在。
 
   test("passes credentialBroker to platform and direct OpenAI-compatible resolvers", () => {
     expect(source).toContain("resolvePlatformChatProviderConfig({");
@@ -81,28 +75,21 @@ describe("CLI local runtime adapter", () => {
     clearCliLocalRuntimePreparedAgentCache();
   });
 
-  const DEFAULT_LOCAL_CODING_TOOL_NAMES = [
-    "listFiles",
-    "readFile",
-    "writeFile",
-    "editFile",
-    "globFiles",
-    "searchFiles",
-    "execShell",
-    "launchProcess",
-    "listProcesses",
-  ];
-  const LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES = [
-    "listFiles",
-    "readFile",
-    "writeFile",
-    "editFile",
-    "globFiles",
-    "searchFiles",
-    "execShell",
-    "launchProcess",
-    "listProcesses",
-  ];
+  const orderWorkspaceToolNames = (names: readonly string[]) => {
+    const enabled = new Set(names);
+    return WORKSPACE_TOOL_NAMES.filter((name) => enabled.has(name));
+  };
+  const DEFAULT_LOCAL_CODING_TOOL_NAMES = orderWorkspaceToolNames(
+    buildLocalWorkspaceToolset({
+      declaredToolNames: expandEnabledPacks(
+        resolveCliEffectiveEnabledPacks({ enabledPacks: [] }),
+      ),
+      exposeShellTools: true,
+    }).toolNames,
+  );
+  const LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES = WORKSPACE_TOOL_NAMES.filter(
+    (name) => name !== "captureVisualState",
+  );
   const SHELL_LOCAL_CODING_TOOL_NAMES = [
     ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
   ];
@@ -1507,7 +1494,7 @@ describe("CLI local runtime adapter", () => {
       { role: "user", content: "make notifications cleaner" },
     ]);
     expect(toolNamesFromRequest(requests[0])).toEqual([
-      ...LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES,
+      ...DEFAULT_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
       "exa_search",
       "fetchWebpage",
@@ -1664,6 +1651,62 @@ describe("CLI local runtime adapter", () => {
     expect(turnRequests[0].body.messages).toBeUndefined();
     expect(turnRequests[0].body.KEY).toBeUndefined();
     expect(turnRequests[0].body.apiKeyHeader).toBeUndefined();
+  });
+
+  test("streams Responses SSE through the platform proxy for a legacy TUI runtime", async () => {
+    const requests: Array<{ url: string; body: any }> = [];
+    const store = new Map<string, any>([
+      ["agent-user-1-deepseek-stream", {
+        dbKey: "agent-user-1-deepseek-stream",
+        id: "deepseek-stream",
+        prompt: "Reply exactly as requested.",
+        model: "deepseek-v4-flash",
+        provider: "nolo",
+        apiSource: "platform",
+        useServerProxy: true,
+      }],
+    ]);
+    const adapter = createAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => { store.set(key, value); },
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async (url, init) => {
+        requests.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return new Response(
+          [
+            'data: {"type":"response.output_text.delta","delta":"PONG"}',
+            'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1}}}',
+            'data: [DONE]',
+            '',
+          ].join("\n\n"),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
+
+    const provider = await adapter.resolveProvider(
+      await adapter.loadAgentConfig("deepseek-stream"),
+    );
+    const deltas: string[] = [];
+    const result = await provider.complete([{ role: "user", content: "Reply PONG" }], {
+      onTextDelta: (chunk) => deltas.push(chunk),
+    });
+
+    expect(deltas).toEqual(["PONG"]);
+    expect(result.content).toBe("PONG");
+    expect(result.usage).toEqual({ input_tokens: 3, output_tokens: 1 });
+    expect(requests[0]?.body.stream).toBe(true);
   });
 
   test("retries transient certificate failures from the platform chat proxy", async () => {
@@ -2453,7 +2496,7 @@ describe("CLI local runtime adapter", () => {
     });
 
     expect(toolNamesFromRequest(requests[0])).toEqual([
-      ...SHELL_LOCAL_CODING_TOOL_NAMES,
+      ...LEGACY_WRITE_LOCAL_CODING_TOOL_NAMES,
       "rememberMemory",
       "exa_search",
       "fetchWebpage",
@@ -4260,7 +4303,7 @@ describe("CLI local runtime adapter", () => {
     expect(toolNames).not.toContain("ask_user");
   });
 
-  test("FORCED_TOOLS (ask_user) is injected when requestUserChoice is provided", async () => {
+  test("requestUserChoice 不再自动注入 ask_user（已移出 FORCED_TOOLS，需显式声明）", async () => {
     const requests: Array<{ body: any }> = [];
     const adapter = createAdapter({
       env: {
@@ -4295,7 +4338,7 @@ describe("CLI local runtime adapter", () => {
     });
 
     const toolNames = toolNamesFromRequest(requests[0]);
-    expect(toolNames).toContain("ask_user");
+    expect(toolNames).not.toContain("ask_user");
   });
 
   test("ask_user executor calls requestUserChoice and resolves the selected option", async () => {
@@ -5124,6 +5167,46 @@ describe("CLI local runtime adapter OAuth branches surface usage (TUI context ch
     });
     expect(requests).toHaveLength(1);
   });
+
+  test("antigravity OAuth branch streams onTextDelta chunks live and does not duplicate content", async () => {
+    writeFakeOAuthCredential("antigravity", "token-antigravity-stream");
+    const sseBody = [
+      'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"chunk 1 "}]}}]}}',
+      'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"chunk 2"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"totalTokenCount":14}}}',
+      "",
+      "",
+    ].join("\n");
+
+    const textDeltas: string[] = [];
+    const adapter = createOAuthAdapter({
+      agentRecord: {
+        dbKey: "agent-user-1-antigravity-oauth",
+        id: "antigravity-oauth",
+        model: "gemini-3.1-pro",
+        provider: "google-antigravity",
+        apiSource: "custom",
+        apiKeyRef: "antigravity",
+      },
+      fetchImpl: async (url) => {
+        if (String(url).includes("streamGenerateContent")) {
+          return new Response(sseBody, {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        return Response.json({ choices: [{ message: { content: "unused" } }] });
+      },
+    });
+
+    const agentConfig = await adapter.loadAgentConfig("antigravity-oauth");
+    const provider = await adapter.resolveProvider(agentConfig);
+    const result = await provider.complete([{ role: "user", content: "hi" }], {
+      onTextDelta: (c) => textDeltas.push(c),
+    });
+
+    expect(result.content).toBe("chunk 1 chunk 2");
+    expect(textDeltas).toEqual(["chunk 1 ", "chunk 2"]);
+    expect(result.usage).toEqual({ prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 });
+  });
 });
 
 /**
@@ -5216,7 +5299,7 @@ describe("CLI local policy tool names 派生自 schema", () => {
   test("executor 覆盖守卫：模型可见的每个工具名都能在本地 executor map 找到实现", () => {
     const agentConfig = { key: "agent-exec-cov", tools: [] } as any;
     const env = {};
-    const requested = resolveCliRequestedToolNames(agentConfig, env as any, null, { hasUserChoice: true });
+    const requested = resolveCliRequestedToolNames(agentConfig, env as any);
     const exposed = buildLocalPolicyToolNames({
       agentKey: agentConfig.key,
       toolNames: requested,
@@ -5389,26 +5472,16 @@ describe("resolveCliRequestedToolNames — systemBuiltinSkills 全局开关", ()
   });
 });
 
-describe("resolveCliRequestedToolNames — hasUserChoice 交互通道门控", () => {
-  test("未提供 hasUserChoice 时默认不注入 ask_user", () => {
-    const agentConfig = { key: "agent-headless", tools: [] } as any;
+describe("resolveCliRequestedToolNames — ask_user opt-in 门控", () => {
+  test("默认（未声明 ask_user）不注入", () => {
+    const agentConfig = { key: "agent-default", tools: [] } as any;
     const requested = resolveCliRequestedToolNames(agentConfig, {} as any);
     expect(requested).not.toContain("ask_user");
   });
 
-  test("hasUserChoice: false 时不注入 ask_user", () => {
-    const agentConfig = { key: "agent-headless", tools: [] } as any;
-    const requested = resolveCliRequestedToolNames(agentConfig, {} as any, null, {
-      hasUserChoice: false,
-    });
-    expect(requested).not.toContain("ask_user");
-  });
-
-  test("hasUserChoice: true 时包含 ask_user", () => {
-    const agentConfig = { key: "agent-interactive", tools: [] } as any;
-    const requested = resolveCliRequestedToolNames(agentConfig, {} as any, null, {
-      hasUserChoice: true,
-    });
+  test("显式声明 ask_user 时注入（显式 opt-in 路径保留）", () => {
+    const agentConfig = { key: "agent-opt-in", toolNames: ["ask_user"] } as any;
+    const requested = resolveCliRequestedToolNames(agentConfig, {} as any);
     expect(requested).toContain("ask_user");
   });
 });

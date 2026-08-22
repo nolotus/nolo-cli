@@ -1,14 +1,15 @@
-import { BUILTIN_NOLO_AGENT_KEY } from "../../core/builtinAgents";
+import {
+  BUILTIN_NOLO_AGENT_KEY,
+  BUILTIN_NOLO_AGENT_NAME,
+} from "../../core/builtinAgents";
 import { API_REPORTED_COST_MULTIPLIER } from "../../ai/token/calculatePrice";
 import { findModelConfig } from "../../ai/llm/providers";
 import {
   DEFAULT_CONTEXT_WINDOW,
   getModelContextWindow,
 } from "../../ai/llm/getModelContextWindow";
-import {
-  CLI_AUTO_TIER_MODELS,
-  resolveCliAutoAgentModel,
-} from "./autoModelRouter";
+import { builtinAgentCatalogEntryById } from "../../core/builtinAgentCatalog";
+import { parsePublicAgentId } from "../../core/prefix";
 import { normalizeUsage } from "../../ai/token/normalizeUsage";
 import type { EnvLike } from "./agentRunTypes";
 
@@ -17,7 +18,7 @@ export type TurnTokenUsage = {
   output: number;
   contextWindow?: number;
   remaining?: number;
-  /** 本轮累计消耗的平台积分（provider 返回 cost 按 7 credits/USD 换算；非平台计费无此值）。 */
+  /** 本轮累计消耗的平台积分（provider 返回 cost 按 8 credits/USD 换算；非平台计费无此值）。 */
   credits?: number;
   /**
    * 命中缓存的输入 token（已含在 `input` 里，不是额外量）。
@@ -33,38 +34,67 @@ const isUsableModelId = (model?: string | null): model is string => {
   return Boolean(raw) && raw !== "-" && raw !== "auto";
 };
 
-/**
- * Resolve the context window for a TUI agent selection.
- *
- * Prefer an explicit model id, then known auto-route tier keys, then the
- * auto/nolo default (flash → DeepSeek 1M when auto-route is on), then the
- * display-name fuzzy path. Avoids the historical bug where agentName "nolo"
- * fell through to DEFAULT_CONTEXT_WINDOW (256k) while auto→flash was actually
- * running on a 1M model.
- */
-export function resolveAgentContextWindow(opts: {
+export type AgentModelRef = {
   agentKey?: string;
   agentName?: string;
   model?: string | null;
-  /** When true (default), DEFAULT_TUI / nolo key uses flash tier's window. */
-  autoRouteDefault?: boolean;
-}): number {
-  if (isUsableModelId(opts.model)) {
-    return getModelContextWindow(opts.model);
-  }
+};
+
+/**
+ * 「这个 agent 实际跑哪个模型」——本文件唯一的一处判断。
+ *
+ * 顺序：显式 model → 该 key 在 builtinAgentCatalog 里声明的模型。
+ * 都不命中返回 undefined，由调用方决定怎么兜底。
+ *
+ * 直接查 catalog，而不是维护一张「档位 key → 模型」的小表：catalog 本来就覆盖
+ * 内置 + 广场 + 内部管线的全部条目，小表只认三个档位 key 且三个值完全相同。
+ *
+ * 上下文窗口和 token 估算都建在它上面。这两条链曾经各写各的：窗口查了档位 key
+ * 而估算没查，同一个 key 一边解析出 1M、另一边说不知道。
+ */
+function resolveEffectiveModel(opts: AgentModelRef): string | undefined {
+  if (isUsableModelId(opts.model)) return opts.model;
 
   const agentKey = opts.agentKey?.trim();
-  if (agentKey) {
-    const tierModel = resolveCliAutoAgentModel(agentKey);
-    if (tierModel) return getModelContextWindow(tierModel);
+  if (!agentKey) return undefined;
 
-    if (
-      opts.autoRouteDefault !== false &&
-      agentKey === BUILTIN_NOLO_AGENT_KEY
-    ) {
-      return getModelContextWindow(CLI_AUTO_TIER_MODELS.flash);
-    }
-  }
+  return builtinAgentCatalogEntryById(parsePublicAgentId(agentKey))?.model;
+}
+
+/**
+ * 供 `estimateDefaultCliContextTokens` 展开的展示名 + 模型。
+ *
+ * 初始状态 / `/new` / `/compact` / `/switch` 共用这一处解析，之前各处手抄
+ * "DeepSeek V4 Flash" / "deepseek-v4-flash" 已随型号换代漂移成过期值。
+ * 字段都可选：解析不出来就不给，让下游用自己的兜底，不塞空串冒充有值。
+ */
+export function resolveAgentModelIdentity(
+  opts: AgentModelRef,
+): { agentName?: string; model?: string } {
+  const model = resolveEffectiveModel(opts);
+  // 默认档用 catalog 的品牌名（"nolo"），除非调用方显式给了 model——那说明
+  // 它已经知道自己在跑什么，名字也该由它说了算。
+  const useCatalogName =
+    !isUsableModelId(opts.model) && opts.agentKey?.trim() === BUILTIN_NOLO_AGENT_KEY;
+  const agentName = useCatalogName ? BUILTIN_NOLO_AGENT_NAME : opts.agentName?.trim();
+
+  return {
+    ...(agentName ? { agentName } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
+/**
+ * Resolve the context window for a TUI agent selection.
+ *
+ * 先按 `resolveEffectiveModel` 解析出真实模型；解析不出来才退回显示名的 fuzzy
+ * 匹配，最后才是通用默认值。修掉过的历史 bug：agentName "nolo" 一路落到
+ * DEFAULT_CONTEXT_WINDOW（256k），而它实际跑在 1M 的模型上。窗口跟随 catalog
+ * 模型，所以 NOLO_AUTO_ROUTE 不再影响它。
+ */
+export function resolveAgentContextWindow(opts: AgentModelRef): number {
+  const model = resolveEffectiveModel(opts);
+  if (model) return getModelContextWindow(model);
 
   if (opts.agentName?.trim()) {
     return getModelContextWindow(opts.agentName);

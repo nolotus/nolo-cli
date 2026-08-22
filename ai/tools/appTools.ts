@@ -17,6 +17,8 @@ import {
   classifyAppReadSnapshot,
 } from "./appReadSnapshot";
 import { evaluateSmallVisualEditGuard } from "./appEditGuard";
+// Wave A: viewMode 已剥至 module store。
+import { getViewMode, getCurrentSpaceIdRaw } from "../../create/space/spaceCurrentStore";
 
 type AppSourceFile = { name: string; code: string };
 type AppDeployFramework = "worker" | "react-spa" | "nolo-react";
@@ -152,7 +154,7 @@ export async function resolveAppDeploySpaceId(
   thunkApi: any
 ): Promise<string | undefined> {
   const state = thunkApi?.getState?.();
-  const rawSpaceId = state?.space?.viewMode === "all" ? null : state?.space?.currentSpaceId;
+  const rawSpaceId = getViewMode() === "all" ? null : getCurrentSpaceIdRaw();
   const currentSpaceId = asOptionalTrimmedString(rawSpaceId);
 
   if (!args.appId) {

@@ -20,7 +20,7 @@ import {
 import { ulid } from "ulid";
 import { patch, write } from "../../database/dbSlice";
 import { createSpaceKey } from "../space/spaceKeys";
-import { selectAllMemberSpaces } from "./spaceSlice";
+import { getAllMemberSpaces } from "./spaceMembershipStore";
 import type { CreateSpaceRequest } from "./types";
 import type { AppDispatch, RootState } from "../../app/store";
 
@@ -126,7 +126,7 @@ export const addSpaceAction = async (
     updatedAt: now,
     type: DataType.SPACE,
   };
-  const spaces = selectAllMemberSpaces(state);
+  const spaces = getAllMemberSpaces();
   // After local+account membership union, first-Space migration must be
   // actor-scoped: a device-local membership must not block account first-Space
   // migration, and an account membership must not block guest first-Space.

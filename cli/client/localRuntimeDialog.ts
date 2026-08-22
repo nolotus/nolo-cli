@@ -391,31 +391,35 @@ export async function writeDialog(args: {
   // 不阻塞 writeDialog 返回；失败静默（下一轮节流会重试）。
   // 返回 titlePatchPromise 让测试可等待 patch 完成；调用方（saveTurn）
   // 不 await 它——patch 完成与否不影响 turn 返回。
-  let titlePatchPromise: Promise<void> | undefined;
+  // patch 成功时 resolve 携带最终标题（失败/被跳过为 null），供长驻宿主
+  // （TUI）在 patch 完成后刷新窗口标题（OSC），不必等下一轮 turn。
+  let titlePatchPromise: Promise<string | null> | undefined;
   if (titlePromise) {
     const dialogKey = `dialog-${args.userId}-${plan.dialogId}`;
     titlePatchPromise = titlePromise.then(async (resolvedTitle) => {
-      if (!resolvedTitle) return;
+      if (!resolvedTitle) return null;
       try {
         const existing = await args.store.read(dialogKey);
-        if (!existing || typeof existing !== "object") return;
+        if (!existing || typeof existing !== "object") return null;
         // 尊重 manual title：用户手动设的标题不被 LLM 覆盖。
-        if (existing?.titleSource === "manual") return;
+        if (existing?.titleSource === "manual") return null;
         // H-1 修复：竞态保护——如果 patch 读回的 record 的 titleUpdatedAt
         // 比本轮（nowMs）更新，说明已有更新的 turn 写过这条 dialog。跳过
         // patch 避免用旧 turn 的 titleUpdatedAt 覆盖新 turn 的值（会污染
         // 新 turn 的 title 30 分钟节流判断）。
         const existingTitleUpdatedAtMs = parseTitleUpdatedAtMs(existing);
-        if (existingTitleUpdatedAtMs > nowMs) return;
+        if (existingTitleUpdatedAtMs > nowMs) return null;
         await args.store.write(dialogKey, {
           ...existing,
           title: resolvedTitle,
           titleSource: "auto",
           titleUpdatedAt: new Date(nowMs).toISOString(),
         });
+        return resolvedTitle;
       } catch {
         // 静默失败：下一轮 needsTitleUpdate 仍为 true（titleUpdatedAt 未刷新），
         // 会重新生成。不值得为此打扰用户。
+        return null;
       }
     });
   }

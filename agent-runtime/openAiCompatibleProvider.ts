@@ -1,3 +1,4 @@
+import { getUsageRequestOptions } from "../ai/llm/usageRequestOptions";
 import type {
   AgentRuntimeChatMessage,
   AgentRuntimeResult,
@@ -28,6 +29,15 @@ import {
   finalizeAccumulatedToolCalls,
 } from "./toolCallAccumulator";
 import { sanitizeForOutbound } from "./outboundHistorySanitize";
+import { buildResponsesRequestBody } from "../integrations/openai/responsesRequestBody";
+import {
+  extractReasoningFromResponseOutput,
+  extractTextFromResponseOutput,
+  extractToolCallsFromResponseOutput,
+} from "../integrations/openai/responsesHelpers";
+import { readResponsesSseCompletion } from "./responsesSseStream";
+
+export { readResponsesSseCompletion };
 
 export type OpenAiCompatibleProviderConfig = {
   model: string;
@@ -36,9 +46,22 @@ export type OpenAiCompatibleProviderConfig = {
   apiKeyHeader?: string;
   provider: string;
   requestOptions: Record<string, number | string>;
+  wire?: "responses" | "chat.completions";
 };
 
 type OpenAiCompatibleTool = Record<string, unknown>;
+
+export function isOpenAiResponsesEndpoint(endpoint: string): boolean {
+  return endpoint.includes("/responses");
+}
+
+export function resolveOpenAiCompatibleWire(config: {
+  endpoint: string;
+  wire?: "responses" | "chat.completions";
+}): "responses" | "chat.completions" {
+  if (config.wire) return config.wire;
+  return isOpenAiResponsesEndpoint(config.endpoint) ? "responses" : "chat.completions";
+}
 
 export function buildOpenAiCompatibleChatCompletionRequest(args: {
   providerConfig: OpenAiCompatibleProviderConfig;
@@ -46,6 +69,7 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
   tools?: OpenAiCompatibleTool[];
   stream?: boolean;
 }) {
+  const isResponses = resolveOpenAiCompatibleWire(args.providerConfig) === "responses";
   const shouldStripReasoning = shouldStripReasoningContentForOutbound(
     args.providerConfig.provider,
     args.providerConfig.model,
@@ -59,7 +83,7 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
   const messages = toOpenAiCompatibleMessages(sanitizedMessages, {
     stripReasoningContent: shouldStripReasoning,
   });
-  const body = {
+  const rawBody: Record<string, any> = {
     model: args.providerConfig.model,
     messages: requiresBareImageUrl({
       endpoint: args.providerConfig.endpoint,
@@ -71,8 +95,14 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
     stream: args.stream ?? false,
     ...args.providerConfig.requestOptions,
     ...(args.tools && args.tools.length > 0 ? { tools: args.tools } : {}),
-    ...(args.stream ? { stream_options: { include_usage: true } } : {}),
+    ...(!isResponses && args.stream
+      ? getUsageRequestOptions(args.providerConfig.provider, { api: "chat-completions" })
+      : {}),
   };
+
+  const body = isResponses
+    ? buildResponsesRequestBody(rawBody, args.providerConfig.model)
+    : rawBody;
 
   const endpoint = args.providerConfig.endpoint;
   const headers: Record<string, string> = {
@@ -92,6 +122,50 @@ export function buildOpenAiCompatibleChatCompletionRequest(args: {
       headers,
       body: JSON.stringify(body),
     },
+  };
+}
+
+export function parseOpenAiCompatibleResponsesResponse(args: {
+  providerConfig: OpenAiCompatibleProviderConfig;
+  data: any;
+  trace: AgentRuntimeChatMessage[];
+}): AgentRuntimeResult {
+  const content = extractTextFromResponseOutput(args.data);
+  const reasoning = extractReasoningFromResponseOutput(args.data);
+  const tool_calls = extractToolCallsFromResponseOutput(args.data);
+  const u = args.data?.usage;
+  const usage =
+    u && typeof u === "object"
+      ? {
+          prompt_tokens:
+            typeof u.input_tokens === "number"
+              ? u.input_tokens
+              : typeof u.prompt_tokens === "number"
+                ? u.prompt_tokens
+                : 0,
+          completion_tokens:
+            typeof u.output_tokens === "number"
+              ? u.output_tokens
+              : typeof u.completion_tokens === "number"
+                ? u.completion_tokens
+                : 0,
+          total_tokens:
+            typeof u.total_tokens === "number"
+              ? u.total_tokens
+              : (u.input_tokens ?? 0) + (u.output_tokens ?? 0),
+        }
+      : undefined;
+
+  return {
+    content,
+    model: args.providerConfig.model,
+    provider: args.providerConfig.provider,
+    ...(tool_calls.length > 0 ? { tool_calls } : {}),
+    ...(reasoning ? { reasoning_content: reasoning } : {}),
+    finish_reason: tool_calls.length > 0 ? "tool_calls" : "stop",
+    stream_complete: true,
+    ...(usage ? { usage } : {}),
+    trace: args.trace,
   };
 }
 
@@ -188,6 +262,8 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
    */
   resolveApiKey?: (opts: { force: boolean }) => Promise<string | null>;
 }): Promise<AgentRuntimeResult> {
+  const isResponses = resolveOpenAiCompatibleWire(args.providerConfig) === "responses";
+
   const send = async (apiKey: string) => {
     const request = buildOpenAiCompatibleChatCompletionRequest({
       providerConfig:
@@ -232,6 +308,25 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
   const isEventStream = contentType.includes("text/event-stream");
 
   if (isEventStream) {
+    if (isResponses) {
+      const streamed = await readResponsesSseCompletion({
+        response: res,
+        ...(args.onTextDelta ? { onTextDelta: args.onTextDelta } : {}),
+        ...(args.onReasoningDelta ? { onReasoningDelta: args.onReasoningDelta } : {}),
+      });
+      return {
+        content: streamed.content,
+        model: args.providerConfig.model,
+        provider: args.providerConfig.provider,
+        ...(streamed.tool_calls ? { tool_calls: streamed.tool_calls } : {}),
+        ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
+        ...(streamed.usage ? { usage: streamed.usage } : {}),
+        ...(streamed.stream_complete ? { stream_complete: true } : {}),
+        ...(streamed.finish_reason ? { finish_reason: streamed.finish_reason } : {}),
+        trace: args.messages,
+      };
+    }
+
     const streamed = await readOpenAiCompatibleSseCompletion({
       response: res,
       ...(args.onTextDelta ? { onTextDelta: args.onTextDelta } : {}),
@@ -257,6 +352,15 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
   } catch {
     data = {};
   }
+
+  if (isResponses) {
+    return parseOpenAiCompatibleResponsesResponse({
+      providerConfig: args.providerConfig,
+      data,
+      trace: args.messages,
+    });
+  }
+
   return parseOpenAiCompatibleChatCompletionResponse({
     providerConfig: args.providerConfig,
     data,

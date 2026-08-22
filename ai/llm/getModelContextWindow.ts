@@ -104,6 +104,7 @@ function fuzzyContextWindow(normalizedName: string): number | undefined {
   // 1M 档
   if (normalizedName.includes("qwen3.8") || normalizedName.includes("qwen3p8")) return 1_000_000;
   if (normalizedName.includes("minimax-m3") || normalizedName.includes("minimax_m3")) return 1_000_000;
+  if (normalizedName.includes("glm-5.3") || normalizedName.includes("glm5.3")) return 1_050_000;
   if (normalizedName.includes("glm-5.2") || normalizedName.includes("glm5.2")) return GLM_5_2_CONTEXT_WINDOW;
   if (normalizedName.includes("deepseek")) return 1_000_000;
   if (normalizedName.includes("gpt-5") || normalizedName.includes("gpt-4.1")) return 1_047_576;

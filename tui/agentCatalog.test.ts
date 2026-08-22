@@ -36,8 +36,8 @@ const privateAgent = (
 });
 
 describe("TUI platform catalog", () => {
-  it("shows auto by default and nolo when auto routing is disabled", () => {
-    expect(resolveCatalogPlatformAgents({} as Record<string, string | undefined>)[0]?.name).toBe("auto");
+  it("shows nolo by default (no synthetic auto tier entry)", () => {
+    expect(resolveCatalogPlatformAgents({} as Record<string, string | undefined>)[0]?.name).toBe("nolo");
     expect(resolveCatalogPlatformAgents({ NOLO_AUTO_ROUTE: "0" })[0]?.name).toBe("nolo");
     expect(resolveCatalogPlatformAgents({} as Record<string, string | undefined>)).toHaveLength(1);
   });

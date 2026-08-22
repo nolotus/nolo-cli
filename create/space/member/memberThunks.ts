@@ -1,9 +1,20 @@
 // create/space/member/memberThunks.ts
 import type { SpaceState } from "../types";
+// Wave D: currentSpaceId/currentSpace 已剥至 module store。
+import {
+  getCurrentSpaceIdRaw,
+  updateCurrentSpaceIfMatch,
+} from "../spaceCurrentStore";
 import { fetchUserSpaceMembershipsAction } from "./fetchUserSpaceMembershipsAction";
 import { addMemberAction } from "./addMemberAction";
 import { removeMemberAction } from "./removeMemberAction";
 import { isSpaceMembershipRemoteUnavailableError } from "./isSpaceMembershipRemoteUnavailableError";
+// Wave C: memberSpaces/loading/membershipStatus 已剥至 module store。
+import {
+  setMemberSpaces,
+  setMembershipLoading,
+  setMembershipRejected,
+} from "../spaceMembershipStore";
 
 type Create = {
   asyncThunk: (...args: any[]) => any;
@@ -19,43 +30,35 @@ export const createMemberThunks = (create: Create) => ({
     fetchUserSpaceMembershipsAction,
     {
       pending: (state: SpaceState) => {
-        // Keep cached memberSpaces; only mark refresh in progress.
-        state.loading = true;
-        state.membershipStatus = "loading";
+        // Wave C: loading/membershipStatus 已剥至 module store。
+        setMembershipLoading();
       },
       fulfilled: (state: SpaceState, action: any) => {
-        state.memberSpaces = action.payload;
-        state.loading = false;
-        state.error = undefined;
-        state.membershipStatus = "fresh";
-        // No sticky default space: memberships alone complete space boot.
-        state.initialized = true;
+        // Wave C: memberSpaces/loading/membershipStatus/initialized 已剥至 module store。
+        setMemberSpaces(action.payload);
       },
       rejected: (state: SpaceState, action: any) => {
-        state.loading = false;
-        state.error = action.error.message;
-        // Preserve memberSpaces (incl. local hydrate preview).
-        if (isSpaceMembershipRemoteUnavailableError(action.error)) {
-          state.membershipStatus = "offline";
-        } else if (state.membershipStatus === "loading") {
-          state.membershipStatus = "idle";
-        }
+        // Wave C: error/membershipStatus 已剥至 module store。
+        setMembershipRejected(
+          action.error.message,
+          isSpaceMembershipRemoteUnavailableError(action.error)
+        );
       },
     }
   ),
 
   addMember: create.asyncThunk(addMemberAction, {
     fulfilled: (state: SpaceState, action: any) => {
-      if (state.currentSpaceId === action.payload.spaceId) {
-        state.currentSpace = action.payload.updatedSpaceData;
+      if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+        updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
       }
     },
   }),
 
   removeMember: create.asyncThunk(removeMemberAction, {
     fulfilled: (state: SpaceState, action: any) => {
-      if (state.currentSpaceId === action.payload.spaceId) {
-        state.currentSpace = action.payload.updatedSpaceData;
+      if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+        updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
       }
     },
   }),

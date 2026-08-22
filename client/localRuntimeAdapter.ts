@@ -211,6 +211,7 @@ import {
   buildLocalWorkspaceOpenAiTools,
   executeOpenAiCompatibleChatCompletion,
   readOpenAiCompatibleSseCompletion,
+  readPlatformChatSseCompletion,
   buildPlatformChatCompletionRequest,
   createLocalWorkspaceToolExecutors,
   parsePlatformChatCompletionData,
@@ -252,6 +253,7 @@ import { resolveAgentRuntimeConfigFromRecord } from "./agentConfigResolver";
 import { resolveCliOpenAiProviderConfig } from "./localProviderResolver";
 import { createFileCredentialBroker } from "../agent-runtime/fileCredentialBroker";
 import { fetchServerSyncedCredential } from "../ai/chat/agentCredentialSyncClient";
+import { getServerProviderSecret } from "../ai/agent/providerSecrets";
 import { createOAuthApiKeyRefResolver } from "../oauth/apiKeyRefResolver";
 import {
   buildLocalDialogWritePlan,
@@ -263,7 +265,6 @@ import { executeLocalToolWithPolicy } from "./localToolPolicy";
 import { inferCaptureIntent } from "../ai/policy/runtimePolicy";
 import {
   TOOL_PACKS,
-  FORCED_TOOLS,
   applyDisabledTools,
   expandEnabledPacks,
   resolveEffectiveEnabledPacks,
@@ -503,13 +504,11 @@ export function createCliLocalRuntimeAdapter(
       // 读取用户全局设置中的「系统内置 Skill」开关映射，传给工具展开管道，
       // 让 CLI 端与 Web/桌面端行为一致：用户关闭「联网搜索」后，CLI agent
       // 也不再注入 web-search 包工具。best-effort，读失败视为默认全开。
-      const hasUserChoice = Boolean(deps.requestUserChoice);
       const requestedToolNames = agentConfig
         ? resolveCliRequestedToolNames(
             agentConfig,
             deps.env,
             systemBuiltinSkills,
-            { hasUserChoice },
           )
         : [];
       activeAgentToolNames = buildLocalPolicyToolNames({
@@ -682,6 +681,16 @@ export function createCliLocalRuntimeAdapter(
       const syncFetcher = authToken
         ? async (ref: string) => {
             try {
+              // provider-key:xxx 格式的共享密钥存在 user-secrets store，
+              // 不是 agent-credentials store。按前缀路由到正确的 API。
+              if (ref.startsWith("provider-key:")) {
+                const presetId = ref.slice("provider-key:".length);
+                return await getServerProviderSecret({
+                  serverOrigin: serverUrl,
+                  token: authToken,
+                  presetId,
+                });
+              }
               return await fetchServerSyncedCredential(
                 { currentServer: serverUrl, authToken },
                 ref,
@@ -715,7 +724,6 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
-          { hasUserChoice: Boolean(deps.requestUserChoice) },
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -751,6 +759,9 @@ export function createCliLocalRuntimeAdapter(
               accessToken,
               metadata: credential?.metadata ?? null,
               openAiBody,
+              signal: options?.signal,
+              onTextDelta: options?.onTextDelta,
+              onReasoningDelta: options?.onReasoningDelta,
               fetchImpl: (url: string | URL | Request, init?: RequestInit) =>
                 fetchWithTransientRetry(fetchImpl, url, init, {
                   sleep: deps.sleep,
@@ -791,9 +802,6 @@ export function createCliLocalRuntimeAdapter(
             const tool_calls = Array.isArray(message.tool_calls)
               ? message.tool_calls
               : undefined;
-            if (content && options?.onTextDelta) {
-              options.onTextDelta(content);
-            }
             logLocalRuntimeDiagnostic("provider.request.result", {
               agentKey: agentConfig.key,
               transport: "antigravity-cloud-code",
@@ -832,7 +840,6 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
-          { hasUserChoice: Boolean(deps.requestUserChoice) },
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -923,7 +930,6 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
-          { hasUserChoice: Boolean(deps.requestUserChoice) },
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1013,7 +1019,6 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
-          { hasUserChoice: Boolean(deps.requestUserChoice) },
         );
         logLocalRuntimeDiagnostic("provider.selected", {
           agentKey: agentConfig.key,
@@ -1098,7 +1103,6 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
-          { hasUserChoice: Boolean(deps.requestUserChoice) },
         );
 
         // 只有本地有 API key 时才走 native route；
@@ -1226,19 +1230,23 @@ export function createCliLocalRuntimeAdapter(
           deps.env,
           buildProviderOpenAiTools,
           additionalToolNames,
-          { hasUserChoice: Boolean(deps.requestUserChoice) },
         );
         return {
           model: providerConfig.model,
           complete: async (messages, options) => {
             const usesResponsesApi =
               providerConfig.endpoint.includes("/responses");
-            const stream = Boolean(options?.onTextDelta) && !usesResponsesApi;
+            // Streaming is a client/runtime capability, not a property of the
+            // selected upstream wire. Nolo may switch Responses ↔ Chat Completions
+            // behind an older TUI during a rollout; request SSE in either case and
+            // route each frame by its actual payload shape in the shared parser.
+            const stream = Boolean(options?.onTextDelta);
             const request = buildPlatformChatCompletionRequest({
               providerConfig,
               messages,
               tools,
               stream,
+              ...(options?.dialogId ? { dialogId: options.dialogId } : {}),
             });
             logLocalRuntimeDiagnostic("provider.request.start", {
               agentKey: agentConfig.key,
@@ -1309,9 +1317,11 @@ export function createCliLocalRuntimeAdapter(
               Boolean(stream && options?.onTextDelta) &&
               contentType.includes("text/event-stream");
             if (shouldStream && options?.onTextDelta) {
-              const streamed = await readOpenAiCompatibleSseCompletion({
+              const streamed = await readPlatformChatSseCompletion({
                 response: res,
+                usesResponsesApi,
                 onTextDelta: options.onTextDelta,
+                onReasoningDelta: options.onReasoningDelta,
               });
               logLocalRuntimeDiagnostic("provider.request.result", {
                 agentKey: agentConfig.key,
@@ -1332,6 +1342,12 @@ export function createCliLocalRuntimeAdapter(
                   ? { reasoning_content: streamed.reasoning_content }
                   : {}),
                 ...(streamed.usage ? { usage: streamed.usage } : {}),
+                ...(streamed.finish_reason
+                  ? { finish_reason: streamed.finish_reason }
+                  : {}),
+                ...(streamed.stream_complete
+                  ? { stream_complete: streamed.stream_complete }
+                  : {}),
                 trace: messages,
               };
             }
@@ -1389,7 +1405,6 @@ export function createCliLocalRuntimeAdapter(
         deps.env,
         buildProviderOpenAiTools,
         additionalToolNames,
-        { hasUserChoice: Boolean(deps.requestUserChoice) },
       );
       return {
         model: providerConfig.model,

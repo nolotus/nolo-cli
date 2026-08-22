@@ -1,3 +1,5 @@
+import { getUsageRequestOptions } from "../ai/llm/usageRequestOptions";
+import { extractUsageFromSsePayload, hasUsageTokens } from "../ai/token/sseUsageExtract";
 import type { AgentRuntimeAgentConfig } from "./hostAdapter";
 import type { CredentialBroker } from "./credentialBroker";
 import type {
@@ -163,6 +165,12 @@ export function buildPlatformChatCompletionRequest(args: {
   messages: AgentRuntimeChatMessage[];
   tools?: PlatformChatTool[];
   stream?: boolean;
+  /**
+   * 计费归因用的对话 id。chatProxyRouting 会把它从 payload 里剥掉，不转发给
+   * 上游 provider；缺省时 chatProxyBilling 兜底写 "chat-proxy"，报表里所有
+   * runtime 调用会塌成同一个桶。
+   */
+  dialogId?: string;
 }) {
   const usesResponsesApi = isResponsesEndpoint(args.providerConfig.endpoint);
   const requestOptions = usesResponsesApi
@@ -195,7 +203,9 @@ export function buildPlatformChatCompletionRequest(args: {
           }),
         }),
     stream: args.stream ?? false,
-    ...(args.stream ? { stream_options: { include_usage: true } } : {}),
+    ...(args.stream
+      ? getUsageRequestOptions(args.providerConfig.provider, { api: "chat-completions" })
+      : {}),
     ...requestOptions,
     ...(args.tools && args.tools.length > 0
       ? {
@@ -207,6 +217,7 @@ export function buildPlatformChatCompletionRequest(args: {
     url: args.providerConfig.endpoint,
     provider: args.providerConfig.provider,
     agentKey: args.providerConfig.agentKey,
+    ...(args.dialogId?.trim() ? { dialogId: args.dialogId.trim() } : {}),
     ...(args.providerConfig.apiSource ? { apiSource: args.providerConfig.apiSource } : {}),
     ...(args.providerConfig.apiKey ? { KEY: args.providerConfig.apiKey } : {}),
     ...(args.providerConfig.apiKeyHeader ? { apiKeyHeader: args.providerConfig.apiKeyHeader } : {}),
@@ -290,7 +301,13 @@ export function parsePlatformChatCompletionResponse(args: {
   data: any;
   trace: AgentRuntimeChatMessage[];
 }): AgentRuntimeResult {
-  if (isResponsesEndpoint(args.providerConfig.endpoint)) {
+  // 线格式以响应体形状为准，endpoint 只是形状缺失时的兜底。客户端按自己的
+  // model→wire 表选线格式，服务端代理按当前部署选上游（nolo provider 的
+  // flash 在官方 Responses ↔ DeepInfra chat.completions 之间切换过），两边
+  // 不一致时 body 的 choices[].message.content 会被 Responses 提取器静默
+  // 丢成空串，落进 localLoop 的空轮 repair 也救不回来。
+  const hasCompletionsShape = Array.isArray(args.data?.choices);
+  if (!hasCompletionsShape && isResponsesEndpoint(args.providerConfig.endpoint)) {
     const rawContent = extractTextFromResponseOutput(args.data);
     const dsml = parseDsml(rawContent);
     const tool_calls = extractToolCallsFromResponseOutput(args.data);
@@ -315,6 +332,7 @@ export function parsePlatformChatCompletionResponse(args: {
   const choiceMessage = args.data?.choices?.[0]?.message ?? {};
   const rawContent = String(choiceMessage?.content ?? "");
   const { content, reasoning } = extractThinkContent(rawContent);
+  const rawFinishReason = args.data?.choices?.[0]?.finish_reason;
   return {
     content,
     model: args.providerConfig.model,
@@ -325,6 +343,9 @@ export function parsePlatformChatCompletionResponse(args: {
       : typeof choiceMessage?.reasoning_content === "string" && choiceMessage.reasoning_content
         ? { reasoning_content: choiceMessage.reasoning_content }
         : {}),
+    ...(typeof rawFinishReason === "string" && rawFinishReason.length > 0
+      ? { finish_reason: rawFinishReason }
+      : {}),
     // 非流式：完整的 200 JSON body 即证明调用走完，见 AgentRuntimeResult。
     stream_complete: true,
     usage: args.data?.usage,
@@ -349,6 +370,7 @@ function processPlatformChatSseEvent(
     completedResponsesPayload?: any;
     responsesToolCalls: ReturnType<typeof createResponsesToolAccumulator>;
     dsmlToolCallState: DsmlParserState;
+    billing?: Record<string, unknown>;
   },
 ) {
   for (const line of event.split("\n")) {
@@ -363,8 +385,39 @@ function processPlatformChatSseEvent(
       continue;
     }
 
-    if (parsed?.usage && typeof parsed.usage === "object") {
-      state.usage = parsed.usage;
+    if (parsed?.billing && typeof parsed.billing === "object") {
+      // 独立 billing 帧（chatBillingSse.formatBillingUsageEvent 注入，[DONE]
+      // 前）携带 cost/billing_* 元数据，用于 TUI 积分 chip。与真实 usage
+      // 分离存储——不覆盖 state.usage，避免把 input_tokens/output_tokens
+      // 冲掉（此前 billing 帧复用顶层 `usage` key，把 usage 覆盖成只剩
+      // billing 字段，TUI context chip 永远不更新）。
+      state.billing = parsed.billing as Record<string, unknown>;
+    }
+
+    const extractedUsage = extractUsageFromSsePayload(parsed);
+    if (extractedUsage) {
+      state.usage = extractedUsage;
+    } else if (
+      parsed?.usage &&
+      typeof parsed.usage === "object" &&
+      !hasUsageTokens(parsed.usage)
+    ) {
+      // 防御：旧 server / 第三方代理仍把 billing 元数据塞在顶层 `usage`
+      // 里（无 token 字段）。不算真实 usage 帧——不覆盖已解析的 token 数，
+      // 只把它当作 legacy billing 元数据合并（保住 cost，credits chip 不丢）。
+      state.billing = {
+        ...(state.billing ?? {}),
+        ...(parsed.usage as Record<string, unknown>),
+      };
+    }
+
+    // 帧路由同 parsePlatformChatCompletionResponse：以形状为准。客户端预期
+    // Responses 线时，代理仍可能回传 chat.completions 上游的 delta chunk
+    // （nolo provider 上游切换的 rollout 窗口）；choices 数组无论预期哪条线
+    // 都必须走 applyChatCompletionDelta，否则正文在流式路径同样被静默丢弃。
+    if (Array.isArray(parsed?.choices)) {
+      applyChatCompletionDelta(parsed, state);
+      continue;
     }
 
     if (!state.usesResponsesApi) {
@@ -416,9 +469,8 @@ function processPlatformChatSseEvent(
     }
     if (eventType === "response.completed" && parsed?.response) {
       state.completedResponsesPayload = parsed.response;
-      if (parsed.response.usage && typeof parsed.response.usage === "object") {
-        state.usage = parsed.response.usage;
-      }
+      // usage 已在帧顶部经 extractUsageFromSsePayload 统一提取
+      // （response.completed.response.usage 形状），这里不再重复赋值。
     }
   }
 }
@@ -433,6 +485,7 @@ export async function readPlatformChatSseCompletion(args: {
     content: "",
     reasoning: "",
     usage: undefined as Record<string, unknown> | undefined,
+    billing: undefined as Record<string, unknown> | undefined,
     usesResponsesApi: args.usesResponsesApi,
     onTextDelta: args.onTextDelta,
     onReasoningDelta: args.onReasoningDelta,
@@ -443,6 +496,7 @@ export async function readPlatformChatSseCompletion(args: {
     accumulatedToolCalls: createToolCallAccumulator(),
     thinkState: createThinkParserState(),
     toolCallTextState: createToolCallTextParserState(),
+    finishReason: undefined as string | undefined,
   };
 
   for await (const frame of readSseFrames(args.response)) {
@@ -482,27 +536,59 @@ export async function readPlatformChatSseCompletion(args: {
       type: "function" as const,
       function: { name: call.name, arguments: call.arguments },
     }));
+    // 形状路由后本分支也可能收到 chat.completions 帧，其 tool_calls 进的是
+    // accumulatedToolCalls 而非 responsesToolCalls——终局聚合两边都要回收，
+    // 否则工具调用意图被吞掉，伪装成无输出的空轮。
+    const completionsToolCalls = finalizeAccumulatedToolCalls(
+      state.accumulatedToolCalls,
+    );
     const tool_calls =
       completedToolCalls.length > 0
         ? completedToolCalls
         : normalizedDsmlCalls.length > 0
           ? normalizedDsmlCalls
-          : finalizeResponsesToolCalls(state.responsesToolCalls);
+          : completionsToolCalls.length > 0
+            ? completionsToolCalls
+            : finalizeResponsesToolCalls(state.responsesToolCalls);
+    const finalUsage = mergeBillingIntoUsage(state.usage, state.billing);
     return {
       content: normalizedFinal.content || state.content,
       ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
       ...(tool_calls.length > 0 ? { tool_calls } : {}),
-      ...(state.usage ? { usage: state.usage, stream_complete: true } : {}),
+      ...(finalUsage ? { usage: finalUsage, stream_complete: true } : {}),
+      // finish_reason 供 executePlatformChatCompletion 穿透给 localLoop 的
+      // 空轮/截断判定；此前 reader 从不回传，流式路径恒缺。
+      ...(state.finishReason ? { finish_reason: state.finishReason } : {}),
     };
   }
 
   const tool_calls = finalizeAccumulatedToolCalls(state.accumulatedToolCalls);
+  const finalUsage = mergeBillingIntoUsage(state.usage, state.billing);
   return {
     content: state.content,
     ...(state.reasoning ? { reasoning_content: state.reasoning } : {}),
     ...(tool_calls.length > 0 ? { tool_calls } : {}),
-    ...(state.usage ? { usage: state.usage, stream_complete: true } : {}),
+    ...(finalUsage ? { usage: finalUsage, stream_complete: true } : {}),
+    ...(state.finishReason ? { finish_reason: state.finishReason } : {}),
   };
+}
+
+/**
+ * Merge the independent billing frame (cost/billing_*) into the real token
+ * usage before returning, so downstream buildTurnTokenUsage can read
+ * `usage.cost` for the TUI credits chip. Token fields stay untouched —
+ * billing never overwrites input/output tokens.
+ *
+ * 有意取舍：若 provider 自带 usage.cost（如 openrouter），平台 billing 帧的
+ * cost 会覆盖它——平台计价才是用户实际扣费口径，方向合理。
+ */
+function mergeBillingIntoUsage(
+  usage: Record<string, unknown> | undefined,
+  billing: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!billing) return usage;
+  if (!usage) return billing;
+  return { ...usage, ...billing };
 }
 
 /**
@@ -516,6 +602,8 @@ export async function executePlatformChatCompletion(args: {
   messages: AgentRuntimeChatMessage[];
   tools?: PlatformChatTool[];
   fetchImpl: FetchLike;
+  /** 计费归因用；透传给 buildPlatformChatCompletionRequest。 */
+  dialogId?: string;
   stream?: boolean;
   onTextDelta?: (chunk: string) => void;
   onReasoningDelta?: (chunk: string) => void;
@@ -531,6 +619,7 @@ export async function executePlatformChatCompletion(args: {
     messages: args.messages,
     tools: args.tools,
     stream: args.stream,
+    ...(args.dialogId ? { dialogId: args.dialogId } : {}),
   });
   const controller = args.requestTimeoutMs ? new AbortController() : undefined;
   const timer = controller
@@ -591,6 +680,10 @@ export async function executePlatformChatCompletion(args: {
       ...(streamed.reasoning_content ? { reasoning_content: streamed.reasoning_content } : {}),
       ...(streamed.usage ? { usage: streamed.usage } : {}),
       ...(streamed.stream_complete ? { stream_complete: true } : {}),
+      // 流式 finish_reason 此前在 reader 与本返回两处都断掉，localLoop 的
+      // finish_reason==="length" 截断诊断在流式路径从未生效——与
+      // openAiCompatibleProvider 的穿透对齐。
+      ...(streamed.finish_reason ? { finish_reason: streamed.finish_reason } : {}),
       trace: args.messages,
     };
   }
@@ -620,6 +713,8 @@ export async function executePlatformChatCompletionWithFallback(args: {
   messages: AgentRuntimeChatMessage[];
   tools?: PlatformChatTool[];
   fetchImpl: FetchLike;
+  /** 计费归因用；透传给 executePlatformChatCompletion。 */
+  dialogId?: string;
   serverUrls: string[];
   requestTimeoutMs?: number;
   stream?: boolean;
@@ -634,6 +729,7 @@ export async function executePlatformChatCompletionWithFallback(args: {
       tools: args.tools,
       fetchImpl: args.fetchImpl,
       stream: args.stream,
+      ...(args.dialogId ? { dialogId: args.dialogId } : {}),
       ...(args.onTextDelta ? { onTextDelta: args.onTextDelta } : {}),
       ...(args.onReasoningDelta ? { onReasoningDelta: args.onReasoningDelta } : {}),
     });
@@ -665,6 +761,7 @@ export async function executePlatformChatCompletionWithFallback(args: {
         tools: args.tools,
         fetchImpl: args.fetchImpl,
         stream: args.stream,
+        ...(args.dialogId ? { dialogId: args.dialogId } : {}),
         ...(onTextDelta ? { onTextDelta } : {}),
         ...(onReasoningDelta ? { onReasoningDelta } : {}),
         // 只限「连接+首字节」；响应开始后长回答不受此超时影响。

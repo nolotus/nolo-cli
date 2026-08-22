@@ -312,6 +312,134 @@ export function convertOpenAiToolsToGemini(
 
 // ---- Response accumulation (Gemini SSE → OpenAI tool_calls) ----
 
+export type GeminiChunkAccumulatorOptions = {
+  onTextDelta?: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
+};
+
+export type GeminiAccumulatorState = {
+  text: string;
+  toolCalls: AgentRuntimeToolCall[];
+  usage?: Record<string, unknown>;
+  pendingThoughtSignature?: string;
+};
+
+export function createGeminiAccumulatorState(): GeminiAccumulatorState {
+  return {
+    text: "",
+    toolCalls: [],
+  };
+}
+
+/**
+ * Apply a single Gemini SSE chunk to the accumulator state, invoking stream callbacks.
+ */
+export function applyGeminiChunk(
+  chunk: unknown,
+  state: GeminiAccumulatorState,
+  options?: GeminiChunkAccumulatorOptions,
+): void {
+  if (!chunk || typeof chunk !== "object") return;
+  const response: Record<string, unknown> =
+    "response" in chunk && chunk.response && typeof chunk.response === "object"
+      ? (chunk.response as Record<string, unknown>)
+      : (chunk as Record<string, unknown>);
+
+  if (
+    "usageMetadata" in response &&
+    response.usageMetadata &&
+    typeof response.usageMetadata === "object"
+  ) {
+    const meta = response.usageMetadata as Record<string, unknown>;
+    const prompt =
+      typeof meta.promptTokenCount === "number" ? meta.promptTokenCount : 0;
+    const candidates =
+      typeof meta.candidatesTokenCount === "number"
+        ? meta.candidatesTokenCount
+        : 0;
+    const total =
+      typeof meta.totalTokenCount === "number"
+        ? meta.totalTokenCount
+        : prompt + candidates;
+    state.usage = {
+      prompt_tokens: prompt,
+      completion_tokens: candidates,
+      total_tokens: total,
+    };
+  }
+
+  const candidates = Array.isArray(response.candidates)
+    ? response.candidates
+    : [];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const parts = Array.isArray(
+      (candidate as { content?: { parts?: unknown[] } }).content?.parts,
+    )
+      ? (candidate as { content: { parts: unknown[] } }).content.parts
+      : [];
+    for (const part of parts) {
+      if (!part || typeof part !== "object") continue;
+      const partSignature = (part as { thoughtSignature?: unknown })
+        .thoughtSignature;
+      const isThought = Boolean((part as { thought?: boolean }).thought);
+      if (
+        "text" in part &&
+        typeof (part as { text: unknown }).text === "string"
+      ) {
+        const piece = (part as { text: string }).text;
+        if (!isThought) {
+          state.text += piece;
+          if (piece && options?.onTextDelta) {
+            options.onTextDelta(piece);
+          }
+        } else {
+          if (piece && options?.onReasoningDelta) {
+            options.onReasoningDelta(piece);
+          }
+        }
+      }
+      // Capture thoughtSignature from thought parts (gemini-3-flash-preview)
+      if (
+        isThought &&
+        typeof partSignature === "string" &&
+        partSignature
+      ) {
+        state.pendingThoughtSignature = partSignature;
+      }
+      if (
+        "functionCall" in part &&
+        (part as { functionCall: unknown }).functionCall
+      ) {
+        const call = (part as { functionCall: Record<string, unknown> })
+          .functionCall;
+        const name = typeof call.name === "string" ? call.name : "tool";
+        const id =
+          typeof call.id === "string"
+            ? call.id
+            : `${name}_${state.toolCalls.length}`;
+        const argsObj =
+          call.args && typeof call.args === "object"
+            ? (call.args as Record<string, unknown>)
+            : {};
+        const resolvedSignature =
+          typeof partSignature === "string" && partSignature
+            ? partSignature
+            : state.pendingThoughtSignature;
+        state.pendingThoughtSignature = undefined;
+        state.toolCalls.push({
+          id,
+          type: "function",
+          function: { name, arguments: JSON.stringify(argsObj) },
+          ...(typeof resolvedSignature === "string" && resolvedSignature
+            ? { thought_signature: resolvedSignature }
+            : {}),
+        });
+      }
+    }
+  }
+}
+
 /**
  * Accumulate Gemini generateContent SSE chunks into text + tool_calls.
  *
@@ -322,111 +450,45 @@ export function convertOpenAiToolsToGemini(
  * The pending signature from a thought part is passed to the immediately
  * following functionCall part, then cleared.
  */
-export function accumulateGeminiChunks(chunks: unknown[]): {
+export function accumulateGeminiChunks(
+  chunks: unknown[],
+  options?: GeminiChunkAccumulatorOptions,
+): {
   text: string;
   toolCalls: AgentRuntimeToolCall[];
   usage?: Record<string, unknown>;
 } {
-  let text = "";
-  const toolCalls: AgentRuntimeToolCall[] = [];
-  let usage: Record<string, unknown> | undefined;
-  let pendingThoughtSignature: string | undefined;
-
+  const state = createGeminiAccumulatorState();
   for (const chunk of chunks) {
-    if (!chunk || typeof chunk !== "object") continue;
-    const response: Record<string, unknown> =
-      "response" in chunk && chunk.response && typeof chunk.response === "object"
-        ? (chunk.response as Record<string, unknown>)
-        : (chunk as Record<string, unknown>);
-
-    if (
-      "usageMetadata" in response &&
-      response.usageMetadata &&
-      typeof response.usageMetadata === "object"
-    ) {
-      const meta = response.usageMetadata as Record<string, unknown>;
-      const prompt =
-        typeof meta.promptTokenCount === "number" ? meta.promptTokenCount : 0;
-      const candidates =
-        typeof meta.candidatesTokenCount === "number"
-          ? meta.candidatesTokenCount
-          : 0;
-      const total =
-        typeof meta.totalTokenCount === "number"
-          ? meta.totalTokenCount
-          : prompt + candidates;
-      usage = {
-        prompt_tokens: prompt,
-        completion_tokens: candidates,
-        total_tokens: total,
-      };
-    }
-
-    const candidates = Array.isArray(response.candidates)
-      ? response.candidates
-      : [];
-    for (const candidate of candidates) {
-      if (!candidate || typeof candidate !== "object") continue;
-      const parts = Array.isArray(
-        (candidate as { content?: { parts?: unknown[] } }).content?.parts,
-      )
-        ? (candidate as { content: { parts: unknown[] } }).content.parts
-        : [];
-      for (const part of parts) {
-        if (!part || typeof part !== "object") continue;
-        const partSignature = (part as { thoughtSignature?: unknown })
-          .thoughtSignature;
-        if (
-          "text" in part &&
-          typeof (part as { text: unknown }).text === "string"
-        ) {
-          const piece = (part as { text: string }).text;
-          if (!(part as { thought?: boolean }).thought) {
-            text += piece;
-          }
-        }
-        // Capture thoughtSignature from thought parts (gemini-3-flash-preview)
-        if (
-          (part as { thought?: boolean }).thought &&
-          typeof partSignature === "string" &&
-          partSignature
-        ) {
-          pendingThoughtSignature = partSignature;
-        }
-        if (
-          "functionCall" in part &&
-          (part as { functionCall: unknown }).functionCall
-        ) {
-          const call = (part as { functionCall: Record<string, unknown> })
-            .functionCall;
-          const name = typeof call.name === "string" ? call.name : "tool";
-          const id =
-            typeof call.id === "string"
-              ? call.id
-              : `${name}_${toolCalls.length}`;
-          const argsObj =
-            call.args && typeof call.args === "object"
-              ? (call.args as Record<string, unknown>)
-              : {};
-          const resolvedSignature =
-            typeof partSignature === "string" && partSignature
-              ? partSignature
-              : pendingThoughtSignature;
-          pendingThoughtSignature = undefined;
-          toolCalls.push({
-            id,
-            type: "function",
-            function: { name, arguments: JSON.stringify(argsObj) },
-            ...(typeof resolvedSignature === "string" && resolvedSignature
-              ? { thought_signature: resolvedSignature }
-              : {}),
-          });
-        }
-      }
-    }
+    applyGeminiChunk(chunk, state, options);
   }
+  return {
+    text: state.text,
+    toolCalls: state.toolCalls,
+    usage: state.usage,
+  };
+}
 
-  return { text, toolCalls, usage };
+/**
+ * Streamingly accumulate Gemini generateContent SSE chunks from an async iterable.
+ */
+export async function accumulateGeminiStream(
+  stream: AsyncIterable<unknown>,
+  options?: GeminiChunkAccumulatorOptions,
+): Promise<{
+  text: string;
+  toolCalls: AgentRuntimeToolCall[];
+  usage?: Record<string, unknown>;
+}> {
+  const state = createGeminiAccumulatorState();
+  for await (const chunk of stream) {
+    applyGeminiChunk(chunk, state, options);
+  }
+  return {
+    text: state.text,
+    toolCalls: state.toolCalls,
+    usage: state.usage,
+  };
 }
 
 // ---- Route decision + request builder (shared by all three paths) ----

@@ -1,6 +1,6 @@
 import { ContentType } from "../../app/types";
 import { addContentAction } from "../../create/space/content/addContentAction";
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import { buildDatabaseFileContentUrl } from "../../database/fileUrl";
 import { fileKey } from "../../database/keys";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
@@ -94,7 +94,7 @@ export const remotionRenderVideoFunc = async (
 
   const state = thunkApi.getState();
   const userId = selectIdentityUserId(state);
-  const spaceId = selectCurrentSpaceId(state);
+  const spaceId = getCurrentSpaceId();
   const currentServer = selectCurrentServer(state);
   const fileId = result?.fileId;
   const metadata = result?.metadata || {};

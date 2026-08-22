@@ -14,7 +14,7 @@
 
 import type { RootState } from "../../app/store";
 import { toErrorMessage } from "../../core/errorMessage";
-import { selectAllMemberSpaces } from "../../create/space/spaceSlice";
+import { getAllMemberSpaces } from "../../create/space/spaceMembershipStore";
 
 // ---- Types ----
 
@@ -75,7 +75,7 @@ export async function listUserSpacesFunc(
             role?: string;
         };
         // Selector typing can collapse membership fields under partial RootState shapes.
-        let memberSpaces = selectAllMemberSpaces(state) as MemberSpaceRow[];
+        let memberSpaces = getAllMemberSpaces() as MemberSpaceRow[];
 
         if (ownedOnly) {
             memberSpaces = memberSpaces.filter((ms) => ms.role === "owner");

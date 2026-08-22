@@ -10,9 +10,17 @@
  * Only Node hosts (CLI localRuntimeAdapter, desktop turn service) import from
  * this module. The pure argument-parsing helpers stay in `noloWorkspaceTools.ts`.
  */
-import { noloStringArg, parseNoloWorkspaceToolArguments } from "./noloWorkspaceTools";
+import { dialogMessageRange } from "../database/keys";
+import { localDialogMessageRecordToRuntimeMessage } from "../cli/client/localDialogRecords";
+import {
+  buildNoloWorkspaceCommandArgs,
+  noloPositiveIntegerString,
+  noloStringArg,
+  parseNoloWorkspaceToolArguments,
+  resolveNoloDialogInput,
+  NOLO_WORKSPACE_TOOL_NAMES,
+} from "./noloWorkspaceTools";
 import { spawnToWebStreams } from "./runtimeCompat";
-import { buildNoloWorkspaceCommandArgs, NOLO_WORKSPACE_TOOL_NAMES } from "./noloWorkspaceTools";
 
 async function readNoloProcessStream(readable: ReadableStream<Uint8Array> | null) {
   if (!readable) return "";
@@ -81,12 +89,90 @@ export async function runNoloWorkspaceCliTool(call: {
   };
 }
 
+export type InProcessDialogStore = {
+  read: (dbKey: string, options?: { remote?: boolean }) => Promise<unknown>;
+  iterator?: (options: { gte: string; lte?: string; lt?: string; reverse?: boolean; limit?: number }) => AsyncIterable<[string, unknown]>;
+};
+
+async function readDialogInProcess(
+  call: { name: string; arguments: string },
+  store: InProcessDialogStore,
+  env?: Record<string, string | undefined>
+): Promise<{ content: string; metadata?: Record<string, unknown> }> {
+  const args = parseNoloWorkspaceToolArguments(call.arguments);
+  const dialogInput = noloStringArg(args.dialog ?? args.dialogId ?? args.id);
+  if (!dialogInput) throw new Error("readDialog requires dialog.");
+
+  const mode = noloStringArg(args.mode);
+  if (mode && mode !== "full" && mode !== "status") {
+    throw new Error(`readDialog mode must be "full" or "status", got "${mode}".`);
+  }
+
+  const userId = noloStringArg(args.user ?? args.userId ?? args.owner) || env?.NOLO_LOCAL_USER_ID || env?.NOLO_USER_ID || "";
+  const { dbKey: dialogKey, dialogId } = resolveNoloDialogInput(dialogInput, userId);
+
+  // 读 dialog meta（本地优先，不读远端）
+  const meta = await store.read(dialogKey, { remote: false });
+
+  if (mode === "status") {
+    const result = {
+      dialogId,
+      dialogKey,
+      meta,
+      status: (meta as any)?.status ?? null,
+      runtimeCheckpoint: (meta as any)?.runtimeCheckpoint ?? null,
+      source: "in-process",
+    };
+    return {
+      content: JSON.stringify(result, null, 2),
+      metadata: { noloWorkspaceTool: true, readDialog: true, inProcess: true, mode: "status" },
+    };
+  }
+
+  const limitNum = noloPositiveIntegerString(args.limit);
+  const limit = limitNum ? Number(limitNum) : undefined;
+
+  // 读 messages
+  const rawMessages: unknown[] = [];
+  if (store.iterator) {
+    const { start, end } = dialogMessageRange(dialogId);
+    for await (const [, value] of store.iterator({ gte: start, lte: end })) {
+      const message = localDialogMessageRecordToRuntimeMessage(value);
+      if (message) {
+        rawMessages.push(message);
+      } else if (value) {
+        rawMessages.push(value);
+      }
+    }
+  }
+
+  const messages = limit !== undefined && rawMessages.length > limit
+    ? rawMessages.slice(rawMessages.length - limit)
+    : rawMessages;
+
+  // 构造返回（与 CLI 输出格式对齐）
+  const result = {
+    dialogId,
+    dialogKey,
+    meta,
+    messages,
+    messagesCount: messages.length,
+    source: "in-process",
+  };
+
+  return {
+    content: JSON.stringify(result, null, 2),
+    metadata: { noloWorkspaceTool: true, readDialog: true, inProcess: true },
+  };
+}
+
 export function buildNoloWorkspaceCliToolExecutors(args: {
   cliEntrypoint?: string;
   env?: Record<string, string | undefined>;
   metadataKind?: string;
   processExecPath?: string;
   spawn?: NoloSpawn;
+  store?: InProcessDialogStore;
 }) {
   const executors: Record<string, (call: { name: string; arguments: string }) => Promise<{
     content: string;
@@ -99,6 +185,10 @@ export function buildNoloWorkspaceCliToolExecutors(args: {
     // buildLoadSkillExecutor separately. Registering it here would route the
     // call into buildNoloWorkspaceCommandArgs, which throws "no CLI mapping".
     if (toolName === "loadSkill") continue;
+    if (toolName === "readDialog" && args.store) {
+      executors[toolName] = (call) => readDialogInProcess(call, args.store!, args.env);
+      continue;
+    }
     executors[toolName] = (call) => runNoloWorkspaceCliTool(call, args);
   }
   return executors;

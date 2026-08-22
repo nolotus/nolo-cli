@@ -10,6 +10,7 @@ import {
   mergeUsageRecords,
   renderTokenStatus,
   resolveAgentContextWindow,
+  resolveAgentModelIdentity,
   resolveContextWindow,
 } from "./tokenUsage";
 
@@ -49,12 +50,13 @@ describe("tokenUsage", () => {
     expect(resolveContextWindow("MiniMax-M3")).toBe(1_000_000);
   });
 
-  test("resolveAgentContextWindow maps auto/flash to DeepSeek 1M", () => {
+  test("resolveAgentContextWindow follows the nolo catalog model (1M)", () => {
+    // nolo 指向 builtinAgentCatalog 里的 DeepSeek V4 Flash Vision Exp（1M），
+    // 窗口跟随目录模型，不再受 NOLO_AUTO_ROUTE 影响。
     expect(
       resolveAgentContextWindow({
         agentKey: BUILTIN_NOLO_AGENT_KEY,
         agentName: "nolo",
-        autoRouteDefault: true,
       }),
     ).toBe(1_000_000);
 
@@ -65,22 +67,30 @@ describe("tokenUsage", () => {
       }),
     ).toBe(1_000_000);
 
-    expect(
-      resolveAgentContextWindow({
-        agentName: "nolo",
-        autoRouteDefault: false,
-      }),
-    ).toBe(256_000);
+    // 没有 agentKey 时只有一个显示名，仍回落到通用默认窗口。
+    expect(resolveAgentContextWindow({ agentName: "nolo" })).toBe(256_000);
+  });
 
-    // With the real default agent key, autoRouteDefault:false must still
-    // refuse the flash 1M upgrade (regression for runAgentChat leak).
+  test("resolveAgentModelIdentity resolves the nolo default from the catalog", () => {
     expect(
-      resolveAgentContextWindow({
+      resolveAgentModelIdentity({
         agentKey: BUILTIN_NOLO_AGENT_KEY,
         agentName: "nolo",
-        autoRouteDefault: false,
       }),
-    ).toBe(256_000);
+    ).toEqual({ agentName: "nolo", model: "deepseek-v4-flash-vision-exp" });
+
+    // 显式 model 优先，不被默认档覆盖。
+    expect(
+      resolveAgentModelIdentity({
+        agentKey: "agent-pub-custom",
+        agentName: "custom",
+        model: "gpt-5.6-luna",
+      }),
+    ).toEqual({ agentName: "custom", model: "gpt-5.6-luna" });
+
+    expect(
+      resolveAgentModelIdentity({ agentKey: "agent-pub-custom", agentName: "custom" }),
+    ).toEqual({ agentName: "custom" });
   });
 
   test("calculates platform credits from provider raw cost when cost > 0", () => {
@@ -89,7 +99,7 @@ describe("tokenUsage", () => {
         { input_tokens: 100, output_tokens: 50, cost: 0.5 },
         "nolo"
       )?.credits
-    ).toBe(3.5);
+    ).toBe(4.0);
     expect(
       buildTurnTokenUsage({ input_tokens: 100, output_tokens: 50 }, "nolo")
         ?.credits

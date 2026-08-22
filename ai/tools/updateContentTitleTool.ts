@@ -1,5 +1,5 @@
 import { updateContentTitle } from "../../create/space/spaceSlice"; // 假设有一个对应的 action
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 
 // Tool definition
 export const updateContentTitleTool = {
@@ -36,7 +36,7 @@ export const updateContentTitleFunc = async (
 ) => {
   const { dispatch, getState } = thunkApi;
   const state = getState(); // Assuming getState returns RootState
-  const spaceId = selectCurrentSpaceId(state); // 获取当前空间ID
+  const spaceId = getCurrentSpaceId(); // 获取当前空间ID
   const { contentId, title } = args;
 
   console.log(

@@ -68,6 +68,13 @@ export type AgentRuntimeAgentConfig = {
 
 export type AgentRuntimeCompleteOptions = {
   timeoutMs?: number;
+  /**
+   * 本轮所属对话 id。仅用于服务端计费归因：platform proxy 会把它写进
+   * token 记录的 dialogId（缺省时 chatProxyBilling 兜底成 "chat-proxy"，
+   * 所有 runtime 调用会塌成同一个桶），kimi 路径还会据此设 prompt_cache_key。
+   * 不会转发给上游 provider。新建对话的首轮尚未分配 id，此时为 undefined。
+   */
+  dialogId?: string;
   onTextDelta?: (chunk: string) => void;
   /**
    * reasoning 增量回调（第一层透传）。provider 在 SSE 读取路径收到
@@ -170,7 +177,16 @@ export type AgentRuntimeHostAdapter = {
   capabilities: string[];
   loadAgentConfig(agentRef: string): Promise<AgentRuntimeAgentConfig | null>;
   loadDialogHistory(dialogId: string): Promise<AgentRuntimeChatMessage[]>;
-  saveTurn(input: AgentRuntimeSaveTurnInput): Promise<{ dialogId: string; title?: string }>;
+  saveTurn(input: AgentRuntimeSaveTurnInput): Promise<{
+    dialogId: string;
+    title?: string;
+    /**
+     * 后台 LLM 标题 patch（fire-and-forget，不阻塞 turn 返回）。resolve 时
+     * 携带 patch 成功的最终标题；无标题/被跳过/失败为 null。长驻宿主（如
+     * TUI）用它刷新窗口标题（OSC）而不必等下一轮 turn 才看到总结标题。
+     */
+    titlePatchPromise?: Promise<string | null>;
+  }>;
   resolveProvider(agentConfig: AgentRuntimeAgentConfig): Promise<AgentRuntimeProvider>;
   executeTool(
     call: AgentRuntimeToolCallInput,

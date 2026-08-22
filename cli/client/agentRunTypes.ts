@@ -140,6 +140,8 @@ export type RunAgentTurnOptions = {
   agentKey: string;
   serverUrl: string;
   message: string;
+  /** User/platform locale for local runtime response-language context. */
+  userLanguage?: string;
   /**
    * Ephemeral TUI paste bodies. Local runs expose a read tool while HTTP runs
    * expand the reference before transport; the durable local dialog receives
@@ -244,6 +246,12 @@ export type RunAgentTurnResult = {
    * this instead of the raw dialogId so users see a summary, not a UUID.
    */
   title?: string;
+  /**
+   * 后台 LLM 标题 patch（fire-and-forget，不阻塞 turn 返回）。resolve 时
+   * 携带 patch 成功的最终标题（无标题/失败为 null）。TUI 用它刷新 OSC
+   * 窗口标题，避免窗口标题停留在 fallback 直到下一轮 turn 才更新。
+   */
+  titlePatchPromise?: Promise<string | null>;
   streamInterrupted?: boolean;
   /**
    * Cooperative stop (TUI Esc) while a tool was still running: the tool name

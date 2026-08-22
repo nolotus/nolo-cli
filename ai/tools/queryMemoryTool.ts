@@ -1,4 +1,4 @@
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import { getActiveDialogKey } from "../../chat/dialog/dialogRuntimeStore";
 import { selectById } from "../../database/dbSlice";
 import type { DialogConfig } from "../../app/types";
@@ -25,8 +25,8 @@ export async function queryMemoryFunc(
     {
       agentKey: resolveDialogRuntimeAgentKey(dialog),
       userInput: query,
-      ...(selectCurrentSpaceId(state)
-        ? { spaceId: selectCurrentSpaceId(state) }
+      ...(getCurrentSpaceId()
+        ? { spaceId: getCurrentSpaceId() }
         : {}),
     },
     { withAuth: true },

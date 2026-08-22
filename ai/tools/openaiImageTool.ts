@@ -1,5 +1,5 @@
 import { callToolApi } from "./toolApiClient";
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import { selectIdentityUserId } from "identity/selectors";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
 import { selectCurrentDialogKey } from "../../chat/dialog/dialogSlice";
@@ -198,7 +198,7 @@ const runOpenAIImageTool = async (
     { withAuth: true }
   );
 
-  const spaceId = selectCurrentSpaceId(state);
+  const spaceId = getCurrentSpaceId();
   const userId = selectIdentityUserId(state);
   const currentServer = selectCurrentServer(state);
 

@@ -88,6 +88,8 @@ export const writeAction = async (
     DataType.TABLE,
     DataType.TABLE_ROW,
     DataType.EMAIL,
+    DataType.AGENT,
+    DataType.AUTOMATION,
   ];
   if (!data.type || !VALID_TYPES.includes(data.type)) {
     logger.warn(

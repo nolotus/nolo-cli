@@ -690,6 +690,56 @@ describe("cli agent run client", () => {
     expect("pendingToolName" in result).toBe(false);
   });
 
+  test("auto runtime local success passes titlePatchPromise through to the caller", async () => {
+    // TUI 默认 runtimeMode=auto：runAgentTurn 的 auto 分支重组返回对象时
+    // 必须透传 saveTurn 的 titlePatchPromise，否则 TUI 的
+    // scheduleTitlePatchSync 永远拿不到 patch → LLM 总结标题/OSC 窗口标题
+    // 在 auto 模式（TUI 默认）下从不刷新（回归：fix/tui-summary-title 只
+    // 在显式 runtimeMode=local 时生效）。
+    const output = new CaptureOutput();
+    const titlePatchPromise = Promise.resolve("总结标题");
+    const result = await runAgentTurn({
+      agentName: "frontend",
+      agentKey: "frontend-local",
+      serverUrl: "https://nolo.chat",
+      message: "polish notifications",
+      scriptDir: "C:/missing/scripts",
+      env: { AUTH_TOKEN: "token-123" },
+      output,
+      runtimeMode: "auto",
+      localRuntimeAdapter: {
+        host: "cli",
+        capabilities: ["local-provider", "local-persistence"],
+        loadAgentConfig: async (agentRef) => ({
+          key: agentRef,
+          name: "Frontend",
+          prompt: "Fix UI",
+          model: "fake-local",
+        }),
+        loadDialogHistory: async () => [],
+        saveTurn: async () => ({
+          dialogId: "dialog-title-patch",
+          title: "fallback title",
+          titlePatchPromise,
+        }),
+        resolveProvider: async () => ({
+          model: "fake-local",
+          complete: async () => ({ content: "done", model: "fake-local" }),
+        }),
+        executeTool: async () => {
+          throw new Error("no tools expected");
+        },
+      },
+      fetchImpl: async () => {
+        throw new Error("server fallback should not run");
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.title).toBe("fallback title");
+    expect(result.titlePatchPromise).toBe(titlePatchPromise);
+  });
+
   test("runs forced local turns through the injected runtime adapter without HTTP", async () => {
     const output = new CaptureOutput();
     const result = await runAgentTurn({

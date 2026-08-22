@@ -1598,19 +1598,17 @@ describe("scroll-aware history", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     const outputAfterSwitch = Buffer.concat(chunks).toString("utf8");
-    expect(outputAfterSwitch).toContain("Switched to auto");
+    expect(outputAfterSwitch).toContain("Switched to nolo");
     // The token-cost / next-turn notice for a successful busy switch.
     expect(outputAfterSwitch).toContain("may consume more tokens");
     // The picker-unavailable notice for the bare /switch.
     expect(outputAfterSwitch).toContain(
       "isn't available while a reply is running",
     );
-    expect(savedSelections).toEqual([
-      {
-        agentKey: "",
-        agentName: "",
-      },
-    ]);
+    // 切回默认档 = 清除持久化选择，而不是把 nolo 存成一次显式选择。
+    // 存了的话下次启动 NOLO_AGENT 就有值，createInitialTuiState 再也走不到
+    // DEFAULT_TUI_AGENT_KEY 兜底，默认档等于被这条记录钉死。
+    expect(savedSelections).toEqual([{ agentKey: "", agentName: "" }]);
     expect(env.NOLO_AGENT).toBeUndefined();
     expect(env.NOLO_AGENT_NAME).toBeUndefined();
 
@@ -2822,6 +2820,137 @@ describe("terminal window title sync", () => {
     const fullOutput = chunks.join("");
     expect(fullOutput).not.toContain("\x1b]0;");
     expect(fullOutput).not.toContain("\x1b]2;");
+  });
+
+  test("LLM 总结标题后台 patch 完成后立即刷新窗口标题（不等下一轮）", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    input.setRawMode = () => {};
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+
+    const chunks: string[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(chunk.toString());
+    });
+
+    // 模拟 saveTurn 的 fire-and-forget：turn 返回时只有 fallback title，
+    // LLM 总结标题稍后才 resolve（后台 patch 完成）。
+    let releasePatch: ((title: string | null) => void) | null = null;
+    const titlePatchPromise = new Promise<string | null>((resolve) => {
+      releasePatch = resolve;
+    });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async () => ({
+        exitCode: 0,
+        dialogId: "d-title-patch",
+        title: "fallback title",
+        titlePatchPromise,
+      }),
+    });
+
+    // 第一轮 turn：窗口标题先显示 fallback（saveTurn 返回值）。
+    input.write("hello\r");
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (chunks.join("").includes("\x1b]0;fallback title\x07")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(chunks.join("")).toContain("\x1b]0;fallback title\x07");
+
+    // 释放后台 patch：窗口标题应立即变成 LLM 总结标题，无需再发一轮。
+    releasePatch!("LLM 总结标题");
+    const deadline2 = Date.now() + 5000;
+    while (Date.now() < deadline2) {
+      if (chunks.join("").includes("\x1b]0;LLM 总结标题\x07")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(chunks.join("")).toContain("\x1b]0;LLM 总结标题\x07");
+
+    input.write("/exit\r");
+    await workspacePromise;
+  });
+
+  test("patch 悬挂期间 /new 切走：释放后旧 dialog 标题不写入窗口标题（串台保护）", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    input.setRawMode = () => {};
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    output.columns = TERM_COLS;
+
+    const chunks: string[] = [];
+    output.on("data", (chunk) => {
+      chunks.push(chunk.toString());
+    });
+
+    // 旧 dialog 的 title patch 悬挂：turn 已返回 fallback，LLM 标题迟迟未 resolve。
+    let releasePatch: ((title: string | null) => void) | null = null;
+    const titlePatchPromise = new Promise<string | null>((resolve) => {
+      releasePatch = resolve;
+    });
+
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async () => ({
+        exitCode: 0,
+        dialogId: "d-old",
+        title: "old fallback",
+        titlePatchPromise,
+      }),
+    });
+
+    // 第一轮 turn 完成：窗口标题 = 旧 dialog 的 fallback。
+    input.write("hello\r");
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (chunks.join("").includes("\x1b]0;old fallback\x07")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(chunks.join("")).toContain("\x1b]0;old fallback\x07");
+
+    // patch 仍悬挂时用户 /new 切走：窗口标题切到新 dialog（t("newDialog")）。
+    input.write("/new\r");
+    const deadline2 = Date.now() + 5000;
+    while (Date.now() < deadline2) {
+      if (chunks.join("").includes("\x1b]0;新对话\x07")) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(chunks.join("")).toContain("\x1b]0;新对话\x07");
+
+    // 释放旧 dialog 的 patch：dialogId 校验应挡住，窗口标题不得变回旧标题。
+    releasePatch!("old dialog LLM title");
+    await new Promise((r) => setTimeout(r, 300));
+    const afterRelease = chunks.join("");
+    expect(afterRelease).not.toContain("old dialog LLM title");
+
+    input.write("/exit\r");
+    await workspacePromise;
   });
 });
 

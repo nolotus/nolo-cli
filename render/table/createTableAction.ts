@@ -8,7 +8,6 @@ import type { RootState, AppDispatch } from "../../app/store";
 import { selectIdentityUserId } from "identity/selectors";
 import {
   addContentToSpace,
-  selectCurrentSpaceId,
 } from "../../create/space/spaceSlice";
 import { isRecord } from "../../core/isRecord";
 import { asOptionalTrimmedString } from "../../core/optionalString";
@@ -24,6 +23,7 @@ import type {
   TableMeta,
   TablePublicIntakeConfig,
 } from "./types";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 
 /**
  * 创建表时的输入参数：
@@ -200,7 +200,7 @@ export const createTableAction = async (
   // This action preserves explicit caller intent:
   // - prefer `spaceId` when a caller passes it;
   // - otherwise fall back to the current selected space only.
-  const spaceId = customSpaceId ?? selectCurrentSpaceId(state);
+  const spaceId = customSpaceId ?? getCurrentSpaceId();
 
   const tableId = ulid();
 

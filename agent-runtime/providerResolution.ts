@@ -15,7 +15,7 @@ type EnvLike = Record<string, string | undefined>;
 
 function resolvePlatformProviderEndpoint(agentConfig: AgentRuntimeAgentConfig) {
   const customProviderUrl = agentConfig.customProviderUrl?.trim();
-  if (customProviderUrl) return resolveChatCompletionsEndpoint(customProviderUrl);
+  if (customProviderUrl) return resolveCustomProviderEndpoint(customProviderUrl);
 
   const provider = asTrimmedLowercaseString(
     agentConfig.provider ?? agentConfig.apiSource ?? "openai"
@@ -143,6 +143,15 @@ export function resolveChatCompletionsEndpoint(value: string) {
   return trimmed.endsWith("/chat/completions")
     ? trimmed
     : `${trimmed}/chat/completions`;
+}
+
+export function resolveCustomProviderEndpoint(value: string) {
+  const trimmed = trimTrailingSlash(value);
+  if (!trimmed) return "";
+  if (/\/responses$/i.test(trimmed) || /\/chat\/completions$/i.test(trimmed)) {
+    return trimmed;
+  }
+  return `${trimmed}/chat/completions`;
 }
 
 export function resolveOpenAiCompatibleBaseUrl(env: EnvLike) {
@@ -298,7 +307,7 @@ export async function buildProviderExecutionPlan(args: {
   }
 
   if (mode === "custom") {
-    const endpoint = resolveChatCompletionsEndpoint(agentConfig.customProviderUrl || resolveOpenAiCompatibleBaseUrl(env));
+    const endpoint = resolveCustomProviderEndpoint(agentConfig.customProviderUrl || resolveOpenAiCompatibleBaseUrl(env));
     let apiKey = "";
     const credentialRef = agentConfig.credentialRef?.trim();
     const apiKeyRef = agentConfig.apiKeyRef?.trim();
@@ -330,6 +339,26 @@ export async function buildProviderExecutionPlan(args: {
       if (trimmed) {
         try { await args.credentialBroker?.put(credentialRef, trimmed); } catch {}
         apiKey = trimmed;
+      }
+    }
+
+    // Provider-level shared key (provider-key:xxx): lives in the user-secrets
+    // store, not the agent-credentials store. Try syncFetcher with the ref
+    // itself — the caller's syncFetcher implementation is expected to detect
+    // the provider-key: prefix and route to /api/user-secrets/get.
+    // No credentialSynced opt-in required here: the user explicitly checked
+    // "记住此服务商密钥" when creating the agent, which is the consent for
+    // storing and retrieving this shared key from the server.
+    if (!apiKey && apiKeyRef && apiKeyRef.startsWith("provider-key:") && args.syncFetcher) {
+      try {
+        const shared = await args.syncFetcher(apiKeyRef);
+        const trimmed = asTrimmedString(shared);
+        if (trimmed) {
+          try { await args.credentialBroker?.put(apiKeyRef, trimmed); } catch {}
+          apiKey = trimmed;
+        }
+      } catch {
+        // Best-effort: a missing provider key falls through to the hint below.
       }
     }
 

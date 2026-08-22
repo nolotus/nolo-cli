@@ -16,7 +16,6 @@ export const TOOL_PACKS = {
   // 加载，不再随 CORE 常驻；全部视图（All View）运行时只给 recommended hint，
   // 不自动注入工具。search_workspace 保持常驻（分类视图的「当前空间」检索）。
   CORE: [
-    "ask_user",
     "read",
     "createDoc",
     "updateDoc",
@@ -42,8 +41,6 @@ export const TOOL_PACKS = {
     "applyLineEdits",
     "codeSearch",
     "globFiles",
-    "searchFiles",
-    "listFiles",
     "execShell",
     "launchProcess",
     "listProcesses",
@@ -484,12 +481,19 @@ export function appendEnabledPackPromptPatches(
 
 /**
  * 强制工具层 (Forced)：CLI 和桌面端不可关闭的工具，即使 declared-only / ablation
- * 模式也保留。web 端通过 getRuntimeCoreTools() 已覆盖（CORE 含 ask_user），
+ * 模式也保留。web 端通过 getRuntimeCoreTools() 已覆盖（CORE），
  * 但 inline-artifact agent 特意跳过 CORE——这是预期行为（纯产物生成 agent 不交互）。
  *
  * 与 CORE 的区别：CORE 是「默认有、可关」，FORCED 是「CLI/桌面永远有」。
+ *
+ * 2026-08-20：ask_user 已从 FORCED 与 CORE 同时移出——默认不再注入（省每轮
+ * ~1600 tokens 的 schema + 交互说明开销），改为显式 opt-in：在 agent 配置的
+ * tools 里写 "ask_user" 即开启（AGENT_AVAILABLE_TOOL_NAMES 保留该名字）。
+ * 各端支持情况：CLI/TUI 有 AskChoice dialog，web 有 AskChoicePanel，
+ * desktop 无交互通道（desktopAgentRuntimeTurnService.ts 会剥离，见
+ * INTERACTION_REQUIRED_TOOL_NAMES）。当前无强制工具。
  */
-export const FORCED_TOOLS = ["ask_user"] as const;
+export const FORCED_TOOLS: ReadonlySet<string> = new Set();
 
 /**
  * Filter out disabledTools from a tool list, preserving FORCED_TOOLS (which
@@ -506,7 +510,7 @@ export function applyDisabledTools(
     return toolNames;
   }
   const disabled = new Set(disabledTools);
-  const forced = new Set<string>(FORCED_TOOLS);
+  const forced = FORCED_TOOLS;
   return toolNames.filter((name) => !disabled.has(name) || forced.has(name));
 }
 

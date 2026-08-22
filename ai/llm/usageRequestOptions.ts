@@ -20,6 +20,23 @@ const STREAM_USAGE_PROVIDERS = new Set([
   "mistral",
   "cloudflare",
   "gmi",
+  // OpenAI-compatible hosted providers expose the terminal usage chunk when
+  // requested, including DeepInfra and Vultr. Keep this capability decision
+  // in the shared seam so proxy and local runtimes cannot drift.
+  "deepinfra",
+  "vultr",
+  // Explicit local-runtime providers with OpenAI-compatible streaming: both
+  // DeepSeek official and Ollama honor stream_options.include_usage on their
+  // chat.completions endpoints. Without them, locally-configured agents lose
+  // token statistics / local billing (the whitelist replaced the previous
+  // always-on include_usage).
+  "deepseek",
+  "ollama",
+  // Platform Kimi K3 remap (provider=nolo + kimi-k3) routes to crof.ai, an
+  // OpenAI-compatible /v1/chat/completions endpoint; the hosted branch passes
+  // "crof" as the usage provider so K3 streams request the terminal usage
+  // chunk (same capability decision as deepinfra/vultr).
+  "crof",
 ]);
 
 const EXTRA_USAGE_FIELD_PROVIDERS = new Set(["openrouter"]);

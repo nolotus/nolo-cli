@@ -8,7 +8,10 @@
 
 import type { AgentRuntimeAgentConfig, AgentRuntimeChatMessage } from "../../agent-runtime";
 import { resolveAgentRuntimeConfigFromRecord } from "../../agent-runtime";
-import { resolveBuiltinPlatformAgentConfig } from "../../agent-runtime/builtinPlatformAgentConfigs";
+import {
+  applyBuiltinAgentRuntimeOverride,
+  resolveBuiltinPlatformAgentConfig,
+} from "../../agent-runtime/builtinPlatformAgentConfigs";
 import type { HybridRecordStore } from "./hybridRecordStore";
 import { buildLocalAgentLookupKeys } from "./localAgentRecords";
 import { dialogMessageRange } from "../../database/keys";
@@ -39,7 +42,7 @@ export function resolveBuiltinLocalCliAgentConfig(
       apiSource: "cli",
       provider: "cli",
       cliProvider: "codex",
-      toolNames: ["readFile", "searchFiles", "execShell", "fetchWebpage", "exa_search"],
+      toolNames: ["readFile", "execShell", "fetchWebpage", "exa_search"],
       rawRecord: {
         dbKey: LOCAL_CODEX_AGENT_KEY,
         id: LOCAL_CODEX_AGENT_ID,
@@ -75,7 +78,15 @@ export async function readAgentFromStore(args: {
   for (const key of buildLocalAgentLookupKeys(args)) {
     const record = await args.store.read(key);
     if (!record || typeof record !== "object") continue;
-    return resolveAgentRuntimeConfigFromRecord(key, record);
+    // 内置 agent 的 provider/model 由 catalog 托管，命中记录也要盖一层：
+    // 服务端那道 override（agentRun/agentLookup）管不到本地 runtime，而本地
+    // 缓存里存的可能正是过期记录（hybrid store 会把远端读到的原始记录缓存下来，
+    // 客户端升级并不会重写它）。不盖的话本地模式又会回到「状态行显示 catalog
+    // 模型的窗口、实际却跑记录里的旧模型」——正是这次要消灭的分叉。
+    return applyBuiltinAgentRuntimeOverride(
+      args.agentRef,
+      resolveAgentRuntimeConfigFromRecord(key, record),
+    );
   }
   // Last-chance fallback: known built-in platform agent keys (quick-chat
   // tiers + builtin nolo) may not be in the local store or the remote

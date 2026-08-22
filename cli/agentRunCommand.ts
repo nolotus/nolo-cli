@@ -8,7 +8,7 @@
 import { runAgentTurn, type RunAgentTurnOptions, type RunAgentTurnResult } from "./client/agentRun";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { classifyCliAutoRoute } from "./client/autoModelRouter";
+import { CLI_AUTO_ROUTE_AGENT_KEY } from "./client/autoModelRouter";
 import {
   buildModelLayerOverride,
   type ModelLayerOverride,
@@ -307,21 +307,14 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
     (args.includes("--auto-route") || env.NOLO_AUTO_ROUTE === "1") &&
     env.NOLO_AUTO_ROUTE !== "0";
   if (autoRouteRequested) {
-    const authToken = resolveAuthToken(args, env);
-    const serverUrl = resolveServerUrl(env);
     const hasExplicitAgent = Boolean(readFlagValue(args, "--agent"));
-    const route = await classifyCliAutoRoute(effectiveMessage, {
-      serverUrl,
-      authToken,
-      // 有图 → kimi vision 档；无图 → flash 档。漏传会永远走 flash。
-      hasImages: parsed.imageUrls.length > 0,
-    });
     if (hasExplicitAgent) {
+      // 只有读「覆盖源 agent」才需要凭证；无 --agent 时不必解析。
       modelOverride = buildModelLayerOverride(
         await readDbRecord({
           dbKey: agentKey,
-          authToken,
-          serverUrl,
+          authToken: resolveAuthToken(args, env),
+          serverUrl: resolveServerUrl(env),
           fetchImpl: fetch,
         }).catch(() => null),
       );
@@ -331,10 +324,12 @@ export async function runAgentRunCommand(args: string[], deps: AgentRunCommandDe
         "[nolo] auto-route: 覆盖源 agent 读取失败，按原样直跑所选 agent。\n",
       );
     } else {
-      effectiveAgentKey = route.agentKey;
-      output.write(
-        `[nolo] auto → ${route.tier}${modelOverride ? ` (model: ${agentKey})` : ""}\n`,
-      );
+      effectiveAgentKey = CLI_AUTO_ROUTE_AGENT_KEY;
+      // 自动路由只剩默认档一个目标，不再打印档位提示；显式 --agent 的 model
+      // 层覆盖仍值得提示（否则用户会疑惑跑的模型为何不是所选 agent 的）。
+      if (modelOverride) {
+        output.write(`[nolo] auto-route: model 层覆盖为 ${agentKey}\n`);
+      }
     }
   }
   let workflowReference: ResolvedWorkflowReference | undefined;

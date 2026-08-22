@@ -10,6 +10,7 @@ import { toTrimmedString } from "../../core/toTrimmedString";
 import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 import { fetchUserData } from "../../database/client/fetchUserData";
 import { getUserDataItemTimestamp, mergeAndDedupUserData } from "../../database/userDataMerge";
+import { getAllMemberSpaces } from "../../create/space/spaceMembershipStore";
 
 type SearchWorkspaceArgs = { query: string };
 
@@ -61,7 +62,7 @@ const selectCurrentSpaceFromState = (state: SearchWorkspaceState) =>
   state.space.currentSpace;
 
 const selectAllMemberSpacesFromState = (state: SearchWorkspaceState) => {
-  const memberSpaces = state.space.memberSpaces ?? [];
+  const memberSpaces = getAllMemberSpaces();
   return [...memberSpaces].sort((a, b) => {
     const aUpdatedAt =
       a.spaceUpdatedAt ??

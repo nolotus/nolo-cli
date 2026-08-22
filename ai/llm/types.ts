@@ -47,6 +47,14 @@ export interface Model {
   contextWindow?: any; // 建议改为 number，但保持你原有的 any 兼容
   price: ModelPrice; // 基础/默认价格
 
+  /**
+   * 分时计价的峰时/谷时价（可选）。
+   * 有这两个字段的模型在前端价格页显示峰谷双行；
+   * 切换到不分时的上游时去掉这两个字段即可，前端自动回退到单一 price。
+   */
+  peakPrice?: ModelPrice;
+  offPeakPrice?: ModelPrice;
+
   // 新增字段：支持高级定价策略
   pricingStrategy?: PricingStrategy;
   serviceTierPriceMultipliers?: Partial<

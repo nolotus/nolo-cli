@@ -41,7 +41,11 @@ export interface RunAgentBackgroundArgs {
     /** 任务状态变化时触发（pending → running → done/failed） */
     onStatusChange?: (status: DialogStatus) => void;
     /** agent 成功完成时触发 */
-    onDone?: (result: { dialogId: string; content?: string; usage?: unknown }) => void;
+    onDone?: (result: {
+        dialogId: string;
+        content?: string;
+        usage?: unknown;
+    }) => void;
     /** agent 失败时触发 */
     onFailed?: (error: string) => void;
     /** 外部取消信号 */

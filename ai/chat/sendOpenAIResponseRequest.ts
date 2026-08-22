@@ -13,7 +13,7 @@ import type { ImageGenerationState, Message } from "../../chat/messages/types";
 import { DataType } from "../../create/types";
 import { write } from "../../database/dbSlice";
 import { selectRuntimeCurrentServer } from "../../app/stateViews/runtime";
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import { getApiEndpoint } from "../llm/providers";
 import { createDialogMessageKeyAndId, dialogMessageKey } from "../../database/keys";
 import { selectIdentityToken } from "identity/selectors";
@@ -208,7 +208,7 @@ export const sendOpenAIResponseRequest = async ({
   const controller = new AbortController();
   thunkSignal.addEventListener("abort", () => controller.abort());
   const signal = controller.signal;
-  const streamSpaceId = selectCurrentSpaceId(getState() as RootState) || undefined;
+  const streamSpaceId = getCurrentSpaceId() || undefined;
 
   let messageId: string;
   let msgKey: string;

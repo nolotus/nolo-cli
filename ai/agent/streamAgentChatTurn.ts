@@ -2139,38 +2139,26 @@ export const streamAgentChatTurnHandler = async (
                 const summaryTokenCount = contexts.dialogSummary
                     ? estimateTokenCount(contexts.dialogSummary)
                     : 0;
+                const serverUrl = selectCurrentServer(loopState);
+                const authToken = selectIdentityToken(loopState);
+                const preprocessedResult = await tryPreprocessWebImageOrReject(
+                    compressOldToolResults(cleanedMessages) as any,
+                    agentConfigForCall as any,
+                    initialHistoryIds,
+                    serverUrl,
+                    authToken,
+                );
                 let processedMessages = trimMessagesWithSummary(
-                    compressOldToolResults(cleanedMessages),
+                    preprocessedResult.messages as any,
                     ctxWindow,
                     summaryTokenCount,
                 );
-
                 let firstDynamicIdx = processedMessages.findIndex(
                     (m) => m.id && !initialHistoryIds.has(m.id),
                 );
                 if (firstDynamicIdx === -1) firstDynamicIdx = processedMessages.length;
-
                 let stableMessages = processedMessages.slice(0, firstDynamicIdx);
                 let dynamicMessages = processedMessages.slice(firstDynamicIdx);
-
-                if (appendTempUserInput) {
-                    const serverUrl = selectCurrentServer(loopState);
-                    const authToken = selectIdentityToken(loopState);
-                    const result = await tryPreprocessWebImageOrReject(
-                        processedMessages as any,
-                        agentConfigForCall as any,
-                        initialHistoryIds,
-                        serverUrl,
-                        authToken,
-                    );
-                    if (result.kind === "reject") {
-                        setLoopStopReason("error");
-                        return rejectWithValue(result.reason);
-                    }
-                    processedMessages = result.messages as typeof processedMessages;
-                    stableMessages = result.stableMessages as typeof stableMessages;
-                    dynamicMessages = result.dynamicMessages as typeof dynamicMessages;
-                }
 
                 const bodyData = generateRequestBody({
                     agentConfig: effectiveAgentConfig,
@@ -2464,39 +2452,27 @@ export const streamAgentChatTurnHandler = async (
             const summaryTokenCount = contexts.dialogSummary
                 ? estimateTokenCount(contexts.dialogSummary)
                 : 0;
+
+            const serverUrl = selectCurrentServer(loopState);
+            const authToken = selectIdentityToken(loopState);
+            const preprocessedResult = await tryPreprocessWebImageOrReject(
+                compressOldToolResults(cleanedMessages) as any,
+                agentConfigForCall as any,
+                initialHistoryIds,
+                serverUrl,
+                authToken,
+            );
             let processedMessages = trimMessagesWithSummary(
-                compressOldToolResults(cleanedMessages),
+                preprocessedResult.messages as any,
                 ctxWindow,
                 summaryTokenCount,
             );
-
-            // --- [优化 P1] 使用 findIndex + slice 确保顺序和无 ID 稳定消息的保留 ---
             let firstDynamicIdx = processedMessages.findIndex(
                 (m) => m.id && !initialHistoryIds.has(m.id),
             );
             if (firstDynamicIdx === -1) firstDynamicIdx = processedMessages.length;
-
             let stableMessages = processedMessages.slice(0, firstDynamicIdx);
             let dynamicMessages = processedMessages.slice(firstDynamicIdx);
-
-            if (appendTempUserInput) {
-                const serverUrl = selectCurrentServer(loopState);
-                const authToken = selectIdentityToken(loopState);
-                const result = await tryPreprocessWebImageOrReject(
-                    processedMessages as any,
-                    agentConfigForCall as any,
-                    initialHistoryIds,
-                    serverUrl,
-                    authToken,
-                );
-                if (result.kind === "reject") {
-                    setLoopStopReason("error");
-                    return rejectWithValue(result.reason);
-                }
-                processedMessages = result.messages as typeof processedMessages;
-                stableMessages = result.stableMessages as typeof stableMessages;
-                dynamicMessages = result.dynamicMessages as typeof dynamicMessages;
-            }
 
             const bodyData = generateRequestBody({
                 agentConfig: effectiveAgentConfig,

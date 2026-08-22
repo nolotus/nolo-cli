@@ -19,6 +19,12 @@ import {
 import { sortAgentsFavoriteOwnedPublic, type SortableAgentItem } from "../ai/agent/utils/sortUtils";
 import { t } from "./i18n";
 import { NOLO_DEFAULT_AGENT_KEY } from "../agentAliases";
+import {
+  BUILTIN_NOLO_AGENT_MODEL,
+  BUILTIN_NOLO_AGENT_NAME,
+} from "../core/builtinAgents";
+import { builtinAgentCatalogEntryById } from "../core/builtinAgentCatalog";
+import { parsePublicAgentId } from "../core/prefix";
 
 // The TUI default is Nolo itself. App Builder is a separate platform agent and
 // must never become the implicit fallback when profile/env resolution is absent.
@@ -54,41 +60,25 @@ export function formatAgentSourceLabel(entry: AgentCatalogEntry): string {
 
 export const PLATFORM_AGENTS: AgentCatalogEntry[] = [
   {
-    name: "nolo",
+    // 名称与模型都从 builtinAgentCatalog 派生：`/switch` 里的 nolo 项直接显示
+    // 它实际指向的模型（当前 DeepSeek V4 Flash Vision Exp），换代自动跟随。
+    name: BUILTIN_NOLO_AGENT_NAME,
     key: DEFAULT_TUI_AGENT_KEY,
-    model: "-",
+    model: BUILTIN_NOLO_AGENT_MODEL,
     kind: "platform",
     description: "one assistant that routes work across your agents and data",
   },
 ];
 
 /**
- * 「auto」合成目录项：与 nolo 默认 agent 同 key。选择它 = 回到
- * 「无显式选择」状态，新对话首轮由 LLM 分类器在内置档间自动选
- * （镜像 web quick-chat 的 auto 模式）。仅自动路由开启时出现
- * （NOLO_AUTO_ROUTE=0 隐藏）。
- */
-export const AUTO_ROUTE_CATALOG_ENTRY: AgentCatalogEntry = {
-  name: "auto",
-  key: DEFAULT_TUI_AGENT_KEY,
-  model: "auto",
-  kind: "platform",
-  description:
-    "auto-route each new dialog across flash / balanced / quality tiers",
-};
-
-/**
- * 目录展示用的平台 agent 列表：自动路由开启时用 auto 项替换 nolo 项
- * （同 key，语义等价），给用户一个显式回到自动模式的入口。
+ * 目录展示用的平台 agent 列表：自动路由只剩 flash 一档，不再用合成
+ * 「auto」项替换 nolo 项（该项曾用于表示「无显式选择」的 auto 模式），
+ * 始终显示默认 agent 名 nolo。
  */
 export function resolveCatalogPlatformAgents(
-  env: EnvLike = process.env,
+  _env: EnvLike = process.env,
 ): AgentCatalogEntry[] {
-  if (env.NOLO_AUTO_ROUTE === "0") return PLATFORM_AGENTS;
-  return [
-    AUTO_ROUTE_CATALOG_ENTRY,
-    ...PLATFORM_AGENTS.filter((entry) => entry.key !== DEFAULT_TUI_AGENT_KEY),
-  ];
+  return PLATFORM_AGENTS;
 }
 
 type EnvLike = Record<string, string | undefined>;
@@ -429,29 +419,56 @@ export function renderAgentCatalogList(entries: AgentCatalogEntry[], currentKey:
   return lines.join("\n");
 }
 
+/**
+ * `/switch <target>` 解析出的切换目标。
+ *
+ * 显式写出返回类型，而不是让 4 个分支各自推断出一个联合类型——改这个函数的人
+ * （或 AI）不该被迫读完所有分支才知道契约。`model` / `apiSource` 可缺省：
+ * 目录外的陌生 key 只能给出 key 本身。
+ */
+export type AgentSwitchTarget = {
+  name: string;
+  key: string;
+  model?: string;
+  apiSource?: string;
+};
+
+/**
+ * 目录条目的来源标记：显式 apiSource 优先，其次平台条目算 "platform"，
+ * 其余（用户自建、来源未知）不标。三个分支曾各自内联同一段三元表达式。
+ */
+function resolveEntryApiSource(entry: {
+  apiSource?: string;
+  kind?: string;
+}): string | undefined {
+  if (entry.apiSource) return entry.apiSource;
+  return entry.kind === "platform" ? "platform" : undefined;
+}
+
+function toSwitchTarget(entry: AgentCatalogEntry): AgentSwitchTarget {
+  const apiSource = resolveEntryApiSource(entry);
+  return {
+    name: entry.name,
+    key: entry.key,
+    model: entry.model,
+    ...(apiSource ? { apiSource } : {}),
+  };
+}
+
 export function findAgentCatalogEntry(
   entries: AgentCatalogEntry[],
   rawTarget: string
-) {
+): AgentSwitchTarget | null {
   const target = rawTarget.trim();
   if (!target) return null;
 
+  // 1) 列表序号
   if (/^\d+$/.test(target)) {
     const entry = entries[Number(target) - 1];
-    return entry
-      ? {
-          name: entry.name,
-          key: entry.key,
-          model: entry.model,
-          ...(entry.apiSource
-            ? { apiSource: entry.apiSource }
-            : entry.kind === "platform"
-              ? { apiSource: "platform" }
-              : {}),
-        }
-      : null;
+    return entry ? toSwitchTarget(entry) : null;
   }
 
+  // 2) 名字 / key / key 后缀
   const lower = target.toLowerCase();
   const byName = entries.find(
     (entry) =>
@@ -459,20 +476,22 @@ export function findAgentCatalogEntry(
       entry.key.toLowerCase() === lower ||
       entry.key.toLowerCase().endsWith(`-${lower}`)
   );
-  if (byName) {
-    return {
-      name: byName.name,
-      key: byName.key,
-      model: byName.model,
-      ...(byName.apiSource
-        ? { apiSource: byName.apiSource }
-        : byName.kind === "platform"
-          ? { apiSource: "platform" }
-          : {}),
-    };
-  }
+  if (byName) return toSwitchTarget(byName);
 
+  // 3) 目录里没有的 agent key（未登录、目录还没加载完、或切的是别人的 agent）。
+  //    平台内置 agent 仍能从 builtinAgentCatalog 拿到真名与模型——直接把 key
+  //    当显示名会连着 persistAgentSelection 一起把裸 key 写进 profile 的
+  //    agentName，状态行随后显示一长串 `agent-pub-01…`。
   if (target.startsWith("agent-") || target.startsWith("agent-pub-")) {
+    const builtin = builtinAgentCatalogEntryById(parsePublicAgentId(target));
+    if (builtin) {
+      return {
+        name: builtin.name,
+        key: target,
+        model: builtin.model,
+        apiSource: builtin.apiSource ?? "platform",
+      };
+    }
     return { name: target, key: target };
   }
 

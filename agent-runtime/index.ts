@@ -71,7 +71,9 @@ export {
   buildOpenAiCompatibleChatCompletionRequest,
   executeOpenAiCompatibleChatCompletion,
   parseOpenAiCompatibleChatCompletionResponse,
+  parseOpenAiCompatibleResponsesResponse,
   readOpenAiCompatibleSseCompletion,
+  readResponsesSseCompletion,
 } from "./openAiCompatibleProvider";
 export { resolveOpenAiCompatibleProviderConfig } from "./openAiCompatibleProviderConfig";
 export {

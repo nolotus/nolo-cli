@@ -30,6 +30,8 @@ import {
   asTrimmedNonEmptyStringArray,
 } from "../core/stringArray";
 import { asTrimmedString } from "../core/trimmedString";
+import { isLevelNotFoundError } from "../database/levelNotFoundError";
+import { isLevelLockError } from "../database/levelLockError";
 
 type ReadSource = "http" | "local-db-fallback";
 
@@ -653,61 +655,58 @@ export async function readDialogSnapshot(args: {
   readLocalDialog?: LocalDialogRead;
 }) {
   const candidateBases = resolveServerCandidates({ NOLO_SERVER: args.base }, args.base);
-  let attempts: HttpAttempt[] = [];
-  try {
-    const result = await tryHttpDialogCandidates({
-      bases: candidateBases,
-      dialogKey: args.dialogKey,
-      dialogId: args.dialogId,
-      limit: args.limit,
-      authToken: args.authToken,
-      fetchImpl: args.fetchImpl,
-    });
-    return { ...result, candidateBases };
-  } catch (error) {
-    attempts =
-      typeof error === "object" && error !== null && "attempts" in error
-        ? ((error as any).attempts as HttpAttempt[])
-        : attempts;
-    const statuses = attempts.map((attempt) => attempt.status).filter((status): status is number => typeof status === "number");
-    const all404 = attempts.length > 0 && statuses.length === attempts.length && statuses.every((status) => status === 404);
-    const localhostCandidate = candidateBases.find(isLocalBaseUrl);
-    const remoteError = Object.assign(new Error(
-      all404
-        ? `dialog not found on tried servers: ${candidateBases.join(", ")}`
-        : `read dialog failed across candidates: ${attempts.map((attempt) => `${attempt.base} -> ${attempt.status ?? attempt.message}`).join("; ")}`
-    ), { attempts });
 
-    // The TUI can run an agent locally while its configured server still
-    // points at the hosted API. Local runs are persisted in the local dialog
-    // store, so an HTTP 404 is not proof that the dialog is absent. Try the
-    // local authority after an all-404 response as well as for the historical
-    // localhost fallback case. Keep the original HTTP error when the local
-    // store does not contain the dialog (or cannot be opened), so remote-only
-    // reads retain their existing diagnostics.
-    if (all404 || localhostCandidate) {
-      try {
-        const fallback = await readDialogFromLocalDb(
-          args.dialogKey,
-          args.dialogId,
-          args.limit,
-          args.readLocalDialog,
-        );
-        return {
-          ...fallback,
-          // Keep the configured base stable for callers that render it; the
-          // source field identifies that the payload came from local storage.
-          resolvedBase: localhostCandidate ?? args.base,
-          attempts,
-          candidateBases,
-        };
-      } catch {
-        // Fall through to the HTTP error below. In particular, do not expose a
-        // LevelDB lock/not-found error as the primary cause of a remote read.
-      }
+  // Local-first is intentional: local TUI/CLI runs persist beside the process,
+  // while server runs persist remotely. A dialogId does not identify the store.
+  // Only fall through on a local miss; a real local DB error must not be hidden.
+  try {
+    const local = await readDialogFromLocalDb(
+      args.dialogKey,
+      args.dialogId,
+      args.limit,
+      args.readLocalDialog,
+    );
+    // A local reader can legally return an empty/missing record (for example
+    // when another local authority is open). Treat that as a miss; otherwise
+    // a stale local lookup would mask the server-owned dialog forever.
+    const localMeta = local.meta;
+    const localKey =
+      localMeta && typeof localMeta === "object"
+        ? String(localMeta.dbKey ?? localMeta.contentKey ?? "")
+        : "";
+    if (!localMeta || (localKey && localKey !== args.dialogKey)) {
+      const miss = new Error("local dialog not found");
+      (miss as Error & { code?: string }).code = "LEVEL_NOT_FOUND";
+      throw miss;
     }
-    throw remoteError;
+    return {
+      ...local,
+      resolvedBase: args.base,
+      attempts: [],
+      candidateBases,
+    };
+  } catch (error) {
+    // Only a confirmed missing key means "try the server". Lock/IO errors are
+    // real local-runtime failures and must remain visible to the caller.
+    // A resident server holding the shared LOCK is an expected miss for CLI
+    // reads: the local authority is unavailable, so try the configured server.
+    // Other local I/O failures remain visible instead of being silently masked.
+    const localDbUnavailable =
+      isLevelLockError(error) ||
+      (typeof error === "object" &&
+        (error as { code?: unknown }).code === "LEVEL_DATABASE_NOT_OPEN");
+    if (!isLevelNotFoundError(error) && !localDbUnavailable) throw error;
   }
+
+  const result = await tryHttpDialogCandidates({
+    bases: candidateBases,
+    dialogKey: args.dialogKey,
+    dialogId: args.dialogId,
+    limit: args.limit,
+    authToken: args.authToken,
+    fetchImpl: args.fetchImpl,
+  });
+  return { ...result, candidateBases };
 }
 
 function compact(value: unknown, max = 180) {

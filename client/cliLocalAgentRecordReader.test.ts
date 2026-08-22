@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { readAgentFromStore } from "./cliLocalAgentRecordReader";
 import { resolveBuiltinPlatformAgentConfig } from "../agent-runtime/builtinPlatformAgentConfigs";
+import { builtinAgentCatalogEntryById } from "../core/builtinAgentCatalog";
 import {
   PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
   PUBLIC_KIMI_K26_IMAGE_AGENT_KEY,
@@ -21,10 +22,12 @@ describe("readAgentFromStore builtin platform agent fallback", () => {
       userId: "user-1",
     });
     expect(config).not.toBeNull();
+    // 从 catalog 派生。手抄型号名的断言会在换代时变成第一个挂掉的东西——
+    // 这一行原本写死 "deepseek-v4-flash"，catalog 切到 vision-exp 后就一直红着。
     expect(config).toMatchObject({
       key: PUBLIC_DEEPSEEK_V4_FLASH_AGENT_KEY,
       provider: "nolo",
-      model: "deepseek-v4-flash",
+      model: builtinAgentCatalogEntryById("01DSV4FLASHPB00000000JFPFD")!.model,
       apiSource: "platform",
       useServerProxy: true,
     });

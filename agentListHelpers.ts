@@ -5,6 +5,7 @@ import {
   type SafeAgentSummary,
   type SafeAgentSummaryOptions,
 } from "./ai/agent/safeAgentSummary";
+export { isAgentUnavailableNow } from "./ai/agent/agentAvailabilityShared";
 import {
   listUserRecordsFromServers,
   readLiveDbRecordAfterTombstoneMerge,
@@ -158,8 +159,11 @@ export function parseAgentListArgs(args: string[]) {
     wantSafe: args.includes("--safe"),
     publicOnly: args.includes("--public-only"),
     idsOnly: args.includes("--ids-only"),
+    showUnavailable: args.includes("--show-unavailable"),
   };
 }
+
+/** 429 限流中（nextAvailableAt 在未来）的 agent 是否仍可见。 */
 
 export async function listLocalCachedAgents(args: {
   db: CliKvDb;

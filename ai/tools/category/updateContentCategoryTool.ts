@@ -2,9 +2,9 @@
 
 import {
   updateContentCategory,
-  selectCurrentSpaceId,
 } from "../../../create/space/spaceSlice";
 import type { RootState } from "../../../app/store";
+import { getCurrentSpaceId } from "../../../create/space/spaceCurrentStore";
 
 /**
  * [Schema] 定义了 'updateContentCategory' 工具的结构，供 LLM 调用。
@@ -44,7 +44,7 @@ export async function updateContentCategoryFunc(
   const { getState } = thunkApi;
   const dispatch = thunkApi.dispatch.bind(thunkApi) as any;
   const state = getState() as RootState;
-  const spaceId = selectCurrentSpaceId(state);
+  const spaceId = getCurrentSpaceId();
 
   if (!spaceId) {
     throw new Error("无法更新分类，因为当前空间未设定。");

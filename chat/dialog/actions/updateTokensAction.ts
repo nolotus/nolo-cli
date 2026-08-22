@@ -58,6 +58,10 @@ const updateStats = async (
       input_tokens: data.input_tokens,
       output_tokens: data.output_tokens,
       cost: data.cost,
+      cache_read_input_tokens: data.cache_read_input_tokens,
+      cache_creation_input_tokens: data.cache_creation_input_tokens,
+      agentId: data.agentId ?? data.cybotId,
+      entry_path: data.entry_path,
     });
 
     await (thunkApi.dispatch(
@@ -79,6 +83,16 @@ const updateStats = async (
   }
 };
 
+/**
+ * 客户端本地日用量统计更新。
+ *
+ * 架构说明 (Authority & Evolution)：
+ * 1. 服务端是 token-stats-* 的唯一权威写入源（write/patch/delete 三处均已拦截客户端写 stats）。
+ *    agent-run 与 chat-proxy 均由服务端原子写入 daily stats 与 dialog projection。
+ * 2. 客户端此处仍保留本地 stats 写入，主要用于离线模式/local 用户本地状态展示与兼容既有单测契约。
+ *    向服务端发起的 stats replication 会被服务端 400 静默拦截，不影响主流程与明细记录写入。
+ * 3. 后续规划：待按明细聚合（detail aggregation）读路径改造落地后，客户端日统计写入将彻底下线。
+ */
 export const saveTokenUsage = async (data: TokenUsageData, thunkApi: any) => {
   // 用 data.timestamp（而非 Date.now()）取 dateKey，与 updateStats 内的
   // timeKey 计算保持一致，避免零点交界处 DB Key 与 Payload timeKey 错配。

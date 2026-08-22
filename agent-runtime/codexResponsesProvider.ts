@@ -10,6 +10,13 @@ import {
 } from "../integrations/openai/responsesHelpers";
 import { parseSseDataLineObject } from "./sseDataLine";
 import { readSseDataValues } from "./sseFrames";
+import {
+  aggregateResponsesStream,
+  codexStreamFailureStatus,
+  type CodexStreamFailure,
+} from "./responsesSseStream";
+
+export { codexStreamFailureStatus, type CodexStreamFailure };
 
 /**
  * ChatGPT Codex (subscription OAuth) provider.
@@ -266,27 +273,6 @@ export function buildCodexRequestBody(
   return body;
 }
 
-/**
- * 上游在流内报告的失败。Codex backend 对 `server_is_overloaded` 这类容量错误
- * **仍然回 HTTP 200**，把故障塞进 SSE 的 `error` / `response.failed` 帧里。
- * 不识别它就会聚合出一条空 assistant 消息 + 伪造的 finish_reason "stop"，
- * 下游 localLoop 只能把它当空轮，最后以「本轮输出不完整」之类的文案收场，
- * 真正的原因（上游过载）全丢了，传输层重试也因为 200 而完全不触发。
- */
-export type CodexStreamFailure = {
-  code?: string;
-  type?: string;
-  message: string;
-};
-
-/** 流内失败 → HTTP 状态码。503/429 才允许重试，其余按 502 终局失败。 */
-export function codexStreamFailureStatus(failure: CodexStreamFailure): number {
-  const marker = `${failure.code ?? ""} ${failure.type ?? ""}`.toLowerCase();
-  if (marker.includes("overload") || marker.includes("service_unavailable")) return 503;
-  if (marker.includes("rate_limit") || marker.includes("usage_limit")) return 429;
-  return 502;
-}
-
 /** 只有容量抖动值得重试；鉴权/配额/参数错误重试只会浪费一轮。 */
 const RETRYABLE_CODEX_STREAM_STATUSES = new Set([503]);
 
@@ -294,92 +280,6 @@ const RETRYABLE_CODEX_STREAM_STATUSES = new Set([503]);
 const CODEX_STREAM_MAX_ATTEMPTS = 3;
 
 const CODEX_STREAM_RETRY_BASE_DELAY_MS = 500;
-
-function toStreamFailure(raw: unknown): CodexStreamFailure | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const err = raw as Record<string, unknown>;
-  // incomplete_details 只有 { reason }，没有 message/code——统一归一化到同一形状。
-  const reason = typeof err.reason === "string" ? err.reason : undefined;
-  const message =
-    typeof err.message === "string" && err.message
-      ? err.message
-      : reason
-        ? `Codex upstream ended incomplete: ${reason}.`
-        : "";
-  if (!message) return undefined;
-  const code = typeof err.code === "string" ? err.code : reason;
-  return {
-    ...(code ? { code } : {}),
-    ...(typeof err.type === "string" ? { type: err.type } : {}),
-    message,
-  };
-}
-
-function aggregateResponsesStream(events: Record<string, unknown>[]) {
-  let text = "";
-  const toolCalls: AgentRuntimeToolCall[] = [];
-  let usage: Record<string, unknown> | undefined;
-  let failure: CodexStreamFailure | undefined;
-
-  for (const ev of events) {
-    const type = String(ev.type ?? "");
-    if (type === "error") {
-      failure = failure ?? toStreamFailure(ev.error);
-      continue;
-    }
-    if (type === "response.failed" || type === "response.incomplete") {
-      const response = ev.response as Record<string, unknown> | undefined;
-      failure =
-        failure ??
-        toStreamFailure(response?.error) ??
-        toStreamFailure(response?.incomplete_details) ?? {
-          code: type === "response.incomplete" ? "response_incomplete" : "response_failed",
-          message: `Codex upstream ended with ${type}.`,
-        };
-      continue;
-    }
-    if (type === "response.output_text.delta" && typeof ev.delta === "string") {
-      text += ev.delta;
-      continue;
-    }
-    if (type === "response.output_item.done") {
-      const item = ev.item as Record<string, unknown> | undefined;
-      if (item && item.type === "function_call") {
-        const name = typeof item.name === "string" ? item.name : "";
-        if (name) {
-          toolCalls.push({
-            id:
-              typeof item.call_id === "string" && item.call_id
-                ? item.call_id
-                : `${name}_${toolCalls.length}`,
-            type: "function",
-            function: {
-              name,
-              arguments: typeof item.arguments === "string" ? item.arguments : "{}",
-            },
-          });
-        }
-      }
-      continue;
-    }
-    if (type === "response.completed") {
-      const response = ev.response as Record<string, unknown> | undefined;
-      const u = response?.usage as Record<string, unknown> | undefined;
-      if (u) {
-        const prompt = typeof u.input_tokens === "number" ? u.input_tokens : 0;
-        const completion = typeof u.output_tokens === "number" ? u.output_tokens : 0;
-        const total =
-          typeof u.total_tokens === "number" ? u.total_tokens : prompt + completion;
-        usage = {
-          prompt_tokens: prompt,
-          completion_tokens: completion,
-          total_tokens: total,
-        };
-      }
-    }
-  }
-  return { text, toolCalls, usage, failure };
-}
 
 async function readSseEvents(response: Response): Promise<Record<string, unknown>[]> {
   return readSseDataValues(response, (line) => {

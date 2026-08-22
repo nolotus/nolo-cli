@@ -5,6 +5,11 @@
  * This is intentionally measured from the same builders the local runtime
  * uses — not a hardcoded floor — so the TUI context chip stays honest.
  */
+import {
+  BUILTIN_NOLO_AGENT_KEY,
+  BUILTIN_NOLO_AGENT_MODEL,
+  BUILTIN_NOLO_AGENT_NAME,
+} from "../core/builtinAgents";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveToolGuidedSections } from "../ai/agent/toolGuidedSections";
@@ -13,6 +18,7 @@ import { prepareTools } from "../ai/tools/prepareTools";
 import { expandEnabledPacks } from "../ai/tools/toolPacks";
 import { buildCurrentTimeBlock } from "../agent-runtime/currentTimeContext";
 import { buildIdentityBlock } from "../agent-runtime/identityBlock";
+import { buildUserResponseLanguageContext } from "../agent-runtime/userResponseLanguage";
 import {
   buildLocalWorkspaceOpenAiTools,
   buildLocalWorkspaceToolset,
@@ -24,14 +30,20 @@ import { canonicalizeToolNames } from "../agent-runtime/toolNameAliases";
 /** Default CLI packs when an agent does not declare enabledPacks. */
 const DEFAULT_CLI_PACKS = ["code", "agent-orchestration", "skills"] as const;
 
-/** Forced / default CLI interaction + light-web tools. */
+/** Default CLI light-web tools (ask_user 已移出默认面，不再计入估算)。 */
 const DEFAULT_CLI_PLATFORM_TOOLS = [
-  "ask_user",
   "exa_search",
   "fetchWebpage",
 ] as const;
 
-const DEFAULT_FLASH_PROMPT =
+/**
+ * 估算用的兜底 prompt——**近似基线，不是默认档的真实 prompt**。
+ *
+ * 默认档现在是 nolo，它的 prompt 是一段更长的路由人格，存在 agent 记录里；
+ * 而本函数是同步纯计算、不读记录。所以调用方没传 agentPrompt 时估算会偏低。
+ * 拿得到真实 prompt 的调用方应该显式传 `agentPrompt`。
+ */
+const DEFAULT_PROMPT_ESTIMATE_BASELINE =
   "你是共享空间里的高性价比通用 AI 助手。优先快速、直接、稳定地完成任务；需要推理时保持步骤清晰。";
 
 function readAgentsMd(cwd: string): string {
@@ -65,7 +77,7 @@ function estimateToolSchemas(toolNames: string[]): number {
 }
 
 /**
- * Estimate built-in context for the default auto→flash CLI surface.
+ * Estimate built-in context for the default CLI surface (flash tier).
  * Includes identity / guidance / time / AGENTS.md / skill index / tool schemas.
  */
 export function estimateDefaultCliContextTokens(opts: {
@@ -74,12 +86,16 @@ export function estimateDefaultCliContextTokens(opts: {
   agentKey?: string;
   model?: string;
   agentPrompt?: string;
+  userLanguage?: string;
 } = {}): number {
   const cwd = opts.cwd?.trim() || process.cwd();
-  const model = opts.model?.trim() || "deepseek-v4-flash";
-  const agentName = opts.agentName?.trim() || "DeepSeek V4 Flash";
-  const agentKey = opts.agentKey?.trim() || "agent-pub-deepseek-v4-flash";
-  const prompt = opts.agentPrompt?.trim() || DEFAULT_FLASH_PROMPT;
+  // 兜底 = 默认档 nolo，全部从 builtinAgentCatalog 派生。这三行曾手抄
+  // "deepseek-v4-flash" / "DeepSeek V4 Flash" / "agent-pub-deepseek-v4-flash"，
+  // 前两个随换代过期，第三个还是早已废弃的历史别名（真 key 是确定性 seed id）。
+  const model = opts.model?.trim() || BUILTIN_NOLO_AGENT_MODEL;
+  const agentName = opts.agentName?.trim() || BUILTIN_NOLO_AGENT_NAME;
+  const agentKey = opts.agentKey?.trim() || BUILTIN_NOLO_AGENT_KEY;
+  const prompt = opts.agentPrompt?.trim() || DEFAULT_PROMPT_ESTIMATE_BASELINE;
 
   const packTools = canonicalizeToolNames(
     expandEnabledPacks([...DEFAULT_CLI_PACKS], []),
@@ -95,6 +111,9 @@ export function estimateDefaultCliContextTokens(opts: {
   const toolSections = resolveToolGuidedSections(toolNames);
   const systemParts = [
     prompt,
+    opts.userLanguage?.trim()
+      ? buildUserResponseLanguageContext({ language: opts.userLanguage })
+      : "",
     buildIdentityBlock({
       agentName,
       agentId: agentKey,

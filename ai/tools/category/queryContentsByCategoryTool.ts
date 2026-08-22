@@ -1,6 +1,6 @@
 // ai/tools/queryContentsByCategoryTool.ts
 
-import { selectCurrentSpaceId } from "../../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../../create/space/spaceCurrentStore";
 import type { RootState } from "../../../app/store";
 
 /**
@@ -40,7 +40,7 @@ export async function queryContentsByCategoryFunc(
 }> {
   const { getState } = thunkApi;
   const state = getState() as RootState;
-  const spaceId = selectCurrentSpaceId(state);
+  const spaceId = getCurrentSpaceId();
 
   if (!spaceId) {
     throw new Error("无法查询内容，因为当前空间未设定。");

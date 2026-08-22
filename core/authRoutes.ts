@@ -42,6 +42,11 @@ export const authRoutes = {
       method: "GET" as const,
       createPath: () => `${API_VERSION}/users/usage-report`,
     },
+    failureReport: {
+      path: `${API_VERSION}/users/failure-report`,
+      method: "GET" as const,
+      createPath: () => `${API_VERSION}/users/failure-report`,
+    },
     growthReport: {
       path: `${API_VERSION}/users/growth-report`,
       method: "GET" as const,

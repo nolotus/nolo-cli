@@ -1,16 +1,14 @@
-import { SpaceData, SpaceMemberWithSpaceInfo } from "../../app/types";
+import { SpaceData } from "../../app/types";
 
 export type SpaceId = string;
 
+// Space state types have been migrated to module stores.
+// These types remain for thunk compatibility signatures only.
+
+/** View mode is owned by spaceCurrentStore. Re-exported here for convenience. */
 export type SpaceViewMode = "all" | "categories";
 
-/**
- * Authoritative membership list freshness for UI/offline UX.
- * - idle: no refresh yet (or status cleared on account switch)
- * - loading: refresh in progress; cached memberSpaces kept
- * - fresh: last refresh completed with remote/local authority
- * - offline: remote membership unavailable; memberSpaces may be stale cache
- */
+/** Membership status is owned by spaceMembershipStore. Re-exported here for convenience. */
 export type MembershipStatus = "idle" | "loading" | "fresh" | "offline";
 
 export interface CreateSpaceRequest {
@@ -21,26 +19,10 @@ export interface CreateSpaceRequest {
   boundFolder?: string;
 }
 
-export interface SpaceState {
-    currentSpaceId: string | null;
-    currentSpace: SpaceData | null;
-    memberSpaces: SpaceMemberWithSpaceInfo[] | null;
-    loading: boolean;
-    error?: string;
-    /** Membership list freshness; reset on account switch. */
-    membershipStatus: MembershipStatus;
-    initialized: boolean;
-    collapsedCategories: Record<string, boolean>;
-    /** "全部"视图 vs "分类"视图 */
-    viewMode: SpaceViewMode;
-    /** 实时任务状态：dialogId → "running" | "done" | "failed" */
-    dialogStatuses: Record<string, string>;
-    /** 最近一次 dialog 事件时间，用于顶部通知排序 */
-    dialogEventTimestamps: Record<string, number>;
-    /** 运行时可用的 dialog 标题缓存 */
-    dialogTitles: Record<string, string>;
-    /** 第一层网页体验：后台完成/失败后给侧边栏一个未读提示点，进入该对话即清除 */
-    unreadDialogIds: Record<string, boolean>;
-    /** 侧边栏「我的收藏」专区折叠态（全局侧边栏偏好，跨空间复用） */
-    favoritesCollapsed: boolean;
-}
+/**
+ * Empty state type for the spaceSlice compatibility shell.
+ * All actual state lives in module stores. This type exists only because
+ * RTK thunk reducer callbacks require a state parameter type.
+ * Do NOT add fields here — new state goes in a module store.
+ */
+export type SpaceState = Record<string, never>;

@@ -1,62 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import {
-  CLI_AUTO_TIER_AGENT_KEYS,
-  classifyCliAutoRoute,
-  resolveCliAutoAgentModel,
-} from "./autoModelRouter";
+import { CLI_AUTO_ROUTE_AGENT_KEY } from "./autoModelRouter";
+import { BUILTIN_NOLO_AGENT_KEY, isBuiltinPlatformAgentKey } from "../core/builtinAgents";
 
-const SERVER_URL = "https://nolo.test";
-const AUTH_TOKEN = "token-123";
-
-describe("classifyCliAutoRoute", () => {
-  it("routes image messages to flash tier (preprocessing pipeline handles images)", () => {
-    const result = classifyCliAutoRoute("看看这张图", {
-      serverUrl: SERVER_URL,
-      authToken: AUTH_TOKEN,
-      hasImages: true,
-    });
-    expect(result.agentKey).toBe(CLI_AUTO_TIER_AGENT_KEYS.flash);
-    expect(result.tier).toBe("flash");
-    expect(result.classified).toBe(true);
+/**
+ * 这个文件曾经有 4 个 test 反复断言「classifyCliAutoRoute 恒返回 flash」——
+ * 那个函数忽略全部入参、恒定返回同一个值，调用方也只读 agentKey 一个字段。
+ * 档位是历史形状，随模块一起删掉了，剩下的契约只有一条：路由目标是哪个 agent。
+ */
+describe("CLI auto-route target", () => {
+  it("points at the builtin nolo agent", () => {
+    // 与 web 首页默认档、TUI /switch 的 nolo 是同一个 agent；三端一致是
+    // 这次统一的核心，指向一旦改回广场档，模型就会重新各漂各的。
+    expect(CLI_AUTO_ROUTE_AGENT_KEY).toBe(BUILTIN_NOLO_AGENT_KEY);
   });
 
-  it("routes plain text messages to the flash tier agent", () => {
-    const result = classifyCliAutoRoute("帮我分析一下这个方案的优缺点", {
-      serverUrl: SERVER_URL,
-      authToken: AUTH_TOKEN,
-    });
-    expect(result.agentKey).toBe(CLI_AUTO_TIER_AGENT_KEYS.flash);
-    expect(result.tier).toBe("flash");
-    expect(result.classified).toBe(true);
-  });
-
-  it("defaults hasImages to false (flash) when not provided", () => {
-    const result = classifyCliAutoRoute("", {
-      serverUrl: SERVER_URL,
-      authToken: AUTH_TOKEN,
-    });
-    expect(result.agentKey).toBe(CLI_AUTO_TIER_AGENT_KEYS.flash);
-    expect(result.tier).toBe("flash");
-  });
-
-  it("is synchronous and never calls the LLM classifier", () => {
-    // 纯路由：不依赖 authToken、不发网络请求、没有复杂度兜底。
-    const result = classifyCliAutoRoute("写一首诗", {
-      serverUrl: SERVER_URL,
-      authToken: "",
-      hasImages: false,
-    });
-    expect(result.classified).toBe(true);
-    expect(result.agentKey).toBe(CLI_AUTO_TIER_AGENT_KEYS.flash);
-    expect(result.tier).toBe("flash");
-  });
-});
-
-describe("resolveCliAutoAgentModel", () => {
-  it("maps flash tier agent keys to catalog model ids", () => {
-    expect(resolveCliAutoAgentModel(CLI_AUTO_TIER_AGENT_KEYS.flash)).toBe(
-      "deepseek-v4-flash",
-    );
-    expect(resolveCliAutoAgentModel("unknown-agent")).toBeUndefined();
+  it("is a platform builtin agent, so its model is catalog-owned", () => {
+    // 只有 builtin 组的 key 才会被 applyBuiltinAgentRuntimeOverride 接管
+    // provider/model；指向组外的 agent 会让 --auto-route 重新依赖数据库取值。
+    expect(isBuiltinPlatformAgentKey(CLI_AUTO_ROUTE_AGENT_KEY)).toBe(true);
   });
 });

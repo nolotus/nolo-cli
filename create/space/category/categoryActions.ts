@@ -8,13 +8,27 @@ import { selectIdentityUserId } from "identity/selectors";
 import { createSpaceKey } from "../../space/spaceKeys";
 import { patch, read } from "../../../database/dbSlice";
 import { UNCATEGORIZED_ID } from "../constants";
-import { selectCurrentSpaceId, DEFAULT_COLLAPSED_CATEGORIES } from "../spaceSlice";
 import type { SpaceState } from "../types";
 import { checkSpaceMembership } from "../utils/permissions";
+// Wave D: currentSpaceId/currentSpace 已剥至 module store。
+import {
+  getCurrentSpaceId,
+  getCurrentSpaceIdRaw,
+  getCurrentSpaceRaw,
+  updateCurrentSpaceIfMatch,
+} from "../spaceCurrentStore";
 import {
   normalizeCollapsedCategories,
   writeStoredCollapsedCategories,
 } from "../spaceCollapsedState";
+// Wave A: collapsedCategories 已剥至 module store。
+import {
+  DEFAULT_COLLAPSED_CATEGORIES,
+  getCollapsedCategories,
+  setCollapsedCategories as setCollapsedCategoriesUi,
+  toggleCategoryCollapse as toggleCategoryCollapseUi,
+  expandCategoryInCollapsed,
+} from "../spaceUiStore";
 
 type Create = {
   asyncThunk: (...args: any[]) => any;
@@ -33,7 +47,10 @@ export const createCategoryActions = (create: Create) => ({
    */
   hydrateCollapsedCategories: create.reducer(
     (state: SpaceState, action: PayloadAction<Record<string, boolean>>) => {
-      state.collapsedCategories = normalizeCollapsedCategories(action.payload);
+      setCollapsedCategoriesUi(
+        normalizeCollapsedCategories(action.payload),
+        getCurrentSpaceIdRaw(),
+      );
     }
   ),
 
@@ -51,11 +68,12 @@ export const createCategoryActions = (create: Create) => ({
       const rootState = getState();
 
       // 优先使用传入的 spaceId，否则获取当前活动空间
-      const spaceId = input.spaceId || selectCurrentSpaceId(rootState);
+      const spaceId = input.spaceId || getCurrentSpaceId();
       if (!spaceId) throw new Error("无法切换折叠状态：没有活动的空间。");
 
-      // 获取当前空间的所有分类 ID（包括已删除标签以外的所有分类）
-      const { currentSpace } = rootState.space;
+      // 获取当前空间的所有分类 ID
+      // Wave D: currentSpace 已剥至 module store
+      const currentSpace = getCurrentSpaceRaw();
       const categoryIds = currentSpace?.categories
         ? Object.keys(currentSpace.categories)
         : [];
@@ -76,16 +94,14 @@ export const createCategoryActions = (create: Create) => ({
         );
       }
 
+      // Wave A: 直接写 module store，传入 thunk 构造的完整 map
+      // （setAllCategoriesCollapsedUi 只遍历已有 keys，会漏新分类，
+      // 所以用 setCollapsedCategoriesUi 传完整 map）
+      setCollapsedCategoriesUi(collapsedCategories, spaceId);
+
       return collapsedCategories;
     },
     {
-      fulfilled: (state: SpaceState, action: any) => {
-        // 合并返回的折叠状态，保持与持久化一致
-        state.collapsedCategories = {
-          ...state.collapsedCategories,
-          ...action.payload,
-        };
-      },
       rejected: (state: SpaceState, action: any) => {
         console.error("批量切换分类折叠状态失败:", action.error.message);
       },
@@ -106,18 +122,19 @@ export const createCategoryActions = (create: Create) => ({
       const rootState = getState();
 
       // 获取当前空间 ID
-      const spaceId = selectCurrentSpaceId(rootState);
+      const spaceId = getCurrentSpaceId();
       if (!spaceId) throw new Error("无法切换折叠状态：没有活动的空间。");
       if (!categoryId) throw new Error("无效的分类ID。");
 
-      // 计算新的折叠状态
+      // 计算新的折叠状态（Wave A: 从 module store 读）
       const defaultCollapsed =
         DEFAULT_COLLAPSED_CATEGORIES[categoryId] ?? true;
+      const currentCollapsedCategories = getCollapsedCategories();
       const isCurrentlyCollapsed =
-        rootState.space.collapsedCategories[categoryId] ?? defaultCollapsed;
+        currentCollapsedCategories[categoryId] ?? defaultCollapsed;
       const newCollapsedState = !isCurrentlyCollapsed;
       const collapsedCategories = {
-        ...rootState.space.collapsedCategories,
+        ...currentCollapsedCategories,
         [categoryId]: newCollapsedState,
       };
 
@@ -129,15 +146,12 @@ export const createCategoryActions = (create: Create) => ({
         );
       }
 
+      // Wave A: 直接写 module store
+      toggleCategoryCollapseUi(categoryId);
+
       return collapsedCategories;
     },
     {
-      fulfilled: (state: SpaceState, action: any) => {
-        state.collapsedCategories = {
-          ...state.collapsedCategories,
-          ...action.payload,
-        };
-      },
       rejected: (state: SpaceState, action: any) => {
         console.error("切换分类折叠状态失败:", action.error.message);
       },
@@ -161,7 +175,7 @@ export const createCategoryActions = (create: Create) => ({
       const { dispatch, getState } = thunkAPI;
       const rootState = getState();
 
-      const spaceId = inputSpaceId || selectCurrentSpaceId(rootState);
+      const spaceId = inputSpaceId || getCurrentSpaceId();
       if (!spaceId) {
         throw new Error("无法添加分类：未选择当前空间且未提供空间 ID。");
       }
@@ -206,11 +220,12 @@ export const createCategoryActions = (create: Create) => ({
         })
       ).unwrap();
 
-      // New categories default expanded. Seed both Redux (fulfilled) and
+      // New categories default expanded. Seed both module store (Wave A) and
       // localStorage so changeSpace / hard reload cannot re-apply the
       // "unregistered regular category = collapsed" fallback.
+      const currentCollapsedCategories = getCollapsedCategories();
       const collapsedCategories = {
-        ...rootState.space.collapsedCategories,
+        ...currentCollapsedCategories,
         [newCategoryId]: false,
       };
       if (typeof window !== "undefined") {
@@ -220,21 +235,15 @@ export const createCategoryActions = (create: Create) => ({
           window.localStorage,
         );
       }
+      // Wave A: 直接展开新分类
+      expandCategoryInCollapsed(newCategoryId, spaceId);
 
       return { spaceId, updatedSpaceData, newCategoryId, collapsedCategories };
     },
     {
       fulfilled: (state: SpaceState, action: any) => {
-        if (state.currentSpaceId === action.payload.spaceId) {
-          state.currentSpace = action.payload.updatedSpaceData;
-          if (action.payload.collapsedCategories) {
-            state.collapsedCategories = {
-              ...state.collapsedCategories,
-              ...action.payload.collapsedCategories,
-            };
-          } else if (action.payload.newCategoryId) {
-            state.collapsedCategories[action.payload.newCategoryId] = false;
-          }
+        if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+          updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
         }
       },
     }
@@ -297,8 +306,10 @@ export const createCategoryActions = (create: Create) => ({
         patch({ dbKey: spaceKey, changes })
       ).unwrap();
 
-      const collapsedCategories = { ...rootState.space.collapsedCategories };
+      // Wave A: 从 module store 读，删后写回 module store + localStorage
+      const collapsedCategories = { ...getCollapsedCategories() };
       delete collapsedCategories[categoryId];
+      setCollapsedCategoriesUi(collapsedCategories, spaceId);
       if (typeof window !== "undefined") {
         writeStoredCollapsedCategories(
           spaceId,
@@ -311,9 +322,8 @@ export const createCategoryActions = (create: Create) => ({
     },
     {
       fulfilled: (state: SpaceState, action: any) => {
-        if (state.currentSpaceId === action.payload.spaceId) {
-          state.currentSpace = action.payload.updatedSpaceData;
-          state.collapsedCategories = action.payload.collapsedCategories;
+        if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+          updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
         }
       },
     }
@@ -367,8 +377,8 @@ export const createCategoryActions = (create: Create) => ({
     },
     {
       fulfilled: (state: SpaceState, action: any) => {
-        if (state.currentSpaceId === action.payload.spaceId) {
-          state.currentSpace = action.payload.updatedSpaceData;
+        if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+          updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
         }
       },
     }
@@ -445,8 +455,8 @@ export const createCategoryActions = (create: Create) => ({
     },
     {
       fulfilled: (state: SpaceState, action: any) => {
-        if (state.currentSpaceId === action.payload.spaceId) {
-          state.currentSpace = action.payload.updatedSpaceData;
+        if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+          updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
         }
       },
     }

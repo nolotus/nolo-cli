@@ -2,7 +2,7 @@
  * Shared agent identity block builder.
  *
  * Single source of truth for the "--- 身份信息 ---" block that tells the model
- * which agent it is (name / ID / model / response language). Every execution
+ * which agent it is (name / ID / model). Every execution
  * surface must use this builder so the identity block — especially the model
  * name — is injected identically across:
  *
@@ -22,7 +22,6 @@ export interface IdentityBlockInput {
   agentName?: string | null;
   agentId?: string | null;
   model?: string | null;
-  responseLanguage?: string | null;
 }
 
 export const buildIdentityBlock = (input: IdentityBlockInput): string => {
@@ -31,7 +30,6 @@ export const buildIdentityBlock = (input: IdentityBlockInput): string => {
     asTrimmedString(input.agentName) ? `名称: ${asTrimmedString(input.agentName)}` : "",
     asTrimmedString(input.agentId) ? `ID: ${asTrimmedString(input.agentId)}` : "",
     asTrimmedString(input.model) ? `模型: ${asTrimmedString(input.model)}` : "",
-    `回复语言: ${asTrimmedString(input.responseLanguage) || "默认跟随用户本轮输入语言"}`,
   ].filter(Boolean);
   return lines.join("\n");
 };

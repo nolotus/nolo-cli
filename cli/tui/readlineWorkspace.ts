@@ -21,11 +21,11 @@ import {
 } from "../../agent-runtime/turnContext";
 import { resolvePlatformAuthToken } from "../../agent-runtime/providerResolution";
 import { resolveCliMemory } from "../memoryRecall";
-import {
-  classifyCliAutoRoute,
-} from "../client/autoModelRouter";
 import { deleteDbRecord, readDbRecord } from "../agentRecordHelpers";
-import { resolveAgentContextWindow } from "../client/tokenUsage";
+import {
+  resolveAgentContextWindow,
+  resolveAgentModelIdentity,
+} from "../client/tokenUsage";
 import { estimateDefaultCliContextTokens } from "../client/estimateCliContext";
 import type { LocalAgentActionGate } from "../../agent-runtime/localLoop";
 import type { ContextBlockScope } from "../../agent-runtime/contextBlockScope";
@@ -387,13 +387,6 @@ type RawModeInput = NodeJS.ReadableStream & {
 
 
 
-// 对话 → 首轮自动路由结果。分类只发生在用户未显式指定 agent 时的
-// 新对话第一轮（建对话前），同一段对话的后续轮复用首轮选定的 agent，不再重复调用分类器。
-const autoRouteByDialog = new Map<
-  string,
-  { agentKey: string; agentName: string }
->();
-
 async function runAgentChat(
   scriptDir: string,
   state: TuiState,
@@ -408,9 +401,6 @@ async function runAgentChat(
     requestUserChoice?: (request: UserChoiceRequest) => Promise<UserChoiceResult>;
     abortSignal?: AbortSignal;
     pastedTextStore?: CollapsedPasteStore;
-    /** True when the user just explicitly switched agent (via /agent or /switch).
-     *  Suppresses the cached auto-route so the chosen agent actually runs. */
-    explicitAgentSwitch?: boolean;
     activityReporter?: (label: string | null) => void;
     /**
      * 后台 run 状态快照的接收者（dock 面板）。曾经在本签名里声明缺失、调用
@@ -420,37 +410,13 @@ async function runAgentChat(
     onAgentRunStatus?: (snapshot: AgentRunStatusSnapshot | null) => void;
   } = {}
 ) {
-  let effectiveAgentKey = state.agentKey;
-  let effectiveAgentName = state.agentName;
+  // 用户选中的 agent 就是要跑的 agent —— 不再做首轮自动改写，也不再按对话
+  // 缓存路由结果。旧实现只在「新对话第一轮」把默认 agent 拨到 flash 档，续聊
+  // （-c / 重启 TUI）时缓存已失效、分支也不进，于是原样落回默认 agent；默认
+  // agent 的模型一旦变贵，用户在毫无提示的情况下按新价计费。
+  const effectiveAgentKey = state.agentKey;
+  const effectiveAgentName = state.agentName;
   const continueId = state.dialogId;
-  const cachedRoute = continueId ? autoRouteByDialog.get(continueId) : undefined;
-  // 消息是否带图片（供纯二选一自动路由与下方 vision 切换共用）。
-  const hasImages = options.imageUrls && options.imageUrls.length > 0;
-
-  if (cachedRoute && !options.explicitAgentSwitch) {
-    // 同一段对话的后续轮：复用首轮路由结果，不再分类。
-    // 但若用户刚刚显式 /agent 切换了 agent（例如原 agent 429 了），
-    // 必须尊重用户选择，否则缓存会把用户「切走」的 429 agent 又切回来。
-    effectiveAgentKey = cachedRoute.agentKey;
-    effectiveAgentName = cachedRoute.agentName;
-  } else if (!continueId && env.NOLO_AUTO_ROUTE !== "0" && state.agentKey === DEFAULT_TUI_AGENT_KEY) {
-    // 新对话第一轮（web 的「建对话前」）：仅在用户未显式选择 agent（保持默认平台 agent）时，
-    // 走纯二选一自动路由（有图 → kimi，无图 → flash），不再调 LLM 分类器。
-    // 若用户已显式选择 agent（如通过 /agent 或 NOLO_AGENT），完全跳过 auto 路由。
-    // 同步执行（无 I/O）：不产生 promise yield，避免首轮准备期间吞掉终端 action gate 的 Enter。
-    const route = classifyCliAutoRoute(message, {
-      serverUrl: state.serverUrl,
-      authToken: resolvePlatformAuthToken(env),
-      hasImages,
-    });
-    effectiveAgentKey = route.agentKey;
-    effectiveAgentName = `auto→${route.tier}`;
-    if (effectiveAgentKey !== state.agentKey) {
-      output.write(
-        `\n[nolo] auto → ${route.tier}\n`,
-      );
-    }
-  }
   // 图片输入：图片档已移除，不再自动切换到 Kimi K2.6。
   // 纯文本模型收到图片时，vision 预处理管道（localLoop 中的
   // preprocessImagesForTextOnlyAgent）会先用 Qwen 3.7 Flash 描述图片为文字，
@@ -552,10 +518,15 @@ async function runAgentChat(
       ? { dialogAgentMode: "auto" as const }
       : { dialogAgentMode: "fixed" as const }),
     runtimeMode: state.runtimeMode,
+    // `/lang` updates the in-memory TUI state immediately. Pass that state
+    // explicitly so the next real turn cannot keep using the workspace's
+    // launch-time NOLO_LANG value while the estimator already uses the new one.
+    userLanguage: state.userLanguage,
     localRuntimeCwd: process.cwd(),
     scriptDir,
     env: {
       ...env,
+      NOLO_LANG: state.userLanguage,
       NOLO_CLI_TOOLS: state.toolDisplay,
     },
     output,
@@ -607,23 +578,11 @@ async function runAgentChat(
       ? { contextBlockScopes }
       : {}),
   });
-  // 首轮分类完成后按对话缓存，同一段对话的后续轮直接复用、不再分类。
-  if (
-    !continueId &&
-    result.dialogId &&
-    effectiveAgentKey !== state.agentKey
-  ) {
-    autoRouteByDialog.set(result.dialogId, {
-      agentKey: effectiveAgentKey,
-      agentName: effectiveAgentName,
-    });
-  }
   return {
     ...result,
     contextWindow: resolveAgentContextWindow({
       agentKey: effectiveAgentKey,
       agentName: effectiveAgentName,
-      autoRouteDefault: env.NOLO_AUTO_ROUTE !== "0",
     }),
     cachedMemoryOverlay: memoryPromptBlock,
   };
@@ -733,25 +692,31 @@ function persistAgentSelection(
   env: NodeJS.ProcessEnv | undefined,
   saveSelection: typeof saveProfileAgentSelection = saveProfileAgentSelection,
 ) {
-  const isAuto =
-    state.agentKey === DEFAULT_TUI_AGENT_KEY &&
-    state.agentName.trim().toLowerCase() === "auto";
+  // 默认档（nolo）不落盘：profile 里存的是「用户显式选择了哪个 agent」，
+  // 存了默认档下次启动就分不清「没选过」和「选了 nolo」，而 NOLO_AGENT 一旦
+  // 有值，createInitialTuiState 就再也走不到 DEFAULT_TUI_AGENT_KEY 兜底。
+  //
+  // 只比对 key。这里曾经附带 `agentName === "auto"` 的条件，但自动路由收敛成
+  // 单档后状态行改为始终显示 agent 名（默认 "nolo"），该条件恒为 false，
+  // 默认档因此被当成显式选择写进了 profile。
+  // 空 key/name = 清除选择；profile 与 env 是同一份意图的两个落点。
+  const selection = state.agentKey === DEFAULT_TUI_AGENT_KEY
+    ? { agentKey: "", agentName: "" }
+    : { agentKey: state.agentKey, agentName: state.agentName };
+
   try {
-    saveSelection({
-      agentKey: isAuto ? "" : state.agentKey,
-      agentName: isAuto ? "" : state.agentName,
-    });
+    saveSelection(selection);
   } catch {
     // profile persistence is best-effort in the workspace loop
   }
-  if (env) {
-    if (isAuto) {
-      delete env.NOLO_AGENT;
-      delete env.NOLO_AGENT_NAME;
-    } else {
-      env.NOLO_AGENT = state.agentKey;
-      env.NOLO_AGENT_NAME = state.agentName;
-    }
+
+  if (!env) return;
+  if (selection.agentKey) {
+    env.NOLO_AGENT = selection.agentKey;
+    env.NOLO_AGENT_NAME = selection.agentName;
+  } else {
+    delete env.NOLO_AGENT;
+    delete env.NOLO_AGENT_NAME;
   }
 }
 
@@ -1040,13 +1005,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     reconcile: (runId) => checkStaleRun(runId, { env: process.env }),
     onRecordsPolled: (records) => runCompletionWatcher.observe(records),
   });
-  // True after the user explicitly switches agent via /agent or /switch.
-  // autoRouteByDialog caches the first-turn router decision per dialog and
-  // would otherwise keep replaying the (possibly 429'd) original agent on
-  // every follow-up turn, silently overriding the user's manual switch.
-  // This flag makes the next runAgentChat honor state.agentKey and drops the
-  // cached route, so "switch agent after a 429" actually takes effect.
-  let explicitAgentSwitch = false;
   let copyViewExitResolver: (() => void) | null = null;
   let copyViewRender: (() => void) | null = null;
   let copyViewScrollTop = 0;
@@ -1341,6 +1299,31 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     actionGateHandler: (gate: LocalAgentActionGate) => Promise<AgentRuntimeToolResult | void>,
     confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>,
   ): Promise<{ ok: boolean; aborted: boolean }> => {
+    // LLM 总结标题是 fire-and-forget 后台 patch：saveTurn 返回的 title 是
+    // fallback（不阻塞 turn），真正标题 patch 完成后把最终标题同步到
+    // dialogLabel + OSC 窗口标题，避免窗口标题停留在 fallback 直到下一轮
+    // turn 才刷新（title 节流 30 分钟，可能很久看不到总结标题）。
+    // 校验 dialogId 仍是当前 dialog：patch 是异步的，用户可能已 /new 或
+    // /pick 切走，不能把旧 dialog 的标题盖到新 dialog 上。
+    const scheduleTitlePatchSync = (runResult: RunAgentTurnResult) => {
+      if (!runResult.titlePatchPromise || !runResult.dialogId) return;
+      const patchDialogId = runResult.dialogId;
+      runResult.titlePatchPromise
+        .then((patchedTitle) => {
+          if (!patchedTitle || sessionEnded) return;
+          if (state.dialogId !== patchDialogId) return;
+          if (state.dialogLabel === patchedTitle) return;
+          state = {
+            ...state,
+            dialogLabel: patchedTitle,
+            dialogTitle: patchedTitle,
+          };
+          syncWindowTitle();
+        })
+        .catch(() => {
+          // 静默：patch 失败下一轮节流会重试，不值得打扰用户。
+        });
+    };
     const req = createTurnRequest(inputMsg);
     if (req.event.kind === "child-run-completed") {
       for (const r of req.event.runs) {
@@ -1427,7 +1410,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(requestUserChoice ? { requestUserChoice } : {}),
           abortSignal: activeTurnAbort.signal,
           pastedTextStore: pasteStore,
-          explicitAgentSwitch,
           activityReporter,
           onAgentRunStatus: (snapshot) => {
             if (snapshot) {
@@ -1472,6 +1454,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             ...(runResult.cachedMemoryOverlay !== undefined ? { cachedMemoryOverlay: runResult.cachedMemoryOverlay } : {}),
           };
         }
+        scheduleTitlePatchSync(runResult);
         return { ok: false, aborted: true };
       }
       const wasAborted = activeTurnAbort.signal.aborted;
@@ -1486,9 +1469,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       ) {
         emitTerminalBell(output);
       }
-      // An explicit switch only needs to suppress the cached route for the
-      // turn it was issued on; once run, normal per-dialog caching resumes.
-      explicitAgentSwitch = false;
       if (isInteractiveInput(input)) {
         finalizeCurrentTurn(history);
         flushPendingRender();
@@ -1535,6 +1515,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           ...(runResult.cachedMemoryOverlay !== undefined ? { cachedMemoryOverlay: runResult.cachedMemoryOverlay } : {}),
         };
       }
+      scheduleTitlePatchSync(runResult);
       // 把失败原因翻成人话：余额 / 额度 / 「对话已保留」/ 「本轮未入档」。
       // 用户预期是：屏幕上看得见的上一句，下一句「继续」不能变成失忆新开场。
       if (!wasAborted && runResult.exitCode !== 0) {
@@ -1552,7 +1533,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     } finally {
       activityIndicator.stop();
       activeTurnAbort = null;
-      explicitAgentSwitch = false;
     }
   };
 
@@ -1594,8 +1574,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
   const persistExplicitAgentSwitch = (previousAgentKey: string) => {
     if (state.agentKey === previousAgentKey) return false;
-    if (state.dialogId) autoRouteByDialog.delete(state.dialogId);
-    explicitAgentSwitch = true;
     persistAgentSelection(
       state,
       options.env ?? process.env,
@@ -1686,16 +1664,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         estimatedContextTokens: estimateDefaultCliContextTokens({
           cwd: state.cwd,
           agentKey: state.agentKey,
-          agentName:
-            state.agentKey === DEFAULT_TUI_AGENT_KEY &&
-            (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0"
-              ? "DeepSeek V4 Flash"
-              : state.agentName,
-          model:
-            state.agentKey === DEFAULT_TUI_AGENT_KEY &&
-            (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0"
-              ? "deepseek-v4-flash"
-              : undefined,
+          userLanguage: state.userLanguage,
+          ...resolveAgentModelIdentity({
+            agentKey: state.agentKey,
+            agentName: state.agentName,
+          }),
         }),
       };
       history.turns.length = 0;
@@ -1741,16 +1714,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           estimatedContextTokens: estimateDefaultCliContextTokens({
             cwd: state.cwd,
             agentKey: state.agentKey,
-            agentName:
-              state.agentKey === DEFAULT_TUI_AGENT_KEY &&
-              (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0"
-                ? "DeepSeek V4 Flash"
-                : state.agentName,
-            model:
-              state.agentKey === DEFAULT_TUI_AGENT_KEY &&
-              (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0"
-                ? "deepseek-v4-flash"
-                : undefined,
+            userLanguage: state.userLanguage,
+            ...resolveAgentModelIdentity({
+              agentKey: state.agentKey,
+              agentName: state.agentName,
+            }),
           }),
         };
         const elapsed = `${elapsedSec}s`;
@@ -1839,21 +1807,17 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               agentKey: pickResult.key,
               agentName: pickResult.name,
               model: pickResult.model,
-              autoRouteDefault: (options.env ?? process.env).NOLO_AUTO_ROUTE !== "0",
             }),
             estimatedContextTokens: estimateDefaultCliContextTokens({
               cwd: state.cwd,
               agentKey: pickResult.key,
               agentName: pickResult.name,
               model: pickResult.model,
+              userLanguage: state.userLanguage,
             }),
             ...(pickResult.apiSource ? { apiSource: pickResult.apiSource } : {}),
             cachedMemoryOverlay: undefined, // 切换 agent 后重新加载记忆
           };
-          // 用户显式切换 agent：清掉这条对话首轮 auto-route 的缓存，否则
-          // 下一轮会被缓存切回原 agent（典型场景：原 agent 429 后想换一个）。
-          if (state.dialogId) autoRouteByDialog.delete(state.dialogId);
-          explicitAgentSwitch = true;
           persistAgentSelection(state, options.env ?? process.env);
           output.write(
             `${formatAgentSwitchMessage({

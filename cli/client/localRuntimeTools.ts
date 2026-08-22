@@ -135,22 +135,15 @@ const CLI_DEFAULT_TOOLS = ["exa_search", "fetchWebpage"] as const;
 function addDefaultCliCoreTools(
   toolNames: string[],
   env?: EnvLike,
-  options?: { hasUserChoice?: boolean },
 ): string[] {
+  // FORCED_TOOLS 当前为空（ask_user 已改为显式声明，不再默认注入）。
+  // 历史：hasUserChoice 参数曾用于区分「TUI 交互注入 ask_user / headless
+  // 不注入」，ask_user 移出本层后参数链已删除（见 feat/ask-user-cleanup）。
   const declaredOnly = env && shouldUseDeclaredOnlyLocalWorkspaceTools(env);
-  const forcedTools =
-    options?.hasUserChoice === true
-      ? FORCED_TOOLS
-      : FORCED_TOOLS.filter((name) => name !== "ask_user");
   const injected = declaredOnly
-    ? [...forcedTools]
-    : [...forcedTools, ...CLI_DEFAULT_TOOLS];
-  const combined = [...toolNames, ...injected];
-  const filtered =
-    options?.hasUserChoice === true
-      ? combined
-      : combined.filter((name) => name !== "ask_user");
-  return [...new Set(filtered)];
+    ? [...FORCED_TOOLS]
+    : [...FORCED_TOOLS, ...CLI_DEFAULT_TOOLS];
+  return [...new Set([...toolNames, ...injected])];
 }
 
 export function resolveCliEffectiveEnabledPacks(args: {
@@ -195,7 +188,6 @@ export function resolveCliRequestedToolNames(
   agentConfig: AgentRuntimeAgentConfig,
   env: EnvLike,
   systemBuiltinSkills?: Record<string, boolean> | null,
-  options?: { hasUserChoice?: boolean },
 ): string[] {
   const declaredOnly = shouldUseDeclaredOnlyLocalWorkspaceTools(env);
   const expanded = addDefaultLightWebToolsForConfiguredAgents(
@@ -211,7 +203,6 @@ export function resolveCliRequestedToolNames(
         ),
       ),
       env,
-      options,
     ),
     agentConfig,
   );
@@ -241,11 +232,10 @@ export function resolveProviderOpenAiToolBundle(
   env: EnvLike,
   buildTools: typeof buildOpenAiTools = buildOpenAiTools,
   additionalToolNames: string[] = [],
-  options?: { hasUserChoice?: boolean },
 ) {
   const requestedToolNames = [
     ...new Set([
-      ...resolveCliRequestedToolNames(agentConfig, env, null, options),
+      ...resolveCliRequestedToolNames(agentConfig, env, null),
       ...additionalToolNames,
     ]),
   ];

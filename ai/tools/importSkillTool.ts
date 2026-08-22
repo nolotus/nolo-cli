@@ -1,5 +1,5 @@
 import { createDocState } from "../../render/page/docStore";
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import type { RootState } from "../../app/store";
 import { asTrimmedString } from "../../core/trimmedString";
 import { canonicalizeToolNames } from "./toolNameAliases";
@@ -135,7 +135,7 @@ export async function importSkillFunc(
   });
 
   const explicitSpaceId = (args.spaceId ?? "").trim() || undefined;
-  const currentSpaceId = selectCurrentSpaceId(state) || undefined;
+  const currentSpaceId = getCurrentSpaceId() || undefined;
   const spaceId = explicitSpaceId ?? currentSpaceId;
   const categoryId = (args.categoryId ?? "").trim() || undefined;
 

@@ -54,6 +54,8 @@ export type TuiState = {
    * 可通过 NOLO_CLI_STATUS_MODE 覆盖,例如设置为 high。
    */
   modeLabel: string;
+  /** Platform response language used by both the real turn and context estimate. */
+  userLanguage?: string;
   gitStatus?: GitStatus;
   toolDisplay: ToolDisplayMode;
   turnTokens?: TurnTokenUsage;

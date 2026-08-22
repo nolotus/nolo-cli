@@ -7,7 +7,7 @@ import { buildBuiltinObjectSkillReference, type BuiltinObjectSkillKind } from ".
 
 import {
   PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL,
-  PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE,
+  PLATFORM_HOSTED_DEEPSEEK_FLASH_PEAK_PRICE,
 } from "../../ai/llm/platformHosted";
 import { PLATFORM_HOSTED_KIMI_PROVIDER } from "../../ai/llm/kimi";
 
@@ -128,8 +128,8 @@ export const buildBuiltinObjectAssistantAgent = (
     model: PLATFORM_HOSTED_DEEPSEEK_FLASH_MODEL,
     apiSource: "platform" as const,
     useServerProxy: true,
-    inputPrice: PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE.input,
-    outputPrice: PLATFORM_HOSTED_DEEPSEEK_FLASH_PRICE.output,
+    inputPrice: PLATFORM_HOSTED_DEEPSEEK_FLASH_PEAK_PRICE.input,
+    outputPrice: PLATFORM_HOSTED_DEEPSEEK_FLASH_PEAK_PRICE.output,
     createdAt: now,
     updatedAt: String(now),
     dialogCount: 0,

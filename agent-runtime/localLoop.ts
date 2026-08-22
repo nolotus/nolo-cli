@@ -19,6 +19,7 @@ import type {
 import { sanitizeToolCallPairing } from "./toolCallPairing";
 import { summarizeToolArguments } from "./summarizeToolArguments";
 import { buildIdentityBlock } from "./identityBlock";
+import { buildUserResponseLanguageContext } from "./userResponseLanguage";
 import { resolveAgentImageInputSupport } from "../ai/llm/agentCapabilities";
 import {
   preprocessImagesForTextOnlyAgent,
@@ -47,6 +48,8 @@ import { maybeAutoCompactLocalHistory } from "./localAutoCompaction";
 export type LocalAgentTurnInput = {
   adapter: AgentRuntimeHostAdapter;
   agentRef: string;
+  /** Platform/user language, not an agent capability. */
+  userLanguage?: string | null;
   input: AgentRuntimeMessageContent;
   /**
    * Optional expanded input used only when persisting a runtime reference
@@ -113,6 +116,8 @@ export type LocalAgentTurnResult = AgentRuntimeResult & {
   dialogId: string;
   /** Dialog title persisted by saveTurn (LLM-generated or fallback). */
   title?: string;
+  /** 后台 LLM 标题 patch（fire-and-forget）；resolve 携带最终标题（无/失败为 null）。 */
+  titlePatchPromise?: Promise<string | null>;
   turnMessages?: AgentRuntimeChatMessage[];
   /** Full per-call accounting evidence; context UI must continue using usage. */
   usageRecords?: AgentRuntimeSaveTurnInput["usageRecords"];
@@ -1259,7 +1264,7 @@ export async function runLocalAgentTurn(
     attachDialogIdToError(error, dialogId);
     throw error;
   }
-  // Identity block (名称/ID/模型/回复语言) — session-scope so it sits in the
+  // Identity block (名称/ID/模型) — session-scope so it sits in the
   // stable prefix. Built from the resolved agentConfig so subscribed/custom
   // agents get their model name injected, matching the web and server paths
   // (previously the local/desktop/TUI runtime omitted the identity block).
@@ -1287,6 +1292,9 @@ export async function runLocalAgentTurn(
   const toolGuidedSections = resolveToolGuidedSections(agentTools);
   const guidanceScopes: ContextBlockScope[] =
     [
+      ...(input.userLanguage?.trim()
+        ? [buildUserResponseLanguageContext({ language: input.userLanguage })]
+        : []),
       guidanceBlocks.startupProtocol,
       guidanceBlocks.contextLayerContract,
       guidanceBlocks.emailRegistrationWorkflow,
@@ -1456,6 +1464,9 @@ export async function runLocalAgentTurn(
         messages: requestMessages,
         options: {
           ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
+          // 计费归因：续聊轮次带上 dialogId，platform proxy 才能把 token 记录
+          // 归到具体对话而不是 chat-proxy 兜底桶。新对话首轮 id 尚未分配。
+          ...(input.continueDialogId ? { dialogId: input.continueDialogId } : {}),
           ...(input.onTextDelta ? { onTextDelta: (chunk: string) => {
             partialContent += chunk;
             input.onTextDelta!(chunk);
@@ -1767,6 +1778,7 @@ export async function runLocalAgentTurn(
     ...(result.finish_reason ? { finish_reason: result.finish_reason } : {}),
     dialogId: saved.dialogId,
     title: saved.title,
+    ...(saved.titlePatchPromise ? { titlePatchPromise: saved.titlePatchPromise } : {}),
     turnMessages,
   };
 }

@@ -24,7 +24,6 @@ const MODEL_ABILITY_TABLE: Record<string, ModelAbility> = {
   "gpt-5.6-luna": { passAt1: 67, benchmarkScore: 51 },
   "grok-4.6": { passAt1: 67 },
   "deepseek-v4-pro": { passAt1: 63 },
-  "claude-opus-4.8": { passAt1: 59 },
   "qwen3.8-max": { passAt1: 57 },
   "muse-spark-1.2": { passAt1: 55 },
   "grok-4.5": { passAt1: 54, benchmarkScore: 54 },
@@ -33,6 +32,7 @@ const MODEL_ABILITY_TABLE: Record<string, ModelAbility> = {
   "muse-spark-1.1": { passAt1: 53 },
   "gpt-5.4": { passAt1: 52 },
   "gemini-3.6-flash": { passAt1: 49, benchmarkScore: 50 },
+  "glm-5.3": { passAt1: 52, benchmarkScore: 60 },
   "glm-5.2": { passAt1: 44, benchmarkScore: 51 },
 };
 

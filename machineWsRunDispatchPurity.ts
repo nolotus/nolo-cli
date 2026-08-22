@@ -443,6 +443,7 @@ export async function defaultRunConnectorLocalRuntimeAgent(args: {
   const continueDialogIdRaw = readField(payload, "continueDialogId");
   const result = await runLocalAgentTurn({
     adapter,
+    userLanguage: args.runtimeEnv.NOLO_LANG ?? null,
     agentRef: agentKey,
     input: typeof userInputRaw === "string" ? userInputRaw : "",
     continueDialogId:

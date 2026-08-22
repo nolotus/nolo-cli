@@ -9,6 +9,7 @@ import { PROVIDER_REASONING_EFFORT_VALUES, type ReasoningEffort } from "../agent
  */
 const REASONING_MODEL_NAMES = new Set([
   "deepseek-v4-flash",
+  "deepseek-v4-flash-vision-exp",
   "deepseek-v4-pro",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
@@ -21,6 +22,7 @@ const REASONING_MODEL_NAMES = new Set([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
+  "glm-5.3",
   "glm-5.2",
   "kimi-k3",
   // Legacy OpenAI catalog ids — still support reasoning UI for agents that

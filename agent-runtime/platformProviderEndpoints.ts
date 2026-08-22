@@ -9,8 +9,14 @@ import { asTrimmedLowercaseString } from "../core/trimmedLowercaseString";
 import { getModelConfig } from "../ai/llm/providers";
 import {
   isPlatformHostedClaudeModel,
+  isPlatformHostedDeepseekModel,
   isPlatformHostedGrokModel,
+  isPlatformHostedKimiK26Model,
+  isPlatformHostedGlmModel,
+  isPlatformHostedQwen37FlashModel,
+  isPlatformHostedGeminiModel,
 } from "../ai/llm/platformHosted";
+import { PLATFORM_HOSTED_KIMI_K3_MODEL } from "../ai/llm/kimi";
 
 export const OPENAI_RESPONSES_ENDPOINT =
   "https://api.openai.com/v1/responses";
@@ -34,9 +40,9 @@ export const PLATFORM_CHAT_COMPLETIONS_ENDPOINTS: Readonly<
   qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
   // Moonshot AI（月之暗面）开放平台 OpenAI 兼容模式（按量计费）
   moonshot: "https://api.moonshot.cn/v1/chat/completions",
-  // Non-DeepSeek hosted models use Ollama Cloud. DeepSeek Flash is routed
-  // separately to the official DeepSeek Responses endpoint.
-  nolo: "https://ollama.com/v1/chat/completions",
+  // 平台托管 Kimi K3 的实际上游
+  crof: "https://crof.ai/v1/chat/completions",
+  // 无 nolo 默认上游：平台托管模型全部显式分流，未识别模型返回 undefined
 };
 
 /**
@@ -49,25 +55,39 @@ export function isOpenAiResponsesModel(args: {
   endpointKey?: string;
 }): boolean {
   const provider = asTrimmedLowercaseString(args.provider);
-  if (provider === "nolo" || provider === "deepseek") {
-    const model = args.model?.trim().toLowerCase();
-    return model === "deepseek-v4-flash" || model === "deepseek-v4-pro";
+  if (provider === "openai") {
+    if (args.endpointKey === "responses") return true;
+    if (!args.model) return false;
+    try {
+      return getModelConfig("openai", args.model).endpointKey === "responses";
+    } catch {
+      return false;
+    }
   }
-  if (provider !== "openai") return false;
-  if (args.endpointKey === "responses") return true;
-  if (!args.model) return false;
-  try {
-    return getModelConfig("openai", args.model).endpointKey === "responses";
-  } catch {
-    return false;
+  if (
+    provider === "deepseek" ||
+    provider === "nolo" ||
+    provider === "ollama-cloud"
+  ) {
+    if (isPlatformHostedDeepseekModel(args.model)) return true;
   }
+  return false;
 }
 
-export function resolvePlatformResponsesEndpoint(provider: string): string | undefined {
+export function resolvePlatformResponsesEndpoint(
+  provider: string,
+  model?: string | null,
+): string | undefined {
   const normalized = asTrimmedLowercaseString(provider);
   if (normalized === "openai") return OPENAI_RESPONSES_ENDPOINT;
-  if (normalized === "nolo" || normalized === "deepseek") {
-    return DEEPSEEK_RESPONSES_ENDPOINT;
+  if (
+    normalized === "deepseek" ||
+    normalized === "nolo" ||
+    normalized === "ollama-cloud"
+  ) {
+    if (!model || isPlatformHostedDeepseekModel(model)) {
+      return DEEPSEEK_RESPONSES_ENDPOINT;
+    }
   }
   return undefined;
 }
@@ -75,15 +95,7 @@ export function resolvePlatformResponsesEndpoint(provider: string): string | und
 /**
  * Legacy agent records may still store a provider id that has since been
  * retired. Alias those to `nolo` so the endpoint resolver never throws on
- * records that predate the change:
- *
- * - `ollama-cloud`: the retired public product id, now canonicalised to `nolo`.
- *   The catalog/provider layer (`packages/ai/llm`) normalises it too; this
- *   keeps the execution seam consistent.
- * - `deepseek`: provider retired (2026-08-13) — records are migrated to `nolo`
- *   via MODEL_UPGRADE_TABLE, but chat.completions fallback aliases to `nolo`
- *   so any un-migrated legacy record still resolves (and DeepSeek V4 models
- *   keep routing to the official Responses endpoint via isOpenAiResponsesModel).
+ * records that predate the change.
  */
 const PLATFORM_PROVIDER_ENDPOINT_ALIASES: Readonly<Record<string, string>> = {
   "ollama-cloud": "nolo",
@@ -98,14 +110,44 @@ export function resolvePlatformChatCompletionsEndpoint(
   const key = asTrimmedLowercaseString(provider);
   if (!key) return undefined;
   const aliased = PLATFORM_PROVIDER_ENDPOINT_ALIASES[key] ?? key;
-  // 平台托管 Claude（provider=nolo + anthropic/claude-*）：记录侧统一 nolo，
-  // 实际上游仍是 deepinfra（URL + DEEPINFRA_API_KEY）。
+  // 平台托管 Claude（provider=nolo + anthropic/claude-*）：实际上游 deepinfra
   if (aliased === "nolo" && isPlatformHostedClaudeModel(model)) {
     return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS.deepinfra;
   }
-  // 平台托管 Grok（provider=nolo + grok-4.6）：记录侧统一 nolo，上游 xAI 官方 API。
+  // 平台托管 Grok（provider=nolo + grok-4.6）：实际上游 xAI
   if (aliased === "nolo" && isPlatformHostedGrokModel(model)) {
     return XAI_CHAT_COMPLETIONS_ENDPOINT;
+  }
+  // 平台托管 Kimi K2.6 & GLM 5.3 / 5.2：实际上游 OpenRouter
+  if (
+    aliased === "nolo" &&
+    (isPlatformHostedKimiK26Model(model) || isPlatformHostedGlmModel(model))
+  ) {
+    return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS.openrouter;
+  }
+  // 平台托管 Kimi K3：实际上游 crof
+  if (
+    aliased === "nolo" &&
+    asTrimmedLowercaseString(model) === PLATFORM_HOSTED_KIMI_K3_MODEL
+  ) {
+    return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS.crof;
+  }
+  // 平台托管 Gemini 3.7 Flash / Qwen 3.7 Flash：实际上游 Google
+  if (
+    aliased === "nolo" &&
+    (isPlatformHostedGeminiModel(model) ||
+      isPlatformHostedQwen37FlashModel(model))
+  ) {
+    return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS.google;
+  }
+  // 平台托管 DeepSeek V4（走 Responses 端点，不走 chat.completions）
+  if (aliased === "nolo" && isPlatformHostedDeepseekModel(model)) {
+    return undefined;
+  }
+  // 平台托管（nolo 及 legacy ollama-cloud/deepseek 记录）未显式分流的模型：
+  // 不再回退到默认上游（原 ollama.com 兜底已移除），显式返回 undefined 让上层报错。
+  if (aliased === "nolo") {
+    return undefined;
   }
   return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS[aliased];
 }

@@ -8,8 +8,8 @@
 // toggleFavorite / toggleContentFavorite); favorite state reads/writes go
 // through mutators/getters, not Redux.
 
-import { createAsyncThunk } from "@reduxjs/toolkit";
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
+import { useAppSelector } from "../store";
 import { selectIdentityToken } from "identity/selectors";
 import { selectRemoteServers } from "../settings/settingSlice";
 import type {
@@ -96,10 +96,6 @@ async function rpcCall<T>(
     }
 
     return (await res.json()) as T;
-}
-
-function getFavoriteServers(state: any): string[] {
-    return selectRemoteServers(state);
 }
 
 function buildFavoritedMap(result: ListFavoritesResult): Record<string, number> {
@@ -642,16 +638,27 @@ export function seedFavoriteStoreForTests(seed: {
     notify();
 }
 
-// ===== async thunks (still dispatchable) =====
+// ===== 依赖注入（Wave2 剥离：不再从 redux getState 取 token/servers）=====
 
-export const initFavorites = createAsyncThunk(
-    "favorite/initFavorites",
-    async (_: void, thunkAPI) => {
+export interface FavoriteDeps {
+    token: string;
+    /** 与 selectRemoteServers 等价的同步目标服务器列表 */
+    servers: string[];
+}
+
+/** 组件内获取 favorite API 依赖（settings/auth 尚未剥离 redux，仍走 selector）。 */
+export function useFavoriteDeps(): FavoriteDeps | null {
+    const token = useAppSelector(selectIdentityToken) ?? "";
+    const servers = useAppSelector(selectRemoteServers) ?? [];
+    return useMemo(() => ({ token, servers }), [token, servers]);
+}
+
+// ===== async 操作（纯 async 函数，不再 dispatchable）=====
+
+export async function initFavorites(deps: FavoriteDeps): Promise<unknown> {
         markFavoritesLoading();
         try {
-            const reduxState = thunkAPI.getState() as any;
-            const token = selectIdentityToken(reduxState);
-            const servers = getFavoriteServers(reduxState);
+            const { token, servers } = deps;
 
             if (!token) {
                 throw new Error("未登录，无法加载收藏列表");
@@ -720,76 +727,71 @@ export const initFavorites = createAsyncThunk(
             throw error;
         }
     }
-);
 
-export const toggleFavorite = createAsyncThunk(
-    "favorite/toggleFavorite",
-    async (agentKey: string, thunkAPI) => {
-        const reduxState = thunkAPI.getState() as any;
-        const token = selectIdentityToken(reduxState);
-        const servers = getFavoriteServers(reduxState);
-        const isCurrentlyFavorite = isAgentFavorited(agentKey);
-        const nextFavoriteState = !isCurrentlyFavorite;
-        const favoritedAt = nextFavoriteState ? Date.now() : undefined;
+export async function toggleFavorite(
+    deps: FavoriteDeps,
+    agentKey: string
+): Promise<{ agentKey: string; isFavorite: boolean }> {
+    const { token, servers } = deps;
+    const isCurrentlyFavorite = isAgentFavorited(agentKey);
+    const nextFavoriteState = !isCurrentlyFavorite;
+    const favoritedAt = nextFavoriteState ? Date.now() : undefined;
 
-        if (!token) {
-            throw new Error("未登录，无法操作收藏");
-        }
-
-        try {
-            await setFavoriteAcrossServers(
-                "agent",
-                agentKey,
-                nextFavoriteState,
-                token,
-                servers,
-                favoritedAt
-            );
-            applyAgentToggle(agentKey, nextFavoriteState);
-            return { agentKey, isFavorite: nextFavoriteState };
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "toggle favorite failed";
-            markToggleFavoriteFailed(message);
-            throw error;
-        }
+    if (!token) {
+        throw new Error("未登录，无法操作收藏");
     }
-);
 
-export const toggleContentFavorite = createAsyncThunk(
-    "favorite/toggleContentFavorite",
-    async (contentKey: string, thunkAPI) => {
-        const reduxState = thunkAPI.getState() as any;
-        const token = selectIdentityToken(reduxState);
-        const servers = getFavoriteServers(reduxState);
-        const isCurrentlyFavorite = isContentFavorited(contentKey);
-        const nextFavoriteState = !isCurrentlyFavorite;
-        const favoritedAt = nextFavoriteState ? Date.now() : undefined;
-
-        if (!token) {
-            throw new Error("未登录，无法操作收藏");
-        }
-
-        try {
-            await setFavoriteAcrossServers(
-                "content",
-                contentKey,
-                nextFavoriteState,
-                token,
-                servers,
-                favoritedAt
-            );
-            applyContentToggle(contentKey, nextFavoriteState);
-            return { contentKey, isFavorite: nextFavoriteState };
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "toggle favorite failed";
-            markToggleFavoriteFailed(message);
-            throw error;
-        }
+    try {
+        await setFavoriteAcrossServers(
+            "agent",
+            agentKey,
+            nextFavoriteState,
+            token,
+            servers,
+            favoritedAt
+        );
+        applyAgentToggle(agentKey, nextFavoriteState);
+        return { agentKey, isFavorite: nextFavoriteState };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : "toggle favorite failed";
+        markToggleFavoriteFailed(message);
+        throw error;
     }
-);
+}
+
+export async function toggleContentFavorite(
+    deps: FavoriteDeps,
+    contentKey: string
+): Promise<{ contentKey: string; isFavorite: boolean }> {
+    const { token, servers } = deps;
+    const isCurrentlyFavorite = isContentFavorited(contentKey);
+    const nextFavoriteState = !isCurrentlyFavorite;
+    const favoritedAt = nextFavoriteState ? Date.now() : undefined;
+
+    if (!token) {
+        throw new Error("未登录，无法操作收藏");
+    }
+
+    try {
+        await setFavoriteAcrossServers(
+            "content",
+            contentKey,
+            nextFavoriteState,
+            token,
+            servers,
+            favoritedAt
+        );
+        applyContentToggle(contentKey, nextFavoriteState);
+        return { contentKey, isFavorite: nextFavoriteState };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : "toggle favorite failed";
+        markToggleFavoriteFailed(message);
+        throw error;
+    }
+}

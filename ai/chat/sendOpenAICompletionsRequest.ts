@@ -33,7 +33,7 @@ import {
 } from "../../agent-runtime/toolCallTextParser";
 import { EMPTY_ASSISTANT_REPAIR_PROMPT } from "../../agent-runtime/localLoop";
 import { selectCurrentServer } from "../../app/settings/settingSlice";
-import { selectCurrentSpaceId } from "../../create/space/spaceSlice";
+import { getCurrentSpaceId } from "../../create/space/spaceCurrentStore";
 import { getApiEndpoint } from "../llm/providers";
 import { createDialogMessageKeyAndId, dialogMessageKey } from "../../database/keys";
 import { selectIdentityToken } from "identity/selectors";
@@ -988,7 +988,7 @@ export const sendOpenAICompletionsRequest = async ({
   const controller = new AbortController();
   thunkSignal.addEventListener("abort", () => controller.abort());
   const signal = controller.signal;
-  const streamSpaceId = selectCurrentSpaceId(getState() as RootState) || undefined;
+  const streamSpaceId = getCurrentSpaceId() || undefined;
 
   let messageId: string;
   let msgKey: string;

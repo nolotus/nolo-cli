@@ -9,11 +9,12 @@ import {
 } from "./antigravityOAuth";
 import { resolveAntigravityWireModel } from "./antigravityWireModel";
 import { parseSseDataLineJson } from "./sseDataLine";
-import { readSseDataValues } from "./sseFrames";
+import { readSseDataValues, streamSseDataValues } from "./sseFrames";
 import {
   convertOpenAiMessagesToGemini,
   convertOpenAiToolsToGemini,
   accumulateGeminiChunks,
+  accumulateGeminiStream,
   isGemini3Model,
 } from "./geminiNativeShared";
 
@@ -40,6 +41,8 @@ type AntigravityCloudCodeCallArgs = {
   };
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  onTextDelta?: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
 };
 
 /**
@@ -178,8 +181,11 @@ export async function fetchAntigravityCloudCodeCompletion(
     };
   }
 
-  const chunks = await readSseJsonChunks(response);
-  const { text, toolCalls, usage } = accumulateGeminiChunks(chunks);
+  const chunkStream = streamSseDataValues(response, parseSseDataLineJson);
+  const { text, toolCalls, usage } = await accumulateGeminiStream(chunkStream, {
+    onTextDelta: args.onTextDelta,
+    onReasoningDelta: args.onReasoningDelta,
+  });
   const message: Record<string, unknown> = {
     role: "assistant",
     content: text || null,

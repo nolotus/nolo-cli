@@ -4,7 +4,7 @@ import {
   renderTokenStatus,
   type TurnTokenUsage,
 } from "../client/tokenUsage";
-import { DEFAULT_TUI_AGENT_KEY, resolveCatalogPlatformAgents } from "./agentCatalog";
+import { resolveCatalogPlatformAgents } from "./agentCatalog";
 import { renderDialogTitle } from "./dialogFrame";
 import { t } from "./i18n";
 import { displayWidth } from "./readlineWorkspace";
@@ -68,13 +68,9 @@ export function renderStatusLine(state: TuiState) {
   // saturated, light/dark-safe colors the raw names used to provide.
   const sep = themeText(" · ", "chrome", colorEnabled);
 
-  // 自动路由开启且未显式选择 agent 时，状态行显示 auto（实际档位在首轮
-  // 分类后确定并打印 auto → tier）；显式选择的 agent 是 model 层覆盖源，
-  // 显示其名。NOLO_AUTO_ROUTE=0 时恢复显示默认 agent 名。
-  const autoRouteActive =
-    state.agentKey === DEFAULT_TUI_AGENT_KEY &&
-    (typeof process === "undefined" || process.env?.NOLO_AUTO_ROUTE !== "0");
-  const agentDisplayName = autoRouteActive ? "auto" : state.agentName;
+  // 自动路由只剩 flash 一档，路由结果不再改变显示名：状态行始终显示当前
+  // agent 名（默认 nolo）。显式 /agent 选择、NOLO_AUTO_ROUTE=0 同理。
+  const agentDisplayName = state.agentName;
   // runtime-mode 为默认的 auto 时不显示——它是默认值，纯噪声，且会与 auto
   // 路由名叠成 "auto · auto"。只有显式切到 local / server 才值得占一个 chip。
   const modeSuffix =

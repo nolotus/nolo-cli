@@ -13,7 +13,7 @@ import { PUBLIC_QWEN_37_FLASH_AGENT_KEY } from "../../core/builtinAgents";
 import { resolveBuiltinPlatformAgentConfig } from "../../agent-runtime/builtinPlatformAgentConfigs";
 import type { AgentRuntimeAgentConfig, AgentRuntimeHostAdapter } from "../../agent-runtime/hostAdapter";
 import { PLATFORM_HOSTED_QWEN_37_FLASH_MODEL } from "../llm/platformHosted";
-import { shouldRejectImageInputForAgent } from "./streamAgentChatTurnUtils";
+import { resolveAgentImageInputSupport } from "../llm/agentCapabilities";
 
 /** 默认 vision 预处理 agent key（Qwen 3.7 Flash，便宜视觉模型） */
 export const DEFAULT_IMAGE_PREPROCESSOR_AGENT_KEY = PUBLIC_QWEN_37_FLASH_AGENT_KEY;
@@ -84,6 +84,17 @@ export function hasImageInRuntimeMessages(messages: AgentRuntimeChatMessage[]): 
  */
 export type DescribeImageFn = (imageUrls: string[]) => Promise<string | null>;
 
+/** 内存级图片描述缓存：相同 URL 组在同会话或多次循环迭代中只调一次视觉模型 */
+const IMAGE_DESCRIPTION_CACHE = new Map<string, string>();
+
+export function clearImageDescriptionCache(): void {
+  IMAGE_DESCRIPTION_CACHE.clear();
+}
+
+function cacheKeyForUrls(urls: string[]): string {
+  return urls.slice().sort().join("||");
+}
+
 /**
  * 核心：用 vision 模型把消息中的 image_url part 替换为文字描述。
  *
@@ -100,11 +111,18 @@ export async function preprocessImagesForTextOnlyAgent(
   const imageUrls = extractImageUrlsFromMessages(messages);
   if (imageUrls.length === 0) return messages;
 
-  // 调用 vision 模型描述所有图片
-  const description = await describeImage(imageUrls);
-  if (description === null || !description.trim()) return messages;
+  const key = cacheKeyForUrls(imageUrls);
+  let description = IMAGE_DESCRIPTION_CACHE.get(key);
 
-  const descriptionText = `[图片描述] ${description.trim()}`;
+  if (!description) {
+    // 调用 vision 模型描述所有图片
+    const rawDesc = await describeImage(imageUrls);
+    if (rawDesc === null || !rawDesc.trim()) return messages;
+    description = rawDesc.trim();
+    IMAGE_DESCRIPTION_CACHE.set(key, description);
+  }
+
+  const descriptionText = `[图片描述] ${description}`;
 
   // 替换所有消息中的 image_url part 为描述文本
   return messages.map((msg) => {
@@ -257,19 +275,43 @@ export function resolveDefaultVisionModelConfig(agentKey?: string): {
 }
 
 /**
- * Web stream 路径的图片预处理 + 拒绝回退逻辑。
+ * 剥离单条消息 content 里的 image_url parts。模型不支持图片输入时，发上去会 400。
+ * 过滤后如果为空则返回占位文本，因为主流 Provider API 要求 user 消息 content 非空。
+ */
+export const IMAGE_OMITTED_PLACEHOLDER =
+  "[Image content omitted: model does not support image input]";
+
+export function stripImagePartsFromContent(
+  content: AgentRuntimeMessageContent,
+): AgentRuntimeMessageContent {
+  if (!Array.isArray(content)) return content;
+  const filtered = content.filter((part) => part?.type !== "image_url");
+  if (filtered.length === 0) return IMAGE_OMITTED_PLACEHOLDER;
+  return filtered as AgentRuntimeMessageContent;
+}
+
+export function stripImagePartsFromMessages<T extends { content: unknown }>(
+  messages: T[],
+): T[] {
+  return messages.map((msg) => ({
+    ...msg,
+    content: stripImagePartsFromContent(msg.content as AgentRuntimeMessageContent),
+  }));
+}
+
+/**
+ * Web / Desktop / RN stream 路径的图片预处理 + 安全降级逻辑。
  *
  * 用于 streamAgentChatTurn.ts 中 Responses API 和 chat.completions 两条路径，
- * 消除两处完全相同的 ~30 行预处理块。
- *
  * 泛型 T 携带消息的额外字段（id / dbKey 等），预处理只操作 content，
  * 不触碰其他字段。
  *
- * 返回值：
- * - { kind: "ok"; messages; stableMessages; dynamicMessages } — 预处理成功或无需预处理
- * - { kind: "reject"; reason } — 需要拒绝（预处理失败或无 server/token）
- *
- * 调用方负责 setLoopStopReason("error") + rejectWithValue(reason)。
+ * 行为：
+ * - 模型支持 vision 或无图片：直接返回切分好的 stable/dynamic 消息
+ * - 模型不支持 vision 且有图片：
+ *   1. 优先调用 vision 预处理模型（如 Qwen 3.7 Flash）转写为详细文字描述
+ *   2. 预处理失败或无连接/token 时，优雅降级剥离 image_url 替换为占位文本，
+ *      绝不报错中断用户的会话。
  */
 export async function tryPreprocessWebImageOrReject<T extends { id?: unknown; content: unknown }>(
   messages: T[],
@@ -277,16 +319,17 @@ export async function tryPreprocessWebImageOrReject<T extends { id?: unknown; co
   initialHistoryIds: Set<unknown>,
   serverUrl: string | null | undefined,
   authToken: string | null | undefined,
-): Promise<
-  | { kind: "ok"; messages: T[]; stableMessages: T[]; dynamicMessages: T[] }
-  | { kind: "reject"; reason: string }
-> {
-  const rejectReason = shouldRejectImageInputForAgent(
-    agentConfig as any,
-    messages as any,
-  );
-  if (!rejectReason) {
-    // 无需拒绝——返回原消息切分
+): Promise<{
+  kind: "ok";
+  messages: T[];
+  stableMessages: T[];
+  dynamicMessages: T[];
+}> {
+  const supportsVision = resolveAgentImageInputSupport(agentConfig as any);
+  const hasImages = hasImageInRuntimeMessages(messages as unknown as AgentRuntimeChatMessage[]);
+  const needsPreprocessing = !supportsVision && hasImages;
+  if (!needsPreprocessing) {
+    // 无需预处理——返回原消息切分
     const firstDynamicIdx = messages.findIndex((m) => m.id && !initialHistoryIds.has(m.id));
     const splitIdx = firstDynamicIdx === -1 ? messages.length : firstDynamicIdx;
     return {
@@ -297,28 +340,33 @@ export async function tryPreprocessWebImageOrReject<T extends { id?: unknown; co
     };
   }
 
-  if (!serverUrl || !authToken) {
-    return { kind: "reject", reason: rejectReason };
+  let finalMessages = messages;
+
+  if (serverUrl && authToken) {
+    try {
+      const preprocessed = await preprocessImagesForTextOnlyAgent(
+        messages as unknown as AgentRuntimeChatMessage[],
+        (urls) => describeImageViaServerProxy(serverUrl, authToken, urls),
+      );
+      if (preprocessed !== (messages as unknown)) {
+        finalMessages = preprocessed as unknown as T[];
+      }
+    } catch (e) {
+      console.warn("[imagePreprocessing] web vision describe error:", e);
+    }
   }
 
-  const preprocessed = await preprocessImagesForTextOnlyAgent(
-    messages as unknown as AgentRuntimeChatMessage[],
-    (urls) => describeImageViaServerProxy(serverUrl, authToken, urls),
-  );
-
-  if (preprocessed === (messages as unknown)) {
-    // 预处理失败（返回了同一引用）
-    return { kind: "reject", reason: rejectReason };
+  // 预处理未成功（比如未登录/离线/vision 失败）：降级剥离 image_url，防止上游 400 崩溃
+  if (finalMessages === messages) {
+    finalMessages = stripImagePartsFromMessages(messages);
   }
 
-  // 预处理成功——重新切分 stable/dynamic
-  const newMessages = preprocessed as unknown as T[];
-  const newFirstDynamicIdx = newMessages.findIndex((m) => m.id && !initialHistoryIds.has(m.id));
-  const splitIdx = newFirstDynamicIdx === -1 ? newMessages.length : newFirstDynamicIdx;
+  const newFirstDynamicIdx = finalMessages.findIndex((m) => m.id && !initialHistoryIds.has(m.id));
+  const splitIdx = newFirstDynamicIdx === -1 ? finalMessages.length : newFirstDynamicIdx;
   return {
     kind: "ok",
-    messages: newMessages,
-    stableMessages: newMessages.slice(0, splitIdx),
-    dynamicMessages: newMessages.slice(splitIdx),
+    messages: finalMessages,
+    stableMessages: finalMessages.slice(0, splitIdx),
+    dynamicMessages: finalMessages.slice(splitIdx),
   };
 }

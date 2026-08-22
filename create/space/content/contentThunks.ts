@@ -1,5 +1,10 @@
 import { toast } from "../../../app/utils/toast";
 import type { SpaceState } from "../types";
+// Wave D: currentSpaceId/currentSpace 已剥至 module store。
+import {
+  getCurrentSpaceIdRaw,
+  updateCurrentSpaceIfMatch,
+} from "../spaceCurrentStore";
 import { addContentAction } from "./addContentAction";
 import { deleteContentFromSpaceAction } from "./deleteContentFromSpaceAction";
 import { moveContentAction } from "./moveContentAction";
@@ -12,6 +17,11 @@ import { normalizeSpaceId } from "../spaceKeys";
 import { UNCATEGORIZED_ID } from "../constants";
 import { writeStoredCollapsedCategories } from "../spaceCollapsedState";
 import { asTrimmedString } from "../../../core/trimmedString";
+// Wave A: collapsedCategories 已剥至 module store。
+import {
+  getCollapsedCategories,
+  expandCategoryInCollapsed,
+} from "../spaceUiStore";
 
 type Create = {
   asyncThunk: (...args: any[]) => any;
@@ -41,9 +51,9 @@ export const createContentThunks = (create: Create) => ({
           : null;
 
       if (expandCategoryId) {
-        const rootState = thunkAPI.getState();
+        // Wave A: 从 module store 读当前折叠状态
         const collapsedCategories = {
-          ...rootState.space.collapsedCategories,
+          ...getCollapsedCategories(),
           [expandCategoryId]: false,
         };
         if (typeof window !== "undefined") {
@@ -53,6 +63,8 @@ export const createContentThunks = (create: Create) => ({
             window.localStorage
           );
         }
+        // Wave A: 直接展开分类，替代原 fulfilled reducer 写 Redux state
+        expandCategoryInCollapsed(expandCategoryId, result.spaceId);
         return { ...result, expandCategoryId, collapsedCategories };
       }
 
@@ -60,74 +72,70 @@ export const createContentThunks = (create: Create) => ({
     },
     {
       fulfilled: (state: SpaceState, action: any) => {
-        const { spaceId, updatedSpaceData, expandCategoryId, collapsedCategories } =
-          action.payload;
+        const { spaceId, updatedSpaceData } = action.payload;
         const normalizedSpaceId = normalizeSpaceId(spaceId);
-        const normalizedCurrentSpaceId = state.currentSpaceId
-          ? normalizeSpaceId(state.currentSpaceId)
+        const rawSpaceId = getCurrentSpaceIdRaw();
+        const normalizedCurrentSpaceId = rawSpaceId
+          ? normalizeSpaceId(rawSpaceId)
           : null;
-        if (normalizedCurrentSpaceId === normalizedSpaceId) {
-          state.currentSpace = updatedSpaceData;
-          if (collapsedCategories) {
-            state.collapsedCategories = {
-              ...state.collapsedCategories,
-              ...collapsedCategories,
-            };
-          } else if (expandCategoryId) {
-            state.collapsedCategories[expandCategoryId] = false;
-          }
+        if (normalizedCurrentSpaceId === normalizedSpaceId && updatedSpaceData) {
+          updateCurrentSpaceIfMatch(action.payload.spaceId, updatedSpaceData);
+          // Wave A: collapsedCategories 的展开已在 thunk 体内通过
+          // expandCategoryInCollapsed 写入 module store，fulfilled 不再写 Redux。
         }
       },
     }
   ),
 
   moveContentToSpace: create.asyncThunk(moveContentAction, {
-    fulfilled: (state: SpaceState, action: any) => {
+    fulfilled: (_state: SpaceState, action: any) => {
       const {
         sourceSpaceId,
         updatedSourceSpaceData,
         targetSpaceId,
         updatedTargetSpaceData,
       } = action.payload;
-      if (state.currentSpaceId === sourceSpaceId && updatedSourceSpaceData) {
-        state.currentSpace = updatedSourceSpaceData;
+      if (getCurrentSpaceIdRaw() === sourceSpaceId && updatedSourceSpaceData) {
+        updateCurrentSpaceIfMatch(sourceSpaceId, updatedSourceSpaceData);
       }
-      if (state.currentSpaceId === targetSpaceId && updatedTargetSpaceData) {
-        state.currentSpace = updatedTargetSpaceData;
+      if (getCurrentSpaceIdRaw() === targetSpaceId && updatedTargetSpaceData) {
+        updateCurrentSpaceIfMatch(targetSpaceId, updatedTargetSpaceData);
       }
     },
   }),
 
   deleteContentFromSpace: create.asyncThunk(deleteContentFromSpaceAction, {
-    fulfilled: (state: SpaceState, action: any) => {
+    fulfilled: (_state: SpaceState, action: any) => {
       const { spaceId, updatedSpaceData } = action.payload;
       const normalizedSpaceId = normalizeSpaceId(spaceId);
-      const normalizedCurrentSpaceId = state.currentSpaceId
-        ? normalizeSpaceId(state.currentSpaceId)
+      const rawSpaceId = getCurrentSpaceIdRaw();
+      const normalizedCurrentSpaceId = rawSpaceId
+        ? normalizeSpaceId(rawSpaceId)
         : null;
-      if (normalizedCurrentSpaceId === normalizedSpaceId) {
-        state.currentSpace = updatedSpaceData;
+      if (normalizedCurrentSpaceId === normalizedSpaceId && updatedSpaceData) {
+        updateCurrentSpaceIfMatch(action.payload.spaceId, updatedSpaceData);
       }
     },
   }),
 
   // --- 新增: 批量删除内容的 Thunk ---
   deleteMultipleContent: create.asyncThunk(deleteMultipleContentAction, {
-    fulfilled: (state: SpaceState, action: any) => {
+    fulfilled: (_state: SpaceState, action: any) => {
       const normalizedSpaceId = normalizeSpaceId(action.payload.spaceId);
-      const normalizedCurrentSpaceId = state.currentSpaceId
-        ? normalizeSpaceId(state.currentSpaceId)
+      const rawSpaceId = getCurrentSpaceIdRaw();
+      const normalizedCurrentSpaceId = rawSpaceId
+        ? normalizeSpaceId(rawSpaceId)
         : null;
-      if (normalizedCurrentSpaceId === normalizedSpaceId) {
-        state.currentSpace = action.payload.updatedSpaceData;
+      if (normalizedCurrentSpaceId === normalizedSpaceId && action.payload.updatedSpaceData) {
+        updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
       }
     },
   }),
 
   uploadAndAddFileToSpace: create.asyncThunk(uploadAndAddFileToSpaceAction, {
     fulfilled: (state: SpaceState, action: any) => {
-      if (state.currentSpaceId === action.payload.spaceId) {
-        state.currentSpace = action.payload.updatedSpaceData;
+      if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+        updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
       }
     }
   }),
@@ -135,8 +143,8 @@ export const createContentThunks = (create: Create) => ({
 
   updateContentTitle: create.asyncThunk(updateContentTitleAction, {
     fulfilled: (state: SpaceState, action: any) => {
-      if (state.currentSpaceId === action.payload.spaceId) {
-        state.currentSpace = action.payload.updatedSpaceData;
+      if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+        updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
       }
     },
     rejected: (_state: SpaceState, action: any) => {
@@ -153,9 +161,9 @@ export const createContentThunks = (create: Create) => ({
     fulfilled: (state: SpaceState, action: any) => {
       if (
         action.payload.updatedSpaceData &&
-        state.currentSpaceId === action.payload.spaceId
+        getCurrentSpaceIdRaw() === action.payload.spaceId
       ) {
-        state.currentSpace = action.payload.updatedSpaceData;
+        updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
       }
     },
     rejected: (_state: SpaceState, action: any) => {
@@ -165,8 +173,8 @@ export const createContentThunks = (create: Create) => ({
 
   updateContentCategory: create.asyncThunk(updateContentCategoryAction, {
     fulfilled: (state: SpaceState, action: any) => {
-      if (state.currentSpaceId === action.payload.spaceId) {
-        state.currentSpace = action.payload.updatedSpaceData;
+      if (getCurrentSpaceIdRaw() === action.payload.spaceId) {
+        updateCurrentSpaceIfMatch(action.payload.spaceId, action.payload.updatedSpaceData);
       }
     },
   }),

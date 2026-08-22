@@ -3,7 +3,8 @@
 import type { RootState } from "../../../app/store";
 import type { Agent } from "../../../app/types";
 import { createAgent } from "../../agent/agentSlice";
-import { selectAllMemberSpaces, addContentToSpace } from "../../../create/space/spaceSlice";
+import { addContentToSpace } from "../../../create/space/spaceSlice";
+import { getAllMemberSpaces } from "../../../create/space/spaceMembershipStore";
 import { ContentType } from "../../../app/types";
 import { createAgentKey, } from "../../../database/keys";
 import type { FormData as AgentFormData } from "../../agent/createAgentSchema";
@@ -441,7 +442,7 @@ export async function createAgentToolFunc(
     const currentBalance = selectIdentityUserBalance(state);
 
     // 获取当前用户的所有 Space (from create/space/spaceSlice)
-    const allSpaces = selectAllMemberSpaces(state);
+    const allSpaces = getAllMemberSpaces();
 
     if (!currentUserId) {
         throw new Error("创建 Agent 失败：当前未登录或缺少 userId。");

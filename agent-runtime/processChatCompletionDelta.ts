@@ -12,6 +12,7 @@
  * deltas. The two cannot drift because they now call the same function.
  */
 import { flushThinkParser, processThinkChunk, type ThinkParseState } from "./thinkTagParser";
+import { extractUsageFromSsePayload } from "../ai/token/sseUsageExtract";
 import {
   accumulateToolCallDelta,
   type ToolCallAccumulator,
@@ -121,8 +122,13 @@ export function applyChatCompletionDelta(
     state.streamError = streamError;
   }
 
-  if (parsed?.usage && typeof parsed.usage === "object") {
-    state.usage = parsed.usage;
+  // 统一走共享提取：只有真实 token usage 帧（顶层 usage 含 token 字段，
+  // 或 response.completed.response.usage）才覆盖 state.usage；billing-only
+  // 的 usage 外观（旧 server / 第三方代理塞的 billing_*/cost）不算 usage，
+  // 不覆盖，避免把已解析的 token 数冲掉（TUI context chip 依赖它）。
+  const extractedUsage = extractUsageFromSsePayload(parsed);
+  if (extractedUsage) {
+    state.usage = extractedUsage;
   }
 
   // finish_reason 通常只在最后一个 chunk 非空；非空才覆盖，前面的 null 不冲掉。

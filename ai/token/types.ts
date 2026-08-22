@@ -144,6 +144,14 @@ export interface TokenRecord {
   cost: number;
   inputPrice?: number;
   outputPrice?: number;
+  /** 缓存命中读取单价（credits/百万），billing catalog 写时快照（US-3.2）；旧记录缺省 */
+  inputCacheHitPrice?: number;
+  /** 缓存写入单价（credits/百万），billing catalog 写时快照（US-3.2）；旧记录缺省 */
+  cacheWritePrice?: number;
+  /** 调用终态（US-3.3）：缺省视为 success；failed = 调用失败（可能仍有部分 usage 被计费） */
+  status?: "success" | "failed";
+  /** 失败原因摘要（provider 错误等，截断存储）；仅 status=failed 时有意义 */
+  errorMessage?: string;
   image_generation_count?: number;
   provider_response_ids?: string[];
   provider_request_ids?: string[];

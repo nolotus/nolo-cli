@@ -13,6 +13,15 @@ describe("estimateCliContext", () => {
     expect(tokens).toBeLessThan(40_000);
   });
 
+  test("includes the configured response language in the estimate", () => {
+    const withoutLanguage = estimateDefaultCliContextTokens({ cwd: process.cwd() });
+    const withLanguage = estimateDefaultCliContextTokens({
+      cwd: process.cwd(),
+      userLanguage: "zh-CN",
+    });
+    expect(withLanguage).toBeGreaterThan(withoutLanguage);
+  });
+
   test("estimateChatMessagesTokens counts string message bodies", () => {
     expect(
       estimateChatMessagesTokens([

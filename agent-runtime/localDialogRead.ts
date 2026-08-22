@@ -11,7 +11,7 @@ export type LocalDialogReadResult = {
  * TUI 只读兜底，抢锁的对手是常驻 dev server——它不会主动让出 LOCK，等 90s 和
  * 等 3s 结果一样是失败，只是白白卡住用户一分半钟。
  *
- * 快速失败后调用方仍会退回原始 HTTP 错误，诊断信息不丢。
+ * 快速失败后 dialog 读取会回退到远程 server；非锁/非 not-found 的本地错误仍向调用方暴露。
  */
 export const LOCAL_READ_LOCK_TIMEOUT_MS = 3_000;
 

@@ -8,16 +8,10 @@ import { asTrimmedLowercaseString } from "../../core/trimmedLowercaseString";
 export const PLATFORM_HOSTED_KIMI_K3_MODEL = "kimi-k3";
 export const PLATFORM_HOSTED_KIMI_K26_MODEL = "kimi-k2.6";
 
-/** @deprecated Kept for backward compatibility. */
-export const OLLAMA_CLOUD_KIMI_K3_MODEL = PLATFORM_HOSTED_KIMI_K3_MODEL;
-/** @deprecated Kept for backward compatibility. */
-export const OLLAMA_CLOUD_KIMI_K26_MODEL = PLATFORM_HOSTED_KIMI_K26_MODEL;
 /** User-facing / catalog provider id. */
 export const PLATFORM_HOSTED_KIMI_PROVIDER = "nolo";
 /** @deprecated Use PLATFORM_HOSTED_KIMI_PROVIDER ("nolo"). Kept as alias for imports. */
 export const PLATFORM_HOSTED_PROVIDER = PLATFORM_HOSTED_KIMI_PROVIDER;
-/** @deprecated Kept for backward compatibility. */
-export const OLLAMA_CLOUD_PROVIDER = PLATFORM_HOSTED_PROVIDER;
 /** Legacy agent records may still store this provider string. */
 export const LEGACY_OLLAMA_CLOUD_PROVIDER = "ollama-cloud";
 
@@ -78,8 +72,8 @@ export const KIMI_PLATFORM_FALLBACK_STATUSES = [
 ];
 
 export const isOllamaCloudKimiModel = (model?: string | null): boolean =>
-  model === OLLAMA_CLOUD_KIMI_K3_MODEL ||
-  model === OLLAMA_CLOUD_KIMI_K26_MODEL;
+  model === PLATFORM_HOSTED_KIMI_K3_MODEL ||
+  model === PLATFORM_HOSTED_KIMI_K26_MODEL;
 
 export const isFireworksKimiModel = (model?: string | null): boolean =>
   model === FIREWORKS_KIMI_LATEST_MODEL ||

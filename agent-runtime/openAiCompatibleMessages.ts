@@ -141,7 +141,9 @@ export function shouldStripReasoningContentForOutbound(
   // DeepSeek V4 rejects string reasoning_content on history replay.
   // Applies to both legacy "deepseek" provider and current "nolo" provider.
   if (p === "deepseek" || p === "nolo") {
-    return m === "deepseek-v4-flash" || m === "deepseek-v4-pro";
+    return m === "deepseek-v4-flash" ||
+      m === "deepseek-v4-flash-vision-exp" ||
+      m === "deepseek-v4-pro";
   }
   return false;
 }

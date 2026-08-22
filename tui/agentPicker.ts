@@ -115,11 +115,14 @@ export function resolveAgentSwitchTarget(
   rawTarget: string,
   catalogEntries: AgentCatalogEntry[] = []
 ) {
-  const resolvedKey = resolveCliAgentKeyInput(rawTarget);
-  if (resolvedKey !== rawTarget.trim()) {
+  // 自动路由只剩 flash 一档，catalog 不再提供 "auto" 项；把旧入口
+  // /switch auto 当作 /switch nolo 解析，回到默认 agent（同 key）。
+  const target = rawTarget.trim() === "auto" ? "nolo" : rawTarget.trim();
+  const resolvedKey = resolveCliAgentKeyInput(target);
+  if (resolvedKey !== target) {
     const aliasEntry = catalogEntries.find((entry) => entry.key === resolvedKey);
     return {
-      name: aliasEntry?.name ?? asTrimmedLowercaseString(rawTarget),
+      name: aliasEntry?.name ?? asTrimmedLowercaseString(target),
       key: resolvedKey,
       ...(aliasEntry?.model ? { model: aliasEntry.model } : {}),
       ...(aliasEntry

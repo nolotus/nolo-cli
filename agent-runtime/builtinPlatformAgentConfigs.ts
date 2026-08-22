@@ -30,8 +30,14 @@ import {
   builtinAgentCatalogEntryById,
   builtinRuntimeFallbackEntries,
 } from "../core/builtinAgentCatalog";
-import { isBuiltinPlatformAgentKey } from "../core/builtinAgents";
 import { parsePublicAgentId, publicAgentKey } from "../core/prefix";
+import { resolveBuiltinAgentRuntimeFields } from "./builtinPlatformAgentRoute";
+
+export {
+  resolveBuiltinAgentRuntimeFields,
+  resolveBuiltinPlatformAgentRoute,
+  type BuiltinPlatformAgentRoute,
+} from "./builtinPlatformAgentRoute";
 
 function buildConfig(e: BuiltinAgentCatalogEntry): AgentRuntimeAgentConfig {
   const key = publicAgentKey(e.id);
@@ -115,15 +121,6 @@ export function resolveBuiltinPlatformAgentRecord(
  * 注意：线上这 6 条记录里的旧 `model` 字段是**不生效的死字段**，刻意不迁移
  * （改数据有风险，且代码已经是真相源）。要换模型改 catalog，不要改数据库。
  */
-export function resolveBuiltinAgentRuntimeFields(
-  agentKey: string,
-): { provider: string; model: string } | null {
-  if (!isBuiltinPlatformAgentKey(agentKey)) return null;
-  const entry = builtinAgentCatalogEntryById(parsePublicAgentId(agentKey));
-  if (!entry) return null;
-  return { provider: entry.provider, model: entry.model };
-}
-
 /**
  * 把 catalog 的 provider/model 盖到一条内置 agent 记录上。
  * 非内置 agent 原样返回（引用相等），调用方可以无条件套用。

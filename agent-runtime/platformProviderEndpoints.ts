@@ -151,3 +151,55 @@ export function resolvePlatformChatCompletionsEndpoint(
   }
   return PLATFORM_CHAT_COMPLETIONS_ENDPOINTS[aliased];
 }
+
+/**
+ * 平台托管模型该用哪个 provider 的 key。
+ *
+ * 与上面的 `resolvePlatformChatCompletionsEndpoint` **逐条对应**——同一个模型，
+ * 端点解析到谁家，key 就取谁家。两个函数必须放在一起改：历史上它们分处两个包
+ * 各自手写，端点先去掉了 ollama 兜底、key 侧还在发 OLLAMA_API_KEY，于是「拿 A
+ * 家的钥匙去开 B 家的门」连出两次线上 401（2026-08-13 / 2026-08-22）。
+ *
+ * 返回 undefined = 不是平台托管路由，调用方按记录里的 provider 自己取 key。
+ */
+export function resolvePlatformHostedCredentialProvider(
+  provider: string,
+  model?: string | null,
+): string | undefined {
+  const key = asTrimmedLowercaseString(provider);
+  if (!key) return undefined;
+  const aliased = PLATFORM_PROVIDER_ENDPOINT_ALIASES[key] ?? key;
+  if (aliased !== "nolo") return undefined;
+  if (isPlatformHostedClaudeModel(model)) return "deepinfra";
+  if (isPlatformHostedGrokModel(model)) return "xai";
+  if (isPlatformHostedKimiK26Model(model) || isPlatformHostedGlmModel(model)) {
+    return "openrouter";
+  }
+  if (asTrimmedLowercaseString(model) === PLATFORM_HOSTED_KIMI_K3_MODEL) {
+    return "crof";
+  }
+  if (isPlatformHostedGeminiModel(model) || isPlatformHostedQwen37FlashModel(model)) {
+    return "google";
+  }
+  if (isPlatformHostedDeepseekModel(model)) return "deepseek";
+  return undefined;
+}
+
+/**
+ * 平台托管请求能不能落到一个真实上游。
+ *
+ * 端点与凭据必须同源：`getNoloKey("nolo")` 已经不再兜底发 key，所以「解析不出
+ * 端点」等价于「这个 model 没有上游」。调用方据此显式报错，而不是让请求带着
+ * 客户端传来的 url 和一把不相干的 key 出门。
+ */
+export function hasPlatformHostedUpstreamRoute(
+  provider: string,
+  model?: string | null,
+): boolean {
+  return Boolean(
+    resolvePlatformChatCompletionsEndpoint(provider, model) ??
+      (isOpenAiResponsesModel({ provider, model: model ?? undefined })
+        ? resolvePlatformResponsesEndpoint(provider, model)
+        : undefined),
+  );
+}

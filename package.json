@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.33.0-alpha.7",
+  "version": "0.33.0-alpha.8",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -511,6 +511,7 @@
     "agent-runtime/contextLayerContract.ts",
     "agent-runtime/startupProtocol.ts",
     "agent-runtime/menuUsage.ts",
+    "agent-runtime/builtinPlatformAgentRoute.ts",
     "agent-runtime/toolCallPairing.ts",
     "agent-runtime/localAutoCompaction.ts",
     "agent-runtime/openAiCompatibleProvider.ts",

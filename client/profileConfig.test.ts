@@ -1,17 +1,30 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  statSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 import {
+  appendAgentSelectionAudit,
   buildCliRuntimeEnv,
   buildEnvFromProfile,
   clearProfileAuthToken,
+  getAgentSelectionAuditPath,
   getDefaultProfileConfigPath,
+  isProtectedHomeProfileWrite,
+  readLastAgentSelectionAudit,
+  redactArgvSecrets,
   loadProfileConfig,
   normalizeProfileServerUrl,
   saveDefaultProfile,
   saveProfileAgentSelection,
+  saveProfileLocale,
 } from "./profileConfig";
 
 describe("cli profile config", () => {
@@ -249,6 +262,284 @@ describe("cli profile config", () => {
     } finally {
       if (prev === undefined) delete process.env.NOLO_HOME;
       else process.env.NOLO_HOME = prev;
+    }
+  });
+});
+
+describe("agent selection audit trail", () => {
+  test("every write records previous → next plus the writing process", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-audit-"));
+    try {
+      const path = join(dir, "config.json");
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+      });
+
+      saveProfileAgentSelection(
+        { agentKey: "agent-pub-app-builder", agentName: "应用构建助手" },
+        path,
+      );
+      saveProfileAgentSelection({ agentKey: "", agentName: "" }, path);
+
+      const entries = readFileSync(getAgentSelectionAuditPath(path), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+
+      expect(entries).toHaveLength(2);
+      // The write that pins a non-default agent must name what it replaced,
+      // so a surprise selection can be traced back to the session that made it.
+      expect(entries[0].previous).toEqual({});
+      expect(entries[0].next).toEqual({
+        agentKey: "agent-pub-app-builder",
+        agentName: "应用构建助手",
+      });
+      expect(entries[1].previous).toEqual({
+        agentKey: "agent-pub-app-builder",
+        agentName: "应用构建助手",
+      });
+      expect(entries[1].next).toEqual({ agentKey: "", agentName: "" });
+      // Process identity is the point of the log: which binary wrote this.
+      expect(entries[0].pid).toBe(process.pid);
+      expect(entries[0].execPath).toBe(process.execPath);
+      expect(Array.isArray(entries[0].argv)).toBe(true);
+      expect(entries[0].stack.length).toBeGreaterThan(0);
+      expect(typeof entries[0].at).toBe("string");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("audit lives beside the config it describes, and never blocks the write", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-audit-path-"));
+    try {
+      const path = join(dir, "config.json");
+      expect(getAgentSelectionAuditPath(path)).toBe(
+        join(dir, "agent-selection.log"),
+      );
+
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+      });
+      // An unwritable audit path must not cost the user their switch.
+      appendAgentSelectionAudit(
+        {
+          previous: {},
+          next: { agentKey: "a", agentName: "b" },
+          configPath: path,
+        },
+        join(dir, "missing-dir\0invalid", "audit.log"),
+      );
+      const config = saveProfileAgentSelection(
+        { agentKey: "agent-pub-x", agentName: "x" },
+        path,
+      );
+      expect(config!.profiles.default.agentKey).toBe("agent-pub-x");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("startup agent origin", () => {
+  const profileWithAgent = {
+    currentProfile: "default",
+    profiles: {
+      default: {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+        agentKey: "agent-pub-app-builder",
+        agentName: "应用构建助手",
+      },
+    },
+  };
+
+  test("marks a profile-restored agent so the TUI can say where it came from", () => {
+    const env = buildCliRuntimeEnv({} as NodeJS.ProcessEnv, profileWithAgent);
+    expect(env.NOLO_AGENT).toBe("agent-pub-app-builder");
+    expect(env.NOLO_AGENT_SOURCE).toBe("profile");
+  });
+
+  test("an explicit shell agent is reported as such, not as a saved choice", () => {
+    const env = buildCliRuntimeEnv(
+      { NOLO_AGENT: "agent-pub-shell" } as NodeJS.ProcessEnv,
+      profileWithAgent,
+    );
+    expect(env.NOLO_AGENT).toBe("agent-pub-shell");
+    expect(env.NOLO_AGENT_SOURCE).toBe("env");
+  });
+
+  test("no saved selection leaves no origin to explain", () => {
+    const env = buildCliRuntimeEnv({} as NodeJS.ProcessEnv, {
+      currentProfile: "default",
+      profiles: { default: { serverUrl: "https://nolo.chat" } },
+    });
+    expect(env.NOLO_AGENT).toBeUndefined();
+    expect(env.NOLO_AGENT_SOURCE).toBeUndefined();
+  });
+});
+
+describe("test processes cannot rewrite the developer's own profile", () => {
+  // Regression: TUI tests drive the real workspace loop, so a test that typed
+  // /agent <key> persisted through the real seam and pinned the developer's
+  // startup agent in ~/.nolo/config.json — rediscovered by hand every time.
+  const realHomeConfig = join(homedir(), ".nolo", "config.json");
+
+  test("a write aimed at the real home config is refused under bun test", () => {
+    expect(process.env.NODE_ENV).toBe("test");
+    // The suite-wide preload gives this process its own home...
+    expect(process.env.NOLO_HOME).toBeTruthy();
+    expect(process.env.NOLO_HOME).not.toBe(join(homedir(), ".nolo"));
+    // ...and the real config stays refused even so, for anyone running a test
+    // file without the preload or passing the real path explicitly.
+    expect(isProtectedHomeProfileWrite(realHomeConfig)).toBe(true);
+
+    const before = existsSync(realHomeConfig)
+      ? readFileSync(realHomeConfig, "utf8")
+      : null;
+    expect(
+      saveProfileAgentSelection(
+        { agentKey: "agent-pub-01APPBUILDER00000001YAII3I", agentName: "应用构建助手" },
+        realHomeConfig,
+      ),
+    ).toBeNull();
+    expect(saveProfileLocale("en", realHomeConfig)).toBeNull();
+    const after = existsSync(realHomeConfig)
+      ? readFileSync(realHomeConfig, "utf8")
+      : null;
+    expect(after).toBe(before);
+  });
+
+  test("temp paths and NOLO_HOME stay writable", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-guard-"));
+    try {
+      const path = join(dir, "config.json");
+      expect(isProtectedHomeProfileWrite(path)).toBe(false);
+
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+      });
+      const config = saveProfileAgentSelection(
+        { agentKey: "agent-pub-x", agentName: "x" },
+        path,
+      );
+      expect(config!.profiles.default.agentKey).toBe("agent-pub-x");
+
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("audit log never records a credential", () => {
+  // The log exists to be read and pasted around while debugging, and
+  // `nolo login --token <auth-token>` puts a live credential in argv.
+  test("masks secret flag values in both --flag value and --flag=value form", () => {
+    expect(
+      redactArgvSecrets(["bun", "index.ts", "login", "--token", "secret-abc"]),
+    ).toEqual(["bun", "index.ts", "login", "--token", "[REDACTED]"]);
+    expect(redactArgvSecrets(["nolo", "--api-key=sk-live-123"])).toEqual([
+      "nolo",
+      "--api-key=[REDACTED]",
+    ]);
+    expect(
+      redactArgvSecrets(["nolo", "machine", "--machine-key", "mk-1", "--json"]),
+    ).toEqual(["nolo", "machine", "--machine-key", "[REDACTED]", "--json"]);
+  });
+
+  test("leaves non-secret flags that merely look like keys alone", () => {
+    // --row-dbkey is a record address, not a credential; masking it would
+    // destroy the attribution this log exists to provide.
+    expect(
+      redactArgvSecrets(["nolo", "table", "--row-dbkey", "row-123", "--limit", "5"]),
+    ).toEqual(["nolo", "table", "--row-dbkey", "row-123", "--limit", "5"]);
+  });
+
+  test("the written audit line carries the redacted argv", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-redact-"));
+    try {
+      const path = join(dir, "config.json");
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+      });
+      const originalArgv = process.argv;
+      process.argv = ["bun", "index.ts", "login", "--token", "super-secret"];
+      try {
+        saveProfileAgentSelection(
+          { agentKey: "agent-pub-x", agentName: "x" },
+          path,
+        );
+      } finally {
+        process.argv = originalArgv;
+      }
+      const raw = readFileSync(getAgentSelectionAuditPath(path), "utf8");
+      expect(raw).not.toContain("super-secret");
+      expect(JSON.parse(raw.trim()).argv).toEqual([
+        "bun",
+        "index.ts",
+        "login",
+        "--token",
+        "[REDACTED]",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("guard covers every writer, and rotation keeps attribution", () => {
+  test("the real profile is refused by the auth-token and login writers too", () => {
+    const realHomeConfig = join(homedir(), ".nolo", "config.json");
+    const before = existsSync(realHomeConfig)
+      ? readFileSync(realHomeConfig, "utf8")
+      : null;
+    expect(clearProfileAuthToken(realHomeConfig)).toBe(false);
+    // login must fail loudly rather than silently skip: a test aimed here is a bug.
+    expect(() =>
+      saveDefaultProfile(realHomeConfig, {
+        serverUrl: "https://nolo.chat",
+        authToken: "should-never-land",
+      }),
+    ).toThrow(/Refusing to write/);
+    const after = existsSync(realHomeConfig)
+      ? readFileSync(realHomeConfig, "utf8")
+      : null;
+    expect(after).toBe(before);
+  });
+
+  test("rotation keeps the newest entries instead of emptying the log", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nolo-profile-rotate-"));
+    try {
+      const path = join(dir, "config.json");
+      const auditPath = getAgentSelectionAuditPath(path);
+      saveDefaultProfile(path, {
+        serverUrl: "https://nolo.chat",
+        authToken: "token-123",
+      });
+      // Push the log past the rotation threshold with junk entries.
+      const filler = `${JSON.stringify({ next: { agentKey: "old", agentName: "old" }, pad: "x".repeat(2048) })}\n`;
+      writeFileSync(auditPath, filler.repeat(300), "utf8");
+
+      saveProfileAgentSelection(
+        { agentKey: "agent-pub-newest", agentName: "newest" },
+        path,
+      );
+
+      const lines = readFileSync(auditPath, "utf8").trim().split("\n");
+      expect(lines.length).toBeLessThan(300);
+      // Attribution for the current selection survives — an emptied log would
+      // make it look like a build without the audit trail wrote it.
+      expect(readLastAgentSelectionAudit(auditPath)).toEqual({
+        logExists: true,
+        last: { agentKey: "agent-pub-newest", agentName: "newest" },
+      });
+      expect(statSync(auditPath).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

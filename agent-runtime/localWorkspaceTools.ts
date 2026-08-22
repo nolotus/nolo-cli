@@ -85,40 +85,44 @@ export const ALWAYS_EXCLUDED_GLOBS: readonly string[] = [
 const DEFAULT_SEARCH_MAX_RESULTS = 200;
 const SEARCH_OUTPUT_CHAR_LIMIT = 20_000;
 
-export type ActivityRef =
-  | { type: "file"; path: string }
-  | { type: "terminal"; id?: string; label?: string }
-  | { type: "url"; url: string; label?: string };
+import {
+  type ActivityRef,
+  type ToolActivityAction,
+  type ToolActivityPhase,
+  type ActivityPlan,
+  type ToolActivity,
+  extractActivity,
+  tokenizeShellPrefix,
+  buildWorkspaceShellCommand,
+  findWorkspaceShellEscapeToken,
+  buildWorkspaceShellEscapeBlockedResult,
+  extractInteractiveGhAuthCommand,
+  buildInteractiveCommandBlockedResult,
+  resolveExecShellTimeoutMs,
+  resolveDetachMs,
+  truncateToolOutput,
+  readNodeStream,
+  waitForNodeProcessExit,
+  deriveLabel,
+  isSpawnFailureError,
+  spawnFailedCommandResult,
+  type WorkspaceExecResult,
+  runWorkspaceCommand,
+} from "./workspaceShell";
 
-export type ToolActivityAction = {
-  title: string;
-  kind?: string;
-  detail?: string;
-  refs?: ActivityRef[];
-};
-
-export type ToolActivityPhase = {
-  id: string;
-  title: string;
-  index?: number;
-  total?: number;
-  status?: "pending" | "running" | "success" | "failed";
-};
-
-export type ActivityPlan = {
-  title?: string;
-  phases: Array<{
-    id: string;
-    title: string;
-    index?: number;
-    status?: "pending" | "running" | "success" | "failed";
-  }>;
-};
-
-export type ToolActivity = Partial<ToolActivityAction> & {
-  phase?: ToolActivityPhase;
-  action?: ToolActivityAction;
-  plan?: ActivityPlan;
+export {
+  type ActivityRef,
+  type ToolActivityAction,
+  type ToolActivityPhase,
+  type ActivityPlan,
+  type ToolActivity,
+  extractActivity,
+  extractInteractiveGhAuthCommand,
+  buildInteractiveCommandBlockedResult,
+  resolveExecShellTimeoutMs,
+  resolveDetachMs,
+  type WorkspaceExecResult,
+  runWorkspaceCommand,
 };
 
 type WorkspaceFileArgs = {
@@ -180,15 +184,11 @@ import {
   SHELL_TOOL_NAMES,
   WORKSPACE_TOOL_NAME_SET,
   REMOVED_WORKSPACE_TOOL_NAMES,
-  tokenizeShellPrefix,
-  buildWorkspaceShellCommand,
-  findWorkspaceShellEscapeToken,
-  buildWorkspaceShellEscapeBlockedResult,
   buildWorkspaceToolDefinition,
   filterDeclaredWorkspaceToolNames,
 } from "./localWorkspaceToolDefs";
 import { isImmediateDetachShellCommand } from "./shellCommandPolicy";
-import { execShellCapability } from "./capabilities/execShellCapability";
+import { invokeCapability } from "./capabilities";
 
 function readTrimmedString(value: unknown): string | undefined {
   return asOptionalTrimmedString(value);
@@ -204,192 +204,6 @@ function readBoolean(parsed: Record<string, unknown>, key: string): boolean | un
   }
   return undefined;
 }
-
-export function resolveExecShellTimeoutMs(override: number | undefined) {
-  const fromOverride = asOptionalPositiveFiniteNumber(override);
-  if (fromOverride !== undefined) return fromOverride;
-  const raw = process.env[EXEC_SHELL_TIMEOUT_ENV];
-  if (raw === undefined) return undefined;
-  return asOptionalPositiveFiniteNumber(Number(raw));
-}
-
-/** Always returns a concrete threshold: override >= 0 (0 = detach immediately,
- * the smart-detach path) wins, otherwise env NOLO_EXEC_SHELL_DETACH_MS,
- * otherwise the default. */
-export function resolveDetachMs(override: number | undefined): number {
-  if (typeof override === "number" && Number.isFinite(override) && override >= 0) {
-    return override;
-  }
-  const raw = process.env[EXEC_SHELL_DETACH_ENV];
-  if (raw === undefined) return DEFAULT_EXEC_SHELL_DETACH_MS;
-  const parsed = asOptionalPositiveFiniteNumber(Number(raw));
-  return parsed === undefined ? DEFAULT_EXEC_SHELL_DETACH_MS : parsed;
-}
-
-
-export function extractInteractiveGhAuthCommand(command: string): string | null {
-  const tokens = tokenizeShellPrefix(command);
-  if (tokens[0] !== "gh" || tokens[1] !== "auth") return null;
-  const subcommand = tokens[2];
-  if (subcommand !== "login" && subcommand !== "refresh") return null;
-  if (tokens.includes("--help")) return null;
-
-  const result = ["gh", "auth", subcommand];
-  for (let index = 3; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (!token) continue;
-    if (token === "-h" || token === "--hostname" || token === "-s" || token === "--scopes" || token === "--remove-scopes" || token === "-r") {
-      const value = tokens[index + 1];
-      if (value) {
-        result.push(token, value);
-        index += 1;
-      }
-      continue;
-    }
-    if (token === "--clipboard" || token === "-c" || token === "--insecure-storage" || token === "--reset-scopes") {
-      result.push(token);
-      continue;
-    }
-    if (token.startsWith("--hostname=") || token.startsWith("--scopes=") || token.startsWith("--remove-scopes=")) {
-      result.push(token);
-      continue;
-    }
-  }
-  return result.join(" ");
-}
-
-function splitShellWords(command: string): string[] {
-  return tokenizeShellPrefix(command);
-}
-
-export function buildInteractiveCommandBlockedResult(command: string): AgentRuntimeToolResult {
-  const argv = splitShellWords(command);
-  return {
-    content: [
-      "action_gate: handoff",
-      `command: ${command}`,
-      "Run this in the current TUI terminal, then resume the agent turn.",
-      "exitCode: 130",
-    ].join("\n"),
-    metadata: {
-      exitCode: 130,
-      timedOut: false,
-      actionGate: {
-        id: `gate-${Date.now().toString(36)}-terminal-handoff`,
-        kind: "handoff",
-        title: "This command requires an interactive terminal.",
-        body: "Complete it in the terminal, then nolo will continue.",
-        payload: {
-          command: argv,
-          displayCommand: command,
-        },
-      },
-      reason: "interactive-command-requires-terminal",
-    },
-  };
-}
-
-function extractActivityRefs(rawRefs: unknown): ActivityRef[] | undefined {
-  if (!Array.isArray(rawRefs)) return undefined;
-  const refs = rawRefs.flatMap((entry): ActivityRef[] => {
-    if (!isRecord(entry)) return [];
-    if (entry.type === "file") {
-      const path = readTrimmedString(entry.path);
-      return path ? [{ type: "file", path }] : [];
-    }
-    if (entry.type === "terminal") {
-      const id = readTrimmedString(entry.id);
-      const label = readTrimmedString(entry.label);
-      return id || label
-        ? [{ type: "terminal", ...(id ? { id } : {}), ...(label ? { label } : {}) }]
-        : [];
-    }
-    if (entry.type === "url") {
-      const url = readTrimmedString(entry.url);
-      const label = readTrimmedString(entry.label);
-      return url ? [{ type: "url", url, ...(label ? { label } : {}) }] : [];
-    }
-    return [];
-  });
-  return refs.length ? refs : undefined;
-}
-
-function extractActivityAction(rawAction: unknown): ToolActivityAction | undefined {
-  if (!isRecord(rawAction)) return undefined;
-  const title = readTrimmedString(rawAction.title);
-  if (!title) return undefined;
-  const kind = readTrimmedString(rawAction.kind);
-  const detail = readTrimmedString(rawAction.detail);
-  const refs = extractActivityRefs(rawAction.refs);
-  return {
-    title,
-    ...(kind ? { kind } : {}),
-    ...(detail ? { detail } : {}),
-    ...(refs ? { refs } : {}),
-  };
-}
-
-function extractActivityPhase(rawPhase: unknown): ToolActivityPhase | undefined {
-  if (!isRecord(rawPhase)) return undefined;
-  const title = readTrimmedString(rawPhase.title);
-  if (!title) return undefined;
-  const id = readTrimmedString(rawPhase.id) || title.toLowerCase().replace(/\s+/g, "-");
-  const index = asOptionalFiniteNumber(rawPhase.index);
-  const total = asOptionalFiniteNumber(rawPhase.total);
-  const status =
-    rawPhase.status === "pending" ||
-    rawPhase.status === "running" ||
-    rawPhase.status === "success" ||
-    rawPhase.status === "failed"
-      ? rawPhase.status
-      : undefined;
-  return {
-    id,
-    title,
-    ...(index !== undefined ? { index } : {}),
-    ...(total !== undefined ? { total } : {}),
-    ...(status ? { status } : {}),
-  };
-}
-
-function extractActivityPlan(rawPlan: unknown): ActivityPlan | undefined {
-  if (!isRecord(rawPlan)) return undefined;
-  if (!Array.isArray(rawPlan.phases)) return undefined;
-  const phases = rawPlan.phases.flatMap((entry, index): ActivityPlan["phases"] => {
-    const phase = extractActivityPhase(entry);
-    if (!phase) return [];
-    return [{
-      id: phase.id,
-      title: phase.title,
-      index: phase.index ?? index + 1,
-      ...(phase.status ? { status: phase.status } : {}),
-    }];
-  });
-  if (phases.length === 0) return undefined;
-  const title = readTrimmedString(rawPlan.title);
-  return {
-    ...(title ? { title } : {}),
-    phases,
-  };
-}
-
-export function extractActivity(parsed: WorkspaceFileArgs): ToolActivity | undefined {
-  const raw = parsed._activity;
-  if (!isRecord(raw)) return undefined;
-  const nestedAction = extractActivityAction(raw.action);
-  const legacyAction = extractActivityAction(raw);
-  const action = nestedAction || legacyAction;
-  const phase = extractActivityPhase(raw.phase);
-  const plan = extractActivityPlan(raw.plan);
-  if (!action && !plan) return undefined;
-  return {
-    ...(action ? action : {}),
-    ...(phase ? { phase } : {}),
-    ...(nestedAction ? { action: nestedAction } : {}),
-    ...(plan ? { plan } : {}),
-  };
-}
-
 
 export function buildLocalWorkspaceToolset(args: {
   declaredToolNames?: string[];
@@ -1096,19 +910,6 @@ async function runWorkspacePackageScript(args: {
   };
 }
 
-function truncateToolOutput(value: string, limit = 20_000) {
-  if (value.length <= limit) return value;
-  const approxMarkerLen = 40;
-  if (limit <= approxMarkerLen) return value.slice(0, limit);
-  const remaining = limit - approxMarkerLen;
-  const headSize = Math.floor(remaining * 0.3);
-  const tailSize = remaining - headSize;
-  const head = value.slice(0, headSize);
-  const tail = value.slice(-tailSize);
-  const actualRemoved = value.length - headSize - tailSize;
-  return `${head}\n\n[... truncated ${actualRemoved} chars ...]\n\n${tail}`;
-}
-
 function parseLastJsonObject(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
   for (let index = trimmed.lastIndexOf("{"); index >= 0; index = trimmed.lastIndexOf("{", index - 1)) {
@@ -1122,59 +923,7 @@ function parseLastJsonObject(text: string): Record<string, unknown> | null {
   return null;
 }
 
-function readNodeStream(stream: NodeJS.ReadableStream | null): Promise<string> {
-  if (!stream) return Promise.resolve("");
-  return new Promise((resolveRead, rejectRead) => {
-    const chunks: Buffer[] = [];
-    stream.on("data", (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-    });
-    stream.on("error", rejectRead);
-    stream.on("end", () => resolveRead(Buffer.concat(chunks).toString("utf8")));
-  });
-}
-
-function waitForNodeProcessExit(proc: ReturnType<typeof spawnChildProcess>) {
-  return new Promise<number>((resolveExit, rejectExit) => {
-    proc.once("error", rejectExit);
-    proc.once("close", (code, signal) => {
-      if (typeof code === "number") {
-        resolveExit(code);
-        return;
-      }
-      resolveExit(signal ? 1 : 0);
-    });
-  });
-}
-
 export type WorkspaceSearchEngine = "ripgrep" | "grep" | "js";
-
-function isSpawnFailureError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const err = error as NodeJS.ErrnoException;
-  if (err.code === "ENOENT") return true;
-  const message = toErrorMessage(error).toLowerCase();
-  return (
-    message.includes("enoent")
-    || message.includes("executable not found")
-    || message.includes("spawn") && message.includes("not found")
-  );
-}
-
-function spawnFailedCommandResult(error: unknown, outputLimit?: number) {
-  const stderr = `spawn failed: ${toErrorMessage(error)}\n`;
-  return {
-    stdout: "",
-    stderr,
-    exitCode: 127,
-    timedOut: false as const,
-    spawnFailed: true as const,
-    content: truncateToolOutput(
-      [`stderr:\n${stderr.trim()}`, "exitCode: 127"].filter(Boolean).join("\n\n"),
-      outputLimit,
-    ),
-  };
-}
 
 /**
  * Prefer Desktop-bundled ripgrep (NOLO_BUNDLED_RG / Resources/bin), then PATH +
@@ -1197,44 +946,6 @@ export function resolveRipgrepBinary(
 function resolveGrepBinary(): string | null {
   return resolveExecutableOnPath("grep");
 }
-
-export type WorkspaceExecResult =
-  | {
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-      timedOut: false;
-      spawnFailed: true;
-      content: string;
-      aborted?: undefined;
-      detached?: undefined;
-      pid?: undefined;
-      label?: undefined;
-    }
-  | {
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-      timedOut: false;
-      detached: true;
-      pid: number;
-      label: string;
-      content: string;
-      spawnFailed?: undefined;
-      aborted?: undefined;
-    }
-  | {
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-      timedOut: boolean;
-      aborted: boolean;
-      content: string;
-      spawnFailed?: undefined;
-      detached?: undefined;
-      pid?: undefined;
-      label?: undefined;
-    };
 
 export type WorkspaceExecLimitedLinesResult =
   | {
@@ -1259,232 +970,6 @@ export type WorkspaceExecLimitedLinesResult =
       pid?: undefined;
       label?: undefined;
     };
-
-export async function runWorkspaceCommand(args: {
-  workspaceRoot: string;
-  command: string[];
-  stdin?: string;
-  timeoutMs?: number;
-  outputLimit?: number;
-  commandPrefix?: string[];
-  abortSignal?: AbortSignal;
-  detachMs?: number; // 超过这个时间仍未退出 → 转后台；默认从 env 读，见 resolveDetachMs
-}): Promise<WorkspaceExecResult> {
-  const timeoutMs = asOptionalPositiveFiniteNumber(args.timeoutMs);
-  const detached = process.platform !== "win32";
-  const command = [
-    ...(args.commandPrefix ?? []),
-    ...args.command,
-  ];
-  const proc = spawnChildProcess(command[0] ?? "", command.slice(1), {
-    cwd: resolve(args.workspaceRoot),
-    stdio: [
-      args.stdin === undefined ? "ignore" : "pipe",
-      "pipe",
-      "pipe",
-    ],
-    detached,
-  });
-  if (args.stdin !== undefined && proc.stdin) {
-    proc.stdin.write(args.stdin);
-    proc.stdin.end();
-  }
-  const exitPromise = waitForNodeProcessExit(proc);
-  // detached spawns a new process group so timeout cleanup can kill the whole
-  // tree (parent shell + its children). The cost is that a SIGHUP/SIGTERM sent
-  // only to this process no longer reaches the child — so if the TUI/CLI host
-  // is killed mid-execShell, the child keeps running. Re-bridge that gap: while
-  // a detached child is live, forward the host's SIGHUP/SIGTERM/SIGINT to its
-  // process group, and detach the handlers once the child settles (exits,
-  // errors, or is killed). SIGHUP is the main target (terminal close, no
-  // competing host handler); SIGINT may also fire alongside a TUI/readline
-  // SIGINT handler on Ctrl-C — that is benign, the ESRCH guard handles a
-  // double-kill of an already-dead child.
-  const cleanupChildOnHostSignal = (signal: NodeJS.Signals) => {
-    if (typeof proc.pid === "number") {
-      try { process.kill(-proc.pid, signal); } catch { /* already exited */ }
-    }
-  };
-  if (detached) {
-    process.once("SIGHUP", cleanupChildOnHostSignal);
-    process.once("SIGTERM", cleanupChildOnHostSignal);
-    process.once("SIGINT", cleanupChildOnHostSignal);
-  }
-  const detachSignalCleanup = () => {
-    if (!detached) return;
-    process.removeListener("SIGHUP", cleanupChildOnHostSignal);
-    process.removeListener("SIGTERM", cleanupChildOnHostSignal);
-    process.removeListener("SIGINT", cleanupChildOnHostSignal);
-  };
-  exitPromise.then(detachSignalCleanup, detachSignalCleanup);
-  const stdoutPromise = readNodeStream(proc.stdout);
-  const stderrPromise = readNodeStream(proc.stderr);
-  // Shared kill helper: SIGTERM/SIGKILL the whole child process group when
-  // detached (covers timeout AND abort paths). Replaces the inline closure
-  // that used to live only inside the `if (timedOut)` block.
-  const killChild = (signal: NodeJS.Signals) => {
-    if (detached && typeof proc.pid === "number") {
-      try {
-        process.kill(-proc.pid, signal);
-        return;
-      } catch {
-        // Fall through to killing the immediate child.
-      }
-    }
-    try {
-      proc.kill(signal);
-    } catch {
-      // The command may have exited after the race winner was decided.
-    }
-  };
-
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  let detachTimer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutResult = Symbol("timeout");
-  const abortResult = Symbol("abort");
-  const detachResult = Symbol("detach");
-
-  // abort path: resolve as soon as the caller's AbortSignal fires. Reuses
-  // the same kill path as timeout (SIGTERM → 500ms → SIGKILL) so the child
-  // tree is reliably torn down on Esc.
-  let abortListener: (() => void) | undefined;
-  const abortPromise = args.abortSignal
-    ? new Promise<typeof abortResult>((resolveAbort) => {
-        if (args.abortSignal!.aborted) {
-          resolveAbort(abortResult);
-          return;
-        }
-        abortListener = () => resolveAbort(abortResult);
-        args.abortSignal!.addEventListener("abort", abortListener, { once: true });
-      })
-    : null;
-
-  // detach path: if the command runs longer than detachMs it is promoted to
-  // a background process (registered in processRegistry) and the turn
-  // continues instead of hanging forever. Default 120s, env-overridable.
-  // execShell passes detachMs=0 for commands that obviously never exit
-  // (isImmediateDetachShellCommand) so they never block the conversation.
-  const effectiveDetachMs = resolveDetachMs(args.detachMs);
-  // Note: 0 is a valid value meaning "detach immediately" — never use a
-  // truthiness check here.
-  const detachPromise = new Promise<typeof detachResult>((r) => {
-    detachTimer = setTimeout(() => r(detachResult), effectiveDetachMs);
-  });
-
-  const racers: Promise<unknown>[] = [exitPromise];
-  if (timeoutMs) {
-    racers.push(
-      new Promise<typeof timeoutResult>((resolveTimeout) => {
-        timeout = setTimeout(() => resolveTimeout(timeoutResult), timeoutMs);
-      }),
-    );
-  }
-  if (abortPromise) racers.push(abortPromise);
-  racers.push(detachPromise);
-
-  let raceWinner: unknown;
-  try {
-    raceWinner = await Promise.race(racers);
-  } catch (error) {
-    if (timeout) clearTimeout(timeout);
-    if (detachTimer) clearTimeout(detachTimer);
-    if (abortListener && args.abortSignal) {
-      args.abortSignal.removeEventListener("abort", abortListener);
-    }
-    detachSignalCleanup();
-    // Only spawn failures (ENOENT / missing binary) become exitCode 127.
-    // Any other race/stream rejection must surface — this helper is shared by execShell.
-    if (isSpawnFailureError(error)) {
-      return spawnFailedCommandResult(error, args.outputLimit);
-    }
-    throw error;
-  }
-  if (timeout) clearTimeout(timeout);
-  if (detachTimer) clearTimeout(detachTimer);
-  if (abortListener && args.abortSignal) {
-    args.abortSignal.removeEventListener("abort", abortListener);
-  }
-
-  const timedOut = raceWinner === timeoutResult;
-  const aborted = raceWinner === abortResult;
-  const didDetach = raceWinner === detachResult;
-
-  if (timedOut || aborted) {
-    killChild("SIGTERM");
-    await Promise.race([
-      exitPromise.catch(() => 124),
-      new Promise((resolveKill) => setTimeout(resolveKill, 500)),
-    ]);
-    killChild("SIGKILL");
-  }
-
-  if (didDetach) {
-    // Promote the still-running child to a background process: register it so
-    // listProcesses / processRegistry can inspect it, and stop reading
-    // stdout/stderr — those streams staying open is harmless once the child
-    // is no longer our responsibility. Host-signal forwarding stays active
-    // (same lifecycle as launchProcess): a backgrounded command belongs to
-    // this host session and is cleaned up on SIGHUP/SIGTERM/SIGINT (terminal
-    // close) instead of orphaning; the forwarder is removed once the child
-    // settles.
-    // With detachMs=0 (smart detach) the detach timer can win the race before
-    // a spawn error surfaces; swallow that late rejection so it cannot become
-    // an unhandledRejection after we already returned.
-    exitPromise.catch(() => {});
-    const pid = typeof proc.pid === "number" ? proc.pid : 0;
-    const label = deriveLabel(args.command.join(" "));
-    const pgid = pid;
-    const registry = getProcessRegistry();
-    registry.add({ pid, pgid, command: args.command.join(" "), label });
-    proc.on("close", (code) => {
-      detachSignalCleanup();
-      registry.markExited(pid, code ?? 1);
-    });
-    const immediate = effectiveDetachMs === 0;
-    const reason = immediate
-      ? `command looks long-running; moved to background immediately (pid=${pid}, label=${label})`
-      : `command detached to background after ${effectiveDetachMs}ms (pid=${pid}, label=${label})`;
-    return {
-      stdout: "",
-      stderr: `${reason}\nUse listProcesses to inspect or stop it.`,
-      exitCode: 0,
-      timedOut: false,
-      detached: true,
-      pid,
-      label,
-      content: JSON.stringify({
-        detached: true,
-        pid,
-        label,
-        status: "running",
-        ...(immediate ? { reason: "long-running-command" } : {}),
-      }),
-    };
-  }
-
-  const [stdout, rawStderr] = await Promise.all([
-    stdoutPromise,
-    stderrPromise,
-  ]);
-  const exitCode = aborted ? 130 : timedOut ? 124 : Number(raceWinner);
-  const stderr = aborted
-    ? `${rawStderr.trim() ? `${rawStderr.trim()}\n` : ""}command aborted by signal\n`
-    : timedOut
-      ? `${rawStderr.trim() ? `${rawStderr.trim()}\n` : ""}command timed out after ${timeoutMs ?? "unknown"}ms\n`
-      : rawStderr;
-  return {
-    stdout,
-    stderr,
-    exitCode,
-    timedOut,
-    aborted,
-    content: truncateToolOutput([
-      stdout.trim() ? `stdout:\n${stdout.trim()}` : "",
-      stderr.trim() ? `stderr:\n${stderr.trim()}` : "",
-      `exitCode: ${exitCode}`,
-    ].filter(Boolean).join("\n\n"), args.outputLimit),
-  };
-}
 
 async function runWorkspaceCommandLimitedLines(args: {
   workspaceRoot: string;
@@ -2558,9 +2043,15 @@ async function execShellTool(args: {
   restrictToWorkspace?: boolean;
   abortSignal?: AbortSignal;
   detachMs?: number;
+  confirmed?: boolean;
+  enableDestructiveShellGuard?: boolean;
+  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  blockDestructiveWithoutConfirmation?: boolean;
+  onInvoke?: (capability: string, input: unknown) => void | Promise<void>;
 }): Promise<AgentRuntimeToolResult> {
-  const normalized = execShellCapability.normalizeInput(args.call.arguments);
-  return execShellCapability.invoke(
+  return invokeCapability(
+    "execShell",
+    args.call.arguments,
     {
       workspaceRoot: args.workspaceRoot,
       commandTimeoutMs: args.commandTimeoutMs,
@@ -2569,19 +2060,13 @@ async function execShellTool(args: {
       restrictToWorkspace: args.restrictToWorkspace,
       abortSignal: args.abortSignal,
       detachMs: args.detachMs,
+      confirmed: args.confirmed,
+      enableDestructiveShellGuard: args.enableDestructiveShellGuard,
+      confirmDestructiveAction: args.confirmDestructiveAction,
+      blockDestructiveWithoutConfirmation: args.blockDestructiveWithoutConfirmation,
+      onInvoke: args.onInvoke,
     },
-    normalized,
   );
-}
-
-function deriveLabel(command: string): string {
-  const trimmed = command.trim();
-  if (!trimmed) return "process";
-  const tokens = trimmed.split(/\s+/);
-  const lastToken = tokens[tokens.length - 1] ?? trimmed;
-  // If lastToken is something like "desktop:dev" or "dev", use it; remove path prefix if any
-  const labelCandidate = lastToken.split(/[/\\]/).pop() || lastToken;
-  return labelCandidate || trimmed;
 }
 
 async function launchProcessTool(args: {
@@ -2745,7 +2230,18 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       workspaceRoot: args.workspaceRoot,
       commandTimeoutMs: args.commandTimeoutMs,
     }),
-    execShell: (call: AgentRuntimeToolCallInput, opts?: { abortSignal?: AbortSignal; detachMs?: number }) => execShellTool({
+    execShell: (
+      call: AgentRuntimeToolCallInput,
+      opts?: {
+        abortSignal?: AbortSignal;
+        detachMs?: number;
+        confirmed?: boolean;
+        enableDestructiveShellGuard?: boolean;
+        confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+        blockDestructiveWithoutConfirmation?: boolean;
+        onInvoke?: (capability: string, input: unknown) => void | Promise<void>;
+      },
+    ) => execShellTool({
       call,
       workspaceRoot: args.workspaceRoot,
       commandTimeoutMs: args.commandTimeoutMs,
@@ -2754,6 +2250,11 @@ export function createLocalWorkspaceToolExecutors(args: LocalWorkspaceToolArgs) 
       restrictToWorkspace: args.restrictShellToWorkspace,
       abortSignal: opts?.abortSignal ?? args.abortSignal,
       detachMs: opts?.detachMs ?? args.detachMs,
+      confirmed: opts?.confirmed,
+      enableDestructiveShellGuard: opts?.enableDestructiveShellGuard,
+      confirmDestructiveAction: opts?.confirmDestructiveAction,
+      blockDestructiveWithoutConfirmation: opts?.blockDestructiveWithoutConfirmation,
+      onInvoke: opts?.onInvoke,
     }),
     launchProcess: (call: AgentRuntimeToolCallInput) => launchProcessTool({
       call,

@@ -58,6 +58,9 @@ export function applyTuiInputKey(
   if (seq === "\u000f" || (key.ctrl && key.name === "o")) {
     return { buffer, cursorPos: curPos, copyView: true };
   }
+  if (seq === "\u000c" || (key.ctrl && key.name === "l")) {
+    return { buffer, cursorPos: curPos, redraw: true };
+  }
   if (
     seq === "\x1b[13;2~" ||
     seq === "\x1b[27;2;13~" ||

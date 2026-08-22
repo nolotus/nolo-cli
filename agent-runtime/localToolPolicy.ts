@@ -4,9 +4,7 @@ import type {
 } from "./hostAdapter";
 import type { PermissionRequest } from "./actionGate";
 import { canonicalizeToolName } from "../ai/tools/toolNameAliases";
-import { parseToolArgumentsJson } from "./parseToolArguments";
-import { isDestructiveShellCommand, resolveShellCommandArg } from "./shellCommandPolicy";
-import { normalizeExecShellInput } from "./capabilities/execShellCapability";
+import { evaluateExecShellDestructiveGuard } from "./capabilities/capabilityPolicy";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -67,44 +65,6 @@ function normalizeLocalToolName(toolName: string) {
   return canonicalizeToolName(
     String(toolName ?? "").replace(/^functions\./, "").trim(),
   );
-}
-
-function parseShellCommandPayload(rawArguments: string | unknown) {
-  try {
-    const normalized = normalizeExecShellInput(rawArguments);
-    return {
-      command: normalized.command,
-      input: (normalized as Record<string, unknown>).input,
-    };
-  } catch {
-    return parseToolArgumentsJson(typeof rawArguments === "string" ? rawArguments : "") as {
-      command?: unknown;
-      cmd?: unknown;
-      input?: unknown;
-    };
-  }
-}
-
-/**
- * Reduce the parsed `command`/`cmd` payload into a single display string for
- * the confirm dialog. `execShell` calls arrive as either a string
- * (`{"cmd":"rm -rf ./tmp"}`) or an argv array (`{"command":["rm","-rf","./tmp"]}`);
- * both flatten to the shell line the user is about to approve.
- */
-function toDisplayCommand(command: unknown): string | undefined {
-  if (typeof command === "string") {
-    const trimmed = command.trim();
-    return trimmed ? trimmed : undefined;
-  }
-  if (Array.isArray(command)) {
-    const joined = command
-      .map((item) => (typeof item === "string" ? item : String(item)))
-      .filter((item) => item.length > 0)
-      .join(" ")
-      .trim();
-    return joined ? joined : undefined;
-  }
-  return undefined;
 }
 
 function isRestrictedLocalToolMode(env: EnvLike) {
@@ -179,27 +139,17 @@ export function resolveLocalToolPolicy(args: {
   };
 }
 
-/**
- * 会收到 per-turn abortSignal 的本地工具。
- *
- * 判据是「能长时间阻塞、且自己有办法收手」：execShell 会真被 SIGTERM 掉，
- * controlAgentRun 的 wait 会轮询几十秒到几分钟。其余工具保持单参契约。
- */
-const ABORT_AWARE_LOCAL_TOOLS = new Set(["execShell", "controlAgentRun"]);
-
 export async function executeLocalToolWithPolicy(args: {
   env: EnvLike;
   agentToolNames?: string[];
   call: AgentRuntimeToolCallInput;
-  executors?: Record<string, (call: AgentRuntimeToolCallInput) => Promise<AgentRuntimeToolResult>>;
+  executors?: Record<string, (call: AgentRuntimeToolCallInput, opts?: Record<string, unknown>) => Promise<AgentRuntimeToolResult>>;
   confirmed?: boolean;
   /**
    * Optional per-turn AbortSignal propagated from the TUI's activeTurnAbort.
-   * When present and the tool is execShell, the signal is injected into the
-   * execShell executor call so Esc aborts a stuck child process tree.
+   * Injected into the tool executor call so Esc aborts stuck child process trees.
    */
   abortSignal?: AbortSignal;
-  // 见下方 ABORT_AWARE_LOCAL_TOOLS。
   /**
    * Optional override for the execShell auto-detach threshold (ms). When a
    * command runs longer than this it is promoted to a background process.
@@ -247,85 +197,39 @@ export async function executeLocalToolWithPolicy(args: {
   if (!executor) {
     throw new Error(`${decision.toolName} is allowed by policy but no local executor is registered.`);
   }
-  // When a per-turn abortSignal is present, inject it into the executors that
-  // can actually act on it, via their optional second arg. Other executors
-  // keep their single-arg contract and ignore the extra opts.
-  //
-  // controlAgentRun 也在名单里：它的 wait 会轮询几十秒到几分钟，turn 被强停
-  // 时若拿不到 signal，raceWithAbort 只会孤儿化这个 promise——轮询继续空转，
-  // 它持有的 run 租约也迟迟不释放。能长时间阻塞的工具都该听得见 abort。
-  const effectiveExecutor =
-    args.abortSignal && ABORT_AWARE_LOCAL_TOOLS.has(decision.toolName) && args.executors
-      ? (call: AgentRuntimeToolCallInput) =>
-          (executor as unknown as (
-            call: AgentRuntimeToolCallInput,
-            opts?: { abortSignal?: AbortSignal; detachMs?: number },
-          ) => Promise<AgentRuntimeToolResult>)(call, {
-            abortSignal: args.abortSignal,
-            detachMs: args.detachMs,
-          })
-      : executor;
-  const guardEnabled = args.enableDestructiveShellGuard !== false;
-  if (decision.toolName === "execShell" && !args.confirmed && guardEnabled) {
-    const parsed = parseShellCommandPayload(args.call.arguments);
-    // 命令文本按全部别名取：只读 command/cmd 会让 `bash` / `runCommand` /
-    // `execute_command` 等形态从闸门下面绕过去。别名清单与实际执行命令的代码
-    // 共用一份（shellCommandPolicy.SHELL_COMMAND_ARG_ALIASES）。
-    const rawCommand = resolveShellCommandArg(parsed as Record<string, unknown>);
-    if (isDestructiveShellCommand({ command: rawCommand, input: parsed.input })) {
-      const command = toDisplayCommand(rawCommand);
-      const request: PermissionRequest = {
-        id: "permission-shell-destructive-action",
-        tool: "execShell",
-        action: "destructive_shell_command",
-        title: "确认执行破坏性 shell 命令",
-        body: "该命令可能删除或重置用户内容，需要用户明确确认后才能执行。",
-        ...(command ? { command } : {}),
-        suggestedRule: {
-          scope: "once",
-          pattern: { capability: "destructive_action", target: "shell_command" },
-        },
-      };
-      const buildBlockedError = (reason: string) => {
-        const error = new Error(reason) as Error & {
-          code?: string;
-          policy?: Record<string, unknown>;
-          permissionRequest?: Record<string, unknown>;
-        };
-        error.code = "destructive_action_requires_confirmation";
-        error.policy = {
-          capability: "destructive_action",
-          target: "shell_command",
-          detail: "execShell destructive command",
-        };
-        error.permissionRequest = request;
-        return error;
-      };
-      // 「没有确认回调」这个信号本身是歧义的：既可能是"无头 CLI，用户自己起的
-      // 任务，拦了只会让模型反复重试 rm 空转"，也可能是"用户面前的应用没把确认
-      // 通道接上"。以前隐式取前者，于是 desktop 侧 rm -rf 直接执行。
-      // 现在要求调用方显式声明，默认保持无头路径的既有行为。
-      if (!args.confirmDestructiveAction) {
-        if (args.blockDestructiveWithoutConfirmation) {
-          throw buildBlockedError(
-            "destructive shell command blocked: no confirmation channel available",
-          );
-        }
-        return effectiveExecutor({
-          ...args.call,
-          name: decision.toolName,
-        });
-      }
-      const confirmed = await args.confirmDestructiveAction(request);
-      if (!confirmed) {
-        throw buildBlockedError(
-          "destructive shell command blocked: user declined confirmation",
-        );
+  const opts: Record<string, unknown> = {
+    ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+    ...(args.detachMs !== undefined ? { detachMs: args.detachMs } : {}),
+    ...(args.confirmed !== undefined ? { confirmed: args.confirmed } : {}),
+    ...(args.enableDestructiveShellGuard !== undefined
+      ? { enableDestructiveShellGuard: args.enableDestructiveShellGuard }
+      : {}),
+    ...(args.confirmDestructiveAction
+      ? { confirmDestructiveAction: args.confirmDestructiveAction }
+      : {}),
+    ...(args.blockDestructiveWithoutConfirmation !== undefined
+      ? { blockDestructiveWithoutConfirmation: args.blockDestructiveWithoutConfirmation }
+      : {}),
+  };
+
+  if (decision.toolName === "execShell") {
+    let parsedInput: unknown = args.call.arguments;
+    if (typeof parsedInput === "string") {
+      try {
+        parsedInput = JSON.parse(parsedInput);
+      } catch {
+        parsedInput = { command: parsedInput };
       }
     }
+    await evaluateExecShellDestructiveGuard(parsedInput, opts as any);
+    opts.confirmed = true;
   }
-  return effectiveExecutor({
-    ...args.call,
-    name: decision.toolName,
-  });
+
+  return executor(
+    {
+      ...args.call,
+      name: decision.toolName,
+    },
+    opts,
+  );
 }

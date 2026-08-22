@@ -6,8 +6,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveNoloStateDir } from "./noloStateDir";
 
 export type OAuthProvider =
   | "chatgpt"
@@ -41,11 +41,17 @@ export type OAuthRefreshFn = (
 ) => Promise<OAuthCredential>;
 export const DEFAULT_REFRESH_SKEW_MS = 5 * 60 * 1000;
 
-export function getCredentialsDir(homeDir = homedir()): string {
-  return join(homeDir, ".nolo", "credentials");
+/**
+ * Credentials live under the nolo home like every other piece of local state,
+ * so `NOLO_HOME` redirects them too. Without that, a test process could only
+ * reach the developer's real tokens — which meant tests had to overwrite and
+ * restore them in place, one crash away from leaving a fake token behind.
+ */
+export function getCredentialsDir(homeDir?: string): string {
+  return resolveNoloStateDir("credentials", homeDir);
 }
 
-export function getCredentialPath(provider: OAuthProvider, homeDir = homedir()): string {
+export function getCredentialPath(provider: OAuthProvider, homeDir?: string): string {
   return join(getCredentialsDir(homeDir), `${provider}.json`);
 }
 
@@ -71,7 +77,7 @@ function writePrivateFile(path: string, body: string): void {
 
 export function readOAuthCredential(
   provider: OAuthProvider,
-  homeDir = homedir()
+  homeDir?: string
 ): OAuthCredential | null {
   const path = getCredentialPath(provider, homeDir);
   if (!existsSync(path)) return null;
@@ -88,20 +94,20 @@ export function readOAuthCredential(
 export function writeOAuthCredential(
   provider: OAuthProvider,
   credential: OAuthCredential,
-  homeDir = homedir()
+  homeDir?: string
 ): void {
   const path = getCredentialPath(provider, homeDir);
   ensurePrivateDir(getCredentialsDir(homeDir));
   writePrivateFile(path, `${JSON.stringify(credential, null, 2)}\n`);
 }
 
-export function removeOAuthCredential(provider: OAuthProvider, homeDir = homedir()): void {
+export function removeOAuthCredential(provider: OAuthProvider, homeDir?: string): void {
   const path = getCredentialPath(provider, homeDir);
   if (!existsSync(path)) return;
   unlinkSync(path);
 }
 
-export function createOAuthTokenStore(homeDir = homedir()): OAuthTokenStore {
+export function createOAuthTokenStore(homeDir?: string): OAuthTokenStore {
   return {
     read(provider) {
       return readOAuthCredential(provider, homeDir);

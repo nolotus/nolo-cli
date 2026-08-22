@@ -4592,11 +4592,11 @@ describe("CLI local runtime adapter OAuth per-request wiring (real credential st
   // adapter 里的 `resolveApiKey: resolveRequestApiKey` 接线，底层单测全绿。本组测试从 adapter
   // 入口驱动，接线被破坏即红。
   //
-  // 可测性说明：adapter 硬构造 createOAuthApiKeyRefResolver()（不传 homeDir），而 Bun 的
-  // os.homedir() 缓存进程启动时的 HOME（运行时改 process.env.HOME 无效，已 probe 验证），
-  // 因此无法在不改产品代码的前提下把凭证存储重定向到临时目录。退而用真实 homeDir 凭证文件
-  // 驱动真实 resolver 链：beforeEach 备份原文件、写入伪造凭证，afterEach 逐字节恢复。测试
-  // 全程只接触伪造凭证（含 Test 2 的强刷也走 stub 的全局 fetch），不消耗用户真实 token。
+  // 可测性说明：adapter 硬构造 createOAuthApiKeyRefResolver()（不传 homeDir），所以本组
+  // 用真实 resolver 链驱动。凭证目录现在认 NOLO_HOME（见 oauthTokenStore.getCredentialsDir），
+  // 测试预载（scripts/test/isolateNoloHome.ts）已把它指向临时目录，因此下面的备份/恢复
+  // 只作用于隔离目录——早先没有这层隔离时，它备份并覆写的是开发者真实的 ~/.nolo/credentials，
+  // 测试一旦中途崩溃就会把伪造凭证留在真实登录的位置。
   // 用 xai：chatgpt/claude/cursor/antigravity 在 adapter 里各有专用 provider 分支
   // （codex responses / anthropic messages / ConnectRPC / CCA），走不到本组要测的
   // direct-openai-compatible 接线。xai 是唯一无专用分支的 OAuth ref。
@@ -4876,7 +4876,7 @@ describe("CLI local runtime adapter Codex OAuth branch (codex-responses) result 
   // AgentRuntimeResult 必须带上 finish_reason / stream_complete / usage。
   //
   // 与上方 xai 组同样的可测性约束：adapter 硬构造 createOAuthApiKeyRefResolver()，
-  // os.homedir() 缓存导致无法重定向凭证目录，故退而用真实 homeDir 凭证文件——
+  // 凭证目录认 NOLO_HOME（测试预载已隔离），下面的备份/恢复只作用于隔离目录——
   // beforeEach 备份 chatgpt 凭证、写入伪造凭证，afterEach 逐字节恢复，全程不碰用户真实 token。
   const CODEX_REF = "chatgpt";
   const credentialPath = getCredentialPath(CODEX_REF);
@@ -4998,9 +4998,9 @@ describe("CLI local runtime adapter OAuth branches surface usage (TUI context ch
   // 上游都返回 OpenAI chat.completions 形状（claude 经 mapAnthropicMessageToOpenAi、
   // antigravity 经 accumulateGeminiChunks），adapter 必须原样透传 usage。
   //
-  // 与 codex 组同样的凭证约束：adapter 硬构造 createOAuthApiKeyRefResolver()，os.homedir()
-  // 缓存导致无法重定向凭证目录，故退而用真实 homeDir 凭证文件——beforeEach 备份、
-  // 写入伪造凭证，afterEach 逐字节恢复，全程不碰用户真实 token。
+  // 与 codex 组同样的凭证约束：adapter 硬构造 createOAuthApiKeyRefResolver()。凭证目录认
+  // NOLO_HOME（测试预载已隔离），beforeEach 备份、写入伪造凭证、afterEach 恢复都只发生在
+  // 隔离目录里，碰不到用户真实凭证。
   const PROVIDERS = ["claude", "antigravity"] as const;
   const originals: Array<{ path: string; raw: string | null; existed: boolean }> = [];
 

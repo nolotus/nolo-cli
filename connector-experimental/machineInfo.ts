@@ -9,7 +9,12 @@ import type { MachineHeartbeat } from "./protocol";
 const CONNECTOR_VERSION = "0.1.0-experimental";
 
 function defaultMachineIdPath() {
-  return join(homedir(), ".nolo", "machine-id");
+  // NOLO_HOME-aware like every other nolo path, so a test process cannot mint
+  // (or inherit) the developer's real machine identity.
+  const noloHome = process.env.NOLO_HOME?.trim();
+  return noloHome
+    ? join(noloHome, "machine-id")
+    : join(homedir(), ".nolo", "machine-id");
 }
 
 export function resolveMachineId(path = defaultMachineIdPath()) {

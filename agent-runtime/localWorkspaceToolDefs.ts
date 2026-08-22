@@ -10,10 +10,19 @@ import { resolveExecutableOnPath } from "./runtimeCompat";
 import type { AgentRuntimeToolResult } from "./hostAdapter";
 import { IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS } from "./shellCommandPolicy";
 import { buildExecShellToolDefinition } from "./capabilities/execShellCapability";
+import {
+  tokenizeShellPrefix,
+  wrapPowerShellCommand,
+  findPowerShellExecutable,
+  buildPowerShellCommand,
+  buildBashCommand,
+  buildWorkspaceShellCommand,
+  findWorkspaceShellEscapeToken,
+  buildWorkspaceShellEscapeBlockedResult,
+} from "./workspaceShell";
+import type { OpenAiCompatibleTool } from "./capabilities";
 
-export type OpenAiCompatibleTool = Record<string, unknown> & {
-  function?: Record<string, unknown> & { name?: string };
-};
+export type { OpenAiCompatibleTool };
 
 export type GlobFilesDescriptionVariant = "brief" | "strategy" | "workflow" | "antiShell";
 export type GlobFilesParameterVariant = "minimal" | "scoped" | "rich";
@@ -37,17 +46,20 @@ const REMOVED_WORKSPACE_TOOL_NAMES = new Set([
   "gitStatus", "gitDiff", "gitCreateBranch", "gitAdd", "gitCommit", "commitWorkspace",
 ]);
 
-export { WORKSPACE_TOOL_NAMES, SHELL_TOOL_NAMES, WORKSPACE_TOOL_NAME_SET, REMOVED_WORKSPACE_TOOL_NAMES };
-
-export function tokenizeShellPrefix(command: string) {
-  const tokens: string[] = [];
-  const pattern = /"([^"]*)"|'([^']*)'|([^\s"'|;&<>]+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(command))) {
-    tokens.push(match[1] ?? match[2] ?? match[3] ?? "");
-  }
-  return tokens;
-}
+export {
+  WORKSPACE_TOOL_NAMES,
+  SHELL_TOOL_NAMES,
+  WORKSPACE_TOOL_NAME_SET,
+  REMOVED_WORKSPACE_TOOL_NAMES,
+  tokenizeShellPrefix,
+  wrapPowerShellCommand,
+  findPowerShellExecutable,
+  buildPowerShellCommand,
+  buildBashCommand,
+  buildWorkspaceShellCommand,
+  findWorkspaceShellEscapeToken,
+  buildWorkspaceShellEscapeBlockedResult,
+};
 
 function buildWorkspacePathProperty() {
   return {
@@ -505,100 +517,6 @@ function buildListProcessesTool(): OpenAiCompatibleTool {
         type: "object",
         properties: {},
       },
-    },
-  };
-}
-
-export function wrapPowerShellCommand(command: string) {
-  return [
-    "[Console]::InputEncoding=[System.Text.Encoding]::UTF8",
-    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8",
-    "$OutputEncoding=[System.Text.Encoding]::UTF8",
-    "$PSStyle.OutputRendering='PlainText'",
-    command,
-  ].join("; ");
-}
-
-export function findPowerShellExecutable() {
-  return resolveExecutableOnPath("pwsh") || resolveExecutableOnPath("powershell.exe") || resolveExecutableOnPath("powershell");
-}
-
-export function buildPowerShellCommand(command: string) {
-  const executable = findPowerShellExecutable();
-  if (!executable) throw new Error("PowerShell is not available on this machine.");
-  return [
-    executable,
-    "-NoLogo",
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    wrapPowerShellCommand(command),
-  ];
-}
-
-export function buildBashCommand(command: string) {
-  const executable = resolveExecutableOnPath("bash") || resolveExecutableOnPath("sh");
-  if (!executable) throw new Error("bash/sh is not available on this machine.");
-  return [executable, "-lc", command];
-}
-
-export function buildWorkspaceShellCommand(args: {
-  toolName: string;
-  command: string;
-  shell?: unknown;
-}) {
-  if (args.shell === "powershell") return buildPowerShellCommand(args.command);
-  if (args.shell === "bash") return buildBashCommand(args.command);
-  return process.platform === "win32"
-    ? buildPowerShellCommand(args.command)
-    : buildBashCommand(args.command);
-}
-
-export function findWorkspaceShellEscapeToken(command: string): string | null {
-  const tokens = tokenizeShellPrefix(command);
-  for (const token of tokens) {
-    if (
-      token === ".." ||
-      token.startsWith("../") ||
-      token.startsWith("..\\") ||
-      token.includes("/../") ||
-      token.includes("\\..\\")
-    ) {
-      return token;
-    }
-    if (token === "~" || token.startsWith("~/") || token.startsWith("~\\")) {
-      return token;
-    }
-    if (
-      token === "/" ||
-      token.startsWith("/") ||
-      /^[A-Za-z]:[\\/]/.test(token) ||
-      token.startsWith("\\\\")
-    ) {
-      return token;
-    }
-  }
-  return null;
-}
-
-export function buildWorkspaceShellEscapeBlockedResult(args: {
-  command: string;
-  token: string;
-}): AgentRuntimeToolResult {
-  return {
-    content: [
-      "workspace_shell_escape_blocked",
-      `blockedToken: ${args.token}`,
-      `command: ${args.command}`,
-      "Use paths relative to the authorized folder only.",
-      "exitCode: 126",
-    ].join("\n"),
-    metadata: {
-      exitCode: 126,
-      workspaceShellEscapeBlocked: true,
-      blockedToken: args.token,
     },
   };
 }

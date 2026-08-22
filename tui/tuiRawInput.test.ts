@@ -159,6 +159,99 @@ describe("createFixedInput 防重入卫兵（onInputLinesChange 反向触发）"
   });
 });
 
+describe("createFixedInput composer diffing & decoupled repaint", () => {
+  test("re-rendering identical buffer and cursor emits 0 bytes to output", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status: ready",
+    });
+
+    input.repaint("hello", 5);
+    expect(tty.chunks.length).toBeGreaterThan(0);
+    tty.chunks.length = 0;
+
+    // Second repaint with same buffer, cursor, and status
+    input.repaint("hello", 5);
+    expect(tty.chunks.length).toBe(0);
+  });
+
+  test("cursor movement on identical buffer only emits cursor positioning (CUP), not \\x1b[J wipe", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status: ready",
+    });
+
+    input.repaint("hello world", 11);
+    tty.chunks.length = 0;
+
+    // Move cursor left by 5 characters
+    input.repaint("hello world", 6);
+    expect(tty.chunks.length).toBe(1);
+    // Emits cursor positioning only
+    expect(tty.chunks[0]).toMatch(/^\x1b\[\d+;\d+H$/);
+    expect(tty.chunks[0]).not.toContain("\x1b[J");
+  });
+
+  test("status line changes trigger full composer repaint", () => {
+    let status = "status: ready";
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => status,
+    });
+
+    input.repaint("", 0);
+    tty.chunks.length = 0;
+
+    // Status changes during background agent run / billing update
+    status = "status: token 100";
+    input.repaint("", 0);
+    expect(tty.chunks.length).toBeGreaterThan(0);
+    const text = tty.stdout();
+    expect(text).toContain("\x1b[J");
+    expect(text).toContain("status: token 100");
+  });
+
+  test("resumeFromDialog invalidates cache and triggers full repaint on next repaint", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status: ready",
+    });
+
+    input.repaint("test", 4);
+    tty.chunks.length = 0;
+
+    // Modal opens and resumes
+    input.pause();
+    input.resumeFromDialog();
+    tty.chunks.length = 0;
+
+    // Next repaint must redraw fully to recover from modal drawing over screen
+    input.repaint("test", 4);
+    expect(tty.chunks.length).toBeGreaterThan(0);
+    expect(tty.stdout()).toContain("\x1b[J");
+  });
+
+  test("resumeFromSubprocess invalidates cache and triggers full repaint on next repaint", () => {
+    const tty = mockTty();
+    const input = createFixedInput(tty.output, {
+      getStatusLine: () => "status: ready",
+    });
+
+    input.repaint("test", 4);
+    tty.chunks.length = 0;
+
+    // Subprocess runs (action gate / pager / editor) and resumes
+    input.pause();
+    input.resumeFromSubprocess();
+    tty.chunks.length = 0;
+
+    // Next repaint must redraw fully
+    input.repaint("test", 4);
+    expect(tty.chunks.length).toBeGreaterThan(0);
+    expect(tty.stdout()).toContain("\x1b[J");
+  });
+});
+
 // --- alternate screen (DECSET 1049) -------------------------------------
 // The TUI must run on the alternate screen to isolate its scroll state from
 // the shell's scrollback. These tests pin the contract: enter on TTY, leave

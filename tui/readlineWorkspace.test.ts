@@ -26,6 +26,7 @@ import {
   padOrTruncateToWidth,
   parseScrollAction,
   renderHistory,
+  renderPinnedAgentNotice,
   splitRawInput,
   startTurn,
   startTuiWorkspace,
@@ -1676,6 +1677,7 @@ describe("scroll-aware history", () => {
 
     let turnCount = 0;
     const seenAgentKeys: string[] = [];
+    const savedSelections: Array<{ agentKey: string; agentName: string }> = [];
 
     const workspacePromise = startTuiWorkspace({
       scriptDir: "",
@@ -1684,6 +1686,12 @@ describe("scroll-aware history", () => {
       // classifyCliAutoRoute 现为同步纯二选一（无 LLM 调用、无网络请求）；
       // 路由出的 tier key 仍按对话缓存。
       env: {},
+      // Capture the persisted selection instead of writing the developer's
+      // real ~/.nolo/config.json (this switch used to pin their startup agent).
+      saveAgentSelection: (selection) => {
+        savedSelections.push(selection);
+        return null;
+      },
       agentRunner: async (opt) => {
         turnCount++;
         seenAgentKeys.push(opt.agentKey);
@@ -1721,6 +1729,10 @@ describe("scroll-aware history", () => {
     expect(seenAgentKeys[1]).toBe(switchedAgentKey);
     // And the switch was actually acknowledged to the user.
     expect(Buffer.concat(chunks).toString("utf8")).toContain("Switched to");
+    // An explicit switch is persisted, and only through the injected seam.
+    expect(savedSelections).toEqual([
+      { agentKey: switchedAgentKey, agentName: "应用构建助手" },
+    ]);
   });
 
   test("explicitly chosen agent skips auto-route completely on the first turn", async () => {
@@ -2587,6 +2599,48 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
     await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
   });
 
+  test("Ctrl+L (\\x0c) triggers full redraw of history and composer", async () => {
+    const { input, output, stdout } = makeTtyIo();
+    let turnCount = 0;
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      agentRunner: async (opt) => {
+        turnCount += 1;
+        opt.output.write(`reply ${turnCount}`);
+        return {
+          exitCode: 0,
+          dialogId: "d",
+        };
+      },
+    });
+
+    await new Promise((r) => setTimeout(r, 40));
+    input.write("hello\r");
+    while (turnCount < 1) await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 40));
+
+    const baselineOut = stdout();
+    expect(baselineOut).toContain("reply 1");
+
+    // Send Ctrl+L (\x0c)
+    input.write("\x0c");
+    await new Promise((r) => setTimeout(r, 50));
+    const outAfterRedraw = stdout();
+
+    // Must have repainted the full screen from row 1 and forced composer redraw
+    expect(outAfterRedraw).toContain("\x1b[1;1H");
+    expect(outAfterRedraw).toContain("reply 1");
+    expect(outAfterRedraw).toContain("\x1b[J");
+    expect(outAfterRedraw).toContain("🏔");
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+  });
+
   test("信号 handler 注册防重复：多次 TTY 启动后 listener 数不增长", async () => {
     // 覆盖测试要求 7。readlineWorkspace 可能在测试/重入里多次调用入口；
     // process 监听器必须只注册一次，否则 Node 报 MaxListenersExceededWarning。
@@ -3154,4 +3208,81 @@ describe("run completion wake (TUI 终态唤醒)", () => {
       restore();
     }
   }, 20000);
+});
+
+describe("pinned agent notice", () => {
+  const appBuilder = {
+    agentKey: "agent-pub-01APPBUILDER00000001YAII3I",
+    agentName: "应用构建助手",
+  } as Parameters<typeof renderPinnedAgentNotice>[0];
+
+  test("names the file a restored non-default agent came from", () => {
+    const notice = renderPinnedAgentNotice(appBuilder, {
+      NOLO_AGENT_SOURCE: "profile",
+    });
+    expect(stripAnsi(notice)).toContain("应用构建助手");
+    expect(stripAnsi(notice)).toContain("config.json");
+    expect(stripAnsi(notice)).toContain("/switch nolo");
+    // One line, so the banner's line accounting stays exact.
+    expect(notice.endsWith("\n")).toBe(true);
+    expect(notice.trimEnd().split("\n")).toHaveLength(1);
+  });
+
+  test("tells a missing audit log apart from one that simply aged out", () => {
+    const { mkdtempSync, rmSync, writeFileSync } =
+      require("node:fs") as typeof import("node:fs");
+    const { tmpdir } = require("node:os") as typeof import("node:os");
+    // The audit path is injected rather than resolved from the ambient home:
+    // this test writes fixture logs, and `bun test` shares one process across
+    // files — resolving the path here is how a fixture ends up in the
+    // developer's real ~/.nolo/agent-selection.log.
+    const dir = mkdtempSync(join(tmpdir(), "nolo-notice-audit-"));
+    const auditPath = join(dir, "agent-selection.log");
+    const notice = () =>
+      stripAnsi(
+        renderPinnedAgentNotice(
+          appBuilder,
+          { NOLO_AGENT_SOURCE: "profile" },
+          auditPath,
+        ),
+      );
+    const writeAudit = (agentKey: string, agentName: string) =>
+      writeFileSync(
+        auditPath,
+        `${JSON.stringify({ next: { agentKey, agentName } })}\n`,
+        "utf8",
+      );
+    try {
+      // No log at all → the write predates the audit trail (an older build).
+      expect(notice()).toContain(t("agentPinnedUnaudited"));
+
+      // A log whose newest entry is some other agent → the entry aged out or a
+      // parallel session wrote it. Blaming an "older build" here would send the
+      // reader hunting for a stale binary that isn't there.
+      writeAudit("agent-pub-other", "other");
+      expect(notice()).toContain(t("agentPinnedAuditRotated"));
+      expect(notice()).not.toContain(t("agentPinnedUnaudited"));
+
+      // The matching entry explains itself; no suffix needed.
+      writeAudit(appBuilder.agentKey, appBuilder.agentName);
+      expect(notice()).not.toContain(t("agentPinnedAuditRotated"));
+      expect(notice()).not.toContain(t("agentPinnedUnaudited"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("stays silent on the default agent and on an explicit shell agent", () => {
+    expect(
+      renderPinnedAgentNotice(
+        {
+          agentKey: "agent-pub-01NOLOAPPBLD000000019KCKT0",
+          agentName: "nolo",
+        } as Parameters<typeof renderPinnedAgentNotice>[0],
+        { NOLO_AGENT_SOURCE: "profile" },
+      ),
+    ).toBe("");
+    expect(renderPinnedAgentNotice(appBuilder, { NOLO_AGENT_SOURCE: "env" })).toBe("");
+    expect(renderPinnedAgentNotice(appBuilder, {})).toBe("");
+  });
 });

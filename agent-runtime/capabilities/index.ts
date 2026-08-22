@@ -1,10 +1,10 @@
 export type {
   CapabilityExecutionContext,
   ExecutableCapability,
+  OpenAiCompatibleTool,
 } from "./capability";
 
 export {
-  execShellCapability,
   buildExecShellToolDefinition,
   normalizeExecShellInput,
 } from "./execShellCapability";

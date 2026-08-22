@@ -14,6 +14,7 @@ import {
   appendToCurrentTurn,
   appendLocalTurn,
   getRenderCacheMissCount,
+  resetHistoryFrameDiffCache,
   type Turn,
 } from "./tuiHistory";
 import {
@@ -1388,6 +1389,126 @@ describe("buildTurnOffsets & incremental streaming verification", () => {
       expect(joined).toContain("line2");
       expect(joined).toContain("line3");
       expect(joined).not.toContain("\r");
+    });
+  });
+
+  describe("renderHistory — double buffering & line-level frame diffing", () => {
+    beforeEach(() => setActiveThemeName("catppuccin"));
+    afterEach(() => setActiveThemeName("catppuccin"));
+
+    const createMockTerminal = (rows = 24, columns = 80) => {
+      const writes: string[] = [];
+      const output = {
+        isTTY: true,
+        rows,
+        columns,
+        write(chunk: string) {
+          writes.push(chunk);
+          return true;
+        },
+      } as unknown as NodeJS.WritableStream;
+      return {
+        output,
+        getWrites: () => writes,
+        getLastWrite: () => writes[writes.length - 1] ?? "",
+        clearWrites: () => {
+          writes.length = 0;
+        },
+      };
+    };
+
+    test("first frame paints all visible lines on a fresh output stream", () => {
+      const mock = createMockTerminal(20, 60);
+      const history = createTurnHistory();
+      startTurn(history, "assistant");
+      appendToCurrentTurn(history, "Hello world\nSecond line");
+      finalizeCurrentTurn(history);
+
+      renderHistory(mock.output, history, 3);
+      expect(mock.getWrites()).toHaveLength(1);
+      const firstFrame = mock.getLastWrite();
+      // Contains cursor addressing for rows 1..17
+      expect(firstFrame).toContain("\x1b[1;1H");
+      expect(firstFrame).toContain("\x1b[17;1H");
+    });
+
+    test("re-rendering identical state outputs 0 bytes (skipped entirely)", () => {
+      const mock = createMockTerminal(20, 60);
+      const history = createTurnHistory();
+      startTurn(history, "assistant");
+      appendToCurrentTurn(history, "Hello world\nSecond line");
+      finalizeCurrentTurn(history);
+
+      renderHistory(mock.output, history, 3);
+      expect(mock.getWrites()).toHaveLength(1);
+      mock.clearWrites();
+
+      // Second render with identical state
+      renderHistory(mock.output, history, 3);
+      expect(mock.getWrites()).toHaveLength(0);
+    });
+
+    test("streaming append to current turn only writes the changed tail row", () => {
+      const mock = createMockTerminal(20, 60);
+      const history = createTurnHistory();
+      startTurn(history, "assistant");
+      appendToCurrentTurn(history, "Line 1\nLine 2\n");
+      renderHistory(mock.output, history, 3);
+      const fullFrameSize = mock.getLastWrite().length;
+      mock.clearWrites();
+
+      // Append token to the current turn on the same line
+      appendToCurrentTurn(history, "Streaming chunk 1");
+      renderHistory(mock.output, history, 3);
+
+      expect(mock.getWrites()).toHaveLength(1);
+      const diffFrame = mock.getLastWrite();
+      // Should not repaint row 1
+      expect(diffFrame).not.toContain("\x1b[1;1H");
+      // Contains the updated line and bottom cursor positioning
+      expect(diffFrame).toContain("Streaming chunk 1");
+      // Diff payload is dramatically smaller than the full screen rewrite (>80% reduction)
+      expect(diffFrame.length).toBeLessThan(fullFrameSize * 0.35);
+    });
+
+    test("resizing terminal rows/cols invalidates double buffer and repaints new dimensions", () => {
+      const mock = createMockTerminal(20, 60);
+      const history = createTurnHistory();
+      startTurn(history, "user");
+      appendToCurrentTurn(history, "Hello");
+      finalizeCurrentTurn(history);
+
+      renderHistory(mock.output, history, 3);
+      mock.clearWrites();
+
+      // Resize terminal from 20 rows to 30 rows
+      (mock.output as { rows: number }).rows = 30;
+      renderHistory(mock.output, history, 3);
+
+      expect(mock.getWrites()).toHaveLength(1);
+      const resizedFrame = mock.getLastWrite();
+      // Repaints all visible lines in new height (27 lines)
+      expect(resizedFrame).toContain("\x1b[27;1H");
+    });
+
+    test("resetHistoryFrameDiffCache forces full repaint on next render", () => {
+      const mock = createMockTerminal(20, 60);
+      const history = createTurnHistory();
+      startTurn(history, "assistant");
+      appendToCurrentTurn(history, "Static content");
+      finalizeCurrentTurn(history);
+
+      renderHistory(mock.output, history, 3);
+      mock.clearWrites();
+
+      // Invalidate diff cache (simulating modal close or screen clear)
+      resetHistoryFrameDiffCache(mock.output);
+      renderHistory(mock.output, history, 3);
+
+      expect(mock.getWrites()).toHaveLength(1);
+      const fullFrame = mock.getLastWrite();
+      expect(fullFrame).toContain("\x1b[1;1H");
+      expect(fullFrame).toContain("\x1b[17;1H");
     });
   });
 });

@@ -34,7 +34,12 @@ import type { PermissionRequest } from "../../agent-runtime/actionGate";
 import type { AgentRuntimeToolResult } from "../agentRuntimeLocal";
 import { compactDialog, type CompactDialogResult } from "../client/compactDialog";
 import { isBalanceExhaustedError, isQuotaExhaustedError } from "../agentRunCommand";
-import { saveProfileAgentSelection } from "../client/profileConfig";
+import {
+  getAgentSelectionAuditPath,
+  getDefaultProfileConfigPath,
+  readLastAgentSelectionAudit,
+  saveProfileAgentSelection,
+} from "../client/profileConfig";
 import { checkForCliUpdate, runSelfUpdate } from "../updateCommands";
 import { readPipeText, spawnProcess } from "../processSpawn";
 import { runConfirmDialog } from "./confirmDialog";
@@ -124,6 +129,7 @@ export {
   appendLocalTurn,
   applyOutputChunkToCurrentTurn,
   renderHistory,
+  resetHistoryFrameDiffCache,
   createHistoryOutputStream,
   applyScrollAction,
 } from "./tuiHistory";
@@ -150,6 +156,7 @@ import {
   createTurnHistory,
   finalizeCurrentTurn,
   renderHistory,
+  resetHistoryFrameDiffCache,
   startTurn,
   type TurnHistory,
   MAX_TUI_HISTORY_TURNS,
@@ -687,6 +694,35 @@ function waitForActionGate(
   });
 }
 
+/**
+ * One dim line naming the origin of a non-default startup agent, or "" when
+ * the session starts on the default (nothing to explain) or the agent came
+ * from an explicit `NOLO_AGENT` in the shell (the user just typed it).
+ */
+export function renderPinnedAgentNotice(
+  state: TuiState,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  auditPath = getAgentSelectionAuditPath(),
+): string {
+  if (state.agentKey === DEFAULT_TUI_AGENT_KEY) return "";
+  if (env.NOLO_AGENT_SOURCE !== "profile") return "";
+  const base = t(
+    "agentPinnedFromProfile",
+    state.agentName,
+    getDefaultProfileConfigPath(),
+  );
+  // Attribution is the whole point of this line, so keep the two "no record"
+  // cases apart: no log at all means a build without the audit trail wrote it,
+  // while a log with no matching entry only means the entry aged out.
+  const { logExists, last } = readLastAgentSelectionAudit(auditPath);
+  const suffix = !logExists
+    ? ` ${t("agentPinnedUnaudited")}`
+    : last?.agentKey !== state.agentKey
+      ? ` ${t("agentPinnedAuditRotated")}`
+      : "";
+  return `${dimCliText(`${base}${suffix}`, resolveCliColorEnabled())}\n`;
+}
+
 function persistAgentSelection(
   state: TuiState,
   env: NodeJS.ProcessEnv | undefined,
@@ -912,7 +948,20 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // 读取）执行两遍，导致首帧与行数计算不一致。
   const initialWelcome = renderWelcome(state, 0, 0, bannerColumns);
   output.write(initialWelcome);
-  const initialBannerLineCount = initialWelcome.split("\n").length;
+  let initialBannerLineCount = initialWelcome.split("\n").length;
+
+  // Starting on a non-default agent is always the result of a *saved* choice,
+  // and the file that holds it can be rewritten by any other session. Name the
+  // origin on the first frame so a pinned agent is never a silent surprise;
+  // the audit trail (~/.nolo/agent-selection.log) says who wrote it.
+  const pinnedAgentNotice = renderPinnedAgentNotice(
+    state,
+    options.env ?? process.env,
+  );
+  if (pinnedAgentNotice) {
+    output.write(pinnedAgentNotice);
+    initialBannerLineCount += pinnedAgentNotice.split("\n").length - 1;
+  }
 
   let lastSentTitle: string | null = null;
   const syncWindowTitle = () => {
@@ -1208,6 +1257,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       copyViewExitResolver = null;
       copyViewRender = null;
       output.write("\x1b[2J\x1b[H");
+      resetHistoryFrameDiffCache(output);
       fixedInput.resumeFromDialog();
       flushPendingRender();
       renderHistoryToOutput();
@@ -1859,6 +1909,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       }
       // The freshly switched buffer is blank — repaint or the user stares at
       // an empty screen until the next event.
+      resetHistoryFrameDiffCache(output);
       renderHistoryToOutput();
       fixedInput.repaint(buffer, cursorPos);
     }
@@ -2434,6 +2485,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           finalizeCurrentTurn(history);
           paintFrame(buffer);
         }
+        return;
+      }
+      if (result.redraw) {
+        resetHistoryFrameDiffCache(output);
+        renderHistoryToOutput();
+        if (fixedInput.active) fixedInput.repaint(buffer, cursorPos, true);
         return;
       }
       if (result.abort) {

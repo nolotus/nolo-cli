@@ -6,7 +6,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -21,7 +20,7 @@ export type StoredApiKeyCredential = {
   updatedAt: number;
 };
 
-export function getApiKeyCredentialsDir(homeDir = homedir()): string {
+export function getApiKeyCredentialsDir(homeDir?: string): string {
   return join(getCredentialsDir(homeDir), "keys");
 }
 
@@ -37,7 +36,7 @@ export function credentialRefToFileName(ref: CredentialRef): string {
   return `${safe}.json`;
 }
 
-export function getApiKeyCredentialPath(ref: CredentialRef, homeDir = homedir()): string {
+export function getApiKeyCredentialPath(ref: CredentialRef, homeDir?: string): string {
   return join(getApiKeyCredentialsDir(homeDir), credentialRefToFileName(ref));
 }
 
@@ -61,7 +60,7 @@ function writePrivateFile(path: string, body: string): void {
 
 export function readApiKeyCredential(
   ref: CredentialRef,
-  homeDir = homedir(),
+  homeDir?: string,
 ): string | null {
   const path = getApiKeyCredentialPath(ref, homeDir);
   if (!existsSync(path)) return null;
@@ -78,7 +77,7 @@ export function readApiKeyCredential(
 export function writeApiKeyCredential(
   ref: CredentialRef,
   secret: string,
-  homeDir = homedir(),
+  homeDir?: string,
   now = Date.now(),
 ): void {
   const trimmedSecret = secret.trim();
@@ -96,14 +95,14 @@ export function writeApiKeyCredential(
   writePrivateFile(path, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
-export function removeApiKeyCredential(ref: CredentialRef, homeDir = homedir()): void {
+export function removeApiKeyCredential(ref: CredentialRef, homeDir?: string): void {
   assertCredentialRef(ref);
   const path = getApiKeyCredentialPath(ref, homeDir);
   if (!existsSync(path)) return;
   unlinkSync(path);
 }
 
-export function hasApiKeyCredential(ref: CredentialRef, homeDir = homedir()): boolean {
+export function hasApiKeyCredential(ref: CredentialRef, homeDir?: string): boolean {
   return readApiKeyCredential(ref, homeDir) !== null;
 }
 
@@ -119,7 +118,7 @@ export type CreateFileCredentialBrokerOptions = {
 export function createFileCredentialBroker(
   options: CreateFileCredentialBrokerOptions = {},
 ): CredentialBroker {
-  const homeDir = options.homeDir ?? homedir();
+  const homeDir = options.homeDir;
   const now = options.now ?? Date.now;
   return {
     get(ref) {

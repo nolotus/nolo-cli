@@ -23,6 +23,7 @@ interface DeleteMemoryFilters {
   patternKeyPrefix?: string;
   sourceDialogId?: string;
   tags?: string[];
+  contentSubstring?: string;
   limit?: number;
 }
 
@@ -64,6 +65,14 @@ const matchesFilters = (item: MemoryItem, filters: DeleteMemoryFilters): boolean
     for (const tag of tagSet) {
       if (!itemTags.has(tag)) return false;
     }
+  }
+
+  const contentSub = asTrimmedString(filters.contentSubstring);
+  if (
+    contentSub &&
+    !(item.content ?? "").toLowerCase().includes(contentSub.toLowerCase())
+  ) {
+    return false;
   }
 
   return true;

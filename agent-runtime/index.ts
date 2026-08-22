@@ -359,11 +359,11 @@ export type {
 export type {
   CapabilityExecutionContext,
   ExecutableCapability,
+  OpenAiCompatibleTool,
   ExecShellInput,
   CapabilitySdk,
 } from "./capabilities";
 export {
-  execShellCapability,
   buildExecShellToolDefinition,
   normalizeExecShellInput,
   createCapabilitySdk,

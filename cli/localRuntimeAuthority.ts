@@ -284,7 +284,17 @@ export async function connectCliAuthorityBroker(args: {
 export async function getDefaultCliLocalRuntimeAuthority(
   options: ResolveCliLocalRuntimeAuthorityOptions = {}
 ) {
-  const env = options.env ?? process.env;
+  // NOLO_HOME says *where this machine keeps its local state*; it is not part
+  // of the per-call config a caller curates (auth, model, language). Callers
+  // that hand down a partial env — the TUI workspace passes its own env object,
+  // and tests routinely pass `{}` — must not silently relocate the database and
+  // broker to a different home than the rest of the CLI uses. An explicit
+  // NOLO_HOME in the caller's env still wins.
+  const ambientNoloHome = process.env.NOLO_HOME?.trim();
+  const env = {
+    ...(ambientNoloHome ? { NOLO_HOME: ambientNoloHome } : {}),
+    ...(options.env ?? process.env),
+  };
   const dbPath = resolveCliLocalRuntimeDbPath({
     env,
     homeDir: options.homeDir,

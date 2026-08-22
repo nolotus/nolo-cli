@@ -29,9 +29,12 @@ function readCliAuthorityDriver(
 }
 
 function resolveCliAuthorityRunDir(options: CliAuthorityStoreDriverOptions = {}) {
+  // Fall back to the ambient env, not `{}`: with an empty env this resolved to
+  // the developer's real ~/.nolo/run even inside a test process with an
+  // isolated NOLO_HOME, and clobbered the broker endpoint a live session uses.
   return path.join(resolveNoloHome({
     ...options,
-    env: options.env ?? {},
+    env: options.env ?? process.env,
   }), "run");
 }
 

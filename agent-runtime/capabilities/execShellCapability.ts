@@ -1,28 +1,26 @@
 import type { AgentRuntimeToolResult } from "../hostAdapter";
 import {
-  type OpenAiCompatibleTool,
-  buildWorkspaceShellCommand,
-  findWorkspaceShellEscapeToken,
-  buildWorkspaceShellEscapeBlockedResult,
-} from "../localWorkspaceToolDefs";
-import {
   IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS,
   isImmediateDetachShellCommand,
   resolveShellCommandArg,
 } from "../shellCommandPolicy";
 import {
+  buildWorkspaceShellCommand,
+  findWorkspaceShellEscapeToken,
+  buildWorkspaceShellEscapeBlockedResult,
   extractActivity,
   extractInteractiveGhAuthCommand,
   buildInteractiveCommandBlockedResult,
   resolveExecShellTimeoutMs,
   runWorkspaceCommand,
-} from "../localWorkspaceTools";
-import type { CapabilityExecutionContext, ExecutableCapability } from "./capability";
+} from "../workspaceShell";
+import type { CapabilityExecutionContext, ExecutableCapability, OpenAiCompatibleTool } from "./capability";
 
 export interface ExecShellInput {
   command: string;
   shell?: unknown;
   activity?: unknown;
+  input?: unknown;
   [key: string]: unknown;
 }
 
@@ -88,10 +86,10 @@ export function normalizeExecShellInput(input: unknown): ExecShellInput {
     }
     const activity = extractActivity(record);
     return {
-      ...record,
       command,
       ...(record.shell !== undefined ? { shell: record.shell } : {}),
       ...(activity ? { activity } : {}),
+      ...(record.input !== undefined ? { input: record.input } : {}),
     };
   }
 
@@ -111,15 +109,10 @@ export const execShellCapability: ExecutableCapability<ExecShellInput, AgentRunt
 
   async invoke(
     ctx: CapabilityExecutionContext,
-    input: ExecShellInput,
+    normalized: ExecShellInput,
   ): Promise<AgentRuntimeToolResult> {
-    const normalized =
-      input && typeof input === "object" && typeof input.command === "string" && input.command.trim()
-        ? input
-        : normalizeExecShellInput(input);
-
-    const command = normalized.command;
     const workspaceRoot = ctx.workspaceRoot || process.cwd();
+    const command = normalized.command;
 
     if (ctx.restrictToWorkspace) {
       const escapeToken = findWorkspaceShellEscapeToken(command);
@@ -152,6 +145,7 @@ export const execShellCapability: ExecutableCapability<ExecShellInput, AgentRunt
       commandPrefix: ctx.commandPrefix,
       abortSignal: ctx.abortSignal,
       detachMs: isImmediateDetachShellCommand({ command }) ? 0 : ctx.detachMs,
+      stdin: typeof normalized.input === "string" ? normalized.input : undefined,
     });
 
     return {

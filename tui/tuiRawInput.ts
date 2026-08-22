@@ -24,6 +24,7 @@ import { themeColorSequence, themeText } from "./theme";
 import { t } from "./i18n";
 import { completeSlashCommand } from "./sessionInput";
 import { PASTE_TOKEN_PREFIX } from "./session";
+import { resetHistoryFrameDiffCache } from "./tuiHistory";
 
 function normalizePasteNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -47,6 +48,16 @@ function normalizePasteNewlines(text: string): string {
  * entirely — entering/leaving an alternate screen there is a no-op.
  */
 const altScreenOn = new WeakMap<NodeJS.WritableStream, boolean>();
+const altScreenInvalidators = new WeakMap<object, Set<() => void>>();
+
+function notifyAltScreenInvalidators(output: object) {
+  const set = altScreenInvalidators.get(output);
+  if (set) {
+    for (const fn of set) {
+      fn();
+    }
+  }
+}
 
 function outputIsTty(output: NodeJS.WritableStream): boolean {
   return Boolean((output as { isTTY?: boolean }).isTTY);
@@ -60,6 +71,8 @@ export function enterAltScreen(output: NodeJS.WritableStream): boolean {
   if (!outputIsTty(output)) return false;
   if (altScreenOn.get(output)) return false;
   altScreenOn.set(output, true);
+  resetHistoryFrameDiffCache(output);
+  notifyAltScreenInvalidators(output);
   output.write("\x1b[?1049h");
   return true;
 }
@@ -73,6 +86,8 @@ export function leaveAltScreen(output: NodeJS.WritableStream): boolean {
   if (!outputIsTty(output)) return false;
   if (!altScreenOn.get(output)) return false;
   altScreenOn.set(output, false);
+  resetHistoryFrameDiffCache(output);
+  notifyAltScreenInvalidators(output);
   output.write("\x1b[?1049l");
   return true;
 }
@@ -107,7 +122,7 @@ export type FixedInputController = {
    */
   enterOutputMode(submittedText: string): void;
   exitOutputMode(buffer: string, cursorPos?: number): void;
-  repaint(buffer: string, cursorPos?: number): void;
+  repaint(buffer: string, cursorPos?: number, force?: boolean): void;
   pause(): void;
   resumeFromSubprocess(): void;
   resumeFromDialog(): void;
@@ -189,12 +204,19 @@ export function createFixedInput(
     output.write(seq);
   };
 
-  const setScrollRegion = (lines: number) => {
+  let lastScrollBottom = -1;
+  const setScrollRegion = (lines: number, force = false) => {
     const bottom = Math.max(1, getRows() - lines);
-    write(`\x1b[1;${bottom}r`);
+    if (force || lastScrollBottom !== bottom) {
+      write(`\x1b[1;${bottom}r`);
+      lastScrollBottom = bottom;
+    }
   };
   const saveCursor = () => write("\x1b7");
-  const resetScrollRegion = () => write("\x1b[r");
+  const resetScrollRegion = () => {
+    lastScrollBottom = -1;
+    write("\x1b[r");
+  };
 
   // Wheel reporting: SGR format (1006) + basic tracking (1000). Without these
   // the terminal never delivers wheel events, so the transcript could not be
@@ -206,6 +228,25 @@ export function createFixedInput(
     if (mouseEnabled) write("\x1b[?1006h\x1b[?1000h");
   };
   const disableMouse = () => write("\x1b[?1000l\x1b[?1006l");
+
+  let lastRenderedText: string | null = null;
+  let lastStartRow = -1;
+  let lastCursorRow = -1;
+  let lastCursorCol = -1;
+  const invalidateComposerCache = () => {
+    lastScrollBottom = -1;
+    lastRenderedText = null;
+    lastStartRow = -1;
+    lastCursorRow = -1;
+    lastCursorCol = -1;
+  };
+
+  let invalidatorSet = altScreenInvalidators.get(output);
+  if (!invalidatorSet) {
+    invalidatorSet = new Set();
+    altScreenInvalidators.set(output, invalidatorSet);
+  }
+  invalidatorSet.add(invalidateComposerCache);
 
   /**
    * OMP-style composer:
@@ -341,7 +382,7 @@ export function createFixedInput(
     return { text, lines, cursorCol, cursorRow: headerRows + cursorRow };
   };
 
-  const repaintAt = (buffer: string, cursorPos?: number) => {
+  const repaintAt = (buffer: string, cursorPos?: number, force = false) => {
     const { text, lines, cursorCol, cursorRow } = renderInputArea(buffer, cursorPos);
     let linesChanged = false;
     if (lines !== inputLines) {
@@ -357,14 +398,34 @@ export function createFixedInput(
       config.onInputLinesChange?.(inputLines);
     }
     const startRow = getRows() - inputLines + 1;
-    write(`\x1b[${startRow};1H`);
-    write("\x1b[J");
-    write(text);
     const cursorLine = startRow + cursorRow;
-    // CUP (H), not CHA (G): G takes only a column — extra params make Ghostty
-    // drop the whole sequence (cursor stays at the end of the bottom rule),
-    // and xterm-family would move to column=row on the wrong line.
-    write(`\x1b[${cursorLine};${cursorCol + 1}H`);
+    const targetCursorCol = cursorCol + 1;
+
+    const contentChanged =
+      force ||
+      linesChanged ||
+      lastRenderedText !== text ||
+      lastStartRow !== startRow;
+    const cursorChanged =
+      force ||
+      linesChanged ||
+      lastCursorRow !== cursorLine ||
+      lastCursorCol !== targetCursorCol;
+
+    if (contentChanged) {
+      write(`\x1b[${startRow};1H\x1b[J${text}`);
+      lastRenderedText = text;
+      lastStartRow = startRow;
+    }
+
+    if (cursorChanged || contentChanged) {
+      // CUP (H), not CHA (G): G takes only a column — extra params make Ghostty
+      // drop the whole sequence (cursor stays at the end of the bottom rule),
+      // and xterm-family would move to column=row on the wrong line.
+      write(`\x1b[${cursorLine};${targetCursorCol}H`);
+      lastCursorRow = cursorLine;
+      lastCursorCol = targetCursorCol;
+    }
   };
 
   if (!isTTY) return createNoopFixedInput();
@@ -372,6 +433,7 @@ export function createFixedInput(
   return {
     active: true,
     init() {
+      invalidateComposerCache();
       saveCursor();
       setScrollRegion(inputLines);
       enableMouse();
@@ -386,16 +448,19 @@ export function createFixedInput(
       saveCursor();
       repaintAt(buffer, cursorPos);
     },
-    repaint(buffer: string, cursorPos?: number) {
-      repaintAt(buffer, cursorPos);
+    repaint(buffer: string, cursorPos?: number, force?: boolean) {
+      repaintAt(buffer, cursorPos, force);
     },
     pause() {
       paused = true;
+      invalidateComposerCache();
       disableMouse();
       resetScrollRegion();
     },
     resumeFromSubprocess() {
       paused = false;
+      invalidateComposerCache();
+      resetHistoryFrameDiffCache(output);
       setScrollRegion(inputLines);
       enableMouse();
       const scrollBottom = Math.max(1, getRows() - inputLines);
@@ -403,11 +468,14 @@ export function createFixedInput(
     },
     resumeFromDialog() {
       paused = false;
+      invalidateComposerCache();
+      resetHistoryFrameDiffCache(output);
       saveCursor();
       setScrollRegion(inputLines);
       enableMouse();
     },
     disable() {
+      invalidatorSet?.delete(invalidateComposerCache);
       disableMouse();
       resetScrollRegion();
       // Leave the alternate screen last: mouse reporting and the scroll

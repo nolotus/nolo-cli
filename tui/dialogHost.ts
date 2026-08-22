@@ -13,6 +13,8 @@
  * that class of bug by forgetting one of the three.
  */
 
+import { resetHistoryFrameDiffCache } from "./tuiHistory";
+
 /** The slice of the composer controller a dialog needs to take over the screen. */
 export type DialogHostComposer = {
   pause(): void;
@@ -87,6 +89,7 @@ export function createDialogHost(args: {
       try {
         return await body(anchor);
       } finally {
+        resetHistoryFrameDiffCache(args.output);
         args.composer.resumeFromDialog();
       }
     },

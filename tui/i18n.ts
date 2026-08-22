@@ -609,6 +609,18 @@ const STRINGS = {
     zh: "✓ 已分叉对话 {0} → {1}，耗时 {2}（无需压缩）。",
   },
   agentCurrent: { en: "Current agent: {0} ({1})", zh: "当前 agent：{0}（{1}）" },
+  agentPinnedUnaudited: {
+    en: "No audit record for it — an older build wrote it; see agent-selection.log.",
+    zh: "这条记录没有审计记录，是旧版本写的；详见 agent-selection.log。",
+  },
+  agentPinnedAuditRotated: {
+    en: "The audit log has no entry for it — it aged out, or another session wrote it.",
+    zh: "审计日志里没有它的记录——可能已被轮转，或是别的会话写的。",
+  },
+  agentPinnedFromProfile: {
+    en: 'Agent "{0}" restored from {1} (saved selection). /switch nolo to go back to the default.',
+    zh: "agent“{0}”来自 {1} 里保存的选择。/switch nolo 可切回默认档。",
+  },
   agentUnknown: {
     en: "I don't know agent \"{0}\" yet.\nUse /switch, /switch list, /switch minimax-m3, or a full agent key.",
     zh: "还不认识 agent“{0}”。\n可以用 /switch、/switch list、/switch minimax-m3 或完整的 agent key 来切换。",

@@ -159,4 +159,5 @@ export type TuiInputKeyResult = {
   submit?: string;
   abort?: boolean;
   copyView?: boolean;
+  redraw?: boolean;
 };

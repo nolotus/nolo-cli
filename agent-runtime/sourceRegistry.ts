@@ -5,8 +5,8 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveNoloStateDir } from "./noloStateDir";
 import { asOptionalTrimmedString } from "../core/optionalString";
 import { asTrimmedString } from "../core/trimmedString";
 
@@ -49,11 +49,11 @@ const SOURCE_STATUSES = new Set<SourceStatus>([
   "error",
 ]);
 
-export function getSourceRegistryDir(homeDir = homedir()): string {
-  return join(homeDir, ".nolo", "sources");
+export function getSourceRegistryDir(homeDir?: string): string {
+  return resolveNoloStateDir("sources", homeDir);
 }
 
-export function getSourceRegistryPath(homeDir = homedir()): string {
+export function getSourceRegistryPath(homeDir?: string): string {
   return join(getSourceRegistryDir(homeDir), "registry.json");
 }
 
@@ -153,7 +153,9 @@ export type CreateFileSourceRegistryOptions = {
 export function createFileSourceRegistry(
   options: CreateFileSourceRegistryOptions = {},
 ): SourceRegistry {
-  const homeDir = options.homeDir ?? homedir();
+  // Leave homeDir undefined when the caller didn't pin one: resolveNoloStateDir
+  // then honours NOLO_HOME, which `?? homedir()` used to defeat.
+  const homeDir = options.homeDir;
   const now = options.now ?? Date.now;
   const path = getSourceRegistryPath(homeDir);
   const dir = getSourceRegistryDir(homeDir);

@@ -42,6 +42,12 @@ type FsLike = {
 function resolveNoloHome(env: EnvLike, homedir: () => string): string {
   const custom = env?.NOLO_HOME;
   if (custom && custom.trim()) return custom.trim();
+  // Callers hand down curated envs (a turn's auth/model config, `{}` in tests)
+  // that say nothing about where this machine keeps its state. Falling straight
+  // through to the home dir put the todo file in the developer's real ~/.nolo
+  // even when NOLO_HOME pointed everything else somewhere else.
+  const ambient = process.env.NOLO_HOME?.trim();
+  if (ambient) return ambient;
   return join(homedir(), ".nolo");
 }
 

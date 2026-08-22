@@ -188,6 +188,7 @@ import {
   filterDeclaredWorkspaceToolNames,
 } from "./localWorkspaceToolDefs";
 import { isImmediateDetachShellCommand } from "./shellCommandPolicy";
+import { execShellCapability } from "./capabilities/execShellCapability";
 
 function readTrimmedString(value: unknown): string | undefined {
   return asOptionalTrimmedString(value);
@@ -204,7 +205,7 @@ function readBoolean(parsed: Record<string, unknown>, key: string): boolean | un
   return undefined;
 }
 
-function resolveExecShellTimeoutMs(override: number | undefined) {
+export function resolveExecShellTimeoutMs(override: number | undefined) {
   const fromOverride = asOptionalPositiveFiniteNumber(override);
   if (fromOverride !== undefined) return fromOverride;
   const raw = process.env[EXEC_SHELL_TIMEOUT_ENV];
@@ -226,7 +227,7 @@ export function resolveDetachMs(override: number | undefined): number {
 }
 
 
-function extractInteractiveGhAuthCommand(command: string): string | null {
+export function extractInteractiveGhAuthCommand(command: string): string | null {
   const tokens = tokenizeShellPrefix(command);
   if (tokens[0] !== "gh" || tokens[1] !== "auth") return null;
   const subcommand = tokens[2];
@@ -261,7 +262,7 @@ function splitShellWords(command: string): string[] {
   return tokenizeShellPrefix(command);
 }
 
-function buildInteractiveCommandBlockedResult(command: string): AgentRuntimeToolResult {
+export function buildInteractiveCommandBlockedResult(command: string): AgentRuntimeToolResult {
   const argv = splitShellWords(command);
   return {
     content: [
@@ -372,7 +373,7 @@ function extractActivityPlan(rawPlan: unknown): ActivityPlan | undefined {
   };
 }
 
-function extractActivity(parsed: WorkspaceFileArgs): ToolActivity | undefined {
+export function extractActivity(parsed: WorkspaceFileArgs): ToolActivity | undefined {
   const raw = parsed._activity;
   if (!isRecord(raw)) return undefined;
   const nestedAction = extractActivityAction(raw.action);
@@ -1259,7 +1260,7 @@ export type WorkspaceExecLimitedLinesResult =
       label?: undefined;
     };
 
-async function runWorkspaceCommand(args: {
+export async function runWorkspaceCommand(args: {
   workspaceRoot: string;
   command: string[];
   stdin?: string;
@@ -2558,58 +2559,19 @@ async function execShellTool(args: {
   abortSignal?: AbortSignal;
   detachMs?: number;
 }): Promise<AgentRuntimeToolResult> {
-  const parsed = parseWorkspaceToolArguments(args.call.arguments);
-  const command = requireShellCommand(parsed, args.call.name);
-  if (args.restrictToWorkspace) {
-    // ponytail: lexical guard for desktop folder execShell; replace with OS sandbox if users need arbitrary shell syntax.
-    const escapeToken = findWorkspaceShellEscapeToken(command);
-    if (escapeToken) {
-      return buildWorkspaceShellEscapeBlockedResult({ command, token: escapeToken });
-    }
-  }
-  const interactiveAuthCommand = extractInteractiveGhAuthCommand(command);
-  if (interactiveAuthCommand) {
-    const activity = extractActivity(parsed);
-    const blocked = buildInteractiveCommandBlockedResult(interactiveAuthCommand);
-    return {
-      ...blocked,
-      metadata: {
-        ...blocked.metadata,
-        ...(activity ? { activity } : {}),
-      },
-    };
-  }
-  const result = await runWorkspaceCommand({
-    workspaceRoot: args.workspaceRoot,
-    command: buildWorkspaceShellCommand({
-      toolName: args.call.name,
-      command,
-      shell: parsed.shell,
-    }),
-    timeoutMs: resolveExecShellTimeoutMs(args.commandTimeoutMs),
-    outputLimit: args.commandOutputLimit,
-    commandPrefix: args.commandPrefix,
-    abortSignal: args.abortSignal,
-    // Commands that clearly never exit (long sleeps, tail -f, watch, dev
-    // servers, infinite loops) are promoted to background immediately so the
-    // turn — and the user's conversation — keeps going. Everything else keeps
-    // the caller/env detach grace window.
-    detachMs: isImmediateDetachShellCommand({ command }) ? 0 : args.detachMs,
-  });
-  const activity = extractActivity(parsed);
-  return {
-    content: result.content,
-    metadata: {
-      command,
-      exitCode: result.exitCode,
-      timedOut: result.timedOut,
-      ...(result.aborted ? { aborted: true } : {}),
-      ...(result.detached
-        ? { detached: true, pid: result.pid, label: result.label, status: "running" as const }
-        : {}),
-      ...(activity ? { activity } : {}),
+  const normalized = execShellCapability.normalizeInput(args.call.arguments);
+  return execShellCapability.invoke(
+    {
+      workspaceRoot: args.workspaceRoot,
+      commandTimeoutMs: args.commandTimeoutMs,
+      commandOutputLimit: args.commandOutputLimit,
+      commandPrefix: args.commandPrefix,
+      restrictToWorkspace: args.restrictToWorkspace,
+      abortSignal: args.abortSignal,
+      detachMs: args.detachMs,
     },
-  };
+    normalized,
+  );
 }
 
 function deriveLabel(command: string): string {

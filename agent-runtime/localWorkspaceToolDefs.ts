@@ -9,6 +9,7 @@
 import { resolveExecutableOnPath } from "./runtimeCompat";
 import type { AgentRuntimeToolResult } from "./hostAdapter";
 import { IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS } from "./shellCommandPolicy";
+import { buildExecShellToolDefinition } from "./capabilities/execShellCapability";
 
 export type OpenAiCompatibleTool = Record<string, unknown> & {
   function?: Record<string, unknown> & { name?: string };
@@ -460,27 +461,7 @@ function buildCaptureVisualStateTool(): OpenAiCompatibleTool {
 }
 
 function buildExecShellTool(toolName: string): OpenAiCompatibleTool {
-  return {
-    type: "function",
-    function: {
-      name: toolName,
-      description:
-        `Execute a shell command from the workspace root. Prefer one compound command (e.g. 'git status && git diff --stat') to perform complete verification in one step instead of multiple small roundtrips. Do not cd into guessed paths; commands already run from the workspace root. Commands block until exit. Long-running commands (sleep over ${IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS}s, dev servers, watchers) automatically detach to background returning {detached: true, pid, label}; for persistent services, prefer launchProcess.`,
-      parameters: {
-        type: "object",
-        properties: {
-          command: {
-            type: "string",
-            description: "Shell command to run (non-empty).",
-          },
-          cmd: {
-            type: "string",
-            description: "Compatibility alias for command.",
-          },
-        },
-      },
-    },
-  };
+  return buildExecShellToolDefinition(toolName);
 }
 
 function buildLaunchProcessTool(): OpenAiCompatibleTool {

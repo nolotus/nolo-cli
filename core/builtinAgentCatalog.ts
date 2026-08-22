@@ -117,6 +117,14 @@ export const BUILTIN_AGENT_CATALOG: BuiltinAgentCatalogEntry[] = [
     runtimeFallback: true,
   },
   {
+    id: "01GLM52DIPB00000000I3E2MY",
+    group: "public",
+    name: "GLM 5.3",
+    provider: "nolo",
+    model: "glm-5.3",
+    runtimeFallback: true,
+  },
+  {
     id: "01KIMIK26OLLAMA0000000001",
     // 已下架的公共入口：保留 internal catalog entry 仅用于旧 Agent 记录的运行时兼容。
     // 旧 nolo/kimi-k2.6 请求由 platformHosted 路由到 OpenRouter qwen/qwen3.8-27b。

@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.33.0-alpha.8",
+  "version": "0.33.0-alpha.9",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -499,6 +499,8 @@
     "agent-runtime/declaredToolNames.ts",
     "agent-runtime/runtimeCompat.ts",
     "agent-runtime/shellCommandPolicy.ts",
+    "agent-runtime/capabilities/execShellCapability.ts",
+    "agent-runtime/capabilities/capability.ts",
     "agent-runtime/responsesSseStream.ts",
     "agent-runtime/responsesToolCallAccumulator.ts",
     "agent-runtime/cursor/agent_pb.ts",
@@ -527,6 +529,8 @@
     "agent-runtime/dialogWritePlan.ts",
     "agent-runtime/hybridRecordStore.ts",
     "agent-runtime/cloudCredentialGrant.ts",
+    "agent-runtime/capabilities/index.ts",
+    "agent-runtime/capabilities/capabilitySdk.ts",
     "agent-runtime/kimiUserAgent.ts",
     "core/errorMessage.ts",
     "core/prefix.ts",
@@ -847,7 +851,6 @@
     "ai/token/resolveBillingTarget.ts",
     "ai/token/sseUsageExtract.ts",
     "ai/tools/toolSchemaCompatibility.ts",
-    "ai/agent/pageBuilderHandoffRules.ts",
     "database-engine/dbPath.ts",
     "database-engine/cliAuthorityBrokerClient.ts",
     "database-engine/cliAuthorityStoreDriver.ts",

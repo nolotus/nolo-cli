@@ -355,3 +355,19 @@ export type {
   AssertCloudGrantAllowedInput,
   CreateCloudCredentialGrantInput,
 } from "./cloudCredentialGrant";
+
+export type {
+  CapabilityExecutionContext,
+  ExecutableCapability,
+  ExecShellInput,
+  CapabilitySdk,
+} from "./capabilities";
+export {
+  execShellCapability,
+  buildExecShellToolDefinition,
+  normalizeExecShellInput,
+  createCapabilitySdk,
+  invokeCapability,
+  BUILTIN_CAPABILITIES,
+} from "./capabilities";
+

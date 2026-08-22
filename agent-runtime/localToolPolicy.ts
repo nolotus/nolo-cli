@@ -6,6 +6,7 @@ import type { PermissionRequest } from "./actionGate";
 import { canonicalizeToolName } from "../ai/tools/toolNameAliases";
 import { parseToolArgumentsJson } from "./parseToolArguments";
 import { isDestructiveShellCommand, resolveShellCommandArg } from "./shellCommandPolicy";
+import { normalizeExecShellInput } from "./capabilities/execShellCapability";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -68,12 +69,20 @@ function normalizeLocalToolName(toolName: string) {
   );
 }
 
-function parseShellCommandPayload(rawArguments: string) {
-  return parseToolArgumentsJson(rawArguments) as {
-    command?: unknown;
-    cmd?: unknown;
-    input?: unknown;
-  };
+function parseShellCommandPayload(rawArguments: string | unknown) {
+  try {
+    const normalized = normalizeExecShellInput(rawArguments);
+    return {
+      command: normalized.command,
+      input: (normalized as Record<string, unknown>).input,
+    };
+  } catch {
+    return parseToolArgumentsJson(typeof rawArguments === "string" ? rawArguments : "") as {
+      command?: unknown;
+      cmd?: unknown;
+      input?: unknown;
+    };
+  }
 }
 
 /**

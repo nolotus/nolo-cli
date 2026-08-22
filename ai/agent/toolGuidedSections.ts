@@ -4,11 +4,9 @@
  *
  * 独立成模块是因为 agent-runtime 的本地运行时（localLoop）必须复用同一张表，
  * 而 buildSystemPrompt 依赖 app/* 渲染层——"agent-runtime 永不 import renderer"
- * 是仓库层级规则。本模块只依赖 agent-runtime/menuUsage 与无依赖的
- * pageBuilderHandoffRules，可安全被两个包共用。
+ * 是仓库层级规则。本模块只依赖 agent-runtime/menuUsage，可安全被两个包共用。
  */
 import { MENU_USAGE_INSTRUCTIONS } from "../../agent-runtime/menuUsage";
-import { PAGE_BUILDER_HANDOFF_INSTRUCTIONS } from "./pageBuilderHandoffRules";
 
 // ============================================================================
 // 多 Agent 编排 - 后台 Run（有 startAgentRun / controlAgentRun 工具时注入）
@@ -101,19 +99,32 @@ const WEBPAGE_ACCESS_INSTRUCTIONS = `--- 网页访问能力 (Web Access) ---
 // ============================================================================
 
 const AGENT_ORCHESTRATION_INSTRUCTIONS = `--- Agent 编排与协作 ---
-你可以调度子 Agent 和工作流工具。何时派发、怎么拆分见「多 Agent 协作」段，怎么选人和盯梢见「多 Agent 编排（后台 Run）」段；本段只讲通道路由、工作流工具和不可逆操作。
+你可以调度子 Agent 和工作流工具。何时派发、怎么拆分见「多 Agent 协作」段，怎么选人和盯梢见「多 Agent 编排（后台 Run）」段；本段只讲通道路由、工作流工具、复杂任务发散/会商与不可逆操作。
 
 1）派发通道
 - 目标 Agent 记录若已声明 delegation.serverBase / runtimeServerBase，工具自动路由到对应 nolo server，不需要你重复填 serverBase。
 - 用户明确给出另一个可访问的 server origin（例如 Windows 机器的 Cloudflare 域名）时，可传 serverBase 覆盖自动路由。不要臆造地址，也不要把 localhost 当成远端机器。
 - 通道语义：startAgentRun 异步（wait:false）只表示 child run 已启动或排队，**不表示任务完成**；进入 done/failed 后系统用 terminal wake 继续父对话，你再读 child evidence 决定下一步。要短结果直接同步等（wait:true）。要让用户前台实时看到另一个 Agent 发言，用 runStreamingAgent。
-- 多 Agent 协作不限于代码任务：游戏设计、电影策划、写作、运营、研究等需要异步分工的场景同样适用。需要多视角分析或辩论时，可依次同步询问多个 Agent，再用你自己的话总结异同并给出综合结论。
+- 多 Agent 协作不限于代码任务：游戏设计、电影策划、写作、运营、研究等需要异步分工的场景同样适用。
 
-2）工作流 / Workflow 工具
+2）多 Agent 发散与会商（系统级决策机制）
+面对脑暴探索、多方案选型、复杂架构论证或跨领域决策时，按任务性质选择模式：
+- **专家发现与选人**：遇到专业垂直领域（代码、翻译、视觉、数据等），调用 listAgents({ publicOnly: true }) 检索并用 readAgent 获取配置，优先挑选契合的垂直专家或自建低成本 Agent。
+- **发散模式（Divergent Mode）**：
+  * 适用：创意探索、方案枚举、开放式多视角分析。
+  * 做法：并行派发各分支（runStreamingAgent 或 startAgentRun），让各分支直接回答原问题，保留开放性与不同模型特色。
+- **会商模式（Deliberation Mode）**：
+  * 适用：复杂决策、方案论证、风险评估、冲突协调。
+  * 做法：
+    1. 首轮独立作答：各分支输出初始判断、核心理由与最大风险；
+    2. 交叉复议：在次轮 prompt 中内嵌上一轮各参与者的要点摘要，要求各方明确回应分歧并修正立场；
+    3. 结论收敛：最终汇报统一按【1. 共识 2. 保留分歧 3. 下一步建议】输出，真实反映各方证据，不强行抹平合理分歧。
+
+3）工作流 / Workflow 工具
 - 多步骤、顺序依赖或批量工具调用的复杂任务，优先考虑 createWorkflow 这类工作流工具。
 - 你负责：清楚描述目标和约束；关注中间结果与最终结果；任务完成或用户要求时总结全过程，并指出可能的错误与风险。
 
-3）危险 / 不可逆操作
+4）危险 / 不可逆操作
 - 涉及不可逆操作（修改文件、删除数据、发送消息、生成正式文件、执行交易等）时，优先预览或向用户确认。
 - 工具返回"预览"或"待确认"状态时，暂停进一步自动修改，等用户明确确认后再继续。不要在用户未确认前连续发出多次破坏性修改。`;
 
@@ -199,7 +210,6 @@ const GENERIC_AGENT_UPDATE_INSTRUCTIONS = `--- Agent 维护能力 ---
 // 工具能力条件注入的 prompt section 表
 // 每项 { id, triggerTools, build } —— agent 命中 triggerTools 任一即注入。
 // 加新「按工具注入」的 section 只需在此表追加一行，无需改 buildSystemPromptContext。
-// agentOrchestration 的 PAGE_BUILDER_HANDOFF 附加块由 build 函数内部组合。
 // ============================================================================
 type ToolGuidedSection = {
     id: string;
@@ -218,9 +228,6 @@ const TOOL_GUIDED_SECTIONS: ToolGuidedSection[] = [
         build: (tools) =>
             [
                 AGENT_ORCHESTRATION_INSTRUCTIONS,
-                tools.includes("runStreamingAgent")
-                    ? PAGE_BUILDER_HANDOFF_INSTRUCTIONS
-                    : "",
                 tools.includes("startAgentRun") || tools.includes("controlAgentRun")
                     ? AGENT_ORCHESTRATION_RUN_INSTRUCTIONS
                     : "",

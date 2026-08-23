@@ -375,18 +375,18 @@ describe("createFixedInput", () => {
     });
 
     input.init();
-    expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1000h");
+    expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1002h");
 
     input.pause();
-    expect(tty.stdout()).toContain("\x1b[?1000l\x1b[?1006l");
+    expect(tty.stdout()).toContain("\x1b[?1002l\x1b[?1006l");
 
     input.resumeFromDialog();
-    expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1000h");
+    expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1002h");
 
     input.disable();
     const disabled = tty.stdout();
-    expect(disabled.lastIndexOf("\x1b[?1000l\x1b[?1006l")).toBeGreaterThan(
-      disabled.lastIndexOf("\x1b[?1006h\x1b[?1000h")
+    expect(disabled.lastIndexOf("\x1b[?1002l\x1b[?1006l")).toBeGreaterThan(
+      disabled.lastIndexOf("\x1b[?1006h\x1b[?1002h")
     );
   });
 

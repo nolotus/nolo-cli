@@ -166,6 +166,17 @@ import {
   type ScrollAction,
   WHEEL_SCROLL_LINES,
 } from "./tuiScrollbar";
+import {
+  parseSgrMouseEvent,
+  type TuiMouseEvent,
+} from "./tuiMouse";
+import {
+  areSelectionPointsEqual,
+  createSelectionState,
+  extractSelectedText,
+  hitTestHistory,
+  type TuiSelectionState,
+} from "./tuiSelection";
 export {
   type FixedInputController,
   createNoopFixedInput,
@@ -1195,6 +1206,23 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   // 防重入卫兵：onInputLinesChange → renderHistoryToOutput → 若 composer 重绘
   // 又触发 onInputLinesChange → 无限递归把 CPU 打满。重入时直接 return。
   let syncingLayout = false;
+  const selectionState = createSelectionState();
+  let autoScrollTimer: ReturnType<typeof setInterval> | null = null;
+  let lastDragMouseX = 1;
+
+  const stopAutoScroll = () => {
+    if (autoScrollTimer) {
+      clearInterval(autoScrollTimer);
+      autoScrollTimer = null;
+    }
+  };
+
+  const clearSelection = () => {
+    stopAutoScroll();
+    selectionState.dragging = false;
+    selectionState.anchor = null;
+    selectionState.head = null;
+  };
 
   const renderHistoryToOutput = () => {
     // A dialog (picker / confirm) owns the screen while paused. Repainting the
@@ -1205,7 +1233,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     if (syncingLayout) return;
     syncingLayout = true;
     try {
-      renderHistory(output, history, fixedInput.getInputLines());
+      renderHistory(
+        output,
+        history,
+        fixedInput.getInputLines(),
+        selectionState,
+      );
     } finally {
       syncingLayout = false;
     }
@@ -2174,6 +2207,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         syncWindowTitle();
         return baseFixedInput.repaint(draft, cursorPos);
       },
+      pause() {
+        clearSelection();
+        return baseFixedInput.pause();
+      },
     };
     fixedInput.init();
     const paintFrame = (draft: string) => {
@@ -2182,6 +2219,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     const onResize = () => {
       if (done) return;
+      clearSelection();
       if (copyViewExitResolver) {
         // copy view owns the screen; re-render its frame against the new
         // rows/cols so a terminal resize does not leave a garbled frame.
@@ -2213,6 +2251,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       if (done) return;
       done = true;
       sessionEnded = true; // signal in-flight async git refresh to drop its repaint
+      clearSelection();
       if (autoThemeTimer !== null) {
         clearInterval(autoThemeTimer);
         autoThemeTimer = null;
@@ -2312,6 +2351,55 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         );
       });
     };
+
+    let autoScrollDirection: "up" | "down" = "up";
+    const startAutoScroll = (direction: "up" | "down", mouseX: number) => {
+      autoScrollDirection = direction;
+      lastDragMouseX = mouseX;
+      if (autoScrollTimer) return;
+      autoScrollTimer = setInterval(() => {
+        if (!selectionState.dragging || !selectionState.anchor || fixedInput.isPaused()) {
+          stopAutoScroll();
+          return;
+        }
+        const tty = output as { rows?: number; columns?: number };
+        const rows = tty.rows ?? 24;
+        const columns = tty.columns ?? 80;
+        const visibleHeight = Math.max(1, rows - fixedInput.getInputLines());
+        const contentWidth = Math.max(1, columns - 1);
+
+        if (autoScrollDirection === "up") {
+          if (history.scrollTop > 0) {
+            history.scrollTop = Math.max(0, history.scrollTop - 1);
+            history.followBottom = false;
+          } else {
+            stopAutoScroll();
+          }
+        } else {
+          const { totalLines } = buildTurnOffsets(history, contentWidth);
+          const maxScroll = Math.max(0, totalLines - visibleHeight);
+          if (history.scrollTop < maxScroll) {
+            history.scrollTop = Math.min(maxScroll, history.scrollTop + 1);
+          } else {
+            stopAutoScroll();
+          }
+        }
+
+        const screenRow = autoScrollDirection === "up" ? 0 : visibleHeight - 1;
+        const hit = hitTestHistory(
+          history,
+          screenRow,
+          lastDragMouseX - 1,
+          contentWidth,
+          history.scrollTop,
+        );
+        if (hit) {
+          selectionState.head = hit;
+        }
+        paintFrame(buffer);
+      }, 60);
+    };
+
     const handleInputToken = async (sequence: string) => {
       if (done) return;
       if (copyViewExitResolver) {
@@ -2420,6 +2508,100 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         return handleInputToken("\r");
       }
       const busyLock = busy;
+
+      const mouseEvent = parseSgrMouseEvent(sequence);
+      if (mouseEvent) {
+        if (fixedInput.isPaused()) return;
+        if (mouseEvent.kind === "wheel") {
+          const scrollAction =
+            mouseEvent.wheelDirection === "down" ? "wheel-down" : "wheel-up";
+          applyScrollAction(history, scrollAction, output, fixedInput.getInputLines());
+          paintFrame(buffer);
+          return;
+        }
+
+        const tty = output as { rows?: number; columns?: number };
+        const rows = tty.rows ?? 24;
+        const columns = tty.columns ?? 80;
+        const visibleHeight = Math.max(1, rows - fixedInput.getInputLines());
+        const contentWidth = Math.max(1, columns - 1);
+        const screenRow = mouseEvent.y - 1;
+        const screenCol = mouseEvent.x - 1;
+
+        if (mouseEvent.kind === "press" && mouseEvent.button === "left") {
+          stopAutoScroll();
+          if (screenRow < visibleHeight && screenCol < contentWidth) {
+            const hit = hitTestHistory(
+              history,
+              screenRow,
+              screenCol,
+              contentWidth,
+              history.scrollTop,
+            );
+            selectionState.anchor = hit;
+            selectionState.head = hit;
+            selectionState.dragging = false;
+          } else {
+            clearSelection();
+          }
+          return;
+        }
+
+        if (mouseEvent.kind === "drag" && mouseEvent.button === "left") {
+          if (!selectionState.anchor) return;
+          selectionState.dragging = true;
+          lastDragMouseX = mouseEvent.x;
+          const clampedRow = Math.max(0, Math.min(visibleHeight - 1, screenRow));
+          const hit = hitTestHistory(
+            history,
+            clampedRow,
+            screenCol,
+            contentWidth,
+            history.scrollTop,
+          );
+          if (hit) {
+            selectionState.head = hit;
+          }
+
+          if (screenRow <= 1 && history.scrollTop > 0) {
+            startAutoScroll("up", mouseEvent.x);
+          } else if (screenRow >= visibleHeight - 2) {
+            startAutoScroll("down", mouseEvent.x);
+          } else {
+            stopAutoScroll();
+          }
+
+          paintFrame(buffer);
+          return;
+        }
+
+        if (mouseEvent.kind === "release") {
+          stopAutoScroll();
+          if (
+            selectionState.dragging &&
+            selectionState.anchor &&
+            selectionState.head &&
+            !areSelectionPointsEqual(selectionState.anchor, selectionState.head)
+          ) {
+            const textToCopy = extractSelectedText(
+              history,
+              selectionState.anchor,
+              selectionState.head,
+            );
+            if (textToCopy.length > 0) {
+              import("clipboardy")
+                .then(({ default: clipboard }) => clipboard.write(textToCopy))
+                .catch(() => {});
+            }
+          }
+          clearSelection();
+          paintFrame(buffer);
+          return;
+        }
+
+        return;
+      }
+
       const scrollAction = parseScrollAction(sequence);
       if (scrollAction) {
         // Scrolling only reads history state, so it stays available during an

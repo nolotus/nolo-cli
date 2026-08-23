@@ -18,7 +18,7 @@ import {
   shouldCollapsePaste,
 } from "../../core/collapsedPaste";
 import { displayWidth, fitAnsiLine, wrapTextToLines } from "./tuiAnsi";
-import { consumeSgrMouseSequence } from "./tuiScrollbar";
+import { consumeSgrMouseSequence } from "./tuiMouse";
 import { dimCliText, resolveCliColorEnabled } from "../client/terminalStyles";
 import { themeColorSequence, themeText } from "./theme";
 import { t } from "./i18n";
@@ -218,16 +218,14 @@ export function createFixedInput(
     write("\x1b[r");
   };
 
-  // Wheel reporting: SGR format (1006) + basic tracking (1000). Without these
-  // the terminal never delivers wheel events, so the transcript could not be
-  // scrolled by trackpad/mouse at all. Selection still works via the
-  // terminal's bypass modifier (e.g. Shift in Ghostty/iTerm2), and /mouse off
-  // flips mouseEnabled so drag-select works without a modifier.
+  // Wheel & drag reporting: SGR format (1006) + normal tracking / drag (1002).
+  // Without these the terminal never delivers wheel or drag events, so the
+  // transcript could not be scrolled or drag-selected by mouse.
   let mouseEnabled = true;
   const enableMouse = () => {
-    if (mouseEnabled) write("\x1b[?1006h\x1b[?1000h");
+    if (mouseEnabled) write("\x1b[?1006h\x1b[?1002h");
   };
-  const disableMouse = () => write("\x1b[?1000l\x1b[?1006l");
+  const disableMouse = () => write("\x1b[?1002l\x1b[?1006l");
 
   let lastRenderedText: string | null = null;
   let lastStartRow = -1;
@@ -490,9 +488,9 @@ export function createFixedInput(
     setMouseEnabled(enabled: boolean) {
       mouseEnabled = enabled;
       if (enabled) {
-        write("\x1b[?1006h\x1b[?1000h");
+        write("\x1b[?1006h\x1b[?1002h");
       } else {
-        write("\x1b[?1000l\x1b[?1006l");
+        write("\x1b[?1002l\x1b[?1006l");
       }
     },
     setAltScreenEnabled(enabled: boolean) {

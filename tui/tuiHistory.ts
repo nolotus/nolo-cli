@@ -30,6 +30,10 @@ import {
 } from "./theme";
 import { formatAssistantDisplay } from "../client/assistantOutput";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
+import {
+  applySelectionOverlay,
+  type TuiSelectionState,
+} from "./tuiSelection";
 
 export type TurnRole = "user" | "assistant" | "local";
 
@@ -692,7 +696,8 @@ export function buildHistoryLines(history: TurnHistory, contentWidth: number): s
 export function renderHistory(
   output: NodeJS.WritableStream,
   history: TurnHistory,
-  inputLines: number
+  inputLines: number,
+  selection?: TuiSelectionState,
 ) {
   const tty = output as { isTTY?: boolean; rows?: number; columns?: number };
   if (!tty.isTTY) return;
@@ -745,7 +750,7 @@ export function renderHistory(
 
   const winStart = history.scrollTop;
   const winEnd = Math.min(totalLines, winStart + visibleHeight);
-  const visibleLines: string[] = new Array(visibleHeight).fill("");
+  let visibleLines: string[] = new Array(visibleHeight).fill("");
 
   // Paint ONLY the turns overlapping the visible window. Off-screen turns are
   // never re-rendered — cache invalidation (theme/density/width) repaints at
@@ -806,6 +811,16 @@ export function renderHistory(
         visibleLines[r - winStart] = currentLines[r - currentStart] ?? "";
       }
     }
+  }
+
+  if (selection && selection.dragging) {
+    visibleLines = applySelectionOverlay(
+      visibleLines,
+      history,
+      contentWidth,
+      winStart,
+      selection,
+    );
   }
 
   // Double-buffering / Line diffing:

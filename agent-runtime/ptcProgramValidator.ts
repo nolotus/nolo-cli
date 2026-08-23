@@ -1,12 +1,15 @@
 /**
  * Model-generated PTC (Programmatic Tool Calling) Program Validator & Contract
  *
- * Provides static validation, schema parsing, and security boundary checks
+ * Provides regex static filtering, schema parsing, and security boundary checks
  * for LLM-generated JavaScript programs targeting the CapabilitySdk tools surface.
  *
+ * NOTE ON VALIDATION:
+ * This module performs regular expression static pattern checks, NOT full AST parsing.
+ *
  * STRICT SECURITY PRINCIPLE:
- * Static validation is an early UX/rejection filter only. It does NOT replace
- * execution isolation (such as QuickJS-WASM or isolated subprocesses).
+ * Regex static filtering is an early UX/rejection filter only. It does NOT replace
+ * execution isolation (such as WebAssembly-based JS runtimes or isolated subprocesses).
  * Host processes (runLocalAgentTurn, CLI, Desktop) MUST NEVER directly eval()
  * or new Function() model-generated code.
  */

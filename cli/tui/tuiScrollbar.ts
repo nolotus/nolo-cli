@@ -1,10 +1,17 @@
 /**
- * TUI 滚动条与滚动动作解析。
+ * TUI 滚动条与键盘/鼠标滚动动作解析。
  *
- * renderScrollbarRow 是纯渲染函数（无依赖）；parseScrollAction 解析终端
- * 按键/鼠标序列为语义动作。applyScrollAction 操作 TurnHistory，放在
- * tuiHistory 以避免循环依赖——本文件只保留纯解析与渲染。
+ * renderScrollbarRow 是纯渲染函数（无依赖）；parseScrollAction 将终端
+ * 按键/鼠标序列转换为语义化的 ScrollAction。
  */
+import {
+  consumeSgrMouseSequence,
+  parseSgrMouseEvent,
+  SGR_MOUSE_REGEX,
+} from "./tuiMouse";
+
+export { consumeSgrMouseSequence, SGR_MOUSE_REGEX };
+
 export type ScrollAction =
   | "page-up"
   | "page-down"
@@ -15,74 +22,17 @@ export type ScrollAction =
   | "wheel-up"
   | "wheel-down";
 
-/** SGR mouse report: ESC [ < button ; col ; row (M=press/wheel, m=release). */
-// eslint-disable-next-line no-control-regex
-export const SGR_MOUSE_REGEX = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
-
-/**
- * Whether an SGR mouse sequence is a wheel event (bit 6 set, 64=up / 65=down;
- * 66/67 are horizontal). Non-wheel clicks/drags return false. Callers use
- * this to decide whether to keep a mouse sequence (wheel → scroll) or drop
- * it (click → ignore) so a stray click into the terminal doesn't get
- * misparsed as a key and accidentally cancel the dialog.
- */
-function parseSgrMouseButton(sequence: string): number | null {
-  const mouse = SGR_MOUSE_REGEX.exec(sequence);
-  return mouse ? Number(mouse[1]) : null;
-}
-
 export function isSgrWheelEvent(sequence: string): boolean {
-  const button = parseSgrMouseButton(sequence);
-  if (button === null) return false;
-  if ((button & 64) === 0) return false; // not a wheel event
-  if ((button & 2) !== 0) return false; // horizontal wheel
-  return true;
-}
-
-/**
- * Try to extract a complete SGR mouse report from `buffer`.
- * Returns the matched sequence string when `buffer` starts with a complete
- * `\x1b[<button;col;row M/m` report, otherwise `undefined` when the buffer
- * could still grow into one, or `null` when the buffer clearly isn't a
- * mouse report. Used by the raw key reader so mouse clicks (which arrive as
- * multi-byte CSI sequences) aren't dropped into the 8-byte escape bucket and
- * misread as a cancel.
- */
-export function consumeSgrMouseSequence(
-  buffer: string,
-): string | null | undefined {
-  if (!buffer.startsWith("\x1b[")) return null;
-  // SGR mouse reports start with ESC [ < ; anything else is a non-mouse CSI.
-  if (!buffer.startsWith("\x1b[<")) {
-    // Could still be a different CSI we don't handle; let the caller's own
-    // CSI logic decide. Return null to signal "not a mouse sequence".
-    return null;
-  }
-  // Validate the body incrementally so an unrelated M/m later in the buffer
-  // cannot terminate a malformed mouse report prematurely.
-  const body = buffer.slice(3);
-  for (let index = 0; index < body.length; index += 1) {
-    const character = body[index];
-    if (character === "M" || character === "m") {
-      if (index !== body.length - 1) return null;
-      return SGR_MOUSE_REGEX.test(buffer) ? buffer : null;
-    }
-    if ((character < "0" || character > "9") && character !== ";") {
-      return null;
-    }
-  }
-  return undefined;
+  const event = parseSgrMouseEvent(sequence);
+  return event !== null && event.kind === "wheel";
 }
 
 export function parseScrollAction(sequence: string): ScrollAction | null {
-  const mouse = SGR_MOUSE_REGEX.exec(sequence);
-  if (mouse) {
-    const button = Number(mouse[1]);
-    // Wheel events carry bit 6 (64): 64=up, 65=down, 66/67=horizontal.
-    if ((button & 64) === 0) return null;
-    if ((button & 2) !== 0) return null; // horizontal wheel: no mapping
-    return (button & 1) !== 0 ? "wheel-down" : "wheel-up";
+  const mouseEvent = parseSgrMouseEvent(sequence);
+  if (mouseEvent && mouseEvent.kind === "wheel") {
+    return mouseEvent.wheelDirection === "down" ? "wheel-down" : "wheel-up";
   }
+
   switch (sequence) {
     case "\x1b[5~":
       return "page-up";

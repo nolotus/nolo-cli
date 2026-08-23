@@ -218,12 +218,10 @@ export function createFixedInput(
     write("\x1b[r");
   };
 
-  // Wheel reporting: SGR format (1006) + basic tracking (1000). Without these
-  // the terminal never delivers wheel events, so the transcript could not be
-  // scrolled by trackpad/mouse at all. Selection still works via the
-  // terminal's bypass modifier (e.g. Shift in Ghostty/iTerm2), and /mouse off
-  // flips mouseEnabled so drag-select works without a modifier.
-  let mouseEnabled = true;
+  // Wheel reporting: SGR format (1006) + basic tracking (1000).
+  // Defaulting to false leaves wheel scrolling and drag selection to the terminal
+  // native scrollback without requiring Shift. Users can opt in via /mouse on or NOLO_TUI_MOUSE=1.
+  let mouseEnabled = (process.env.NOLO_TUI_MOUSE ?? "").trim() === "1";
   const enableMouse = () => {
     if (mouseEnabled) write("\x1b[?1006h\x1b[?1000h");
   };

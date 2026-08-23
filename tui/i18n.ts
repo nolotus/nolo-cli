@@ -212,16 +212,8 @@ const STRINGS = {
     zh: "当前环境没有可用的剪贴板。最后一条回复已打印在上方，可手动复制。",
   },
   copyUsage: {
-    en: "Usage: /copy or /copy view",
-    zh: "用法：/copy 或 /copy view",
-  },
-  copyViewTitle: {
-    en: "Copy view — conversation history",
-    zh: "复制视图 — 对话历史",
-  },
-  copyViewHint: {
-    en: "Drag to select. Use PageUp/PageDown, Home/End, or the mouse wheel to scroll. Press Esc or Enter to return.",
-    zh: "直接拖选。可用 PageUp/PageDown、Home/End 或鼠标滚轮滚动。按 Esc 或 Enter 返回。",
+    en: "Usage: /copy",
+    zh: "用法：/copy",
   },
   historyNoToken: {
     en: "History requires an auth token. Run `nolo login` or set AUTH_TOKEN.",
@@ -503,7 +495,6 @@ const STRINGS = {
       "  /resume <dialogId>    Resume a dialog directly by id",
       "  /lang <zh|en>         Switch interface language",
       "  /copy                 Copy the last reply to the clipboard",
-      "  /copy view            Open native scrollback for partial selection (Ctrl+O)",
       "  /mouse <on|off>       Toggle mouse mode (off = drag to select text)",
       "  /altscreen <on|off>   Toggle the terminal alternate screen (default on; off shares shell scrollback)",
       "  /doc                  List attached docs",
@@ -539,7 +530,6 @@ const STRINGS = {
       "  /resume <dialogId>    按 id 直接恢复对话",
       "  /lang <zh|en>         切换界面语言",
       "  /copy                 复制最后一条回复到剪贴板",
-      "  /copy view            打开原生回滚进行跨屏拖选（Ctrl+O）",
       "  /mouse <on|off>       切换鼠标模式（off 后可直接拖选文本）",
       "  /altscreen <on|off>   切换终端备用屏（默认 on；off 改为与 shell 共用回滚）",
       "  /doc                  列出已挂载的文档",

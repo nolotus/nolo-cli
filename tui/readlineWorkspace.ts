@@ -151,10 +151,11 @@ import {
   applyScrollAction,
   appendToCurrentTurn,
   appendLocalTurn,
-  buildCopyViewLines,
+  commitTurnToTerminal,
   createHistoryOutputStream,
   createTurnHistory,
   finalizeCurrentTurn,
+  formatTurnLines,
   renderHistory,
   resetHistoryFrameDiffCache,
   startTurn,
@@ -164,7 +165,6 @@ import {
 import {
   parseScrollAction,
   type ScrollAction,
-  WHEEL_SCROLL_LINES,
 } from "./tuiScrollbar";
 export {
   type FixedInputController,
@@ -236,13 +236,18 @@ const SIGNAL_EXIT_CODE: Partial<Record<NodeJS.Signals, number>> = {
 };
 
 /**
- * Restore the alternate screen to the main screen. Never throws: the output
- * stream may already be destroyed (e.g. after a crash), in which case the
- * write silently fails — the terminal is gone, nothing more to do.
+ * Restore the terminal and alternate screen to the main screen. Never throws:
+ * the output stream may already be destroyed (e.g. after a crash), in which
+ * case the write silently fails — the terminal is gone, nothing more to do.
  */
 const restoreAltScreen = () => {
   try {
-    if (altScreenRestoreOutput) leaveAltScreen(altScreenRestoreOutput);
+    if (altScreenRestoreOutput) {
+      leaveAltScreen(altScreenRestoreOutput);
+      if ((altScreenRestoreOutput as { isTTY?: boolean }).isTTY) {
+        altScreenRestoreOutput.write("\x1b[r\x1b[?2004l\x1b[?25h");
+      }
+    }
   } catch {
     // Stream destroyed / write failed: the terminal is already gone.
   }
@@ -277,26 +282,17 @@ export function installAltScreenRestoreHandlers(
 
     const handler: NodeJS.SignalsListener = () => {
       restoreAltScreen();
-      // Query live rather than using a snapshot taken at install time: a
-      // listener attached after us (the common case — the TUI installs early,
-      // callers register their own cleanup later) would otherwise be invisible
-      // here, and we would exit out from under it before it ever ran.
-      const others = process
-        .listeners(sig)
-        .filter((fn) => fn !== (handler as unknown as (...a: unknown[]) => void));
-      if (others.length === 0) {
-        // No pre-existing listener: Node's default "terminate on signal" was
-        // suppressed the moment we registered this handler. Re-terminate
-        // explicitly so the process dies with the conventional 128+signum
-        // code instead of hanging on the main screen.
+      // Query live listenerCount or snapshot: if only this handler is registered,
+      // re-terminate explicitly with the conventional 128+signum code.
+      const count = process.listenerCount(sig);
+      const hasOtherListeners =
+        (preExistingSignalListeners[sig]?.length ?? 0) > 0 || count > 1;
+      if (!hasOtherListeners) {
         process.exit(SIGNAL_EXIT_CODE[sig] ?? 128 + 1);
         return;
       }
       // Pre-existing listeners present: they remain attached to the emitter
-      // and will be invoked by Node itself (once each, after us). We do NOT
-      // re-dispatch — that would double-fire. They decide whether the
-      // process exits (e.g. a framework's SIGINT handler that calls
-      // process.exit).
+      // and will be invoked by Node itself (once each, after us).
     };
     // Prepend so restore runs before the pre-existing (and any later-attached)
     // listeners.
@@ -905,25 +901,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   const selfUpdater: SelfUpdater =
     options.selfUpdater ?? ((target) => runSelfUpdate({ output: target }));
 
+  const env = options.env ?? process.env;
+  const startInAltScreen = (env.NOLO_TUI_ALTSCREEN ?? "").trim() === "1";
+
   if ((output as { isTTY?: boolean }).isTTY) {
-    // Enter the alternate screen first so the TUI owns a private buffer.
-    // The TUI keeps its own scroll state (tuiHistory scrollTop / PgUp / PgDn),
-    // so giving up the shared scrollback loses nothing — and it stops the
-    // terminal wheel from desyncing the viewport against the TUI's own
-    // scroll state (the root cause of the garbled repaint bug). Must happen
-    // before the clear so we clear the *alternate* screen, not the shell's.
-    enterAltScreen(output);
+    if (startInAltScreen) {
+      enterAltScreen(output);
+      output.write("\x1b[2J\x1b[H");
+    }
     // Register the terminal-restore handlers (exit / signals / exceptions)
     // once per process. Installing here (after we know we're on a TTY) keeps
     // the no-op guarantee for non-TTY runs: pipes/redirects/tests never touch
     // the alternate screen, and the handlers short-circuit via leaveAltScreen.
     installAltScreenRestoreHandlers(output);
-    // Clear the alternate screen (NOT the scrollback: \x1b[3J is dropped —
-    // it wipes the *main* screen's scrollback, which is both pointless here
-    // and would erase the user's shell history on terminals that honor it
-    // even while switched away). \x1b[2J clears the visible screen, \x1b[H
-    // homes the cursor.
-    output.write("\x1b[2J\x1b[H");
   }
 
   // Ask the terminal for its background before the first frame is painted, so
@@ -1060,9 +1050,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     reconcile: (runId) => checkStaleRun(runId, { env: process.env }),
     onRecordsPolled: (records) => runCompletionWatcher.observe(records),
   });
-  let copyViewExitResolver: (() => void) | null = null;
-  let copyViewRender: (() => void) | null = null;
-  let copyViewScrollTop = 0;
   const history = createTurnHistory();
   // `fixedInput` is reassigned once the interactive composer is installed, so
   // the host delegates through the binding rather than capturing the noop.
@@ -1225,51 +1212,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       .find((turn) => turn.role === "assistant")?.content;
     const text = lastReply ? stripAnsi(lastReply).trim() : "";
     return text || null;
-  };
-  const openCopyView = async () => {
-    const lines = buildCopyViewLines(history);
-    if (lines.length === 0) return false;
-    if (!isInteractiveInput(input)) {
-      output.write(`${lines.join("\n")}\n`);
-      return true;
-    }
-
-    const tty = output as { rows?: number; columns?: number };
-    const renderCopyView = () => {
-      const rows = Math.max(1, tty.rows ?? 24);
-      const columns = Math.max(1, tty.columns ?? 80);
-      const copyLines = buildCopyViewLines(history);
-      const visibleHeight = Math.max(1, rows - 3);
-      const maxScrollTop = Math.max(0, copyLines.length - visibleHeight);
-      copyViewScrollTop = Math.max(0, Math.min(copyViewScrollTop, maxScrollTop));
-      let frame = "\x1b[2J\x1b[H";
-      frame += `${t("copyViewTitle")}\n`;
-      for (let index = 0; index < visibleHeight; index++) {
-        frame += `${fitAnsiLine(copyLines[copyViewScrollTop + index] ?? "", columns)}\n`;
-      }
-      frame += `${t("copyViewHint")}\n`;
-      output.write(frame);
-    };
-
-    fixedInput.pause();
-    copyViewScrollTop = 0;
-    copyViewRender = renderCopyView;
-    try {
-      renderCopyView();
-      await new Promise<void>((resolve) => {
-        copyViewExitResolver = resolve;
-      });
-    } finally {
-      copyViewExitResolver = null;
-      copyViewRender = null;
-      output.write("\x1b[2J\x1b[H");
-      resetHistoryFrameDiffCache(output);
-      fixedInput.resumeFromDialog();
-      flushPendingRender();
-      renderHistoryToOutput();
-      fixedInput.repaint(buffer, cursorPos);
-    }
-    return true;
   };
 
   // True while a modal (raw action gate OR ask_choice popup) owns the
@@ -1920,11 +1862,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       fixedInput.repaint(buffer, cursorPos);
     }
 
-    if (result.action?.type === "copy-view") {
-      const opened = await openCopyView();
-      if (!opened) emitCommandOutput(t("copyNothing"));
-    }
-
     if (result.action?.type === "copy-last") {
       const text = readLatestAssistantReply() ?? "";
       if (!text) {
@@ -2191,12 +2128,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     const onResize = () => {
       if (done) return;
-      if (copyViewExitResolver) {
-        // copy view owns the screen; re-render its frame against the new
-        // rows/cols so a terminal resize does not leave a garbled frame.
-        copyViewRender?.();
-        return;
-      }
       // Re-measure rows/cols, rebuild scroll region + full-width rules, repaint.
       // Keep the user's current draft visible even during an agent turn so
       // typing is not lost on terminal resize.
@@ -2307,7 +2238,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     runWakeHandler = (event: InternalTurnEvent | string) => {
       if (done) return;
-      if (busy || fixedInput.isPaused() || copyViewExitResolver) {
+      if (busy || fixedInput.isPaused()) {
         const { actionGateHandler, confirmDestructiveAction } = buildInteractiveTurnHandlers();
         ensureChatQueueBinding(actionGateHandler, confirmDestructiveAction).enqueue(event);
         if (fixedInput.active && !fixedInput.isPaused()) {
@@ -2323,49 +2254,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     const handleInputToken = async (sequence: string) => {
       if (done) return;
-      if (copyViewExitResolver) {
-        const tty = output as { rows?: number };
-        const visibleHeight = Math.max(1, (tty.rows ?? 24) - 3);
-        const lines = buildCopyViewLines(history);
-        const maxScrollTop = Math.max(0, lines.length - visibleHeight);
-        const scrollAction = parseScrollAction(sequence);
-        if (scrollAction) {
-          switch (scrollAction) {
-            case "page-up":
-              copyViewScrollTop = Math.max(0, copyViewScrollTop - visibleHeight);
-              break;
-            case "page-down":
-              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + visibleHeight);
-              break;
-            case "half-page-up":
-              copyViewScrollTop = Math.max(0, copyViewScrollTop - Math.max(1, Math.floor(visibleHeight / 2)));
-              break;
-            case "wheel-up":
-              copyViewScrollTop = Math.max(0, copyViewScrollTop - WHEEL_SCROLL_LINES);
-              break;
-            case "half-page-down":
-              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + Math.max(1, Math.floor(visibleHeight / 2)));
-              break;
-            case "wheel-down":
-              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + WHEEL_SCROLL_LINES);
-              break;
-            case "top":
-              copyViewScrollTop = 0;
-              break;
-            case "bottom":
-              copyViewScrollTop = maxScrollTop;
-              break;
-          }
-          copyViewRender?.();
-          return;
-        }
-        if (sequence === "\x1b" || sequence === "\r" || sequence === "\n" || sequence === "\u0003") {
-          const exitCopyView = copyViewExitResolver;
-          copyViewExitResolver = null;
-          exitCopyView();
-        }
-        return;
-      }
       // While a modal (raw action gate OR ask_choice popup) owns the
       // keyboard, that modal's own `data` listener owns the keyboard. Drop
       // everything else so random keys do not accumulate in the composer
@@ -2482,17 +2370,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       const result = applyTuiInputKey(buffer, sequence, {}, cursorPos, {
         pasteStore,
       });
-      if (result.copyView) {
-        const opened = await openCopyView();
-        if (!opened) {
-          history.followBottom = true;
-          startTurn(history, "assistant");
-          appendToCurrentTurn(history, t("copyNothing"));
-          finalizeCurrentTurn(history);
-          paintFrame(buffer);
-        }
-        return;
-      }
       if (result.redraw) {
         resetHistoryFrameDiffCache(output);
         renderHistoryToOutput();

@@ -368,13 +368,16 @@ describe("createFixedInput", () => {
     expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES);
   });
 
-  test("enables wheel reporting on init and disables it on pause/disable", () => {
+  test("defaults to disabled mouse reporting, enables on opt-in and disables on pause/disable", () => {
     const tty = mockTty();
     const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > test",
     });
 
     input.init();
+    expect(tty.stdout()).not.toContain("\x1b[?1006h\x1b[?1000h");
+
+    input.setMouseEnabled(true);
     expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1000h");
 
     input.pause();
@@ -2526,9 +2529,7 @@ function makeTtyIo() {
 }
 
 describe("alternate screen isolation (startTuiWorkspace)", () => {
-  test("TTY 启动写 ?1049h 且启动序列不再含 \\x1b[3J", async () => {
-    // 覆盖测试要求 1（启动）+ 4（3J 被删）。启动序列里必须有 ?1049h，
-    // 绝不能有 \x1b[3J（它会清主屏 scrollback，切到备用屏后是无意义且有害的）。
+  test("TTY 默认主屏启动不写 ?1049h，且启动序列不再含 \\x1b[3J", async () => {
     const { input, output, stdout } = makeTtyIo();
     const workspacePromise = startTuiWorkspace({
       scriptDir: "",
@@ -2537,7 +2538,24 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
       env: {},
       agentRunner: async () => ({ exitCode: 0, dialogId: "d" }),
     });
-    // 等启动 banner + 清屏序列落地。
+    await new Promise((r) => setTimeout(r, 60));
+    const out = stdout();
+    expect(out).not.toContain("\x1b[?1049h");
+    expect(out).not.toContain("\x1b[3J");
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
+  });
+
+  test("NOLO_TUI_ALTSCREEN=1 时 TTY 启动写 ?1049h", async () => {
+    const { input, output, stdout } = makeTtyIo();
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: { NOLO_TUI_ALTSCREEN: "1" },
+      agentRunner: async () => ({ exitCode: 0, dialogId: "d" }),
+    });
     await new Promise((r) => setTimeout(r, 60));
     const out = stdout();
     expect(out).toContain("\x1b[?1049h");
@@ -2547,9 +2565,7 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
     await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
   });
 
-  test("/altscreen off 写 ?1049l 且触发历史重绘；on 反之", async () => {
-    // 覆盖测试要求 5。off → 写 ?1049l 并重绘历史（否则切过去是空屏），
-    // on → 写 ?1049h。同时验证反馈文案出现。
+  test("/altscreen on 写 ?1049h 且触发历史重绘；off 写 ?1049l", async () => {
     const { input, output, stdout } = makeTtyIo();
     let resolveFirst: (() => void) | null = null;
     const firstTurn = new Promise<void>((r) => { resolveFirst = r; });
@@ -2571,28 +2587,24 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
     while (turnCount < 1) await new Promise((r) => setTimeout(r, 10));
     await new Promise((r) => setTimeout(r, 40));
 
-    // off：必须写 ?1049l 并出现 altscreenOff 文案。
-    input.write("/altscreen off\r");
-    await new Promise((r) => setTimeout(r, 60));
-    let out = stdout();
-    expect(out).toContain("\x1b[?1049l");
-    expect(out).toContain(t("altscreenOff"));
-
-    // on：必须写 ?1049h 并出现 altscreenOn 文案，且重绘（composer 状态行
-    // 🏔 在 altscreenOn 文案之后再次出现，证明 repaint 被调用，而非空屏）。
+    // on：必须写 ?1049h 并出现 altscreenOn 文案，且重绘
     input.write("/altscreen on\r");
     await new Promise((r) => setTimeout(r, 60));
-    out = stdout();
+    let out = stdout();
     expect(out).toContain("\x1b[?1049h");
     expect(out).toContain(t("altscreenOn"));
-    // 重绘落地：切回 on 后历史内容仍在输出里（证明 renderHistoryToOutput 被调）。
     expect(out).toContain("reply 1");
-    // composer 重绘证据：?1049h 之后必须出现一次 🏔 状态行（action handler 的
-    // renderHistoryToOutput+repaint 在切屏后才补绘，证明切过去不是空屏）。
     const onSeqIdx = out.lastIndexOf("\x1b[?1049h");
     expect(onSeqIdx).toBeGreaterThanOrEqual(0);
     const statusAfterOn = out.indexOf("🏔", onSeqIdx);
     expect(statusAfterOn, "composer 应在切到备用屏后重绘").toBeGreaterThan(onSeqIdx);
+
+    // off：必须写 ?1049l 并出现 altscreenOff 文案。
+    input.write("/altscreen off\r");
+    await new Promise((r) => setTimeout(r, 60));
+    out = stdout();
+    expect(out).toContain("\x1b[?1049l");
+    expect(out).toContain(t("altscreenOff"));
 
     input.write("/exit\r");
     input.end();

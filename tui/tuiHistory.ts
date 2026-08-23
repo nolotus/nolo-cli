@@ -246,7 +246,7 @@ export function renderTurnBlock(
   // split and is emitted into the terminal frame — displayWidth treats it as
   // zero-width so it isn't stripped, and the terminal rewinds to the start of
   // the row, corrupting the transcript layout on Windows (CRLF) and any
-  // platform that feeds CR-terminated content. Mirrors buildCopyViewLines.
+  // platform that feeds CR-terminated content. Mirrors formatTurnLines.
   content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines: string[] = [];
   if (role === "user") {
@@ -598,33 +598,6 @@ function currentTurnSeparator(history: TurnHistory, density: string): number {
     : 0;
 }
 
-export function buildCopyViewLines(history: TurnHistory): string[] {
-  const turns = [...history.turns];
-  if (history.currentRole !== null) {
-    turns.push({ role: history.currentRole, content: history.currentContent });
-  }
-  const lines: string[] = [];
-  for (const [index, turn] of turns.entries()) {
-    if (index > 0) lines.push("");
-    // Normalize line endings: CRLF (\r\n) and lone CR (\r, legacy Mac) both
-    // collapse to LF so split("\n") yields clean logical lines. Without this,
-    // a stray \r in copied content would either vanish or render as a row
-    // rewind, corrupting both the copy-view display and the copied text.
-    const normalized = stripAnsi(turn.content).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    if (turn.role === "local") {
-      // 本地命令回显：带 `› ` 前缀输出命令行，让 copy 出去的文本保留
-      // "这是一条命令不是对话" 的可读线索。
-      if (turn.command) {
-        lines.push(`› ${stripAnsi(turn.command)}`);
-      }
-      lines.push(...normalized.split("\n"));
-    } else {
-      lines.push(...normalized.split("\n"));
-    }
-  }
-  return lines;
-}
-
 export function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
   const colorEnabled = resolveCliColorEnabled();
   // Visual rhythm: every turn is separated by a blank line. User turns carry a
@@ -936,3 +909,44 @@ export function applyScrollAction(
       break;
   }
 }
+
+/**
+ * Format one finalized turn into styled ANSI physical lines.
+ */
+export function formatTurnLines(
+  turn: Turn,
+  contentWidth: number,
+  colorEnabled: boolean = resolveCliColorEnabled(),
+): string[] {
+  return renderTurnBlock(
+    turn.role,
+    turn.content,
+    contentWidth,
+    colorEnabled,
+    turn.command,
+  );
+}
+
+/**
+ * Commit a finalized turn directly to the terminal's output stream, pushing it into
+ * the native scrollback buffer.
+ */
+export function commitTurnToTerminal(
+  output: NodeJS.WritableStream,
+  turn: Turn,
+  options?: {
+    contentWidth?: number;
+    colorEnabled?: boolean;
+    addBlankSeparator?: boolean;
+  },
+): void {
+  const tty = output as { columns?: number };
+  const contentWidth =
+    options?.contentWidth ?? Math.max(1, (tty.columns ?? 80) - 1);
+  const colorEnabled = options?.colorEnabled ?? resolveCliColorEnabled();
+  const lines = formatTurnLines(turn, contentWidth, colorEnabled);
+  if (lines.length === 0) return;
+  const prefix = options?.addBlankSeparator ? "\n" : "";
+  output.write(`${prefix}${lines.join("\n")}\n`);
+}
+

@@ -1,9 +1,10 @@
 import { describe, expect, test, afterEach, beforeEach } from "bun:test";
 import {
-  buildCopyViewLines,
   buildHistoryLines,
   buildTurnOffsets,
+  commitTurnToTerminal,
   countTurnLines,
+  formatTurnLines,
   renderTurnBlock,
   resetStreamingTurnCache,
   renderHistory,
@@ -685,91 +686,6 @@ describe("buildHistoryLines — per-turn memoization", () => {
   });
 });
 
-describe("buildCopyViewLines — copy view line construction", () => {
-  const makeHistory = (turns: Turn[]) => ({ ...createTurnHistory(), turns });
-
-  test("strips ANSI escape sequences from content", () => {
-    const turns: Turn[] = [
-      { role: "assistant", content: "\x1b[1mbold\x1b[0m and \x1b[38;2;88;166;255mcolored\x1b[0m" },
-    ];
-    const lines = buildCopyViewLines(makeHistory(turns));
-    expect(lines.join("")).not.toContain("\x1b[");
-    expect(lines[0]).toBe("bold and colored");
-  });
-
-  test("normalizes CRLF (\\r\\n) to a single LF — no stray \\r, no extra blank rows", () => {
-    const turns: Turn[] = [
-      { role: "assistant", content: "line1\r\nline2\r\nline3" },
-    ];
-    const lines = buildCopyViewLines(makeHistory(turns));
-    // CRLF must collapse cleanly: 3 logical lines, no \r residue.
-    expect(lines).toEqual(["line1", "line2", "line3"]);
-    expect(lines.every((l) => !l.includes("\r"))).toBe(true);
-  });
-
-  test("normalizes lone CR (legacy Mac) to LF", () => {
-    const turns: Turn[] = [
-      { role: "assistant", content: "aaa\rbbb\rccc" },
-    ];
-    const lines = buildCopyViewLines(makeHistory(turns));
-    expect(lines).toEqual(["aaa", "bbb", "ccc"]);
-    expect(lines.every((l) => !l.includes("\r"))).toBe(true);
-  });
-
-  test("mixes CRLF and lone CR without producing \r in output", () => {
-    const turns: Turn[] = [
-      { role: "assistant", content: "a\r\nb\rc\r\nd" },
-    ];
-    const lines = buildCopyViewLines(makeHistory(turns));
-    expect(lines).toEqual(["a", "b", "c", "d"]);
-    expect(lines.join("")).not.toContain("\r");
-  });
-
-  test("inserts exactly one blank separator between turns", () => {
-    const turns: Turn[] = [
-      { role: "user", content: "u1" },
-      { role: "assistant", content: "a1\na2" },
-      { role: "user", content: "u2" },
-    ];
-    const lines = buildCopyViewLines(makeHistory(turns));
-    // u1 | "" | a1 | a2 | "" | u2
-    expect(lines).toEqual(["u1", "", "a1", "a2", "", "u2"]);
-  });
-
-  test("scroll boundary: content shorter than a small viewport yields maxScrollTop 0", () => {
-    // Reproduce the renderCopyView maxScrollTop formula against the built
-    // lines to lock the scroll-clamp boundary for short content.
-    const turns: Turn[] = [{ role: "assistant", content: "only\none\ntwo" }];
-    const lines = buildCopyViewLines(makeHistory(turns));
-    const visibleHeight = 10;
-    const maxScrollTop = Math.max(0, lines.length - visibleHeight);
-    expect(lines.length).toBeLessThanOrEqual(visibleHeight);
-    expect(maxScrollTop).toBe(0);
-  });
-
-  test("scroll boundary: content taller than viewport yields a positive maxScrollTop", () => {
-    const turns: Turn[] = [
-      { role: "assistant", content: Array.from({ length: 30 }, (_, i) => `l${i}`).join("\n") },
-    ];
-    const lines = buildCopyViewLines(makeHistory(turns));
-    const visibleHeight = 5;
-    const maxScrollTop = Math.max(0, lines.length - visibleHeight);
-    expect(lines.length).toBe(30);
-    expect(maxScrollTop).toBe(25);
-    // Clamp invariants the render loop relies on:
-    const clampedTop = Math.max(0, Math.min(maxScrollTop + 100, maxScrollTop));
-    expect(clampedTop).toBe(maxScrollTop);
-  });
-
-  test("includes the in-progress current turn content", () => {
-    const history = createTurnHistory();
-    startTurn(history, "assistant");
-    appendToCurrentTurn(history, "streaming\r\npartial");
-    const lines = buildCopyViewLines(history);
-    expect(lines).toEqual(["streaming", "partial"]);
-  });
-});
-
 describe("virtualized renderHistory — windowed painting matches the full render path", () => {
   const ROWS = 24;
   const COLUMNS = 100;
@@ -1347,14 +1263,13 @@ describe("buildTurnOffsets & incremental streaming verification", () => {
       expect(out).toContain("┃  next question");
     });
 
-    test("buildCopyViewLines includes › prefix for local command turns", () => {
-      const history = createTurnHistory();
-      history.turns.push({
+    test("formatTurnLines includes › prefix for local command turns", () => {
+      const turn: Turn = {
         role: "local",
         command: "/switch 2",
         content: "Switched to DeepSeek V4 Flash",
-      });
-      const lines = buildCopyViewLines(history);
+      };
+      const lines = formatTurnLines(turn, 80, false);
       const joined = lines.join("\n");
       expect(joined).toContain("› /switch 2");
       expect(joined).toContain("Switched to DeepSeek V4 Flash");
@@ -1381,9 +1296,12 @@ describe("buildTurnOffsets & incremental streaming verification", () => {
     });
 
     test("local turn normalizes CRLF and lone CR in content", () => {
-      const history = createTurnHistory();
-      appendLocalTurn(history, "/copy", "line1\r\nline2\rline3");
-      const lines = buildCopyViewLines(history);
+      const turn: Turn = {
+        role: "local",
+        command: "/copy",
+        content: "line1\r\nline2\rline3",
+      };
+      const lines = formatTurnLines(turn, 80, false);
       const joined = lines.join("\n");
       expect(joined).toContain("line1");
       expect(joined).toContain("line2");
@@ -1509,6 +1427,65 @@ describe("buildTurnOffsets & incremental streaming verification", () => {
       const fullFrame = mock.getLastWrite();
       expect(fullFrame).toContain("\x1b[1;1H");
       expect(fullFrame).toContain("\x1b[17;1H");
+    });
+  });
+
+  describe("formatTurnLines & commitTurnToTerminal", () => {
+    const makeMockStream = (rows = 24, columns = 80) => {
+      const writes: string[] = [];
+      const output = {
+        isTTY: true,
+        rows,
+        columns,
+        write(chunk: string) {
+          writes.push(chunk);
+          return true;
+        },
+      } as unknown as NodeJS.WritableStream;
+      return {
+        output,
+        getWrites: () => writes,
+        getLastWrite: () => writes[writes.length - 1] ?? "",
+      };
+    };
+
+    test("formatTurnLines formats user turn with gutter", () => {
+      const turn: Turn = { role: "user", content: "Hello world" };
+      const lines = formatTurnLines(turn, 80, false);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      expect(lines[0]).toContain("┃  Hello world");
+    });
+
+    test("formatTurnLines formats assistant turn with anchor", () => {
+      const turn: Turn = { role: "assistant", content: "I am ready." };
+      const lines = formatTurnLines(turn, 80, false);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      expect(lines[0]).toContain("◈ I am ready.");
+    });
+
+    test("formatTurnLines formats local turn with command prefix", () => {
+      const turn: Turn = { role: "local", content: "Switched to model", command: "/model 1" };
+      const lines = formatTurnLines(turn, 80, false);
+      expect(lines.some((l) => l.includes("› /model 1"))).toBe(true);
+      expect(lines.some((l) => l.includes("Switched to model"))).toBe(true);
+    });
+
+    test("commitTurnToTerminal writes turn lines to output with trailing newline", () => {
+      const mock = makeMockStream(24, 80);
+      const turn: Turn = { role: "user", content: "Commit test" };
+      commitTurnToTerminal(mock.output, turn, { colorEnabled: false });
+      const last = mock.getLastWrite();
+      expect(last).toContain("┃  Commit test");
+      expect(last.endsWith("\n")).toBe(true);
+    });
+
+    test("commitTurnToTerminal respects addBlankSeparator", () => {
+      const mock = makeMockStream(24, 80);
+      const turn: Turn = { role: "assistant", content: "Response" };
+      commitTurnToTerminal(mock.output, turn, { colorEnabled: false, addBlankSeparator: true });
+      const last = mock.getLastWrite();
+      expect(last.startsWith("\n")).toBe(true);
+      expect(last).toContain("◈ Response");
     });
   });
 });

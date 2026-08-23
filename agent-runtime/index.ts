@@ -55,6 +55,8 @@ export type { AccumulatedToolCall, ToolCallAccumulator } from "./toolCallAccumul
 export { applyChatCompletionDelta, flushChatCompletionStream } from "./processChatCompletionDelta";
 export type { ChatCompletionStreamState } from "./processChatCompletionDelta";
 export { runLocalAgentTurn, createLocalCapabilitySdk } from "./localLoop";
+export { validatePtcProgramCode, parsePtcProgramOutput } from "./ptcProgramValidator";
+export type { PtcProgramContract, PtcValidationResult } from "./ptcProgramValidator";
 export {
   EMPTY_ASSISTANT_REPAIR_PROMPT,
   EMPTY_ASSISTANT_FALLBACK_MESSAGE,

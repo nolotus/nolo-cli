@@ -19,6 +19,7 @@ import type {
 import {
   createCapabilitySdk,
   createHostToolAgentRunService,
+  buildLocalExecShellContext,
 } from "./capabilities";
 import type { CapabilitySdk } from "./capabilities";
 import type { CapabilityExecutionContext } from "./capabilities/capability";
@@ -111,6 +112,13 @@ export type LocalAgentTurnInput = {
    * 真正撤销；中断的回合仍会 saveTurn 留档。
    */
   abortSignal?: AbortSignal;
+  /**
+   * Internal / test seam for programmatic execution probe. Invoked with the
+   * CapabilitySdk constructed for this turn's execution scope.
+   * STRICT: Never wire or populate this field from untrusted, model-controlled,
+   * or remote input — it executes with this turn's host permissions.
+   */
+  __testProgram?: (tools: CapabilitySdk) => Promise<unknown>;
 };
 
 export type LocalAgentTurnResult = AgentRuntimeResult & {
@@ -1204,13 +1212,6 @@ function applyPersistedTurnInput(
  * startAgentRun / controlAgentRun executors. This is intentionally a
  * programmatic probe: it is not wired as a model tool and does not change
  * normal tool calling.
- *
- * CAVEAT for future PTC wiring: the returned SDK context carries only
- * agentRunService. `tools.execShell()` therefore runs with no workspaceRoot /
- * restrictToWorkspace and, when confirmDestructiveAction and
- * blockDestructiveWithoutConfirmation are both absent (headless default), may
- * proceed on destructive commands. A PTC runtime that wires execShell must
- * provide those context fields or gate them before invocation.
  */
 export function createLocalCapabilitySdk(
   adapter: AgentRuntimeHostAdapter,
@@ -1242,6 +1243,46 @@ export async function runLocalAgentTurn(
     error.code = LOCAL_AGENT_CONFIG_MISSING_CODE;
     error.agentRef = input.agentRef;
     throw error;
+  }
+  const execShellContext = buildLocalExecShellContext({
+    workspaceRoot:
+      typeof input.runtimeContext?.workspaceRoot === "string"
+        ? input.runtimeContext.workspaceRoot
+        : typeof input.runtimeContext?.cwd === "string"
+          ? input.runtimeContext.cwd
+          : process.cwd(),
+    ...(typeof input.runtimeContext?.restrictToWorkspace === "boolean"
+      ? { restrictToWorkspace: input.runtimeContext.restrictToWorkspace }
+      : typeof input.runtimeContext?.restrictShellToWorkspace === "boolean"
+        ? { restrictToWorkspace: input.runtimeContext.restrictShellToWorkspace }
+        : {}),
+    ...(typeof input.runtimeContext?.commandTimeoutMs === "number"
+      ? { commandTimeoutMs: input.runtimeContext.commandTimeoutMs }
+      : {}),
+    ...(typeof input.runtimeContext?.commandOutputLimit === "number"
+      ? { commandOutputLimit: input.runtimeContext.commandOutputLimit }
+      : {}),
+    ...(Array.isArray(input.runtimeContext?.commandPrefix)
+      ? { commandPrefix: input.runtimeContext.commandPrefix }
+      : {}),
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    ...(typeof input.runtimeContext?.detachMs === "number"
+      ? { detachMs: input.runtimeContext.detachMs }
+      : {}),
+    ...(typeof input.runtimeContext?.enableDestructiveShellGuard === "boolean"
+      ? { enableDestructiveShellGuard: input.runtimeContext.enableDestructiveShellGuard }
+      : {}),
+    ...(typeof input.runtimeContext?.confirmDestructiveAction === "function"
+      ? { confirmDestructiveAction: input.runtimeContext.confirmDestructiveAction }
+      : {}),
+    ...(typeof input.runtimeContext?.blockDestructiveWithoutConfirmation === "boolean"
+      ? { blockDestructiveWithoutConfirmation: input.runtimeContext.blockDestructiveWithoutConfirmation }
+      : {}),
+  });
+  const tools = createLocalCapabilitySdk(input.adapter, execShellContext);
+
+  if (input.__testProgram) {
+    await input.__testProgram(tools);
   }
   const rawBillingConfig = agentConfig.rawRecord ?? {};
   const billingConfig: NonNullable<AgentRuntimeSaveTurnInput["billingConfig"]> = {

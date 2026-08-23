@@ -7,8 +7,9 @@ export type {
 export {
   buildExecShellToolDefinition,
   normalizeExecShellInput,
+  buildLocalExecShellContext,
 } from "./execShellCapability";
-export type { ExecShellInput } from "./execShellCapability";
+export type { ExecShellInput, LocalExecShellContextArgs } from "./execShellCapability";
 
 export {
   createCapabilitySdk,
@@ -28,6 +29,7 @@ export {
   executeAgentRunLifecycle,
   generateActivityId,
   createToolBridgeAgentRunService,
+  createHostToolAgentRunService,
 } from "./agentRunService";
 export type {
   AgentRunService,
@@ -41,4 +43,6 @@ export type {
   AgentRunInspectResult,
   AgentRunInput,
   AgentRunResult,
+  HostExecuteTool,
+  HostExecuteToolCall,
 } from "./agentRunService";

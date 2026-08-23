@@ -1,9 +1,8 @@
 /**
- * TUI 对话历史：turn 数据结构、样式化渲染、滚动条贴边、滚动动作应用。
+ * TUI 对话历史：turn 数据结构、样式化渲染与 stream commit 管道。
  *
  * 从 readlineWorkspace.ts 抽出。依赖：
  * - ./tuiAnsi：wrapTranscriptLine / padOrTruncateToWidth / applyTerminalOutputToText
- * - ./tuiScrollbar：renderScrollbarRow / parseScrollAction / ScrollAction / WHEEL_SCROLL_LINES
  * - ./theme：themeColorSequence / themeText / getActiveDensity / resolveCliColorEnabled
  * - ../client/assistantOutput：formatAssistantDisplay（assistant turn 的唯一渲染器，
  *   与流式输出共享同一份实现，避免历史重绘与流式样式漂移）
@@ -16,11 +15,6 @@ import {
   visibleWidth,
   wrapTranscriptLine,
 } from "./tuiAnsi";
-import {
-  renderScrollbarRow,
-  type ScrollAction,
-  WHEEL_SCROLL_LINES,
-} from "./tuiScrollbar";
 import {
   getActiveDensity,
   renderSurfaceLine,
@@ -807,11 +801,8 @@ export function renderHistory(
   let frame = "";
   for (let i = 0; i < visibleHeight; i++) {
     const line = visibleLines[i] ?? "";
-    const padded = padOrTruncateToWidth(line, contentWidth);
-    const thumb = renderScrollbarRow(i, visibleHeight, totalLines, history.scrollTop);
-    const scrollbarPrefix = colorEnabled ? themeColorSequence("chrome") : "";
-    const scrollbarSuffix = colorEnabled ? "\x1b[39m" : "";
-    const rowContent = `${padded}\x1b[${columns}G${scrollbarPrefix}${thumb}${scrollbarSuffix}`;
+    const padded = padOrTruncateToWidth(line, columns);
+    const rowContent = padded;
     nextLines[i] = rowContent;
 
     if (!prevLines || prevLines[i] !== rowContent) {
@@ -854,60 +845,19 @@ export function createHistoryOutputStream(
   } as unknown as NodeJS.WritableStream;
 }
 
-export function applyScrollAction(
+export function createNativeOutputStream(
   history: TurnHistory,
-  action: ScrollAction,
-  output: NodeJS.WritableStream,
-  inputLines: number
-): void {
-  const tty = output as { rows?: number; columns?: number };
-  const rows = tty.rows ?? 24;
-  const columns = tty.columns ?? 80;
-  const visibleHeight = Math.max(1, rows - inputLines);
-  const contentWidth = Math.max(1, columns - 1);
-  const { totalLines: finalizedLines } = buildTurnOffsets(history, contentWidth);
-  let totalLines = finalizedLines;
-  if (history.currentRole !== null && history.currentContent) {
-    totalLines +=
-      currentTurnSeparator(history, getActiveDensity()) +
-      countTurnLines(history.currentRole, history.currentContent, contentWidth);
-  }
-  const maxScrollTop = Math.max(0, totalLines - visibleHeight);
-
-  history.followBottom = false;
-
-  switch (action) {
-    case "page-up":
-      history.scrollTop = Math.max(0, history.scrollTop - visibleHeight);
-      break;
-    case "page-down":
-      history.scrollTop = Math.min(maxScrollTop, history.scrollTop + visibleHeight);
-      break;
-    case "half-page-up":
-      history.scrollTop = Math.max(0, history.scrollTop - Math.floor(visibleHeight / 2));
-      break;
-    case "half-page-down":
-      history.scrollTop = Math.min(
-        maxScrollTop,
-        history.scrollTop + Math.floor(visibleHeight / 2)
-      );
-      break;
-    case "wheel-up":
-      history.scrollTop = Math.max(0, history.scrollTop - WHEEL_SCROLL_LINES);
-      break;
-    case "wheel-down":
-      history.scrollTop = Math.min(maxScrollTop, history.scrollTop + WHEEL_SCROLL_LINES);
-      // Scrolling back to the bottom resumes live-tail, like the End key.
-      if (history.scrollTop >= maxScrollTop) history.followBottom = true;
-      break;
-    case "top":
-      history.scrollTop = 0;
-      break;
-    case "bottom":
-      history.scrollTop = maxScrollTop;
-      history.followBottom = true;
-      break;
-  }
+  terminalOutput: NodeJS.WritableStream,
+): NodeJS.WritableStream {
+  return {
+    isTTY: true,
+    write(chunk: string | Buffer): boolean {
+      const text = typeof chunk === "string" ? chunk : chunk.toString();
+      applyOutputChunkToCurrentTurn(history, text);
+      terminalOutput.write(text);
+      return true;
+    },
+  } as unknown as NodeJS.WritableStream;
 }
 
 /**

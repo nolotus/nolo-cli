@@ -131,9 +131,7 @@ export {
   renderHistory,
   resetHistoryFrameDiffCache,
   createHistoryOutputStream,
-  applyScrollAction,
 } from "./tuiHistory";
-export { type ScrollAction, parseScrollAction } from "./tuiScrollbar";
 import {
   applyTerminalOutputToText,
   buildWindowTitle,
@@ -148,11 +146,11 @@ import {
 } from "./tuiAnsi";
 import {
   applyOutputChunkToCurrentTurn,
-  applyScrollAction,
   appendToCurrentTurn,
   appendLocalTurn,
   commitTurnToTerminal,
   createHistoryOutputStream,
+  createNativeOutputStream,
   createTurnHistory,
   finalizeCurrentTurn,
   formatTurnLines,
@@ -162,10 +160,6 @@ import {
   type TurnHistory,
   MAX_TUI_HISTORY_TURNS,
 } from "./tuiHistory";
-import {
-  parseScrollAction,
-  type ScrollAction,
-} from "./tuiScrollbar";
 export {
   type FixedInputController,
   createNoopFixedInput,
@@ -183,6 +177,7 @@ import {
   splitRawInput,
   enterAltScreen,
   leaveAltScreen,
+  isAltScreenOn,
   type FixedInputController,
 } from "./tuiRawInput";
 
@@ -1104,7 +1099,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // fallback that still reduces visible flicker.
     output.write("\x1b[?2026h\x1b[?25l");
     try {
-      renderHistory(output, history, fixedInput.getInputLines());
+      if (isAltScreenOn(output)) {
+        renderHistory(output, history, fixedInput.getInputLines());
+      }
       if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
     } finally {
       output.write("\x1b[?25h\x1b[?2026l");
@@ -1199,6 +1196,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // the keyboard, and the turn looked hung.
     if (fixedInput.isPaused()) return;
     if (syncingLayout) return;
+    // In native scrollback mode (main screen), turns are committed sequentially to the
+    // terminal output. Do NOT repaint with absolute cursor positions (\x1b[1;1H), which
+    // causes line overlapping and jitter when scrolling.
+    if (!isAltScreenOn(output)) return;
     syncingLayout = true;
     try {
       renderHistory(output, history, fixedInput.getInputLines());
@@ -1342,22 +1343,34 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       req.event.kind === "child-run-completed"
         ? (req.event.displayText ?? req.event.text)
         : message;
+    const userTurnContent = isInternalEvent
+      ? dimCliText(transcriptText, resolveCliColorEnabled())
+      : transcriptText;
     startTurn(history, isInternalEvent ? "assistant" : "user");
-    appendToCurrentTurn(
-      history,
-      isInternalEvent
-        ? dimCliText(transcriptText, resolveCliColorEnabled())
-        : transcriptText,
-    );
+    appendToCurrentTurn(history, userTurnContent);
     finalizeCurrentTurn(history);
-    renderHistoryToOutput();
+
+    if (!isAltScreenOn(output)) {
+      commitTurnToTerminal(
+        output,
+        {
+          role: isInternalEvent ? "assistant" : "user",
+          content: userTurnContent,
+        },
+        { addBlankSeparator: true },
+      );
+    } else {
+      renderHistoryToOutput();
+    }
     if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
 
     startTurn(history, "assistant");
     const agentOutput = isInteractiveInput(input)
-      ? createHistoryOutputStream(history, () => {
-          scheduleRender();
-        })
+      ? isAltScreenOn(output)
+        ? createHistoryOutputStream(history, () => {
+            scheduleRender();
+          })
+        : createNativeOutputStream(history, output)
       : output;
     // Interactive ask_user: dock an arrow-key select dialog above the
     // composer (same dialogHost + runSelectDialog as the /agent picker) and
@@ -1470,7 +1483,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       if (isInteractiveInput(input)) {
         finalizeCurrentTurn(history);
         flushPendingRender();
-        renderHistoryToOutput();
+        if (isAltScreenOn(output)) {
+          renderHistoryToOutput();
+        } else {
+          output.write("\n");
+        }
         if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
       }
       if (wasAborted) {
@@ -1566,7 +1583,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     }
     history.followBottom = true;
     appendLocalTurn(history, command, text);
-    renderHistoryToOutput();
+    if (!isAltScreenOn(output)) {
+      commitTurnToTerminal(
+        output,
+        {
+          role: "local",
+          content: text,
+          command,
+        },
+        { addBlankSeparator: true },
+      );
+    } else {
+      renderHistoryToOutput();
+    }
     if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
   };
 
@@ -1916,6 +1945,11 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           history.currentContent = "";
           history.scrollTop = 0;
           history.followBottom = true;
+          if (!isAltScreenOn(output)) {
+            for (const turn of restored) {
+              commitTurnToTerminal(output, turn, { addBlankSeparator: true });
+            }
+          }
           state = {
             ...state,
             dialogId: pickResult.dialog.id,
@@ -2137,7 +2171,9 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         // reflow on resize garbles absolute-row frames (stale fragments,
         // vanished composer), and the dialog's own resize listener —
         // registered after this one — repaints its frame on top.
-        renderHistory(output, history, fixedInput.getInputLines());
+        if (isAltScreenOn(output)) {
+          renderHistory(output, history, fixedInput.getInputLines());
+        }
         fixedInput.repaint(buffer, cursorPos);
         return;
       }
@@ -2317,16 +2353,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         return handleInputToken("\r");
       }
       const busyLock = busy;
-      const scrollAction = parseScrollAction(sequence);
-      if (scrollAction) {
-        // Scrolling only reads history state, so it stays available during an
-        // agent turn; block it only while a picker/confirm dialog or
-        // subprocess owns the screen (repainting would corrupt their UI).
-        if (fixedInput.isPaused()) return;
-        applyScrollAction(history, scrollAction, output, fixedInput.getInputLines());
-        paintFrame(buffer);
-        return;
-      }
       // Esc while a turn is running = cooperative stop. A lone \x1b token is
       // only produced for a real Esc press (arrow keys arrive as full CSI
       // sequences), so this cannot swallow other keys. When the queue has
@@ -2371,9 +2397,24 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         pasteStore,
       });
       if (result.redraw) {
-        resetHistoryFrameDiffCache(output);
-        renderHistoryToOutput();
-        if (fixedInput.active) fixedInput.repaint(buffer, cursorPos, true);
+        if (!isAltScreenOn(output)) {
+          output.write("\x1b[2J\x1b[3J\x1b[H");
+          for (const turn of history.turns) {
+            commitTurnToTerminal(output, turn, { addBlankSeparator: true });
+          }
+          if (history.currentRole !== null && history.currentContent) {
+            commitTurnToTerminal(
+              output,
+              { role: history.currentRole, content: history.currentContent },
+              { addBlankSeparator: true },
+            );
+          }
+          if (fixedInput.active) fixedInput.repaint(buffer, cursorPos, true);
+        } else {
+          resetHistoryFrameDiffCache(output);
+          renderHistoryToOutput();
+          if (fixedInput.active) fixedInput.repaint(buffer, cursorPos, true);
+        }
         return;
       }
       if (result.abort) {

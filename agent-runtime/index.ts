@@ -54,7 +54,7 @@ export {
 export type { AccumulatedToolCall, ToolCallAccumulator } from "./toolCallAccumulator";
 export { applyChatCompletionDelta, flushChatCompletionStream } from "./processChatCompletionDelta";
 export type { ChatCompletionStreamState } from "./processChatCompletionDelta";
-export { runLocalAgentTurn } from "./localLoop";
+export { runLocalAgentTurn, createLocalCapabilitySdk } from "./localLoop";
 export {
   EMPTY_ASSISTANT_REPAIR_PROMPT,
   EMPTY_ASSISTANT_FALLBACK_MESSAGE,
@@ -363,6 +363,7 @@ export type {
   OpenAiCompatibleTool,
   ExecShellInput,
   CapabilitySdk,
+  LocalExecShellContextArgs,
   AgentRunActivity,
   AgentRunActivityStatus,
   AgentActivityEvent,
@@ -378,15 +379,19 @@ export type {
   AgentRunInspectResult,
   AgentRunInput,
   AgentRunResult,
+  HostExecuteTool,
+  HostExecuteToolCall,
 } from "./capabilities";
 export {
   buildExecShellToolDefinition,
   normalizeExecShellInput,
+  buildLocalExecShellContext,
   createCapabilitySdk,
   invokeCapability,
   BUILTIN_CAPABILITIES,
   executeAgentRunLifecycle,
   generateActivityId,
   createToolBridgeAgentRunService,
+  createHostToolAgentRunService,
 } from "./capabilities";
 

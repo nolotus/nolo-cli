@@ -8,7 +8,6 @@ import {
   renderTurnBlock,
   resetStreamingTurnCache,
   renderHistory,
-  applyScrollAction,
   createTurnHistory,
   finalizeCurrentTurn,
   startTurn,
@@ -27,7 +26,6 @@ import {
 } from "./theme";
 import { padOrTruncateToWidth, stripAnsi, visibleWidth } from "./tuiAnsi";
 import { resolveCliColorEnabled } from "../client/terminalStyles";
-import { renderScrollbarRow } from "./tuiScrollbar";
 import { formatAssistantDisplay } from "../client/assistantOutput";
 
 // buildHistoryLines is the single paint path for both streaming and history
@@ -770,15 +768,10 @@ describe("virtualized renderHistory — windowed painting matches the full rende
     let frame = "";
     for (let i = 0; i < visibleHeight; i++) {
       const line = visibleLines[i] ?? "";
-      const padded = padOrTruncateToWidth(line, contentWidth);
-      const thumb = renderScrollbarRow(i, visibleHeight, totalLines, history.scrollTop);
-      const scrollbarPrefix = resolveCliColorEnabled() ? themeColorSequence("chrome") : "";
-      const scrollbarSuffix = resolveCliColorEnabled() ? "\x1b[39m" : "";
+      const padded = padOrTruncateToWidth(line, columns);
       frame += `\x1b[${i + 1};1H`;
       frame += "\x1b[2K";
       frame += padded;
-      frame += `\x1b[${columns}G`;
-      frame += `${scrollbarPrefix}${thumb}${scrollbarSuffix}`;
     }
     const mainBottom = Math.max(1, rows - inputLines);
     frame += `\x1b[${mainBottom};1H`;
@@ -818,35 +811,6 @@ describe("virtualized renderHistory — windowed painting matches the full rende
       // One screenful of turns — NOT all 150.
       expect(rendered).toBeGreaterThan(0);
       expect(rendered).toBeLessThanOrEqual(ROWS - INPUT_LINES);
-    });
-  });
-
-  test("every scroll action keeps output byte-identical to the full-render slice", () => {
-    noColor(() => {
-      const actions = [
-        "top",
-        "half-page-up",
-        "half-page-down",
-        "wheel-up",
-        "wheel-down",
-        "page-up",
-        "page-down",
-        "bottom",
-      ] as const;
-      for (const action of actions) {
-        const history = buildRichHistory(60);
-        const output = {
-          isTTY: true,
-          rows: ROWS,
-          columns: COLUMNS,
-          write() {
-            return true;
-          },
-        } as unknown as NodeJS.WritableStream;
-        renderHistory(output, history, INPUT_LINES); // establish a clamped scrollTop
-        applyScrollAction(history, action, output, INPUT_LINES);
-        expect(renderFrame(history)).toBe(referenceFrame(history));
-      }
     });
   });
 

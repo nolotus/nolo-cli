@@ -206,6 +206,9 @@ export function createFixedInput(
 
   let lastScrollBottom = -1;
   const setScrollRegion = (lines: number, force = false) => {
+    // Only set scroll region when running on the alternate screen.
+    // In main screen mode, DECSTBM breaks native terminal scrollback and causes viewport jitter.
+    if (!isAltScreenOn(output)) return;
     const bottom = Math.max(1, getRows() - lines);
     if (force || lastScrollBottom !== bottom) {
       write(`\x1b[1;${bottom}r`);
@@ -214,6 +217,7 @@ export function createFixedInput(
   };
   const saveCursor = () => write("\x1b7");
   const resetScrollRegion = () => {
+    if (!isAltScreenOn(output)) return;
     lastScrollBottom = -1;
     write("\x1b[r");
   };

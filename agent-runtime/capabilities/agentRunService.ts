@@ -1,4 +1,5 @@
 import type { CapabilityExecutionContext } from "./capability";
+import type { AgentRuntimeToolResult } from "../hostAdapter";
 import type {
   AgentActivityEvent,
   AgentRunActivity,
@@ -410,4 +411,109 @@ export function createToolBridgeAgentRunService(options: {
         }
       : undefined,
   };
+}
+
+/**
+ * Host-tool AgentRunService — wires `tools.agents.run()` through the SAME
+ * `executeTool` seam the host uses for model tool calls.
+ *
+ * The host supplies its own tool-execution boundary (`hostExecuteTool`), which
+ * for CLI/desktop local is `AgentRuntimeHostAdapter.executeTool` and for server
+ * is a thin wrapper over `executeToolOnServer`. Because the bridge calls that
+ * same boundary for `startAgentRun` / `controlAgentRun`, the SDK path inherits
+ * the host's real executors, authority (allowedChildAgentKeys), tool policy,
+ * transport, and run/dialog persistence — no second polling / persistence /
+ * authority layer, and no per-host AgentRunService variant.
+ *
+ * The host boundary returns `AgentRuntimeToolResult = { content, metadata }`
+ * (same shape model tools return); we do minimal canonical parsing: try
+ * JSON.parse(content) → rawData, fall back to the raw string, and surface
+ * `metadata.displayData` for the TUI renderers.
+ */
+export interface HostExecuteToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export type HostExecuteTool = (
+  call: HostExecuteToolCall,
+  opts?: { abortSignal?: AbortSignal },
+) => Promise<AgentRuntimeToolResult>;
+
+let toolCallSeq = 0;
+
+export function createHostToolAgentRunService(
+  hostExecuteTool: HostExecuteTool,
+): AgentRunService {
+  const execTool = async (
+    name: string,
+    args: Record<string, unknown>,
+    opts?: { abortSignal?: AbortSignal },
+  ): Promise<{ rawData: any; displayData: string }> => {
+    // Host boundaries expect the agent-tool-call shape (id included); synth a
+    // stable-enough id so agentRuntimeHostAdapter.executeTool works verbatim.
+    const id = `sdk-${Date.now().toString(36)}-${(++toolCallSeq).toString(36)}`;
+    const res = await hostExecuteTool({ id, name, arguments: JSON.stringify(args) }, opts);
+    let rawData: any = res.content;
+    if (typeof res.content === "string" && res.content.length) {
+      try {
+        rawData = JSON.parse(res.content);
+      } catch {
+        rawData = res.content;
+      }
+    }
+    // Surface host tool-expression errors: some host boundaries (e.g. server
+    // executeToolOnServer) report a refusal as { error } content rather than
+    // throwing. Treat that as a rejection so authority/policy denials reach the
+    // SDK caller instead of being swallowed as a "successful" run.
+    if (
+      rawData &&
+      typeof rawData === "object" &&
+      typeof (rawData as any).error === "string"
+    ) {
+      throw new Error((rawData as any).error);
+    }
+    return {
+      rawData,
+      displayData:
+        typeof res.metadata?.displayData === "string"
+          ? res.metadata.displayData
+          : String(res.content ?? ""),
+    };
+  };
+
+  return createToolBridgeAgentRunService({
+    startRunner: async (opts) =>
+      execTool("startAgentRun", {
+        agentKey: opts.agentKey ?? opts.agentId,
+        task: opts.task,
+        input: opts.input,
+        agentName: opts.agentName,
+        ephemeral: opts.ephemeral,
+        batchId: opts.batchId,
+        parentDialogId: opts.parentDialogId,
+        wait: false,
+      }),
+    waitRunner: async (opts) =>
+      execTool(
+        "controlAgentRun",
+        {
+          action: "wait",
+          runId: opts.runId,
+          timeoutMs: opts.timeoutMs,
+        },
+        // Forward the per-run abort signal so the host wait loop can be
+        // cancelled (CLI controlAgentRun wait reads opts.abortSignal).
+        { abortSignal: opts.signal },
+      ),
+    cancelRunner: async ({ runId }) =>
+      execTool("controlAgentRun", { action: "stop", runId }),
+    inspectRunner: async ({ runId, tailLines }) =>
+      execTool("controlAgentRun", {
+        action: "status",
+        runId,
+        tailLines: tailLines ?? 0,
+      }),
+  });
 }

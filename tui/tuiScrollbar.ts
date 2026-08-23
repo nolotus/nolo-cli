@@ -1,9 +1,7 @@
 /**
- * TUI 滚动条与滚动动作解析。
+ * TUI 模态滚动动作与 SGR 鼠标序列解析。
  *
- * renderScrollbarRow 是纯渲染函数（无依赖）；parseScrollAction 解析终端
- * 按键/鼠标序列为语义动作。applyScrollAction 操作 TurnHistory，放在
- * tuiHistory 以避免循环依赖——本文件只保留纯解析与渲染。
+ * 用于 modal 选择器（如 AgentPicker、DialogPicker、AskChoiceDialog）的翻页与鼠标滚轮解析。
  */
 export type ScrollAction =
   | "page-up"
@@ -105,32 +103,4 @@ export function parseScrollAction(sequence: string): ScrollAction | null {
     default:
       return null;
   }
-}
-
-export const WHEEL_SCROLL_LINES = 3;
-
-/**
- * 渲染滚动条的单行缩略字符。totalLines <= visibleHeight 时返回空格（无滚动条）。
- */
-export function renderScrollbarRow(
-  rowIndex: number,
-  visibleHeight: number,
-  totalLines: number,
-  scrollTop: number
-): string {
-  if (totalLines <= visibleHeight) return " ";
-  const trackHeight = visibleHeight;
-  const thumbSize = Math.max(
-    1,
-    Math.floor((visibleHeight * visibleHeight) / totalLines)
-  );
-  const maxScrollTop = totalLines - visibleHeight;
-  const thumbTop = Math.floor(
-    (scrollTop / maxScrollTop) * (trackHeight - thumbSize)
-  );
-  const thumbBottom = thumbTop + thumbSize;
-  if (rowIndex >= thumbTop && rowIndex < thumbBottom) {
-    return "█";
-  }
-  return "│";
 }

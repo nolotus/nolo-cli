@@ -11,7 +11,6 @@ import { join } from "node:path";
 import {
   ANSI_ESCAPE_REGEX,
   appendToCurrentTurn,
-  applyScrollAction,
   applyTerminalOutputToText,
   createFixedInput,
   createHistoryOutputStream,
@@ -24,7 +23,6 @@ import {
   fitAnsiLine,
   installAltScreenRestoreHandlers,
   padOrTruncateToWidth,
-  parseScrollAction,
   renderHistory,
   renderPinnedAgentNotice,
   splitRawInput,
@@ -235,6 +233,7 @@ describe("createFixedInput", () => {
 
   test("anchors an OMP-style composer to the terminal bottom", () => {
     const tty = mockTty();
+    enterAltScreen(tty.output);
     const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > DeepSeek V4 Flash > ~/tmp > context: 1.9% (19.5k/1M)",
     });
@@ -263,6 +262,7 @@ describe("createFixedInput", () => {
 
   test("positions the cursor on the input line when completions are shown", () => {
     const tty = mockTty();
+    enterAltScreen(tty.output);
     const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > minimax-m3 > ~/tmp",
     });
@@ -1047,18 +1047,6 @@ describe("scroll-aware history", () => {
     ]);
   });
 
-  test("renderHistory shows scrollbar when history exceeds viewport", () => {
-    const { output, chunks } = makeOutput(10, 40);
-    const history = createTurnHistory();
-    for (let i = 0; i < 20; i++) {
-      history.turns.push({ role: "assistant", content: `line ${i}` });
-    }
-    renderHistory(output, history, 2);
-    const stdout = chunks.join("");
-    expect(stdout).toContain("█");
-    expect(stdout).toContain("│");
-  });
-
   test("renderHistory scrolls to follow bottom by default", () => {
     const { output, chunks } = makeOutput(10, 40);
     const history = createTurnHistory();
@@ -1084,76 +1072,6 @@ describe("scroll-aware history", () => {
     const stdout = chunks.join("");
     expect(stdout).toContain("line 2");
     expect(stdout).not.toContain("line 29");
-  });
-
-  test("parseScrollAction recognizes scroll keys", () => {
-    expect(parseScrollAction("\x1b[5~")).toBe("page-up");
-    expect(parseScrollAction("\x1b[6~")).toBe("page-down");
-    expect(parseScrollAction("\x1b[5;2~")).toBe("half-page-up");
-    expect(parseScrollAction("\x1b[6;5~")).toBe("half-page-down");
-    expect(parseScrollAction("\x1b[H")).toBe("top");
-    expect(parseScrollAction("\x1b[F")).toBe("bottom");
-    expect(parseScrollAction("\x1b[1~")).toBe("top");
-    expect(parseScrollAction("\x1b[4~")).toBe("bottom");
-    expect(parseScrollAction("a")).toBeNull();
-  });
-
-  test("parseScrollAction recognizes SGR mouse wheel events", () => {
-    expect(parseScrollAction("\x1b[<64;10;5M")).toBe("wheel-up");
-    expect(parseScrollAction("\x1b[<65;10;5M")).toBe("wheel-down");
-    // modifier bits (shift=4, meta=8, ctrl=16) keep the wheel mapping
-    expect(parseScrollAction("\x1b[<68;10;5M")).toBe("wheel-up");
-    expect(parseScrollAction("\x1b[<81;10;5M")).toBe("wheel-down");
-    // horizontal wheel and plain clicks are not scroll actions
-    expect(parseScrollAction("\x1b[<66;10;5M")).toBeNull();
-    expect(parseScrollAction("\x1b[<67;10;5M")).toBeNull();
-    expect(parseScrollAction("\x1b[<0;10;5M")).toBeNull();
-    expect(parseScrollAction("\x1b[<0;10;5m")).toBeNull();
-  });
-
-  test("applyScrollAction scrolls by wheel lines and refollows at bottom", () => {
-    const { output } = makeOutput(10, 40);
-    const history = createTurnHistory();
-    for (let i = 0; i < 30; i++) {
-      history.turns.push({ role: "assistant", content: `line ${i}` });
-    }
-    history.scrollTop = 10;
-    history.followBottom = false;
-
-    applyScrollAction(history, "wheel-up", output, 2);
-    expect(history.scrollTop).toBe(7);
-    expect(history.followBottom).toBe(false);
-
-    applyScrollAction(history, "wheel-down", output, 2);
-    expect(history.scrollTop).toBe(10);
-    expect(history.followBottom).toBe(false);
-
-    // Reaching the bottom via the wheel resumes live-tail. 30 assistant
-    // turns render as 59 lines (blank separators), viewport 8 → max 51.
-    history.scrollTop = 50;
-    applyScrollAction(history, "wheel-down", output, 2);
-    expect(history.scrollTop).toBe(51);
-    expect(history.followBottom).toBe(true);
-  });
-
-  test("applyScrollAction moves scrollTop and disables follow bottom", () => {
-    const { output } = makeOutput(10, 40);
-    const history = createTurnHistory();
-    history.followBottom = true;
-    for (let i = 0; i < 30; i++) {
-      history.turns.push({ role: "assistant", content: `line ${i}` });
-    }
-    applyScrollAction(history, "page-up", output, 2);
-    expect(history.followBottom).toBe(false);
-    expect(history.scrollTop).toBe(0);
-
-    applyScrollAction(history, "page-down", output, 2);
-    expect(history.scrollTop).toBe(8);
-
-    applyScrollAction(history, "bottom", output, 2);
-    expect(history.followBottom).toBe(true);
-    // 59 transcript lines (30 turns + blank separators) - 8 visible = 51.
-    expect(history.scrollTop).toBe(51);
   });
 
   test("splitRawInput keeps CSI scroll sequences intact", () => {
@@ -2642,8 +2560,8 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
     await new Promise((r) => setTimeout(r, 50));
     const outAfterRedraw = stdout();
 
-    // Must have repainted the full screen from row 1 and forced composer redraw
-    expect(outAfterRedraw).toContain("\x1b[1;1H");
+    // Must have cleared and repainted from row 1 and forced composer redraw
+    expect(outAfterRedraw).toContain("\x1b[2J");
     expect(outAfterRedraw).toContain("reply 1");
     expect(outAfterRedraw).toContain("\x1b[J");
     expect(outAfterRedraw).toContain("🏔");

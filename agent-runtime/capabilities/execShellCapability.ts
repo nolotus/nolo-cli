@@ -1,4 +1,5 @@
 import type { AgentRuntimeToolResult } from "../hostAdapter";
+import type { PermissionRequest } from "../actionGate";
 import {
   IMMEDIATE_DETACH_SLEEP_THRESHOLD_SECONDS,
   isImmediateDetachShellCommand,
@@ -15,6 +16,48 @@ import {
   runWorkspaceCommand,
 } from "../workspaceShell";
 import type { CapabilityExecutionContext, ExecutableCapability, OpenAiCompatibleTool } from "./capability";
+
+
+// Small, policy-free context builder: maps the local runtime's real execShell
+// settings into the CapabilityExecutionContext fields that execShellCapability
+// (and therefore PTC tools.execShell) reads. Used so PTC execShell is never
+// more permissive than normal local tool calling — both share the same builder
+// and the same execShellCapability path.
+export type LocalExecShellContextArgs = {
+  workspaceRoot: string;
+  commandTimeoutMs?: number;
+  commandOutputLimit?: number;
+  commandPrefix?: string[];
+  restrictToWorkspace?: boolean;
+  abortSignal?: AbortSignal;
+  detachMs?: number;
+  confirmed?: boolean;
+  enableDestructiveShellGuard?: boolean;
+  confirmDestructiveAction?: (request: PermissionRequest) => Promise<boolean>;
+  blockDestructiveWithoutConfirmation?: boolean;
+  onInvoke?: (capability: string, input: unknown) => void | Promise<void>;
+};
+
+export function buildLocalExecShellContext(
+  args: LocalExecShellContextArgs,
+): CapabilityExecutionContext {
+  return {
+    workspaceRoot: args.workspaceRoot,
+    ...(args.commandTimeoutMs !== undefined ? { commandTimeoutMs: args.commandTimeoutMs } : {}),
+    ...(args.commandOutputLimit !== undefined ? { commandOutputLimit: args.commandOutputLimit } : {}),
+    ...(args.commandPrefix ? { commandPrefix: args.commandPrefix } : {}),
+    ...(args.restrictToWorkspace !== undefined ? { restrictToWorkspace: args.restrictToWorkspace } : {}),
+    ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+    ...(args.detachMs !== undefined ? { detachMs: args.detachMs } : {}),
+    ...(args.confirmed !== undefined ? { confirmed: args.confirmed } : {}),
+    ...(args.enableDestructiveShellGuard !== undefined ? { enableDestructiveShellGuard: args.enableDestructiveShellGuard } : {}),
+    ...(args.confirmDestructiveAction ? { confirmDestructiveAction: args.confirmDestructiveAction } : {}),
+    ...(args.blockDestructiveWithoutConfirmation !== undefined
+      ? { blockDestructiveWithoutConfirmation: args.blockDestructiveWithoutConfirmation }
+      : {}),
+    ...(args.onInvoke ? { onInvoke: args.onInvoke } : {}),
+  };
+}
 
 export interface ExecShellInput {
   command: string;

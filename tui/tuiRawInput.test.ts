@@ -105,6 +105,7 @@ describe("createFixedInput onInputLinesChange", () => {
       return originalWrite(seq);
     };
 
+    enterAltScreen(tty.output);
     const input = createFixedInput(tty.output, {
       getStatusLine: () => "status",
       getActivityLine: () => activeLine,

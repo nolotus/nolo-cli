@@ -16,6 +16,12 @@ import type {
   AgentRuntimeResult,
   AgentRuntimeToolCall,
 } from "./types";
+import {
+  createCapabilitySdk,
+  createHostToolAgentRunService,
+} from "./capabilities";
+import type { CapabilitySdk } from "./capabilities";
+import type { CapabilityExecutionContext } from "./capabilities/capability";
 import { sanitizeToolCallPairing } from "./toolCallPairing";
 import { summarizeToolArguments } from "./summarizeToolArguments";
 import { buildIdentityBlock } from "./identityBlock";
@@ -1186,6 +1192,39 @@ function applyPersistedTurnInput(
         ? { context_reference: persistedInputReference }
         : {}),
     };
+  });
+}
+
+/**
+ * Shared local CapabilitySdk — constructed once from AgentRuntimeHostAdapter
+ * (the single local execution seam shared by CLI + Desktop), so a future PTC
+ * runtime can obtain tools.execShell() / tools.agents.run().
+ *
+ * agents.run bridges through adapter.executeTool, reusing the host's real
+ * startAgentRun / controlAgentRun executors. This is intentionally a
+ * programmatic probe: it is not wired as a model tool and does not change
+ * normal tool calling.
+ *
+ * CAVEAT for future PTC wiring: the returned SDK context carries only
+ * agentRunService. `tools.execShell()` therefore runs with no workspaceRoot /
+ * restrictToWorkspace and, when confirmDestructiveAction and
+ * blockDestructiveWithoutConfirmation are both absent (headless default), may
+ * proceed on destructive commands. A PTC runtime that wires execShell must
+ * provide those context fields or gate them before invocation.
+ */
+export function createLocalCapabilitySdk(
+  adapter: AgentRuntimeHostAdapter,
+  execShellContext: Partial<CapabilityExecutionContext>,
+): CapabilitySdk {
+  return createCapabilitySdk({
+    context: {
+      agentRunService: createHostToolAgentRunService(adapter.executeTool),
+      // Inject the SAME local execution context the host uses for execShell,
+      // so PTC tools.execShell() is no more permissive than normal local tool
+      // calling. Caller supplies the real values (workspaceRoot, restrictToWorkspace,
+      // timeout/output limits, destructive-shell guard semantics, abortSignal).
+      ...execShellContext,
+    },
   });
 }
 

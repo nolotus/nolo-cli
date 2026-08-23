@@ -106,6 +106,21 @@ export function displayWidth(str: string): number {
   for (const char of str) {
     const code = char.codePointAt(0) ?? 0;
     if (code < 0x20 || code === 0x7f) continue;
+    // Zero-width characters: combining marks, zero-width joiners/spaces, variation selectors
+    if (
+      (code >= 0x0300 && code <= 0x036f) ||
+      (code >= 0x1ab0 && code <= 0x1aff) ||
+      (code >= 0x1dc0 && code <= 0x1dff) ||
+      (code >= 0x200b && code <= 0x200f) ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2060 && code <= 0x206f) ||
+      (code >= 0x20d0 && code <= 0x20ff) ||
+      (code >= 0xfe00 && code <= 0xfe0f) ||
+      (code >= 0xfe20 && code <= 0xfe2f) ||
+      (code >= 0xe0100 && code <= 0xe01ef)
+    ) {
+      continue;
+    }
     if (
       (code >= 0x1100 && code <= 0x115f) ||
       // 0x2768-0x2775 (ornamental brackets, incl. the ❯ prompt at U+276F)
@@ -226,9 +241,16 @@ export function padOrTruncateToWidth(text: string, width: number): string {
 }
 
 const SGR_RESET_REGEX = /^\x1b\[0?m$/;
-type WrapToken = { kind: "sgr" | "char"; value: string; width: number };
+export type WrapToken = {
+  kind: "sgr" | "char";
+  value: string;
+  width: number;
+  charIndex: number;
+};
 
-function tokenizeAnsiLine(line: string): WrapToken[] {
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+export function tokenizeAnsiLine(line: string): WrapToken[] {
   const tokens: WrapToken[] = [];
   let index = 0;
   while (index < line.length) {
@@ -236,23 +258,298 @@ function tokenizeAnsiLine(line: string): WrapToken[] {
       // OSC 8 hyperlinks (ESC ]8;;...ST) are zero-width style tokens.
       const osc = line.slice(index).match(/^\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/);
       if (osc) {
-        tokens.push({ kind: "sgr", value: osc[0], width: 0 });
+        tokens.push({ kind: "sgr", value: osc[0], width: 0, charIndex: index });
         index += osc[0].length;
         continue;
       }
       const sgr = SGR_SEQUENCE_REGEX.exec(line.slice(index));
       if (sgr) {
-        tokens.push({ kind: "sgr", value: sgr[0], width: 0 });
+        tokens.push({ kind: "sgr", value: sgr[0], width: 0, charIndex: index });
         index += sgr[0].length;
         continue;
       }
+      const csi = line.slice(index).match(/^\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/);
+      if (csi) {
+        tokens.push({ kind: "sgr", value: csi[0], width: 0, charIndex: index });
+        index += csi[0].length;
+        continue;
+      }
     }
-    const codePoint = line.codePointAt(index) ?? 0;
-    const value = String.fromCodePoint(codePoint);
-    tokens.push({ kind: "char", value, width: displayWidth(value) });
-    index += value.length;
+    let nextEsc = line.indexOf("\x1b", index);
+    if (nextEsc === -1) nextEsc = line.length;
+    const chunk = line.slice(index, nextEsc);
+    for (const item of graphemeSegmenter.segment(chunk)) {
+      tokens.push({
+        kind: "char",
+        value: item.segment,
+        width: displayWidth(item.segment),
+        charIndex: index + item.index,
+      });
+    }
+    index = nextEsc;
   }
   return tokens;
+}
+
+/**
+ * Build a character-offset mapping from stripped styled line back to raw source line.
+ * Handles Markdown formatting ([link](url), `code`, **bold**, *italic*, ~~strike~~, # headings).
+ */
+export function buildSourceMapping(rawLine: string, styledLine: string, prefixCharCount: number): number[] {
+  let contentStart = 0;
+  const headingMatch = rawLine.match(/^(#{1,3})\s+(.+)$/);
+  let lineToParse = rawLine;
+  if (headingMatch) {
+    contentStart = headingMatch[1]!.length + 1;
+    while (contentStart < rawLine.length && rawLine[contentStart] === " ") contentStart++;
+    lineToParse = rawLine.slice(contentStart);
+  }
+
+  const INLINE_RE = /(\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*(.+?)\*\*|(?<!\*)\*([^*]+?)\*(?!\*)|~~([^~]+?)~~)/g;
+  const mapping: number[] = [];
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = INLINE_RE.exec(lineToParse)) !== null) {
+    const plainBefore = lineToParse.slice(lastIdx, match.index);
+    for (let c = 0; c < plainBefore.length; c++) {
+      mapping.push(contentStart + lastIdx + c);
+    }
+
+    const fullMatch = match[0];
+    if (match[2] !== undefined && match[3] !== undefined) {
+      // Link [text](url) -> visible "text (url)"
+      const linkText = match[2];
+      const linkUrl = match[3];
+      const textOffset = contentStart + match.index + 1;
+      for (let c = 0; c < linkText.length; c++) {
+        mapping.push(textOffset + c);
+      }
+      const parenOffset = textOffset + linkText.length;
+      mapping.push(parenOffset);
+      mapping.push(parenOffset + 1);
+      const urlOffset = parenOffset + 2;
+      for (let c = 0; c < linkUrl.length; c++) {
+        mapping.push(urlOffset + c);
+      }
+      mapping.push(urlOffset + linkUrl.length);
+    } else if (match[4] !== undefined) {
+      // `code` -> visible "code"
+      const codeText = match[4];
+      const codeOffset = contentStart + match.index + 1;
+      for (let c = 0; c < codeText.length; c++) {
+        mapping.push(codeOffset + c);
+      }
+    } else if (match[5] !== undefined) {
+      // **bold** -> visible "bold"
+      const boldText = match[5];
+      const boldOffset = contentStart + match.index + 2;
+      for (let c = 0; c < boldText.length; c++) {
+        mapping.push(boldOffset + c);
+      }
+    } else if (match[6] !== undefined) {
+      // *italic* -> visible "italic"
+      const italicText = match[6];
+      const italicOffset = contentStart + match.index + 1;
+      for (let c = 0; c < italicText.length; c++) {
+        mapping.push(italicOffset + c);
+      }
+    } else if (match[7] !== undefined) {
+      // ~~strikethrough~~ -> visible "strikethrough"
+      const strikeText = match[7];
+      const strikeOffset = contentStart + match.index + 2;
+      for (let c = 0; c < strikeText.length; c++) {
+        mapping.push(strikeOffset + c);
+      }
+    }
+    lastIdx = match.index + fullMatch.length;
+  }
+
+  const plainRest = lineToParse.slice(lastIdx);
+  for (let c = 0; c < plainRest.length; c++) {
+    mapping.push(contentStart + lastIdx + c);
+  }
+
+  return mapping;
+}
+
+export type WrappedTranscriptRow = {
+  rendered: string;
+  sourceStart: number;
+  sourceEnd: number;
+  prefixWidth: number;
+  sourceMapping?: number[];
+};
+
+/**
+ * Wrap one transcript line to `columns` visible cells, tracking source start/end offsets.
+ */
+export function wrapTranscriptLineWithLayout(
+  line: string,
+  columns: number,
+  hangingIndent = "",
+  lineSourceStart = 0,
+  prefixWidth = 0,
+  prefixCharCount = 0,
+  sourceMapping?: number[],
+  rawLineLength?: number,
+): WrappedTranscriptRow[] {
+  if (line === "") {
+    const rawLen = rawLineLength ?? 0;
+    return [
+      {
+        rendered: "",
+        sourceStart: lineSourceStart,
+        sourceEnd: lineSourceStart + rawLen,
+        prefixWidth,
+      },
+    ];
+  }
+  const tokens = tokenizeAnsiLine(line);
+  const rows: WrappedTranscriptRow[] = [];
+
+  let activeStyles: string[] = [];
+  const applyStyleToken = (value: string) => {
+    if (SGR_RESET_REGEX.test(value)) {
+      activeStyles = [];
+    } else {
+      activeStyles.push(value);
+    }
+  };
+
+  let start = 0;
+  while (start < tokens.length) {
+    // Only zero-width style tokens left: fold them into the previous line
+    // instead of emitting a visually blank row.
+    if (tokens.slice(start).every((token) => token.kind === "sgr")) {
+      if (rows.length > 0) break;
+    }
+    const openingStyles = [...activeStyles];
+    const isContinuation = rows.length > 0;
+    const currentPrefixWidth = isContinuation ? visibleWidth(hangingIndent) : prefixWidth;
+    const indentWidth = isContinuation ? visibleWidth(hangingIndent) : 0;
+    const maxSegmentWidth = Math.max(1, columns - indentWidth);
+
+    let width = 0;
+    let end = start;
+    let lastBreak = -1; // index just after a breakable char
+    while (end < tokens.length) {
+      const token = tokens[end]!;
+      if (token.kind === "sgr") {
+        end += 1;
+        continue;
+      }
+      if (width + token.width > maxSegmentWidth && width > 0) break;
+      width += token.width;
+      end += 1;
+      if ((token.value === " " || token.value === "\t") && token.charIndex >= prefixCharCount) {
+        lastBreak = end;
+      }
+    }
+
+    let segmentEnd = end;
+    if (end < tokens.length && lastBreak > start) {
+      // Mid-word overflow with a space earlier in the segment: break there.
+      const overflowToken = tokens[end]!;
+      if (overflowToken.kind === "char" && overflowToken.value !== " " && overflowToken.width === 1) {
+        segmentEnd = lastBreak;
+      }
+    }
+    if (segmentEnd === start) segmentEnd = start + 1;
+
+    let segment = "";
+    let sawStyle = openingStyles.length > 0;
+    for (let i = start; i < segmentEnd; i += 1) {
+      const token = tokens[i]!;
+      segment += token.value;
+      if (token.kind === "sgr") {
+        sawStyle = true;
+        applyStyleToken(token.value);
+      }
+    }
+    const prefix = openingStyles.join("");
+    const needsReset =
+      (sawStyle || activeStyles.length > 0) && !segment.endsWith("\x1b[0m");
+    const lineContent = `${prefix}${segment}${needsReset ? "\x1b[0m" : ""}`;
+    const rowRendered = isContinuation && hangingIndent.length > 0 ? `${hangingIndent}${lineContent}` : lineContent;
+
+    let segSourceStart = lineSourceStart;
+    let segSourceEnd = lineSourceStart;
+    let foundFirst = false;
+    const rowMapping: number[] = [];
+
+    // Calculate plainCharIndex up to segment start (excluding ANSI codes)
+    let plainCharIndex = 0;
+    for (let i = 0; i < start; i++) {
+      const tok = tokens[i]!;
+      if (tok.kind === "char" && tok.charIndex >= prefixCharCount) {
+        plainCharIndex += tok.value.length;
+      }
+    }
+
+    for (let i = start; i < segmentEnd; i++) {
+      const tok = tokens[i]!;
+      if (tok.kind === "char" && tok.charIndex >= prefixCharCount) {
+        const mappedOffset = sourceMapping && sourceMapping[plainCharIndex] !== undefined
+          ? sourceMapping[plainCharIndex]!
+          : plainCharIndex;
+        if (!foundFirst) {
+          segSourceStart = lineSourceStart + mappedOffset;
+          foundFirst = true;
+        }
+        for (let c = 0; c < tok.value.length; c++) {
+          const idx = plainCharIndex + c;
+          const mapped = sourceMapping && sourceMapping[idx] !== undefined ? sourceMapping[idx]! : idx;
+          rowMapping.push(lineSourceStart + mapped);
+        }
+        const lastCharIdx = plainCharIndex + tok.value.length - 1;
+        const mappedEndOffset = sourceMapping && sourceMapping[lastCharIdx] !== undefined
+          ? sourceMapping[lastCharIdx]! + 1
+          : plainCharIndex + tok.value.length;
+        segSourceEnd = lineSourceStart + mappedEndOffset;
+        plainCharIndex += tok.value.length;
+      }
+    }
+
+    start = segmentEnd;
+    // Continuation rows never start with the space we just wrapped at.
+    while (start < tokens.length) {
+      const token = tokens[start]!;
+      if (token.kind === "char" && token.value === " " && token.charIndex >= prefixCharCount) {
+        const mappedOffset = sourceMapping && sourceMapping[plainCharIndex] !== undefined
+          ? sourceMapping[plainCharIndex]! + 1
+          : plainCharIndex + 1;
+        segSourceEnd = lineSourceStart + mappedOffset;
+        plainCharIndex += token.value.length;
+        start += 1;
+        continue;
+      }
+      break;
+    }
+
+    if (start >= tokens.length && rawLineLength !== undefined) {
+      segSourceEnd = lineSourceStart + rawLineLength;
+    }
+
+    rows.push({
+      rendered: rowRendered,
+      sourceStart: segSourceStart,
+      sourceEnd: segSourceEnd,
+      prefixWidth: currentPrefixWidth,
+      sourceMapping: rowMapping.length > 0 ? rowMapping : undefined,
+    });
+  }
+
+  return rows.length > 0
+    ? rows
+    : [
+        {
+          rendered: "",
+          sourceStart: lineSourceStart,
+          sourceEnd: lineSourceStart + (rawLineLength ?? 0),
+          prefixWidth,
+        },
+      ];
 }
 
 /**
@@ -271,86 +568,7 @@ export function wrapTranscriptLine(
   columns: number,
   hangingIndent = ""
 ): string[] {
-  if (line === "") return [""];
-  const tokens = tokenizeAnsiLine(line);
-  const result: string[] = [];
-
-  let activeStyles: string[] = [];
-  const applyStyleToken = (value: string) => {
-    if (SGR_RESET_REGEX.test(value)) {
-      activeStyles = [];
-    } else {
-      activeStyles.push(value);
-    }
-  };
-
-  let start = 0;
-  while (start < tokens.length) {
-    // Only zero-width style tokens left: fold them into the previous line
-    // instead of emitting a visually blank row.
-    if (tokens.slice(start).every((token) => token.kind === "sgr")) {
-      if (result.length > 0) break;
-    }
-    const openingStyles = [...activeStyles];
-    const isContinuation = result.length > 0 && hangingIndent.length > 0;
-    const indentWidth = isContinuation ? visibleWidth(hangingIndent) : 0;
-    const maxSegmentWidth = Math.max(1, columns - indentWidth);
-
-    let width = 0;
-    let end = start;
-    let lastBreak = -1; // index just after a breakable char
-    while (end < tokens.length) {
-      const token = tokens[end];
-      if (token.kind === "sgr") {
-        end += 1;
-        continue;
-      }
-      if (width + token.width > maxSegmentWidth && width > 0) break;
-      width += token.width;
-      end += 1;
-      if (token.value === " " || token.value === "\t") {
-        lastBreak = end;
-      }
-    }
-
-    let segmentEnd = end;
-    if (end < tokens.length && lastBreak > start) {
-      // Mid-word overflow with a space earlier in the segment: break there.
-      const overflowToken = tokens[end];
-      if (overflowToken.kind === "char" && overflowToken.value !== " " && overflowToken.width === 1) {
-        segmentEnd = lastBreak;
-      }
-    }
-    if (segmentEnd === start) segmentEnd = start + 1;
-
-    let segment = "";
-    let sawStyle = openingStyles.length > 0;
-    for (let i = start; i < segmentEnd; i += 1) {
-      const token = tokens[i];
-      segment += token.value;
-      if (token.kind === "sgr") {
-        sawStyle = true;
-        applyStyleToken(token.value);
-      }
-    }
-    const prefix = openingStyles.join("");
-    const needsReset =
-      (sawStyle || activeStyles.length > 0) && !segment.endsWith("\x1b[0m");
-    const lineContent = `${prefix}${segment}${needsReset ? "\x1b[0m" : ""}`;
-    result.push(isContinuation ? `${hangingIndent}${lineContent}` : lineContent);
-    start = segmentEnd;
-    // Continuation rows never start with the space we just wrapped at.
-    while (start < tokens.length) {
-      const token = tokens[start];
-      if (token.kind === "char" && token.value === " ") {
-        start += 1;
-        continue;
-      }
-      break;
-    }
-  }
-
-  return result.length > 0 ? result : [""];
+  return wrapTranscriptLineWithLayout(line, columns, hangingIndent).map((r) => r.rendered);
 }
 
 /**

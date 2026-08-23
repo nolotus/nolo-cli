@@ -155,6 +155,7 @@ import {
   createHistoryOutputStream,
   createTurnHistory,
   finalizeCurrentTurn,
+  getAllTurnEntries,
   renderHistory,
   resetHistoryFrameDiffCache,
   startTurn,
@@ -2376,7 +2377,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             stopAutoScroll();
           }
         } else {
-          const { totalLines } = buildTurnOffsets(history, contentWidth);
+          const { totalLines } = getAllTurnEntries(history, contentWidth);
           const maxScroll = Math.max(0, totalLines - visibleHeight);
           if (history.scrollTop < maxScroll) {
             history.scrollTop = Math.min(maxScroll, history.scrollTop + 1);
@@ -2593,13 +2594,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
                 .then(({ default: clipboard }) => clipboard.write(textToCopy))
                 .catch(() => {});
             }
+            selectionState.dragging = false;
+          } else {
+            clearSelection();
           }
-          clearSelection();
           paintFrame(buffer);
           return;
         }
 
         return;
+      }
+
+      if (selectionState.anchor) {
+        clearSelection();
       }
 
       const scrollAction = parseScrollAction(sequence);

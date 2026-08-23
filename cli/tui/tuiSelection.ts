@@ -1,23 +1,23 @@
 /**
  * TUI 鼠标文本选择与 Hit-test 映射。
  *
- * 维护拖拽选区状态、将终端屏幕行列 (screenRow, screenCol) 映射到历史
- * sourceOffset (SelectionPoint)，以及从 TurnHistory 中提取选中文本并渲染
- * 高亮 Overlay。
+ * 采用标准终端 (xterm.js / tmux / Ghostty) 2D 网格选区模型：
+ * 维护全局行/列选区状态 (SelectionPoint { globalRow, col })，在可视行上
+ * 叠加字符级反色高亮，并从历史渲染行中按列范围提取纯文本到剪贴板。
  */
 import {
   displayWidth,
   stripAnsi,
-  wrapTranscriptLine,
+  tokenizeAnsiLine,
 } from "./tuiAnsi";
 import {
-  buildTurnOffsets,
+  buildHistoryLines,
   type TurnHistory,
 } from "./tuiHistory";
 
 export type SelectionPoint = {
-  turnIndex: number;
-  sourceOffset: number;
+  globalRow: number;
+  col: number;
 };
 
 export type TuiSelectionState = {
@@ -38,10 +38,10 @@ export function compareSelectionPoints(
   a: SelectionPoint,
   b: SelectionPoint,
 ): number {
-  if (a.turnIndex !== b.turnIndex) {
-    return a.turnIndex - b.turnIndex;
+  if (a.globalRow !== b.globalRow) {
+    return a.globalRow - b.globalRow;
   }
-  return a.sourceOffset - b.sourceOffset;
+  return a.col - b.col;
 }
 
 export function areSelectionPointsEqual(
@@ -50,174 +50,128 @@ export function areSelectionPointsEqual(
 ): boolean {
   if (a === null && b === null) return true;
   if (a === null || b === null) return false;
-  return a.turnIndex === b.turnIndex && a.sourceOffset === b.sourceOffset;
+  return a.globalRow === b.globalRow && a.col === b.col;
 }
 
 /**
- * 将屏幕行/列坐标转换为 TurnHistory 内的 SelectionPoint (turnIndex + sourceOffset)。
+ * 将一行 ANSI 渲染文本中落在 [selStartCol, selEndCol] 列区间的字符叠加高亮 (\x1b[7m ... \x1b[27m)。
+ * 行尾 padding 空格不进入高亮，遇到内部 reset (\x1b[0m) 时自动重新开启高亮，避免高亮中断或泄漏。
+ */
+export function highlightLineByColumns(
+  line: string,
+  selStartCol: number,
+  selEndCol: number,
+): string {
+  if (selStartCol >= selEndCol) return line;
+  const tokens = tokenizeAnsiLine(line);
+  if (tokens.length === 0) return line;
+
+  // Find the last visible non-space character token to avoid highlighting trailing padding
+  let lastNonSpaceCol = 0;
+  let colScan = 0;
+  for (const tok of tokens) {
+    if (tok.kind === "char") {
+      if (tok.value.trim().length > 0) {
+        lastNonSpaceCol = colScan + tok.width;
+      }
+      colScan += tok.width;
+    }
+  }
+  const effectiveEndCol = Math.min(selEndCol, lastNonSpaceCol);
+  if (selStartCol >= effectiveEndCol) return line;
+
+  let out = "";
+  let currentCol = 0;
+  let isHighlightActive = false;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (token.kind === "sgr") {
+      if (isHighlightActive) {
+        if (/^\x1b\[0?m$/.test(token.value)) {
+          out += `${token.value}\x1b[7m`;
+        } else {
+          out += token.value;
+        }
+      } else {
+        out += token.value;
+      }
+      continue;
+    }
+
+    const charStartCol = currentCol;
+    const charEndCol = currentCol + token.width;
+    const isSelected = charStartCol >= selStartCol && charStartCol < effectiveEndCol;
+
+    if (isSelected && !isHighlightActive) {
+      out += "\x1b[7m";
+      isHighlightActive = true;
+    } else if (!isSelected && isHighlightActive) {
+      out += "\x1b[27m";
+      isHighlightActive = false;
+    }
+
+    out += token.value;
+    currentCol = charEndCol;
+  }
+
+  if (isHighlightActive) {
+    out += "\x1b[27m";
+  }
+
+  return out;
+}
+
+/**
+ * 将屏幕行/列坐标转换为全局绝对坐标 SelectionPoint (globalRow + col)。
  */
 export function hitTestHistory(
   history: TurnHistory,
   screenRow: number,
   screenCol: number,
-  contentWidth: number,
+  _contentWidth: number,
   scrollTop: number,
 ): SelectionPoint | null {
-  if (history.turns.length === 0) return null;
-
-  const { entries } = buildTurnOffsets(history, contentWidth);
-  if (entries.length === 0) return null;
-
-  const globalRow = scrollTop + screenRow;
-
-  // Clamp before first turn
-  const firstEntry = entries[0]!;
-  if (globalRow < firstEntry.startRow) {
-    return { turnIndex: 0, sourceOffset: 0 };
-  }
-
-  // Clamp after last turn
-  const lastIdx = entries.length - 1;
-  const lastEntry = entries[lastIdx]!;
-  const lastTurn = history.turns[lastIdx]!;
-  if (globalRow >= lastEntry.startRow + lastEntry.lineCount) {
-    return { turnIndex: lastIdx, sourceOffset: lastTurn.content.length };
-  }
-
-  // Find matching turn entry
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]!;
-    const turn = history.turns[i]!;
-    const turnStart = entry.startRow;
-    const turnEnd = turnStart + entry.lineCount;
-
-    // Check if on separator line above turn
-    if (entry.separatorAbove > 0 && globalRow === turnStart - 1) {
-      return { turnIndex: i, sourceOffset: 0 };
-    }
-
-    if (globalRow >= turnStart && globalRow < turnEnd) {
-      const rowInTurn = globalRow - turnStart;
-      const sourceOffset = mapRowColToSourceOffset(
-        turn.content,
-        turn.role,
-        contentWidth,
-        rowInTurn,
-        screenCol,
-        turn.command,
-      );
-      return { turnIndex: i, sourceOffset };
-    }
-  }
-
-  return null;
+  const globalRow = Math.max(0, scrollTop + screenRow);
+  const col = Math.max(0, screenCol);
+  return { globalRow, col };
 }
 
 /**
- * 内部辅助：将单个 Turn 内的 (rowInTurn, col) 映射为 content 中的字符索引。
+ * 从一行纯文本中提取落在 [startCol, endCol] 列范围内的字符，自动去除 UI 前缀。
  */
-function mapRowColToSourceOffset(
-  content: string,
-  role: string,
-  contentWidth: number,
-  targetRow: number,
-  targetCol: number,
-  command?: string,
-): number {
-  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const logicalLines = normalized.split("\n");
-
-  let currentRow = 0;
-  let charAccumulator = 0;
-
-  // Handle local turn command line
-  if (role === "local" && command) {
-    const cmdWrapped = wrapTranscriptLine(`› ${command}`, contentWidth);
-    if (targetRow < cmdWrapped.length) {
-      // Clicked on command line; map to start of content
-      return 0;
-    }
-    currentRow += cmdWrapped.length;
+export function extractTextSliceByColumns(
+  plain: string,
+  startCol: number,
+  endCol: number,
+): string {
+  let text = plain;
+  let textStartCol = 0;
+  if (text.startsWith("◈ ")) {
+    text = text.slice(2);
+    textStartCol = 2;
+  } else if (text.startsWith("┃  ")) {
+    text = text.slice(3);
+    textStartCol = 3;
+  } else if (text.startsWith("› ")) {
+    text = text.slice(2);
+    textStartCol = 2;
   }
 
-  for (let l = 0; l < logicalLines.length; l++) {
-    const lineText = logicalLines[l]!;
-    const lineLen = lineText.length;
+  const effectiveStart = Math.max(0, startCol - textStartCol);
+  const effectiveEnd = Math.max(0, endCol - textStartCol);
+  if (effectiveStart >= effectiveEnd) return "";
 
-    let wrappedRows: string[];
-    let prefixFirst = 0;
-    let prefixCont = 0;
-
-    if (role === "user") {
-      wrappedRows = wrapTranscriptLine(`┃  ${lineText}`, contentWidth, "┃  ");
-      prefixFirst = 3;
-      prefixCont = 3;
-    } else if (role === "local") {
-      wrappedRows = wrapTranscriptLine(`  ${lineText}`, contentWidth, "  ");
-      prefixFirst = 2;
-      prefixCont = 2;
-    } else {
-      // assistant
-      if (l === 0 && !lineText.startsWith("[nolo]")) {
-        wrappedRows = wrapTranscriptLine(`◈ ${lineText}`, contentWidth);
-        prefixFirst = 2;
-        prefixCont = 0;
-      } else {
-        wrappedRows = wrapTranscriptLine(lineText, contentWidth);
-        prefixFirst = 0;
-        prefixCont = 0;
-      }
+  let out = "";
+  let col = 0;
+  for (const char of text) {
+    const w = displayWidth(char);
+    if (col + w > effectiveStart && col < effectiveEnd) {
+      out += char;
     }
-
-    const rowCount = Math.max(1, wrappedRows.length);
-
-    if (targetRow >= currentRow && targetRow < currentRow + rowCount) {
-      const subRow = targetRow - currentRow;
-      let offsetInLine = 0;
-
-      // Accumulate lengths of full subrows before target subrow
-      for (let s = 0; s < subRow; s++) {
-        const rowStr = stripAnsi(wrappedRows[s] ?? "");
-        const pLen = s === 0 ? prefixFirst : prefixCont;
-        const pureText = rowStr.slice(pLen);
-        offsetInLine += pureText.length;
-      }
-
-      // Add offset within target subrow based on targetCol
-      const targetRowStr = stripAnsi(wrappedRows[subRow] ?? "");
-      const pLen = subRow === 0 ? prefixFirst : prefixCont;
-      const pureTargetText = targetRowStr.slice(pLen);
-      const effectiveCol = Math.max(0, targetCol - pLen);
-
-      let colAccum = 0;
-      for (let c = 0; c < pureTargetText.length; c++) {
-        const char = pureTargetText[c]!;
-        const w = displayWidth(char);
-        if (colAccum + w > effectiveCol) {
-          break;
-        }
-        colAccum += w;
-        offsetInLine += char.length;
-      }
-
-      let finalOffset = Math.min(normalized.length, charAccumulator + Math.min(lineLen, offsetInLine));
-      // Guard against splitting surrogate pair (if high surrogate at end, include low surrogate)
-      if (
-        finalOffset > 0 &&
-        finalOffset < normalized.length &&
-        normalized.charCodeAt(finalOffset - 1) >= 0xd800 &&
-        normalized.charCodeAt(finalOffset - 1) <= 0xdbff
-      ) {
-        finalOffset += 1;
-      }
-      return finalOffset;
-    }
-
-    currentRow += rowCount;
-    charAccumulator += lineLen + 1; // +1 for newline
+    col += w;
   }
-
-  return normalized.length;
+  return out;
 }
 
 /**
@@ -227,6 +181,7 @@ export function extractSelectedText(
   history: TurnHistory,
   anchor: SelectionPoint | null,
   head: SelectionPoint | null,
+  contentWidth = 80,
 ): string {
   if (!anchor || !head) return "";
   const cmp = compareSelectionPoints(anchor, head);
@@ -235,45 +190,50 @@ export function extractSelectedText(
   const start = cmp < 0 ? anchor : head;
   const end = cmp < 0 ? head : anchor;
 
-  if (start.turnIndex === end.turnIndex) {
-    const turn = history.turns[start.turnIndex];
-    if (!turn) return "";
-    const raw = turn.content.slice(start.sourceOffset, end.sourceOffset);
-    return stripAnsi(raw);
-  }
+  const lines = buildHistoryLines(history, contentWidth);
+  const selectedLines: string[] = [];
 
-  const pieces: string[] = [];
-  const startTurn = history.turns[start.turnIndex];
-  if (startTurn) {
-    pieces.push(startTurn.content.slice(start.sourceOffset));
-  }
+  for (let r = start.globalRow; r <= end.globalRow; r++) {
+    const rawLine = lines[r];
+    if (rawLine === undefined) continue;
+    const plain = stripAnsi(rawLine);
+    if (plain.trim().length === 0) {
+      if (selectedLines.length > 0 && selectedLines[selectedLines.length - 1] !== "") {
+        selectedLines.push("");
+      }
+      continue;
+    }
 
-  for (let i = start.turnIndex + 1; i < end.turnIndex; i++) {
-    const midTurn = history.turns[i];
-    if (midTurn) {
-      pieces.push(midTurn.content);
+    let lineStartCol = 0;
+    let lineEndCol = Infinity;
+
+    if (r === start.globalRow) {
+      lineStartCol = start.col;
+    }
+    if (r === end.globalRow) {
+      lineEndCol = end.col;
+    }
+
+    const extracted = extractTextSliceByColumns(plain, lineStartCol, lineEndCol);
+    if (extracted.length > 0) {
+      selectedLines.push(extracted);
     }
   }
 
-  const endTurn = history.turns[end.turnIndex];
-  if (endTurn) {
-    pieces.push(endTurn.content.slice(0, end.sourceOffset));
-  }
-
-  return stripAnsi(pieces.join("\n\n"));
+  return selectedLines.join("\n");
 }
 
 /**
- * 将反色高亮 (Reverse Video \x1b[7m ... \x1b[27m) 叠加到可见行。
+ * 将字符级反色高亮 (Reverse Video \x1b[7m ... \x1b[27m) 叠加到可见行。
  */
 export function applySelectionOverlay(
   visibleLines: string[],
-  history: TurnHistory,
-  contentWidth: number,
+  _history: TurnHistory,
+  _contentWidth: number,
   scrollTop: number,
   selection: TuiSelectionState,
 ): string[] {
-  if (!selection.dragging || !selection.anchor || !selection.head) {
+  if (!selection.anchor || !selection.head) {
     return visibleLines;
   }
   const cmp = compareSelectionPoints(selection.anchor, selection.head);
@@ -282,46 +242,32 @@ export function applySelectionOverlay(
   const start = cmp < 0 ? selection.anchor : selection.head;
   const end = cmp < 0 ? selection.head : selection.anchor;
 
-  const { entries } = buildTurnOffsets(history, contentWidth);
   const result = [...visibleLines];
 
   for (let screenRow = 0; screenRow < visibleLines.length; screenRow++) {
     const globalRow = scrollTop + screenRow;
-
-    // Check if globalRow is between start and end selection points
-    let isSelectedRow = false;
-    for (let i = start.turnIndex; i <= end.turnIndex; i++) {
-      const entry = entries[i];
-      if (!entry) continue;
-
-      const turnStart = entry.startRow;
-      const turnEnd = turnStart + entry.lineCount;
-
-      if (i === start.turnIndex && i === end.turnIndex) {
-        if (globalRow >= turnStart && globalRow < turnEnd) {
-          isSelectedRow = true;
-        }
-      } else if (i === start.turnIndex) {
-        if (globalRow >= turnStart) {
-          isSelectedRow = true;
-        }
-      } else if (i === end.turnIndex) {
-        if (globalRow < turnEnd) {
-          isSelectedRow = true;
-        }
-      } else {
-        if (globalRow >= turnStart && globalRow < turnEnd) {
-          isSelectedRow = true;
-        }
-      }
+    if (globalRow < start.globalRow || globalRow > end.globalRow) {
+      continue;
     }
 
-    if (isSelectedRow) {
-      const line = result[screenRow] ?? "";
-      if (line.length > 0) {
-        result[screenRow] = `\x1b[7m${line}\x1b[27m`;
-      }
+    const currentLine = result[screenRow] ?? "";
+    if (currentLine.length === 0) continue;
+
+    let selStartCol = 0;
+    let selEndCol = Infinity;
+
+    if (globalRow === start.globalRow) {
+      selStartCol = start.col;
     }
+    if (globalRow === end.globalRow) {
+      selEndCol = end.col;
+    }
+
+    result[screenRow] = highlightLineByColumns(
+      currentLine,
+      selStartCol,
+      selEndCol,
+    );
   }
 
   return result;

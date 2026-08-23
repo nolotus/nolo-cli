@@ -2,9 +2,17 @@ import type { AgentRuntimeToolResult } from "../hostAdapter";
 import type { CapabilityExecutionContext, ExecutableCapability } from "./capability";
 import { evaluateCapabilityPolicy } from "./capabilityPolicy";
 import { execShellCapability } from "./execShellCapability";
+import {
+  type AgentRunInput,
+  type AgentRunResult,
+  executeAgentRunLifecycle,
+} from "./agentRunService";
 
 export interface CapabilitySdk {
   execShell(input: unknown): Promise<AgentRuntimeToolResult>;
+  agents: {
+    run(input: AgentRunInput): Promise<AgentRunResult>;
+  };
   invoke<O = AgentRuntimeToolResult>(name: string, input: unknown): Promise<O>;
 }
 
@@ -63,6 +71,14 @@ export function createCapabilitySdk(args: {
 
   return {
     execShell: (input: unknown) => invoke<AgentRuntimeToolResult>("execShell", input),
+    agents: {
+      run: async (input: AgentRunInput): Promise<AgentRunResult> => {
+        if (!args.context.agentRunService) {
+          throw new Error("CapabilityExecutionContext missing agentRunService for agents.run()");
+        }
+        return executeAgentRunLifecycle(args.context.agentRunService, input, args.context);
+      },
+    },
     invoke,
   };
 }

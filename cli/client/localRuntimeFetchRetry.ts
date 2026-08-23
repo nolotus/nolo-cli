@@ -40,7 +40,13 @@ const CORE_DRAINING_MAX_ATTEMPTS = 30;
  */
 const RETRYABLE_HTTP_STATUSES = new Set([429, 503]);
 
-function isTransientFetchError(error: unknown) {
+/**
+ * Transient (transport-level) failure test. Exported for providerStreamRetry:
+ * the same class of socket/network errors that fetchWithTransientRetry retries
+ * at the fetch-exchange stage must also be retried at the provider.complete
+ * stage (mid-stream deaths) and classified correctly in user-facing messages.
+ */
+export function isTransientFetchError(error: unknown) {
   const message = toErrorMessage(error);
   return /certificate|handshake|network|socket|timed out|timeout|ECONNRESET/i.test(
     message,

@@ -277,6 +277,7 @@ export type {
   AgentRuntimeAgentConfig,
   AgentRuntimeDialogSummary,
   AgentRuntimeHostAdapter,
+  AgentRuntimeCompleteOptions,
   AgentRuntimeProvider,
   AgentRuntimeSaveTurnInput,
   AgentRuntimeToolCallInput,
@@ -362,6 +363,21 @@ export type {
   OpenAiCompatibleTool,
   ExecShellInput,
   CapabilitySdk,
+  AgentRunActivity,
+  AgentRunActivityStatus,
+  AgentActivityEvent,
+  AgentActivitySink,
+  AgentRunService,
+  AgentRunStartOptions,
+  AgentRunStartResult,
+  AgentRunWaitOptions,
+  AgentRunWaitResult,
+  AgentRunCancelOptions,
+  AgentRunCancelResult,
+  AgentRunInspectOptions,
+  AgentRunInspectResult,
+  AgentRunInput,
+  AgentRunResult,
 } from "./capabilities";
 export {
   buildExecShellToolDefinition,
@@ -369,5 +385,8 @@ export {
   createCapabilitySdk,
   invokeCapability,
   BUILTIN_CAPABILITIES,
+  executeAgentRunLifecycle,
+  generateActivityId,
+  createToolBridgeAgentRunService,
 } from "./capabilities";
 

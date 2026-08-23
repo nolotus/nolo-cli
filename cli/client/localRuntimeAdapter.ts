@@ -7,6 +7,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   AgentRuntimeChatMessage,
+  AgentRuntimeProvider,
   AgentRuntimeResult,
   AgentRuntimeToolCall,
   AgentRuntimeToolCallInput,
@@ -76,6 +77,7 @@ type CliExecuteResult = {
 };
 type CliImageInput = { source: string };
 import type { ReadToolFn } from "./cliLocalToolExecutors";
+import { withProviderStreamRetry } from "./providerStreamRetry";
 
 import {
   resolveRuntimeServerUrl as _resolveRuntimeServerUrl,
@@ -437,7 +439,7 @@ export function createCliLocalRuntimeAdapter(
     ...runtimeToolExecutionLimits,
   });
 
-  return {
+  const adapterBase = {
     host: "cli",
     capabilities: [
       "leveldb-agent-config",
@@ -593,7 +595,7 @@ export function createCliLocalRuntimeAdapter(
           loopbackRequest,
         }),
       }),
-    resolveProvider: async (agentConfig) => {
+    resolveProviderBase: async (agentConfig) => {
       // 冷却检查放在派发点：loadAgentConfig 只负责加载配置，不应因冷却失败
       // （冷却 ≠ 配置错误，listAgents/预览等读配置路径不能被误伤）。
       if (isAgentCoolingDown(agentConfig, now())) {
@@ -1535,5 +1537,24 @@ export function createCliLocalRuntimeAdapter(
         },
       };
     },
+  } satisfies Omit<AgentRuntimeHostAdapter, "resolveProvider"> & {
+    resolveProviderBase: AgentRuntimeHostAdapter["resolveProvider"];
+  };
+
+  // Single wrap point for every transport branch above: provider.complete is
+  // retried as a whole when the upstream dies mid-stream (SSE body read /
+  // res.text()), which fetchWithTransientRetry cannot see because it only
+  // covers the fetch exchange up to the response headers. The cast mirrors the
+  // pre-existing structural looseness of the branch returns (one branch omits
+  // `model` on the result — already flagged by TS2322 on alpha at this spot).
+  return {
+    ...adapterBase,
+    resolveProvider: async (agentConfig: AgentRuntimeAgentConfig) =>
+      withProviderStreamRetry(
+        (await adapterBase.resolveProviderBase(
+          agentConfig,
+        )) as AgentRuntimeProvider,
+        deps,
+      ),
   };
 }

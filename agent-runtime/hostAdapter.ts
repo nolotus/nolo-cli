@@ -69,6 +69,13 @@ export type AgentRuntimeAgentConfig = {
 export type AgentRuntimeCompleteOptions = {
   timeoutMs?: number;
   /**
+   * 本轮的取消信号（用户按 Esc / stop）。localLoop 把 input.abortSignal
+   * 透传到这里，provider 层可据此 abort 底层 fetch；CLI 的
+   * providerStreamRetry 也用它判定「取消后不再重试」。仅本地 runtime
+   * 路径；服务端 loop 不使用。
+   */
+  signal?: AbortSignal;
+  /**
    * 本轮所属对话 id。仅用于服务端计费归因：platform proxy 会把它写进
    * token 记录的 dialogId（缺省时 chatProxyBilling 兜底成 "chat-proxy"，
    * 所有 runtime 调用会塌成同一个桶），kimi 路径还会据此设 prompt_cache_key。

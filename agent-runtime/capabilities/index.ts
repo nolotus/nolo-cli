@@ -16,3 +16,29 @@ export {
   BUILTIN_CAPABILITIES,
 } from "./capabilitySdk";
 export type { CapabilitySdk } from "./capabilitySdk";
+
+export type {
+  AgentRunActivity,
+  AgentRunActivityStatus,
+  AgentActivityEvent,
+  AgentActivitySink,
+} from "./agentRunActivity";
+
+export {
+  executeAgentRunLifecycle,
+  generateActivityId,
+  createToolBridgeAgentRunService,
+} from "./agentRunService";
+export type {
+  AgentRunService,
+  AgentRunStartOptions,
+  AgentRunStartResult,
+  AgentRunWaitOptions,
+  AgentRunWaitResult,
+  AgentRunCancelOptions,
+  AgentRunCancelResult,
+  AgentRunInspectOptions,
+  AgentRunInspectResult,
+  AgentRunInput,
+  AgentRunResult,
+} from "./agentRunService";

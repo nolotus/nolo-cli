@@ -1,5 +1,7 @@
 import type { AgentRuntimeToolResult } from "../hostAdapter";
 import type { PermissionRequest } from "../actionGate";
+import type { AgentRunService } from "./agentRunService";
+import type { AgentActivitySink } from "./agentRunActivity";
 
 export type OpenAiCompatibleTool = Record<string, unknown> & {
   type?: string;
@@ -32,6 +34,12 @@ export interface CapabilityExecutionContext {
   blockDestructiveWithoutConfirmation?: boolean;
   /** Optional policy check or audit hook invoked before capability execution */
   onInvoke?: (capability: string, input: unknown) => void | Promise<void>;
+  /** Low-level AgentRunService for programmatic agent run lifecycle execution */
+  agentRunService?: AgentRunService;
+  /** Activity context for tracking parent/child relationship */
+  activityContext?: { parentActivityId?: string };
+  /** Optional activity event sink for structured agent-run activity lifecycle */
+  onActivity?: AgentActivitySink;
   [key: string]: unknown;
 }
 

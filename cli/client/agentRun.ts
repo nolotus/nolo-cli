@@ -12,6 +12,7 @@ import {
   createCliLocalRuntimeAdapter,
   isBuiltinNoloAgentRef,
 } from "./localRuntimeAdapter";
+import { isTransientFetchError } from "./localRuntimeFetchRetry";
 import type {
   LocalAgentTurnInput,
 } from "../../agent-runtime/localLoop";
@@ -502,6 +503,17 @@ function describeLocalRunFailure(message: string): string {
 
   const cls = classifyLocalRunError(message);
   if (cls.kind === "generic") {
+    // Socket/network deaths mid-stream are upstream transport failures —
+    // telling the user to "fix the local credential/config" points the
+    // investigation in the wrong direction (this exact wording misled a real
+    // mid-stream kill investigation; the 502/503 branches already carry
+    // "not your local credential" disclaimers).
+    if (isTransientFetchError(message)) {
+      return (
+        `${RUN_UNAVAILABLE_PREFIX} (${message}). ${NO_FALLBACK} ` +
+        `The upstream connection dropped mid-request (transient network/gateway issue — not a local credential or config problem). Send again (or say "continue") to retry in the same conversation.\n`
+      );
+    }
     return (
       `${RUN_UNAVAILABLE_PREFIX} (${message}). ${NO_FALLBACK} ` +
       `Fix the local credential/config and retry, ${SERVER_FALLBACK_HINT}.\n`

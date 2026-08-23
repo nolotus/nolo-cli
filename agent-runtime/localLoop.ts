@@ -1420,6 +1420,10 @@ export async function runLocalAgentTurn(
         messages: requestMessages,
         options: {
           ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
+          // 用户取消信号穿进 provider options：providerStreamRetry 据此在
+          // 取消后跳过重试，provider 分支（如 antigravity/openai-compatible）
+          // 也可把 fetch 绑定到同一信号，实现真正的传输层取消。
+          ...(input.abortSignal ? { signal: input.abortSignal } : {}),
           // 计费归因：续聊轮次带上 dialogId，platform proxy 才能把 token 记录
           // 归到具体对话而不是 chat-proxy 兜底桶。新对话首轮 id 尚未分配。
           ...(input.continueDialogId ? { dialogId: input.continueDialogId } : {}),

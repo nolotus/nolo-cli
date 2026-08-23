@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   ANSI_ESCAPE_REGEX,
   appendToCurrentTurn,
+  applyScrollAction,
   applyTerminalOutputToText,
   createFixedInput,
   createHistoryOutputStream,
@@ -23,6 +24,7 @@ import {
   fitAnsiLine,
   installAltScreenRestoreHandlers,
   padOrTruncateToWidth,
+  parseScrollAction,
   renderHistory,
   renderPinnedAgentNotice,
   splitRawInput,
@@ -233,7 +235,6 @@ describe("createFixedInput", () => {
 
   test("anchors an OMP-style composer to the terminal bottom", () => {
     const tty = mockTty();
-    enterAltScreen(tty.output);
     const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > DeepSeek V4 Flash > ~/tmp > context: 1.9% (19.5k/1M)",
     });
@@ -262,7 +263,6 @@ describe("createFixedInput", () => {
 
   test("positions the cursor on the input line when completions are shown", () => {
     const tty = mockTty();
-    enterAltScreen(tty.output);
     const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > minimax-m3 > ~/tmp",
     });
@@ -368,16 +368,13 @@ describe("createFixedInput", () => {
     expect(input.getInputLines()).toBe(EMPTY_COMPOSER_LINES);
   });
 
-  test("defaults to disabled mouse reporting, enables on opt-in and disables on pause/disable", () => {
+  test("enables wheel reporting on init and disables it on pause/disable", () => {
     const tty = mockTty();
     const input = createFixedInput(tty.output, {
       getStatusLine: () => "nolo > test",
     });
 
     input.init();
-    expect(tty.stdout()).not.toContain("\x1b[?1006h\x1b[?1000h");
-
-    input.setMouseEnabled(true);
     expect(tty.stdout()).toContain("\x1b[?1006h\x1b[?1000h");
 
     input.pause();
@@ -1047,6 +1044,18 @@ describe("scroll-aware history", () => {
     ]);
   });
 
+  test("renderHistory shows scrollbar when history exceeds viewport", () => {
+    const { output, chunks } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    for (let i = 0; i < 20; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    renderHistory(output, history, 2);
+    const stdout = chunks.join("");
+    expect(stdout).toContain("█");
+    expect(stdout).toContain("│");
+  });
+
   test("renderHistory scrolls to follow bottom by default", () => {
     const { output, chunks } = makeOutput(10, 40);
     const history = createTurnHistory();
@@ -1072,6 +1081,76 @@ describe("scroll-aware history", () => {
     const stdout = chunks.join("");
     expect(stdout).toContain("line 2");
     expect(stdout).not.toContain("line 29");
+  });
+
+  test("parseScrollAction recognizes scroll keys", () => {
+    expect(parseScrollAction("\x1b[5~")).toBe("page-up");
+    expect(parseScrollAction("\x1b[6~")).toBe("page-down");
+    expect(parseScrollAction("\x1b[5;2~")).toBe("half-page-up");
+    expect(parseScrollAction("\x1b[6;5~")).toBe("half-page-down");
+    expect(parseScrollAction("\x1b[H")).toBe("top");
+    expect(parseScrollAction("\x1b[F")).toBe("bottom");
+    expect(parseScrollAction("\x1b[1~")).toBe("top");
+    expect(parseScrollAction("\x1b[4~")).toBe("bottom");
+    expect(parseScrollAction("a")).toBeNull();
+  });
+
+  test("parseScrollAction recognizes SGR mouse wheel events", () => {
+    expect(parseScrollAction("\x1b[<64;10;5M")).toBe("wheel-up");
+    expect(parseScrollAction("\x1b[<65;10;5M")).toBe("wheel-down");
+    // modifier bits (shift=4, meta=8, ctrl=16) keep the wheel mapping
+    expect(parseScrollAction("\x1b[<68;10;5M")).toBe("wheel-up");
+    expect(parseScrollAction("\x1b[<81;10;5M")).toBe("wheel-down");
+    // horizontal wheel and plain clicks are not scroll actions
+    expect(parseScrollAction("\x1b[<66;10;5M")).toBeNull();
+    expect(parseScrollAction("\x1b[<67;10;5M")).toBeNull();
+    expect(parseScrollAction("\x1b[<0;10;5M")).toBeNull();
+    expect(parseScrollAction("\x1b[<0;10;5m")).toBeNull();
+  });
+
+  test("applyScrollAction scrolls by wheel lines and refollows at bottom", () => {
+    const { output } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    for (let i = 0; i < 30; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    history.scrollTop = 10;
+    history.followBottom = false;
+
+    applyScrollAction(history, "wheel-up", output, 2);
+    expect(history.scrollTop).toBe(7);
+    expect(history.followBottom).toBe(false);
+
+    applyScrollAction(history, "wheel-down", output, 2);
+    expect(history.scrollTop).toBe(10);
+    expect(history.followBottom).toBe(false);
+
+    // Reaching the bottom via the wheel resumes live-tail. 30 assistant
+    // turns render as 59 lines (blank separators), viewport 8 → max 51.
+    history.scrollTop = 50;
+    applyScrollAction(history, "wheel-down", output, 2);
+    expect(history.scrollTop).toBe(51);
+    expect(history.followBottom).toBe(true);
+  });
+
+  test("applyScrollAction moves scrollTop and disables follow bottom", () => {
+    const { output } = makeOutput(10, 40);
+    const history = createTurnHistory();
+    history.followBottom = true;
+    for (let i = 0; i < 30; i++) {
+      history.turns.push({ role: "assistant", content: `line ${i}` });
+    }
+    applyScrollAction(history, "page-up", output, 2);
+    expect(history.followBottom).toBe(false);
+    expect(history.scrollTop).toBe(0);
+
+    applyScrollAction(history, "page-down", output, 2);
+    expect(history.scrollTop).toBe(8);
+
+    applyScrollAction(history, "bottom", output, 2);
+    expect(history.followBottom).toBe(true);
+    // 59 transcript lines (30 turns + blank separators) - 8 visible = 51.
+    expect(history.scrollTop).toBe(51);
   });
 
   test("splitRawInput keeps CSI scroll sequences intact", () => {
@@ -2447,7 +2526,9 @@ function makeTtyIo() {
 }
 
 describe("alternate screen isolation (startTuiWorkspace)", () => {
-  test("TTY 默认主屏启动不写 ?1049h，且启动序列不再含 \\x1b[3J", async () => {
+  test("TTY 启动写 ?1049h 且启动序列不再含 \\x1b[3J", async () => {
+    // 覆盖测试要求 1（启动）+ 4（3J 被删）。启动序列里必须有 ?1049h，
+    // 绝不能有 \x1b[3J（它会清主屏 scrollback，切到备用屏后是无意义且有害的）。
     const { input, output, stdout } = makeTtyIo();
     const workspacePromise = startTuiWorkspace({
       scriptDir: "",
@@ -2456,24 +2537,7 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
       env: {},
       agentRunner: async () => ({ exitCode: 0, dialogId: "d" }),
     });
-    await new Promise((r) => setTimeout(r, 60));
-    const out = stdout();
-    expect(out).not.toContain("\x1b[?1049h");
-    expect(out).not.toContain("\x1b[3J");
-    input.write("/exit\r");
-    input.end();
-    await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
-  });
-
-  test("NOLO_TUI_ALTSCREEN=1 时 TTY 启动写 ?1049h", async () => {
-    const { input, output, stdout } = makeTtyIo();
-    const workspacePromise = startTuiWorkspace({
-      scriptDir: "",
-      input,
-      output,
-      env: { NOLO_TUI_ALTSCREEN: "1" },
-      agentRunner: async () => ({ exitCode: 0, dialogId: "d" }),
-    });
+    // 等启动 banner + 清屏序列落地。
     await new Promise((r) => setTimeout(r, 60));
     const out = stdout();
     expect(out).toContain("\x1b[?1049h");
@@ -2483,7 +2547,9 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
     await Promise.race([workspacePromise, new Promise((r) => setTimeout(r, 3000))]);
   });
 
-  test("/altscreen on 写 ?1049h 且触发历史重绘；off 写 ?1049l", async () => {
+  test("/altscreen off 写 ?1049l 且触发历史重绘；on 反之", async () => {
+    // 覆盖测试要求 5。off → 写 ?1049l 并重绘历史（否则切过去是空屏），
+    // on → 写 ?1049h。同时验证反馈文案出现。
     const { input, output, stdout } = makeTtyIo();
     let resolveFirst: (() => void) | null = null;
     const firstTurn = new Promise<void>((r) => { resolveFirst = r; });
@@ -2505,24 +2571,28 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
     while (turnCount < 1) await new Promise((r) => setTimeout(r, 10));
     await new Promise((r) => setTimeout(r, 40));
 
-    // on：必须写 ?1049h 并出现 altscreenOn 文案，且重绘
-    input.write("/altscreen on\r");
+    // off：必须写 ?1049l 并出现 altscreenOff 文案。
+    input.write("/altscreen off\r");
     await new Promise((r) => setTimeout(r, 60));
     let out = stdout();
+    expect(out).toContain("\x1b[?1049l");
+    expect(out).toContain(t("altscreenOff"));
+
+    // on：必须写 ?1049h 并出现 altscreenOn 文案，且重绘（composer 状态行
+    // 🏔 在 altscreenOn 文案之后再次出现，证明 repaint 被调用，而非空屏）。
+    input.write("/altscreen on\r");
+    await new Promise((r) => setTimeout(r, 60));
+    out = stdout();
     expect(out).toContain("\x1b[?1049h");
     expect(out).toContain(t("altscreenOn"));
+    // 重绘落地：切回 on 后历史内容仍在输出里（证明 renderHistoryToOutput 被调）。
     expect(out).toContain("reply 1");
+    // composer 重绘证据：?1049h 之后必须出现一次 🏔 状态行（action handler 的
+    // renderHistoryToOutput+repaint 在切屏后才补绘，证明切过去不是空屏）。
     const onSeqIdx = out.lastIndexOf("\x1b[?1049h");
     expect(onSeqIdx).toBeGreaterThanOrEqual(0);
     const statusAfterOn = out.indexOf("🏔", onSeqIdx);
     expect(statusAfterOn, "composer 应在切到备用屏后重绘").toBeGreaterThan(onSeqIdx);
-
-    // off：必须写 ?1049l 并出现 altscreenOff 文案。
-    input.write("/altscreen off\r");
-    await new Promise((r) => setTimeout(r, 60));
-    out = stdout();
-    expect(out).toContain("\x1b[?1049l");
-    expect(out).toContain(t("altscreenOff"));
 
     input.write("/exit\r");
     input.end();
@@ -2560,8 +2630,8 @@ describe("alternate screen isolation (startTuiWorkspace)", () => {
     await new Promise((r) => setTimeout(r, 50));
     const outAfterRedraw = stdout();
 
-    // Must have cleared and repainted from row 1 and forced composer redraw
-    expect(outAfterRedraw).toContain("\x1b[2J");
+    // Must have repainted the full screen from row 1 and forced composer redraw
+    expect(outAfterRedraw).toContain("\x1b[1;1H");
     expect(outAfterRedraw).toContain("reply 1");
     expect(outAfterRedraw).toContain("\x1b[J");
     expect(outAfterRedraw).toContain("🏔");

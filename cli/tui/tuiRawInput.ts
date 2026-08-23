@@ -206,9 +206,6 @@ export function createFixedInput(
 
   let lastScrollBottom = -1;
   const setScrollRegion = (lines: number, force = false) => {
-    // Only set scroll region when running on the alternate screen.
-    // In main screen mode, DECSTBM breaks native terminal scrollback and causes viewport jitter.
-    if (!isAltScreenOn(output)) return;
     const bottom = Math.max(1, getRows() - lines);
     if (force || lastScrollBottom !== bottom) {
       write(`\x1b[1;${bottom}r`);
@@ -217,15 +214,16 @@ export function createFixedInput(
   };
   const saveCursor = () => write("\x1b7");
   const resetScrollRegion = () => {
-    if (!isAltScreenOn(output)) return;
     lastScrollBottom = -1;
     write("\x1b[r");
   };
 
-  // Wheel reporting: SGR format (1006) + basic tracking (1000).
-  // Defaulting to false leaves wheel scrolling and drag selection to the terminal
-  // native scrollback without requiring Shift. Users can opt in via /mouse on or NOLO_TUI_MOUSE=1.
-  let mouseEnabled = (process.env.NOLO_TUI_MOUSE ?? "").trim() === "1";
+  // Wheel reporting: SGR format (1006) + basic tracking (1000). Without these
+  // the terminal never delivers wheel events, so the transcript could not be
+  // scrolled by trackpad/mouse at all. Selection still works via the
+  // terminal's bypass modifier (e.g. Shift in Ghostty/iTerm2), and /mouse off
+  // flips mouseEnabled so drag-select works without a modifier.
+  let mouseEnabled = true;
   const enableMouse = () => {
     if (mouseEnabled) write("\x1b[?1006h\x1b[?1000h");
   };

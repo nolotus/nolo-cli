@@ -122,6 +122,9 @@ export type TuiAction =
       type: "copy-last";
     }
   | {
+      type: "copy-view";
+    }
+  | {
       type: "set-mouse";
       enabled: boolean;
     }
@@ -155,5 +158,6 @@ export type TuiInputKeyResult = {
   cursorPos?: number;
   submit?: string;
   abort?: boolean;
+  copyView?: boolean;
   redraw?: boolean;
 };

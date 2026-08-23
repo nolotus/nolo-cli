@@ -5211,6 +5211,147 @@ describe("CLI local runtime adapter OAuth branches surface usage (TUI context ch
     expect(textDeltas).toEqual(["chunk 1 ", "chunk 2"]);
     expect(result.usage).toEqual({ prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 });
   });
+
+  test("antigravity OAuth branch force-refreshes token and retries once on HTTP 401", async () => {
+    writeOAuthCredential("antigravity", {
+      provider: "antigravity",
+      accessToken: "token-antigravity-stale",
+      refreshToken: "refresh-antigravity-stale",
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      obtainedAt: Date.now(),
+      metadata: { projectId: "projects/antigravity-proj-1" },
+    });
+    const receivedAuthHeaders: string[] = [];
+
+    const refreshFetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      async (input: any) => {
+        const url = String(input?.url ?? input);
+        if (url.includes("oauth2.googleapis.com/token")) {
+          return Response.json({
+            access_token: "token-antigravity-fresh",
+            expires_in: 3600,
+            token_type: "Bearer",
+          });
+        }
+        return Response.json({});
+      },
+    );
+
+    try {
+      const adapter = createOAuthAdapter({
+        agentRecord: {
+          dbKey: "agent-user-1-antigravity-oauth",
+          id: "antigravity-oauth",
+          model: "gemini-3.1-pro",
+          provider: "google-antigravity",
+          apiSource: "custom",
+          apiKeyRef: "antigravity",
+        },
+        fetchImpl: async (url, init) => {
+          if (String(url).includes("streamGenerateContent")) {
+            const authHeader =
+              new Headers(init?.headers as HeadersInit).get("Authorization") || "";
+            receivedAuthHeaders.push(authHeader);
+            if (authHeader.includes("token-antigravity-stale")) {
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    code: 401,
+                    message: "Request had invalid authentication credentials.",
+                    status: "UNAUTHENTICATED",
+                  },
+                }),
+                { status: 401, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            return new Response(
+              'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"retried ok"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"totalTokenCount":7}}}\n\n',
+              { headers: { "Content-Type": "text/event-stream" } },
+            );
+          }
+          return Response.json({ choices: [{ message: { content: "unused" } }] });
+        },
+      });
+
+      const agentConfig = await adapter.loadAgentConfig("antigravity-oauth");
+      const provider = await adapter.resolveProvider(agentConfig);
+      const result = await provider.complete([{ role: "user", content: "hi" }], {});
+
+      expect(refreshFetchSpy.mock.calls.length).toBeGreaterThan(0);
+      expect(receivedAuthHeaders).toEqual([
+        "Bearer token-antigravity-stale",
+        "Bearer token-antigravity-fresh",
+      ]);
+      expect(result).toMatchObject({
+        content: "retried ok",
+        usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+      });
+    } finally {
+      refreshFetchSpy.mockRestore();
+    }
+  });
+
+  test("antigravity OAuth branch surfaces original 401 when force-refresh fails", async () => {
+    writeOAuthCredential("antigravity", {
+      provider: "antigravity",
+      accessToken: "token-antigravity-stale",
+      refreshToken: "refresh-antigravity-broken",
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      obtainedAt: Date.now(),
+      metadata: { projectId: "projects/antigravity-proj-1" },
+    });
+
+    const refreshFetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      async (input: any) => {
+        const url = String(input?.url ?? input);
+        if (url.includes("oauth2.googleapis.com/token")) {
+          return new Response(
+            JSON.stringify({ error: "invalid_grant", error_description: "Token has been revoked." }),
+            { status: 400, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return Response.json({});
+      },
+    );
+
+    try {
+      const adapter = createOAuthAdapter({
+        agentRecord: {
+          dbKey: "agent-user-1-antigravity-oauth",
+          id: "antigravity-oauth",
+          model: "gemini-3.1-pro",
+          provider: "google-antigravity",
+          apiSource: "custom",
+          apiKeyRef: "antigravity",
+        },
+        fetchImpl: async (url) => {
+          if (String(url).includes("streamGenerateContent")) {
+            return new Response(
+              JSON.stringify({
+                error: {
+                  code: 401,
+                  message: "Request had invalid authentication credentials.",
+                  status: "UNAUTHENTICATED",
+                },
+              }),
+              { status: 401, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          return Response.json({ choices: [{ message: { content: "unused" } }] });
+        },
+      });
+
+      const agentConfig = await adapter.loadAgentConfig("antigravity-oauth");
+      const provider = await adapter.resolveProvider(agentConfig);
+
+      // 刷新失败时保留原始 401 向上抛，不被 refresh 报错掩盖。
+      await expect(
+        provider.complete([{ role: "user", content: "hi" }], {}),
+      ).rejects.toThrow("local antigravity provider failed: HTTP 401");
+    } finally {
+      refreshFetchSpy.mockRestore();
+    }
+  });
 });
 
 /**

@@ -482,6 +482,13 @@ export function handleTuiInput(input: string, state: TuiState): TuiInputResult {
         action: { type: "pick-dialog" },
       };
     case "/copy":
+      if (argText === "view") {
+        return {
+          nextState: state,
+          output: "",
+          action: { type: "copy-view" },
+        };
+      }
       if (argText) {
         return { nextState: state, output: t("copyUsage") };
       }

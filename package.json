@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.33.0-alpha.17",
+  "version": "0.33.0-alpha.18",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -392,6 +392,7 @@
     "cli/tui/agentCatalog.ts",
     "cli/tui/dialogFrame.ts",
     "cli/tui/sessionTypes.ts",
+    "cli/tui/tuiScrollbar.ts",
     "cli/tui/multiSelectDialog.ts",
     "cli/tui/runRegistryPoller.ts",
     "cli/tui/agentPicker.ts",
@@ -406,7 +407,6 @@
     "cli/tui/session.ts",
     "cli/tui/detectBackground.ts",
     "cli/tui/terminalNotification.ts",
-    "cli/tui/tuiScrollbar.ts",
     "cli/tui/agentRunPanelLines.ts",
     "cli/tui/runSnapshotDisplay.ts",
     "cli/tui/sessionDispatch.ts",

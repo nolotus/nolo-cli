@@ -149,10 +149,11 @@ describe("applyTuiInputKey", () => {
     expect(applyTuiInputKey("abc", "\u0003").abort).toBe(true);
   });
 
-  test("drops unbound control characters (e.g. Ctrl+O 0x0f) without polluting buffer", () => {
+  test("opens copy view with Ctrl+O without changing the draft", () => {
     expect(applyTuiInputKey("draft", "\u000f")).toEqual({
       buffer: "draft",
       cursorPos: 5,
+      copyView: true,
     });
   });
 
@@ -431,16 +432,17 @@ describe("applyTuiInputKey", () => {
   });
 });
 
-describe("handleTuiInput - copy", () => {
-  test("keeps /copy as direct copy-last action", () => {
+describe("handleTuiInput - copy view", () => {
+  test("keeps /copy as direct copy and routes /copy view separately", () => {
     const state = createInitialTuiState({});
     expect(handleTuiInput("/copy", state).action).toEqual({ type: "copy-last" });
+    expect(handleTuiInput("/copy view", state).action).toEqual({ type: "copy-view" });
   });
 
   test("rejects unsupported /copy arguments", () => {
     const result = handleTuiInput("/copy something", createInitialTuiState({}));
     expect(result.action).toBeUndefined();
-    expect(result.output).toContain("/copy");
+    expect(result.output).toContain("/copy view");
   });
 });
 

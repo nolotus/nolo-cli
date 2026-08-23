@@ -55,6 +55,9 @@ export function applyTuiInputKey(
   if (seq === "\u0003" || (key.ctrl && key.name === "c")) {
     return { buffer, cursorPos: curPos, abort: true };
   }
+  if (seq === "\u000f" || (key.ctrl && key.name === "o")) {
+    return { buffer, cursorPos: curPos, copyView: true };
+  }
   if (seq === "\u000c" || (key.ctrl && key.name === "l")) {
     return { buffer, cursorPos: curPos, redraw: true };
   }
@@ -173,7 +176,7 @@ export function applyTuiInputKey(
     return { buffer: completed, cursorPos: completed.length };
   }
 
-  if (!seq || key.ctrl || key.meta || seq.startsWith("\x1b") || seq.charCodeAt(0) < 32) {
+  if (!seq || key.ctrl || key.meta || seq.startsWith("\x1b")) {
     return { buffer, cursorPos: curPos };
   }
 

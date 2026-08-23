@@ -714,12 +714,21 @@ export function createCliLocalRuntimeAdapter(
       // direct `/chat/completions` against daily-cloudcode-pa returns HTTP 404.
       // Mirror server agent-run loop: CCA wire + local oauth refresh.
       if (isAntigravityOAuthAgent(agentConfig)) {
-        const accessToken = await apiKeyRefResolver("antigravity");
-        if (!accessToken) {
-          throw new Error(
-            'OAuth credential for "antigravity" not found locally. Run `nolo auth antigravity`.',
-          );
-        }
+        // OAuth access token 可能短于一次工具循环的时长，也可能被 Google 在
+        // 本地仍认为新鲜时提前作废（refresh 轮换/上游瞬时拒绝）。解析下沉到
+        // 每次请求；401 时强制换新 token 重试一次，与 openAiCompatibleProvider
+        // 和服务端 loopUpstream 的 401/403 refresh-and-retry 对齐。
+        const resolveAccessToken = async (): Promise<string> => {
+          const accessToken = await apiKeyRefResolver("antigravity");
+          if (!accessToken) {
+            throw new Error(
+              'OAuth credential for "antigravity" not found locally. Run `nolo auth antigravity`.',
+            );
+          }
+          return accessToken;
+        };
+        // 构建时快速失败：凭证完全缺失时保留原有的明确指引。
+        await resolveAccessToken();
         const credential = readOAuthCredential("antigravity");
         const { requestedToolNames, tools } = resolveProviderOpenAiToolBundle(
           agentConfig,
@@ -756,20 +765,45 @@ export function createCliLocalRuntimeAdapter(
               requestedToolNames,
               openAiToolNames: summarizeOpenAiToolNames(tools),
             });
-            const result = await fetchAntigravityCloudCodeCompletion({
-              agentConfig,
-              accessToken,
-              metadata: credential?.metadata ?? null,
-              openAiBody,
-              signal: options?.signal,
-              onTextDelta: options?.onTextDelta,
-              onReasoningDelta: options?.onReasoningDelta,
-              fetchImpl: (url: string | URL | Request, init?: RequestInit) =>
-                fetchWithTransientRetry(fetchImpl, url, init, {
-                  sleep: deps.sleep,
-                  loopbackRequest,
-                }),
-            });
+            const accessToken = await resolveAccessToken();
+            const sendCcaRequest = (token: string) =>
+              fetchAntigravityCloudCodeCompletion({
+                agentConfig,
+                accessToken: token,
+                metadata: credential?.metadata ?? null,
+                openAiBody,
+                signal: options?.signal,
+                onTextDelta: options?.onTextDelta,
+                onReasoningDelta: options?.onReasoningDelta,
+                fetchImpl: (url: string | URL | Request, init?: RequestInit) =>
+                  fetchWithTransientRetry(fetchImpl, url, init, {
+                    sleep: deps.sleep,
+                    loopbackRequest,
+                  }),
+              });
+            let result = await sendCcaRequest(accessToken);
+            if (result.status === 401) {
+              // 上游拒绝了本地认为新鲜的 token：强制换新 token 重试一次。
+              // 刷新失败时保留原始 401 向上抛（对齐 loopUpstream 的语义）。
+              try {
+                const refreshed = await apiKeyRefResolver("antigravity", {
+                  force: true,
+                });
+                if (refreshed && refreshed !== accessToken) {
+                  logLocalRuntimeDiagnostic("provider.request.auth_retry", {
+                    agentKey: agentConfig.key,
+                    transport: "antigravity-cloud-code",
+                  });
+                  result = await sendCcaRequest(refreshed);
+                }
+              } catch (error) {
+                logLocalRuntimeDiagnostic("provider.request.auth_retry_failed", {
+                  agentKey: agentConfig.key,
+                  transport: "antigravity-cloud-code",
+                  error: toErrorMessage(error),
+                });
+              }
+            }
             await recordLocalAvailability(result.status, result.body);
             if (result.status < 200 || result.status >= 300) {
               const errMsg =

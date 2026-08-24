@@ -1,10 +1,14 @@
 export const AGENT_RUNTIME_PACKAGE_ID = "agent-runtime";
 
+// 429 可用性逻辑的单一事实来源是 `ai/agent/agentAvailabilityShared`（本包曾有一份
+// 平行实现，已删除）。此处转发，保持 agent-runtime 的既有导出面。
 export {
   DEFAULT_PROVIDER_RETRY_MS,
-  isAgentCoolingDown,
-  resolveAgentNextAvailableAt,
-} from "./agentAvailability";
+  isAgentUnavailableNow,
+  mergeAvailabilityDeadline,
+  resolveAvailabilityAction,
+  resolveNextAvailableAt,
+} from "../ai/agent/agentAvailabilityShared";
 
 export {
   AUTO_EXECUTION_PROFILES,

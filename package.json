@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.33.0-alpha.25",
+  "version": "0.33.0-alpha.26",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -478,7 +478,6 @@
     "agent-runtime/sseFrames.ts",
     "agent-runtime/sseDataLine.ts",
     "agent-runtime/anthropicMessagesProvider.ts",
-    "agent-runtime/agentAvailability.ts",
     "agent-runtime/cursor/cursorProvider.ts",
     "agent-runtime/codexResponsesProvider.ts",
     "agent-runtime/oauthTokenStore.ts",

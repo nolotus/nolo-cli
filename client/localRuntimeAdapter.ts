@@ -240,7 +240,11 @@ import {
   fetchAnthropicMessagesCompletion,
   isAnthropicOAuthAgent,
 } from "../agent-runtime/anthropicMessagesProvider";
-import { isAgentCoolingDown, resolveAgentNextAvailableAt } from "../agent-runtime/agentAvailability";
+import {
+  isAgentUnavailableNow,
+  mergeAvailabilityDeadline,
+  resolveAvailabilityAction,
+} from "../ai/agent/agentAvailabilityShared";
 import {
   createCursorProvider,
   isCursorOAuthAgent,
@@ -598,20 +602,38 @@ export function createCliLocalRuntimeAdapter(
     resolveProviderBase: async (agentConfig) => {
       // 冷却检查放在派发点：loadAgentConfig 只负责加载配置，不应因冷却失败
       // （冷却 ≠ 配置错误，listAgents/预览等读配置路径不能被误伤）。
-      if (isAgentCoolingDown(agentConfig, now())) {
+      if (isAgentUnavailableNow(agentConfig as Record<string, unknown>, now())) {
         throw new Error(
           `agent temporarily unavailable until ${new Date(Number((agentConfig as any).nextAvailableAt)).toISOString()}`,
         );
       }
-      const recordLocalAvailability = async (status: number, body: unknown) => {
+      /**
+       * 把一次上游响应的可用性结论落到本地 agent 记录（429 冷却 / 恢复）。
+       * 决策用共享纯函数，本地只负责 IO；每条 transport 分支都必须调用它，
+       * 否则限流 agent 会继续被 listAgents 列出、继续被选中、继续撞 429。
+       */
+      const recordLocalAvailability = async (status: number, body?: unknown) => {
         const key = typeof agentConfig.key === "string" ? agentConfig.key : "";
-        if (!key || (status !== 200 && status !== 429)) return;
-        const current = await getOrCreateSharedStore(deps).then((store) => store.read(key, { remote: false })).catch(() => null);
+        if (!key) return;
+        const action = resolveAvailabilityAction(status, body, now());
+        if (action.kind === "noop") return;
+        const store = await getOrCreateSharedStore(deps);
+        const current = await store.read(key, { remote: false }).catch(() => null);
         if (!current || typeof current !== "object") return;
-        const next = { ...(current as Record<string, unknown>) };
-        if (status === 429) next.nextAvailableAt = resolveAgentNextAvailableAt(body, now());
-        else delete next.nextAvailableAt;
-        await getOrCreateSharedStore(deps).then((store) => store.write(key, next)).catch(() => undefined);
+        const record = current as Record<string, unknown>;
+        // 无 deadline 时的 clear 是空操作，跳过可避免每次成功响应都写一次库。
+        if (action.kind === "clear" && !("nextAvailableAt" in record)) return;
+        const next = { ...record };
+        if (action.kind === "mark") {
+          // 取更晚者：短冷却（如 5xx 的 5 分钟）不得抹掉已落盘的长冷却（如周额度）。
+          next.nextAvailableAt = mergeAvailabilityDeadline(
+            record.nextAvailableAt,
+            action.nextAvailableAt,
+          );
+        } else {
+          delete next.nextAvailableAt;
+        }
+        await store.write(key, next).catch(() => undefined);
       };
       if (isCliProviderAgent(agentConfig)) {
         const provider = resolveCliProviderName(agentConfig);
@@ -1321,6 +1343,7 @@ export function createCliLocalRuntimeAdapter(
             if (!res.ok) {
               const raw = await res.text().catch(() => "");
               const data = parsePlatformChatCompletionData(raw);
+              await recordLocalAvailability(res.status, data);
               // `JSON.stringify(data)` collapses an empty/HTML/Cloudflare body into
               // `{}`, which is ambiguous and forces a long post-hoc investigation.
               // Carry the raw body (truncated) + gateway-revealing headers so the
@@ -1348,6 +1371,7 @@ export function createCliLocalRuntimeAdapter(
                   (gatewayHeaders ? ` headers=[${gatewayHeaders}]` : ""),
               );
             }
+            await recordLocalAvailability(res.status);
             const contentType = res.headers.get("content-type") ?? "";
             const shouldStream =
               Boolean(stream && options?.onTextDelta) &&
@@ -1500,6 +1524,8 @@ export function createCliLocalRuntimeAdapter(
               }),
             stream,
             onTextDelta: options?.onTextDelta,
+            onHttpResult: ({ status, body }) =>
+              recordLocalAvailability(status, body),
             ...(resolveRequestApiKey ? { resolveApiKey: resolveRequestApiKey } : {}),
           });
           logLocalRuntimeDiagnostic("provider.request.result", {

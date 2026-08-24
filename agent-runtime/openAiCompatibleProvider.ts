@@ -261,6 +261,13 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
    * 返回 null 时回落到 providerConfig.apiKey。
    */
   resolveApiKey?: (opts: { force: boolean }) => Promise<string | null>;
+  /**
+   * 每次请求的最终 HTTP 结果回执（重试后的那次）。调用方用它把 429 的
+   * 复位时刻落盘成 agent 冷却，把 2xx 当成恢复信号；不落盘就会出现
+   * 「限流 agent 仍被 listAgents 列出、被选中、再撞 429」的循环。
+   * `body` 仅在非 2xx 时提供（已解析的 JSON，失败时为原始文本）。
+   */
+  onHttpResult?: (result: { status: number; body?: unknown }) => Promise<void> | void;
 }): Promise<AgentRuntimeResult> {
   const isResponses = resolveOpenAiCompatibleWire(args.providerConfig) === "responses";
 
@@ -296,13 +303,23 @@ export async function executeOpenAiCompatibleChatCompletion(args: {
   }
 
   if (!res.ok) {
+    const raw = await res.text().catch(() => "");
+    let parsed: unknown = raw;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // keep raw text
+    }
+    await args.onHttpResult?.({ status: res.status, body: parsed });
     throw providerHttpFailure({
       label: "local provider",
       status: res.status,
-      raw: await res.text().catch(() => ""),
+      raw,
       messages: args.messages,
     });
   }
+
+  await args.onHttpResult?.({ status: res.status });
 
   const contentType = res.headers.get("content-type") ?? "";
   const isEventStream = contentType.includes("text/event-stream");

@@ -74,6 +74,21 @@ export const resources = {
     ai: aiLocale[Language.JA].translation,
     chat: chatLocale[Language.JA].translation,
   },
+  [Language.KO]: {
+    common: {
+      ...(interfaceLocale[Language.KO]?.translation ?? interfaceLocale[Language.EN].translation),
+      ...(errorLocale[Language.KO]?.translation ?? errorLocale[Language.EN].translation),
+      ...(appBuilderLocale[Language.KO]?.translation ?? appBuilderLocale[Language.EN].translation),
+      ...(pricingLocale[Language.KO]?.translation ?? pricingLocale[Language.EN].translation),
+      ...(privacyLocale[Language.KO]?.translation ?? privacyLocale[Language.EN].translation),
+      ...(termsLocale[Language.KO]?.translation ?? termsLocale[Language.EN].translation),
+      ...(localFirstLocale[Language.KO]?.translation ?? localFirstLocale[Language.EN].translation),
+      seo: seoLocale[Language.KO],
+    },
+    space: spaceLocale[Language.KO]?.translation ?? spaceLocale[Language.EN].translation,
+    ai: aiLocale[Language.KO]?.translation ?? aiLocale[Language.EN].translation,
+    chat: chatLocale[Language.KO]?.translation ?? chatLocale[Language.EN].translation,
+  },
 };
 
 export const i18nConfig = {

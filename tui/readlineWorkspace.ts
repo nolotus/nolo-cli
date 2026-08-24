@@ -138,7 +138,6 @@ import {
   applyTerminalOutputToText,
   buildWindowTitle,
   displayWidth,
-  fitAnsiLine,
   padOrTruncateToWidth,
   stripAnsi,
   truncateAnsi,
@@ -151,7 +150,6 @@ import {
   applyScrollAction,
   appendToCurrentTurn,
   appendLocalTurn,
-  buildCopyViewLines,
   createHistoryOutputStream,
   createTurnHistory,
   finalizeCurrentTurn,
@@ -1068,9 +1066,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     reconcile: (runId) => checkStaleRun(runId, { env: process.env }),
     onRecordsPolled: (records) => runCompletionWatcher.observe(records),
   });
-  let copyViewExitResolver: (() => void) | null = null;
-  let copyViewRender: (() => void) | null = null;
-  let copyViewScrollTop = 0;
   const history = createTurnHistory();
   // `fixedInput` is reassigned once the interactive composer is installed, so
   // the host delegates through the binding rather than capturing the noop.
@@ -1256,52 +1251,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const text = lastReply ? stripAnsi(lastReply).trim() : "";
     return text || null;
   };
-  const openCopyView = async () => {
-    const lines = buildCopyViewLines(history);
-    if (lines.length === 0) return false;
-    if (!isInteractiveInput(input)) {
-      output.write(`${lines.join("\n")}\n`);
-      return true;
-    }
-
-    const tty = output as { rows?: number; columns?: number };
-    const renderCopyView = () => {
-      const rows = Math.max(1, tty.rows ?? 24);
-      const columns = Math.max(1, tty.columns ?? 80);
-      const copyLines = buildCopyViewLines(history);
-      const visibleHeight = Math.max(1, rows - 3);
-      const maxScrollTop = Math.max(0, copyLines.length - visibleHeight);
-      copyViewScrollTop = Math.max(0, Math.min(copyViewScrollTop, maxScrollTop));
-      let frame = "\x1b[2J\x1b[H";
-      frame += `${t("copyViewTitle")}\n`;
-      for (let index = 0; index < visibleHeight; index++) {
-        frame += `${fitAnsiLine(copyLines[copyViewScrollTop + index] ?? "", columns)}\n`;
-      }
-      frame += `${t("copyViewHint")}\n`;
-      output.write(frame);
-    };
-
-    fixedInput.pause();
-    copyViewScrollTop = 0;
-    copyViewRender = renderCopyView;
-    try {
-      renderCopyView();
-      await new Promise<void>((resolve) => {
-        copyViewExitResolver = resolve;
-      });
-    } finally {
-      copyViewExitResolver = null;
-      copyViewRender = null;
-      output.write("\x1b[2J\x1b[H");
-      resetHistoryFrameDiffCache(output);
-      fixedInput.resumeFromDialog();
-      flushPendingRender();
-      renderHistoryToOutput();
-      fixedInput.repaint(buffer, cursorPos);
-    }
-    return true;
-  };
-
   // True while a modal (raw action gate OR ask_choice popup) owns the
   // keyboard. The modal's own `data` listener handles its keys (Enter/Esc/
   // Ctrl+C/arrow keys), so the main loop must not let stray keys leak into
@@ -1950,11 +1899,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       fixedInput.repaint(buffer, cursorPos);
     }
 
-    if (result.action?.type === "copy-view") {
-      const opened = await openCopyView();
-      if (!opened) emitCommandOutput(t("copyNothing"));
-    }
-
     if (result.action?.type === "copy-last") {
       const text = readLatestAssistantReply() ?? "";
       if (!text) {
@@ -2225,12 +2169,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     const onResize = () => {
       if (done) return;
       clearSelection();
-      if (copyViewExitResolver) {
-        // copy view owns the screen; re-render its frame against the new
-        // rows/cols so a terminal resize does not leave a garbled frame.
-        copyViewRender?.();
-        return;
-      }
       // Re-measure rows/cols, rebuild scroll region + full-width rules, repaint.
       // Keep the user's current draft visible even during an agent turn so
       // typing is not lost on terminal resize.
@@ -2342,7 +2280,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     };
     runWakeHandler = (event: InternalTurnEvent | string) => {
       if (done) return;
-      if (busy || fixedInput.isPaused() || copyViewExitResolver) {
+      if (busy || fixedInput.isPaused()) {
         const { actionGateHandler, confirmDestructiveAction } = buildInteractiveTurnHandlers();
         ensureChatQueueBinding(actionGateHandler, confirmDestructiveAction).enqueue(event);
         if (fixedInput.active && !fixedInput.isPaused()) {
@@ -2407,49 +2345,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
     const handleInputToken = async (sequence: string) => {
       if (done) return;
-      if (copyViewExitResolver) {
-        const tty = output as { rows?: number };
-        const visibleHeight = Math.max(1, (tty.rows ?? 24) - 3);
-        const lines = buildCopyViewLines(history);
-        const maxScrollTop = Math.max(0, lines.length - visibleHeight);
-        const scrollAction = parseScrollAction(sequence);
-        if (scrollAction) {
-          switch (scrollAction) {
-            case "page-up":
-              copyViewScrollTop = Math.max(0, copyViewScrollTop - visibleHeight);
-              break;
-            case "page-down":
-              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + visibleHeight);
-              break;
-            case "half-page-up":
-              copyViewScrollTop = Math.max(0, copyViewScrollTop - Math.max(1, Math.floor(visibleHeight / 2)));
-              break;
-            case "wheel-up":
-              copyViewScrollTop = Math.max(0, copyViewScrollTop - WHEEL_SCROLL_LINES);
-              break;
-            case "half-page-down":
-              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + Math.max(1, Math.floor(visibleHeight / 2)));
-              break;
-            case "wheel-down":
-              copyViewScrollTop = Math.min(maxScrollTop, copyViewScrollTop + WHEEL_SCROLL_LINES);
-              break;
-            case "top":
-              copyViewScrollTop = 0;
-              break;
-            case "bottom":
-              copyViewScrollTop = maxScrollTop;
-              break;
-          }
-          copyViewRender?.();
-          return;
-        }
-        if (sequence === "\x1b" || sequence === "\r" || sequence === "\n" || sequence === "\u0003") {
-          const exitCopyView = copyViewExitResolver;
-          copyViewExitResolver = null;
-          exitCopyView();
-        }
-        return;
-      }
       // While a modal (raw action gate OR ask_choice popup) owns the
       // keyboard, that modal's own `data` listener owns the keyboard. Drop
       // everything else so random keys do not accumulate in the composer
@@ -2687,17 +2582,6 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
       const result = applyTuiInputKey(buffer, sequence, {}, cursorPos, {
         pasteStore,
       });
-      if (result.copyView) {
-        const opened = await openCopyView();
-        if (!opened) {
-          history.followBottom = true;
-          startTurn(history, "assistant");
-          appendToCurrentTurn(history, t("copyNothing"));
-          finalizeCurrentTurn(history);
-          paintFrame(buffer);
-        }
-        return;
-      }
       if (result.redraw) {
         resetHistoryFrameDiffCache(output);
         renderHistoryToOutput();

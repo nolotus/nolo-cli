@@ -55,11 +55,13 @@ export function applyTuiInputKey(
   if (seq === "\u0003" || (key.ctrl && key.name === "c")) {
     return { buffer, cursorPos: curPos, abort: true };
   }
-  if (seq === "\u000f" || (key.ctrl && key.name === "o")) {
-    return { buffer, cursorPos: curPos, copyView: true };
-  }
   if (seq === "\u000c" || (key.ctrl && key.name === "l")) {
     return { buffer, cursorPos: curPos, redraw: true };
+  }
+  // Ctrl+O used to open the retired copy view. Keep the control byte out of
+  // the draft instead of treating it as printable input.
+  if (seq === "\u000f" || (key.ctrl && key.name === "o")) {
+    return { buffer, cursorPos: curPos };
   }
   if (
     seq === "\x1b[13;2~" ||

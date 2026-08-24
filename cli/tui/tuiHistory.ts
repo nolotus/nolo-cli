@@ -728,27 +728,6 @@ function currentTurnSeparator(history: TurnHistory, density: string): number {
     : 0;
 }
 
-export function buildCopyViewLines(history: TurnHistory): string[] {
-  const turns = [...history.turns];
-  if (history.currentRole !== null) {
-    turns.push({ role: history.currentRole, content: history.currentContent });
-  }
-  const lines: string[] = [];
-  for (const [index, turn] of turns.entries()) {
-    if (index > 0) lines.push("");
-    const normalized = stripAnsi(turn.content).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    if (turn.role === "local") {
-      if (turn.command) {
-        lines.push(`› ${stripAnsi(turn.command)}`);
-      }
-      lines.push(...normalized.split("\n"));
-    } else {
-      lines.push(...normalized.split("\n"));
-    }
-  }
-  return lines;
-}
-
 export function buildHistoryLines(history: TurnHistory, contentWidth: number): string[] {
   const colorEnabled = resolveCliColorEnabled();
   const density = getActiveDensity();

@@ -980,6 +980,8 @@ describe("mouse drag selection integration", () => {
     output.columns = 21;
     input.setRawMode = () => {};
 
+    const outputChunks: string[] = [];
+    output.on("data", (chunk) => outputChunks.push(String(chunk)));
     const copied: string[] = [];
     let agentRuns = 0;
     const workspacePromise = startTuiWorkspace({
@@ -1008,7 +1010,9 @@ describe("mouse drag selection integration", () => {
     // History rows at width 20: separator, user, separator,
     // "◈ abcdefghijklmnopqr", "stuvwxyz". SGR coordinates are 1-based.
     input.write("\x1b[<0;1;5M");
-    input.write("\x1b[<32;6;5M");
+    // Deliberately stop the last motion early. The release coordinate is the
+    // authoritative endpoint when a terminal coalesces motion reports.
+    input.write("\x1b[<32;3;5M");
     input.write("\x1b[<0;6;5m");
 
     const copyDeadline = Date.now() + 1000;
@@ -1016,6 +1020,15 @@ describe("mouse drag selection integration", () => {
       await Bun.sleep(10);
     }
     expect(copied).toEqual(["stuvw"]);
+
+    // A plain click starts a zero-width selection and must repaint away the
+    // old reverse-video overlay even if no drag follows.
+    const outputBeforeClick = outputChunks.length;
+    input.write("\x1b[<0;2;5M");
+    await Bun.sleep(30);
+    const clickPaint = outputChunks.slice(outputBeforeClick).join("");
+    expect(clickPaint.length).toBeGreaterThan(0);
+    expect(clickPaint).not.toContain("\x1b[7m");
 
     input.write("/exit\r");
     input.end();

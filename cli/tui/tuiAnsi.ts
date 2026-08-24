@@ -5,21 +5,20 @@
  * i18n 的 locale（displayWidth 对 CJK 全角引号按 locale 判宽度）。
  */
 import { getCliLocale } from "./i18n";
+import ansiRegex from "ansi-regex";
 import stringWidth from "string-width";
 
 export const ANSI_ESCAPE_REGEX =
   /\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g;
-
-// OSC 8 hyperlinks: ESC ] 8 ; ; params URI ST ... ESC ] 8 ; ; ST
-// ST (string terminator) is ESC \ or BEL. Match both open and close in one
-// regex so stripAnsi / visibleWidth drop them along with CSI sequences.
-// eslint-disable-next-line no-control-regex
-const OSC_HYPERLINK_REGEX = /\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)\x1b\]8;;(?:\x07|\x1b\\)|\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const ALL_ANSI_ESCAPE_REGEX = ansiRegex();
+const FIRST_ANSI_ESCAPE_REGEX = ansiRegex({ onlyFirst: true });
 
 export function stripAnsi(text: string): string {
+  // Keep our broad ECMA-48 CSI matcher first: ansi-regex intentionally treats
+  // a few private-mode replies (for example ESC [ > 0 c) more narrowly.
   return text
-    .replace(OSC_HYPERLINK_REGEX, "")
-    .replace(ANSI_ESCAPE_REGEX, "");
+    .replace(ANSI_ESCAPE_REGEX, "")
+    .replace(ALL_ANSI_ESCAPE_REGEX, "");
 }
 
 /** SGR (color/style) sequences only: ESC [ params m. */
@@ -240,10 +239,21 @@ export function tokenizeAnsiLine(line: string): WrapToken[] {
       }
       const csi = line.slice(index).match(/^\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/);
       if (csi) {
-        tokens.push({ kind: "sgr", value: csi[0], width: 0, charIndex: index });
         index += csi[0].length;
         continue;
       }
+      // Consume every other recognized terminal escape without replaying it.
+      // Besides avoiding cursor/title injection from transcript text, this
+      // guarantees progress for OSC and non-SGR CSI sequences.
+      const escape = FIRST_ANSI_ESCAPE_REGEX.exec(line.slice(index));
+      if (escape?.index === 0) {
+        index += escape[0].length;
+        continue;
+      }
+      // An isolated or vendor-specific ESC must never pin the tokenizer on
+      // the same byte forever. Drop it and continue with the visible suffix.
+      index += 1;
+      continue;
     }
     let nextEsc = line.indexOf("\x1b", index);
     if (nextEsc === -1) nextEsc = line.length;

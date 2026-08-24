@@ -1,11 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { buildWindowTitle, displayWidth } from "./tuiAnsi";
+import { buildWindowTitle, displayWidth, stripAnsi, tokenizeAnsiLine } from "./tuiAnsi";
 
 describe("displayWidth grapheme clusters", () => {
   test("counts ZWJ families and emoji modifiers as one double-width cell cluster", () => {
     expect(displayWidth("👨‍👩‍👧‍👦")).toBe(2);
     expect(displayWidth("👍🏽")).toBe(2);
     expect(displayWidth("❤️")).toBe(2);
+  });
+});
+
+describe("terminal escape handling", () => {
+  test("strips OSC title sequences that the old CSI-only regex missed", () => {
+    expect(stripAnsi("A\x1b]0;untrusted title\x07B")).toBe("AB");
+  });
+
+  test("tokenizer consumes unsupported escapes and always makes progress", () => {
+    const tokens = tokenizeAnsiLine("A\x1b]0;untrusted title\x07B");
+    expect(tokens.filter((token) => token.kind === "char").map((token) => token.value).join(""))
+      .toBe("AB");
   });
 });
 

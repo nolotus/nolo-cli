@@ -55,6 +55,14 @@ export type { AccumulatedToolCall, ToolCallAccumulator } from "./toolCallAccumul
 export { applyChatCompletionDelta, flushChatCompletionStream } from "./processChatCompletionDelta";
 export type { ChatCompletionStreamState } from "./processChatCompletionDelta";
 export { runLocalAgentTurn, createLocalCapabilitySdk } from "./localLoop";
+export {
+  executePtcQuickJsPrototype,
+} from "./ptcQuickJsPrototype";
+export type {
+  PtcQuickJsPrototypeOptions,
+  PtcQuickJsPrototypeResult,
+  PtcQuickJsPrototypeTools,
+} from "./ptcQuickJsPrototype";
 export { validatePtcProgramCode, parsePtcProgramOutput } from "./ptcProgramValidator";
 export type { PtcProgramContract, PtcValidationResult } from "./ptcProgramValidator";
 export {
@@ -383,6 +391,7 @@ export type {
   AgentRunResult,
   HostExecuteTool,
   HostExecuteToolCall,
+  PtcStrictTurnContext,
 } from "./capabilities";
 export {
   buildExecShellToolDefinition,
@@ -395,5 +404,8 @@ export {
   generateActivityId,
   createToolBridgeAgentRunService,
   createHostToolAgentRunService,
+  createPtcFailClosedContext,
+  createPtcCapabilitySdk,
+  PtcContextValidationError,
 } from "./capabilities";
 

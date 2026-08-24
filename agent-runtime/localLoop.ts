@@ -20,8 +20,13 @@ import {
   createCapabilitySdk,
   createHostToolAgentRunService,
   buildLocalExecShellContext,
+  createPtcCapabilitySdk,
 } from "./capabilities";
 import type { CapabilitySdk } from "./capabilities";
+import {
+  executePtcQuickJsPrototype,
+  type PtcQuickJsPrototypeResult,
+} from "./ptcQuickJsPrototype";
 import type { CapabilityExecutionContext } from "./capabilities/capability";
 import { sanitizeToolCallPairing } from "./toolCallPairing";
 import { summarizeToolArguments } from "./summarizeToolArguments";
@@ -119,6 +124,18 @@ export type LocalAgentTurnInput = {
    * or remote input — it executes with this turn's host permissions.
    */
   __testProgram?: (tools: CapabilitySdk) => Promise<unknown>;
+  /**
+   * Internal / test seam for programmatic PTC execution slice. Executes the
+   * supplied JavaScript program in a QuickJS WASM sandbox bound to a fail-closed
+   * CapabilitySdk constructed from this current turn.
+   * STRICT: Hand-provided only during this vertical slice phase.
+   */
+  __testPtcProgram?: {
+    code: string;
+    timeoutMs?: number;
+    memoryLimitBytes?: number;
+    onResult?: (res: PtcQuickJsPrototypeResult) => void;
+  };
 };
 
 export type LocalAgentTurnResult = AgentRuntimeResult & {
@@ -1280,6 +1297,23 @@ export async function runLocalAgentTurn(
       : {}),
   });
   const tools = createLocalCapabilitySdk(input.adapter, execShellContext);
+
+  if (input.__testPtcProgram) {
+    const { sdk: ptcSdk, context: ptcContext } = createPtcCapabilitySdk({
+      turnContext: {
+        ...execShellContext,
+        agentRunService: createHostToolAgentRunService(input.adapter.executeTool),
+      },
+    });
+    const ptcResult = await executePtcQuickJsPrototype({
+      code: input.__testPtcProgram.code,
+      tools: ptcSdk,
+      abortSignal: ptcContext.abortSignal,
+      timeoutMs: input.__testPtcProgram.timeoutMs,
+      memoryLimitBytes: input.__testPtcProgram.memoryLimitBytes,
+    });
+    input.__testPtcProgram.onResult?.(ptcResult);
+  }
 
   if (input.__testProgram) {
     await input.__testProgram(tools);

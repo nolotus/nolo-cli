@@ -18,6 +18,13 @@ export {
 } from "./capabilitySdk";
 export type { CapabilitySdk } from "./capabilitySdk";
 
+export {
+  createPtcFailClosedContext,
+  createPtcCapabilitySdk,
+  PtcContextValidationError,
+} from "./ptcExecutionContext";
+export type { PtcStrictTurnContext } from "./ptcExecutionContext";
+
 export type {
   AgentRunActivity,
   AgentRunActivityStatus,

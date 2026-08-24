@@ -2546,8 +2546,12 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
             selectionState.anchor = hit;
             selectionState.head = hit;
             selectionState.dragging = false;
+            // A previous selection may still be painted in the frame buffer.
+            // Repaint immediately even when this click never becomes a drag.
+            paintFrame(buffer);
           } else {
             clearSelection();
+            paintFrame(buffer);
           }
           return;
         }
@@ -2582,6 +2586,19 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
 
         if (mouseEvent.kind === "release") {
           stopAutoScroll();
+          if (selectionState.dragging && selectionState.anchor) {
+            // Some terminals coalesce the last motion report, so the release
+            // coordinates are the only reliable final drag endpoint.
+            const clampedRow = Math.max(0, Math.min(visibleHeight - 1, screenRow));
+            const releaseHit = hitTestHistory(
+              history,
+              clampedRow,
+              screenCol,
+              contentWidth,
+              history.scrollTop,
+            );
+            if (releaseHit) selectionState.head = releaseHit;
+          }
           if (
             selectionState.dragging &&
             selectionState.anchor &&

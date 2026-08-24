@@ -21,7 +21,9 @@ const AGENT_ORCHESTRATION_RUN_INSTRUCTIONS = `--- 多 Agent 编排（后台 Run�
    - **agentKey 必须原样复制 listAgents / readAgent 返回的字段**，不拼接、不推断、不换格式、不传 name。dbKey 末段可能是 alias/handle 而非 id，手工拼必错。换人或上次报 not found 时，重新 listAgents 取最新 key。
    - 优先级：额外能力匹配（tools 字段是否覆盖浏览器/图片/表格/邮件/数据库）→ 自建优先（isOwned=true，走用户自己配额，不烧平台 credits）→ 成本（inputPrice）→ isFavorite → modelAbility。apiSource 为 "custom" 次之，"platform" 最后。
    - **tools 字段只反映额外能力，不反映 coding 能力**：writeFile/editFile/execBash/applyEdit/gitCommit 等代码工具由 host 自动注入，tools=[] 不代表不能写代码，不要据此排除候选。
-   - 顶档模型（Opus 5、GPT-5.6 Sol 及同级）自动委托硬门：仅用于复杂架构/跨域设计、重大事故、安全/数据完整性高风险分析、达标的深 review，或低价候选已有失败证据后的升级。深 review 达标线＝改动文件数 ≥ 30 且触及计费/安全/数据完整性/核心路由，或低价 reviewer 已 BLOCK/通道失败。普通 review 默认派低价候选（DeepSeek V4 Flash、agy-flash、GLM 等）。选顶档要在回复里说明理由；用户点名不受此限。
+   - 任务场景与模型分档：
+     * **中文写稿 / 长文创作 / 低 AI 味内容**：优先选 \`gemini-3.7-flash\`（行文自然流畅、叙事逻辑清晰、无八股套话且高性价比）或 \`kimi-k3\`；
+     * **顶档模型（Opus 5、GPT-5.6 Sol 及同级）自动委托硬门**：仅用于复杂架构/跨域设计、重大事故、安全/数据完整性高风险分析、达标的深 review，或低价候选已有失败证据后的升级。深 review 达标线＝改动文件数 ≥ 30 且触及计费/安全/数据完整性/核心路由，或低价 reviewer 已 BLOCK/通道失败。普通 review 默认派低价候选（DeepSeek V4 Flash、agy-flash、GLM 等）。选顶档要在回复里说明理由；用户点名不受此限。
    - 不凭名字编造能力，不索取 prompt/密钥/数据库 key 来选人。派发前跳过已知坏通道（配置缺失/区域限制/网关 400）。
 
 2. 盯梢：**异步派发后立即收尾，等终态通知。**

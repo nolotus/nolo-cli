@@ -133,7 +133,7 @@ describe("tuiSelection", () => {
     finalizeCurrentTurn(history);
 
     const point = { globalRow: 1, col: 3 };
-    const text = extractSelectedText(history, point, point);
+    const text = extractSelectedText(history, point, point, 80);
     expect(text).toBe("");
   });
 
@@ -298,5 +298,116 @@ describe("tuiSelection", () => {
     expect(highlighted).toContain("\x1b[7mbold\x1b[0m\x1b[7m\x1b[27m");
     expect(highlighted.startsWith("◈ before ")).toBe(true);
     expect(highlighted.endsWith(" after")).toBe(true);
+  });
+
+  test("copy preserves spaces across visual soft wraps", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, "alpha beta gamma delta");
+    finalizeCurrentTurn(history);
+
+    const contentWidth = 12;
+    expect(buildHistoryLines(history, contentWidth)).toHaveLength(2);
+    expect(
+      extractSelectedText(
+        history,
+        { globalRow: 0, col: 2 },
+        { globalRow: 1, col: 99 },
+        contentWidth,
+      ),
+    ).toBe("alpha beta gamma delta");
+  });
+
+  test("copy preserves consecutive explicit blank lines", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, "a\n\n\nb");
+    finalizeCurrentTurn(history);
+
+    expect(
+      extractSelectedText(
+        history,
+        { globalRow: 0, col: 2 },
+        { globalRow: 3, col: 99 },
+        80,
+      ),
+    ).toBe("a\n\n\nb");
+  });
+
+  test("copy only removes layout-owned prefixes, not matching user content", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, "first\n◈ literal marker");
+    finalizeCurrentTurn(history);
+
+    expect(
+      extractSelectedText(
+        history,
+        { globalRow: 1, col: 0 },
+        { globalRow: 1, col: 99 },
+        80,
+      ),
+    ).toBe("◈ literal marker");
+  });
+
+  test("highlight and copy snap identically when selection starts inside a wide cell", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, "你好");
+    finalizeCurrentTurn(history);
+
+    const anchor = { globalRow: 0, col: 3 };
+    const head = { globalRow: 0, col: 4 };
+    expect(extractSelectedText(history, anchor, head, 80)).toBe("你");
+
+    const [overlaid] = applySelectionOverlay(
+      buildHistoryLines(history, 80),
+      history,
+      80,
+      0,
+      { dragging: true, anchor, head },
+    );
+    expect(overlaid).toContain("\x1b[7m你\x1b[27m好");
+  });
+
+  test("copy uses the same product-specific symbol widths as highlighting", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, "♠abc");
+    finalizeCurrentTurn(history);
+
+    const anchor = { globalRow: 0, col: 4 };
+    const head = { globalRow: 0, col: 5 };
+    expect(extractSelectedText(history, anchor, head, 80)).toBe("a");
+
+    const [overlaid] = applySelectionOverlay(
+      buildHistoryLines(history, 80),
+      history,
+      80,
+      0,
+      { dragging: true, anchor, head },
+    );
+    expect(overlaid).toContain("♠\x1b[7ma\x1b[27mbc");
+  });
+
+  test("layout prefix is excluded from both highlight and clipboard text", () => {
+    const history = createTurnHistory();
+    startTurn(history, "assistant");
+    appendToCurrentTurn(history, "Hello");
+    finalizeCurrentTurn(history);
+
+    const anchor = { globalRow: 0, col: 0 };
+    const head = { globalRow: 0, col: 5 };
+    expect(extractSelectedText(history, anchor, head, 80)).toBe("Hel");
+
+    const [overlaid] = applySelectionOverlay(
+      buildHistoryLines(history, 80),
+      history,
+      80,
+      0,
+      { dragging: true, anchor, head },
+    );
+    expect(overlaid).toContain("◈ \x1b[7mHel\x1b[27mlo");
+    expect(overlaid).not.toContain("\x1b[7m◈");
   });
 });

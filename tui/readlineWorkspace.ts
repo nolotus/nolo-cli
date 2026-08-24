@@ -387,6 +387,7 @@ type WorkspaceOptions = {
   summaryLlmCaller?: (content: string) => Promise<string | null>;
   fetchImpl?: typeof fetch;
   saveAgentSelection?: typeof saveProfileAgentSelection;
+  clipboardWriter?: (text: string) => Promise<void>;
 };
 
 
@@ -905,6 +906,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
   const output = options.output ?? defaultOutput;
   const fetchImpl = options.fetchImpl ?? fetch;
   const spawnRunner = options.spawnRunner ?? spawnProcess;
+  const writeClipboard = options.clipboardWriter ?? (async (text: string) => {
+    const { default: clipboard } = await import("clipboardy");
+    await clipboard.write(text);
+  });
   const selfUpdater: SelfUpdater =
     options.selfUpdater ?? ((target) => runSelfUpdate({ output: target }));
 
@@ -1956,8 +1961,7 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
         emitCommandOutput(t("copyNothing"));
       } else {
         try {
-          const { default: clipboard } = await import("clipboardy");
-          await clipboard.write(text);
+          await writeClipboard(text);
           emitCommandOutput(t("copiedLastReply"));
         } catch (error) {
           // Headless / container shells often lack xclip/pbcopy; surface the
@@ -2588,11 +2592,15 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
               history,
               selectionState.anchor,
               selectionState.head,
+              contentWidth,
             );
             if (textToCopy.length > 0) {
-              import("clipboardy")
-                .then(({ default: clipboard }) => clipboard.write(textToCopy))
-                .catch(() => {});
+              writeClipboard(textToCopy)
+                .catch((error) => {
+                  emitCommandOutput(
+                    `[nolo] ${t("copyFailed")}: ${toErrorMessage(error)}`,
+                  );
+                });
             }
             selectionState.dragging = false;
           } else {

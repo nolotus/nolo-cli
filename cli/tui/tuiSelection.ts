@@ -6,12 +6,10 @@
  * 叠加字符级反色高亮，并从历史渲染行中按列范围提取纯文本到剪贴板。
  */
 import {
-  displayWidth,
-  stripAnsi,
   tokenizeAnsiLine,
 } from "./tuiAnsi";
 import {
-  buildHistoryLines,
+  buildHistoryLayoutRows,
   type TurnHistory,
 } from "./tuiHistory";
 
@@ -61,24 +59,16 @@ export function highlightLineByColumns(
   line: string,
   selStartCol: number,
   selEndCol: number,
+  prefixWidth = 0,
 ): string {
-  if (selStartCol >= selEndCol) return line;
   const tokens = tokenizeAnsiLine(line);
-  if (tokens.length === 0) return line;
-
-  // Find the last visible non-space character token to avoid highlighting trailing padding
-  let lastNonSpaceCol = 0;
-  let colScan = 0;
-  for (const tok of tokens) {
-    if (tok.kind === "char") {
-      if (tok.value.trim().length > 0) {
-        lastNonSpaceCol = colScan + tok.width;
-      }
-      colScan += tok.width;
-    }
-  }
-  const effectiveEndCol = Math.min(selEndCol, lastNonSpaceCol);
-  if (selStartCol >= effectiveEndCol) return line;
+  const range = resolveSelectableColumnRange(
+    tokens,
+    selStartCol,
+    selEndCol,
+    prefixWidth,
+  );
+  if (!range) return line;
 
   let out = "";
   let currentCol = 0;
@@ -101,7 +91,7 @@ export function highlightLineByColumns(
 
     const charStartCol = currentCol;
     const charEndCol = currentCol + token.width;
-    const isSelected = charStartCol >= selStartCol && charStartCol < effectiveEndCol;
+    const isSelected = charStartCol >= range.start && charStartCol < range.end;
 
     if (isSelected && !isHighlightActive) {
       out += "\x1b[7m";
@@ -120,6 +110,47 @@ export function highlightLineByColumns(
   }
 
   return out;
+}
+
+function resolveSelectableColumnRange(
+  tokens: ReturnType<typeof tokenizeAnsiLine>,
+  requestedStart: number,
+  requestedEnd: number,
+  prefixWidth: number,
+): { start: number; end: number } | null {
+  if (requestedStart >= requestedEnd) return null;
+
+  let col = 0;
+  let lastNonSpaceCol = 0;
+  for (const token of tokens) {
+    if (token.kind !== "char") continue;
+    if (token.value.trim().length > 0) {
+      lastNonSpaceCol = col + token.width;
+    }
+    col += token.width;
+  }
+
+  const start = Math.max(prefixWidth, requestedStart);
+  const end = Math.min(requestedEnd, lastNonSpaceCol);
+  if (start >= end) return null;
+
+  let snappedStart: number | null = null;
+  let snappedEnd: number | null = null;
+  col = 0;
+  for (const token of tokens) {
+    if (token.kind !== "char") continue;
+    const tokenStart = col;
+    const tokenEnd = col + token.width;
+    if (tokenEnd > start && tokenStart < end) {
+      snappedStart ??= tokenStart;
+      snappedEnd = tokenEnd;
+    }
+    col = tokenEnd;
+  }
+
+  return snappedStart === null || snappedEnd === null
+    ? null
+    : { start: snappedStart, end: snappedEnd };
 }
 
 /**
@@ -141,37 +172,30 @@ export function hitTestHistory(
  * 从一行纯文本中提取落在 [startCol, endCol] 列范围内的字符，自动去除 UI 前缀。
  */
 export function extractTextSliceByColumns(
-  plain: string,
+  line: string,
   startCol: number,
   endCol: number,
+  prefixWidth = 0,
 ): string {
-  let text = plain;
-  let textStartCol = 0;
-  if (text.startsWith("◈ ")) {
-    text = text.slice(2);
-    textStartCol = 2;
-  } else if (text.startsWith("┃  ")) {
-    text = text.slice(3);
-    textStartCol = 3;
-  } else if (text.startsWith("› ")) {
-    text = text.slice(2);
-    textStartCol = 2;
-  }
+  const tokens = tokenizeAnsiLine(line);
+  const range = resolveSelectableColumnRange(
+    tokens,
+    startCol,
+    endCol,
+    prefixWidth,
+  );
+  if (!range) return "";
 
-  const effectiveStart = Math.max(0, startCol - textStartCol);
-  const effectiveEnd = Math.max(0, endCol - textStartCol);
-  if (effectiveStart >= effectiveEnd) return "";
-
-  let out = "";
   let col = 0;
-  for (const char of text) {
-    const w = displayWidth(char);
-    if (col + w > effectiveStart && col < effectiveEnd) {
-      out += char;
+  let text = "";
+  for (const token of tokens) {
+    if (token.kind !== "char") continue;
+    if (col >= range.start && col < range.end) {
+      text += token.value;
     }
-    col += w;
+    col += token.width;
   }
-  return out;
+  return text;
 }
 
 /**
@@ -181,7 +205,7 @@ export function extractSelectedText(
   history: TurnHistory,
   anchor: SelectionPoint | null,
   head: SelectionPoint | null,
-  contentWidth = 80,
+  contentWidth: number,
 ): string {
   if (!anchor || !head) return "";
   const cmp = compareSelectionPoints(anchor, head);
@@ -190,19 +214,12 @@ export function extractSelectedText(
   const start = cmp < 0 ? anchor : head;
   const end = cmp < 0 ? head : anchor;
 
-  const lines = buildHistoryLines(history, contentWidth);
-  const selectedLines: string[] = [];
+  const rows = buildHistoryLayoutRows(history, contentWidth);
+  const pieces: string[] = [];
 
   for (let r = start.globalRow; r <= end.globalRow; r++) {
-    const rawLine = lines[r];
-    if (rawLine === undefined) continue;
-    const plain = stripAnsi(rawLine);
-    if (plain.trim().length === 0) {
-      if (selectedLines.length > 0 && selectedLines[selectedLines.length - 1] !== "") {
-        selectedLines.push("");
-      }
-      continue;
-    }
+    const row = rows[r];
+    if (!row) continue;
 
     let lineStartCol = 0;
     let lineEndCol = Infinity;
@@ -214,13 +231,20 @@ export function extractSelectedText(
       lineEndCol = end.col;
     }
 
-    const extracted = extractTextSliceByColumns(plain, lineStartCol, lineEndCol);
-    if (extracted.length > 0) {
-      selectedLines.push(extracted);
+    pieces.push(
+      extractTextSliceByColumns(
+        row.rendered,
+        lineStartCol,
+        lineEndCol,
+        row.prefixWidth,
+      ),
+    );
+    if (r < end.globalRow) {
+      pieces.push(row.softWrapped ? (row.softWrapJoiner ?? "") : "\n");
     }
   }
 
-  return selectedLines.join("\n");
+  return pieces.join("");
 }
 
 /**
@@ -228,8 +252,8 @@ export function extractSelectedText(
  */
 export function applySelectionOverlay(
   visibleLines: string[],
-  _history: TurnHistory,
-  _contentWidth: number,
+  history: TurnHistory,
+  contentWidth: number,
   scrollTop: number,
   selection: TuiSelectionState,
 ): string[] {
@@ -241,6 +265,7 @@ export function applySelectionOverlay(
 
   const start = cmp < 0 ? selection.anchor : selection.head;
   const end = cmp < 0 ? selection.head : selection.anchor;
+  const layoutRows = buildHistoryLayoutRows(history, contentWidth);
 
   const result = [...visibleLines];
 
@@ -252,6 +277,7 @@ export function applySelectionOverlay(
 
     const currentLine = result[screenRow] ?? "";
     if (currentLine.length === 0) continue;
+    const layoutRow = layoutRows[globalRow];
 
     let selStartCol = 0;
     let selEndCol = Infinity;
@@ -267,6 +293,7 @@ export function applySelectionOverlay(
       currentLine,
       selStartCol,
       selEndCol,
+      layoutRow?.prefixWidth ?? 0,
     );
   }
 

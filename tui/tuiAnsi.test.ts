@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { buildWindowTitle } from "./tuiAnsi";
+import { buildWindowTitle, displayWidth } from "./tuiAnsi";
+
+describe("displayWidth grapheme clusters", () => {
+  test("counts ZWJ families and emoji modifiers as one double-width cell cluster", () => {
+    expect(displayWidth("👨‍👩‍👧‍👦")).toBe(2);
+    expect(displayWidth("👍🏽")).toBe(2);
+    expect(displayWidth("❤️")).toBe(2);
+  });
+});
 
 describe("buildWindowTitle", () => {
   test("strips ANSI sequences from title", () => {

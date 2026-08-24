@@ -961,6 +961,68 @@ describe("createRawInputDecoder", () => {
   });
 });
 
+describe("mouse drag selection integration", () => {
+  test("copies the same wrapped row highlighted by SGR press/drag/release events", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      setRawMode?: (mode: boolean) => void;
+    };
+    const output = new PassThrough() as PassThrough & {
+      isTTY?: boolean;
+      rows?: number;
+      columns?: number;
+    };
+    input.isTTY = true;
+    output.isTTY = true;
+    output.rows = TERM_ROWS;
+    // contentWidth = columns - scrollbar = 20. The regression used a hidden
+    // default width of 80 on release, so row 4 did not exist in the copy grid.
+    output.columns = 21;
+    input.setRawMode = () => {};
+
+    const copied: string[] = [];
+    let agentRuns = 0;
+    const workspacePromise = startTuiWorkspace({
+      scriptDir: "",
+      input,
+      output,
+      env: {},
+      clipboardWriter: async (text) => {
+        copied.push(text);
+      },
+      agentRunner: async (options) => {
+        agentRuns += 1;
+        options.output.write("abcdefghijklmnopqrstuvwxyz");
+        return { exitCode: 0, dialogId: "selection-test" };
+      },
+    });
+
+    input.write("q\r");
+    const deadline = Date.now() + 3000;
+    while (agentRuns === 0 && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    expect(agentRuns).toBe(1);
+    await Bun.sleep(80);
+
+    // History rows at width 20: separator, user, separator,
+    // "◈ abcdefghijklmnopqr", "stuvwxyz". SGR coordinates are 1-based.
+    input.write("\x1b[<0;1;5M");
+    input.write("\x1b[<32;6;5M");
+    input.write("\x1b[<0;6;5m");
+
+    const copyDeadline = Date.now() + 1000;
+    while (copied.length === 0 && Date.now() < copyDeadline) {
+      await Bun.sleep(10);
+    }
+    expect(copied).toEqual(["stuvw"]);
+
+    input.write("/exit\r");
+    input.end();
+    await Promise.race([workspacePromise, Bun.sleep(3000)]);
+  });
+});
+
 describe("scroll-aware history", () => {
   function makeOutput(rows = 10, columns = 40) {
     const chunks: string[] = [];

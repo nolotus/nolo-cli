@@ -57,6 +57,8 @@ export type TurnLayoutRow = {
   sourceEnd: number;
   prefixWidth: number;
   sourceMapping?: number[];
+  softWrapped?: boolean;
+  softWrapJoiner?: string;
 };
 
 export type TurnHistory = {
@@ -285,6 +287,8 @@ export function layoutTurnRows(
           sourceEnd: r.sourceEnd,
           prefixWidth: r.prefixWidth,
           sourceMapping: r.sourceMapping,
+          softWrapped: r.softWrapped,
+          softWrapJoiner: r.softWrapJoiner,
         });
       }
       lineSourceStart += line.length + 1;
@@ -316,6 +320,8 @@ export function layoutTurnRows(
           sourceEnd: 0,
           prefixWidth: 2,
           sourceMapping: undefined,
+          softWrapped: r.softWrapped,
+          softWrapJoiner: r.softWrapJoiner,
         });
       }
     }
@@ -776,6 +782,53 @@ export function buildHistoryLines(history: TurnHistory, contentWidth: number): s
   }
 
   return wrapped;
+}
+
+/**
+ * Build the same global row grid used by history rendering, retaining the
+ * prefix and soft-wrap metadata needed by selection/copy. This is deliberately
+ * separate from the streaming render cache: it only runs on mouse release or
+ * while painting an active selection, never for ordinary transcript frames.
+ */
+export function buildHistoryLayoutRows(
+  history: TurnHistory,
+  contentWidth: number,
+): TurnLayoutRow[] {
+  const colorEnabled = resolveCliColorEnabled();
+  const density = getActiveDensity();
+  const surface = colorEnabled ? userSurfaceBackgroundSequence() : "";
+  const rows: TurnLayoutRow[] = [];
+  const separatorRow = (): TurnLayoutRow => ({
+    rendered: "",
+    sourceStart: 0,
+    sourceEnd: 0,
+    prefixWidth: 0,
+  });
+
+  for (let i = 0; i < history.turns.length; i++) {
+    const turn = history.turns[i]!;
+    if (density === "spacious" && (i > 0 || turn.role === "user")) {
+      rows.push(separatorRow());
+    }
+    rows.push(...getTurnLayoutRows(turn, contentWidth, colorEnabled, density, surface));
+  }
+
+  if (history.currentRole !== null && history.currentContent) {
+    const i = history.turns.length;
+    if (density === "spacious" && (i > 0 || history.currentRole === "user")) {
+      rows.push(separatorRow());
+    }
+    rows.push(
+      ...layoutTurnRows(
+        history.currentRole,
+        history.currentContent,
+        contentWidth,
+        colorEnabled,
+      ),
+    );
+  }
+
+  return rows;
 }
 
 export let renderCacheMissCount = 0;

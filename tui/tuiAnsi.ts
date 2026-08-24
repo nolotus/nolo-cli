@@ -5,6 +5,7 @@
  * i18n 的 locale（displayWidth 对 CJK 全角引号按 locale 判宽度）。
  */
 import { getCliLocale } from "./i18n";
+import stringWidth from "string-width";
 
 export const ANSI_ESCAPE_REGEX =
   /\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g;
@@ -102,56 +103,25 @@ export function applyTerminalOutputToText(existing: string, chunk: string): stri
 }
 
 export function displayWidth(str: string): number {
-  let width = 0;
-  for (const char of str) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f) continue;
-    // Zero-width characters: combining marks, zero-width joiners/spaces, variation selectors
-    if (
-      (code >= 0x0300 && code <= 0x036f) ||
-      (code >= 0x1ab0 && code <= 0x1aff) ||
-      (code >= 0x1dc0 && code <= 0x1dff) ||
-      (code >= 0x200b && code <= 0x200f) ||
-      (code >= 0x202a && code <= 0x202e) ||
-      (code >= 0x2060 && code <= 0x206f) ||
-      (code >= 0x20d0 && code <= 0x20ff) ||
-      (code >= 0xfe00 && code <= 0xfe0f) ||
-      (code >= 0xfe20 && code <= 0xfe2f) ||
-      (code >= 0xe0100 && code <= 0xe01ef)
-    ) {
-      continue;
-    }
-    if (
-      (code >= 0x1100 && code <= 0x115f) ||
-      // 0x2768-0x2775 (ornamental brackets, incl. the ❯ prompt at U+276F)
-      // render narrow in terminals; counting them wide drifts the cursor.
+  const plain = stripAnsi(str);
+  let width = stringWidth(plain);
+
+  // Preserve the small set of product-specific width choices that differ
+  // from Unicode's default narrow treatment in string-width. These symbols
+  // are used as TUI chrome and render double-wide in our supported terminal
+  // fonts. Emoji/grapheme clustering and all standard EAW decisions stay in
+  // the library instead of being reimplemented here.
+  for (const { segment } of graphemeSegmenter.segment(plain)) {
+    if (stringWidth(segment) !== 1) continue;
+    const code = segment.codePointAt(0) ?? 0;
+    const forceWideSymbol =
       (code >= 0x2600 && code <= 0x27bf && !(code >= 0x2768 && code <= 0x2775)) ||
-      // 0x2B00-0x2BFF (Misc Symbols and Arrows, incl. ⬢ U+2B22 used as the
-      // status-line agent icon) render double-wide in common monospace fonts;
-      // counting ⬢ as width 1 drifts the whole status line right of the icon.
       (code >= 0x2b00 && code <= 0x2bff) ||
-      (code >= 0x2e80 && code <= 0x303e) ||
-      (code >= 0x3040 && code <= 0x33bf) ||
-      (code >= 0x3400 && code <= 0x4dbf) ||
-      (code >= 0x4e00 && code <= 0xa4cf) ||
-      (code >= 0xac00 && code <= 0xd7a3) ||
-      (code >= 0xf900 && code <= 0xfaff) ||
-      (code >= 0xfe30 && code <= 0xfe6f) ||
-      (code >= 0xff01 && code <= 0xff60) ||
-      (code >= 0xffe0 && code <= 0xffe6) ||
-      (code >= 0x1f300 && code <= 0x1faff) ||
-      (code >= 0x20000 && code <= 0x2fffd) ||
-      (code >= 0x30000 && code <= 0x3fffd) ||
-      // East Asian Ambiguous CJK quotation marks (U+201C/D “ ”, U+2018/9 ‘ ’).
-      // In CJK locale + CJK fonts these render double-wide like 全角 punctuation;
-      // in English fonts they stay width 1. Follow the active locale so Chinese
-      // replies align correctly without breaking English terminal output.
-      (getCliLocale() === "zh" && (code === 0x201c || code === 0x201d || code === 0x2018 || code === 0x2019))
-    ) {
-      width += 2;
-    } else {
-      width += 1;
-    }
+      (code >= 0x1f300 && code <= 0x1faff);
+    const cjkQuote =
+      getCliLocale() === "zh" &&
+      (code === 0x201c || code === 0x201d || code === 0x2018 || code === 0x2019);
+    if (forceWideSymbol || cjkQuote) width += 1;
   }
   return width;
 }
@@ -379,6 +349,10 @@ export type WrappedTranscriptRow = {
   sourceEnd: number;
   prefixWidth: number;
   sourceMapping?: number[];
+  /** True when the next physical row continues the same logical source line. */
+  softWrapped?: boolean;
+  /** Whitespace consumed at the wrap boundary and absent from rendered rows. */
+  softWrapJoiner?: string;
 };
 
 /**
@@ -512,10 +486,12 @@ export function wrapTranscriptLineWithLayout(
     }
 
     start = segmentEnd;
+    let softWrapJoiner = "";
     // Continuation rows never start with the space we just wrapped at.
     while (start < tokens.length) {
       const token = tokens[start]!;
       if (token.kind === "char" && token.value === " " && token.charIndex >= prefixCharCount) {
+        softWrapJoiner += token.value;
         const mappedOffset = sourceMapping && sourceMapping[plainCharIndex] !== undefined
           ? sourceMapping[plainCharIndex]! + 1
           : plainCharIndex + 1;
@@ -537,6 +513,8 @@ export function wrapTranscriptLineWithLayout(
       sourceEnd: segSourceEnd,
       prefixWidth: currentPrefixWidth,
       sourceMapping: rowMapping.length > 0 ? rowMapping : undefined,
+      softWrapped: start < tokens.length,
+      softWrapJoiner,
     });
   }
 

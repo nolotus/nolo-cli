@@ -74,10 +74,11 @@ export {
   EMPTY_ASSISTANT_FALLBACK_MESSAGE,
   LENGTH_TRUNCATED_FALLBACK_MESSAGE,
   STREAM_TRUNCATED_FALLBACK_MESSAGE,
+  type EmptyAssistantFallbackReason,
   resolveEmptyAssistantOutcome,
   resolveEmptyAssistantFallbackMessage,
   hasAssistantVisibleOutput,
-} from "./localLoop";
+} from "./emptyAssistantRepair";
 export {
   pickAgentRuntimeInferenceOptions,
 } from "./agentConfigOptions";

@@ -1120,7 +1120,10 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
     // fallback that still reduces visible flicker.
     output.write("\x1b[?2026h\x1b[?25l");
     try {
-      renderHistory(output, history, fixedInput.getInputLines());
+      // Reuse renderHistoryToOutput so synced frames carry the active
+      // selection highlight (a wheel scroll now repaints through here and must
+      // not drop a drag-selection the user made) and share its re-entry guard.
+      renderHistoryToOutput();
       if (fixedInput.active) fixedInput.repaint(buffer, cursorPos);
     } finally {
       output.write("\x1b[?25h\x1b[?2026l");
@@ -2416,7 +2419,13 @@ export async function startTuiWorkspace(options: WorkspaceOptions) {
           const scrollAction =
             mouseEvent.wheelDirection === "down" ? "wheel-down" : "wheel-up";
           applyScrollAction(history, scrollAction, output, fixedInput.getInputLines());
-          paintFrame(buffer);
+          // One trackpad swipe delivers dozens of wheel reports. Painting each
+          // one synchronously means dozens of full unsynced transcript
+          // repaints that also fight the streaming render frames — the scroll
+          // visibly tears and lags. Fold them into the same throttled, BSU/ESU
+          // wrapped frame pipeline the stream uses: scrollTop is already
+          // updated, only the paint is coalesced.
+          scheduleRender();
           return;
         }
 

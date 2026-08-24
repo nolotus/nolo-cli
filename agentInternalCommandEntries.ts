@@ -28,6 +28,10 @@ export function getAgentInternalCommandEntries(): CommandEntry[] {
       const { runAgentCreateCommand } = await import("./agentRecordCommands");
       return runAgentCreateCommand(args, deps);
     }),
+    createEnvCommand(["agent", "models"], "List models available on an OpenAI-compatible provider", async (args, deps) => {
+      const { runAgentModelsCommand } = await import("./agentProviderCommands");
+      return runAgentModelsCommand(args, deps);
+    }),
     createEnvCommand(["agent", "pull"], "Cache an agent for local runs", async (args, deps) => {
       const { runAgentPullCommand } = await import("./agentPullCommand");
       return runAgentPullCommand(args, deps);

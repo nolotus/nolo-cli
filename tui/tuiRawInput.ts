@@ -706,14 +706,26 @@ export type RawInputDecoder = {
   destroy(): void;
 };
 
+/**
+ * A bare ESC arriving within this window after a complete mouse report is
+ * treated as the head of a split report rather than an Esc keypress.
+ */
+const MOUSE_ACTIVE_WINDOW_MS = 250;
+
 export function createRawInputDecoder(
-  onToken: (token: string) => void,
+  emitToken: (token: string) => void,
   options?: {
     escTimeoutMs?: number;
     /** @deprecated Open pastes no longer force-complete on a timer. */
     openPasteTimeoutMs?: number;
     /** Debounce for coalescing multi-chunk unmarked paste bursts. */
     unmarkedPasteDebounceMs?: number;
+    /**
+     * Grace window for a bare ESC that arrived while the mouse was actively
+     * reporting — it is far more likely the head of a split wheel report than
+     * a real Esc keypress. Defaults to 120ms.
+     */
+    mouseSplitGraceMs?: number;
   },
 ): RawInputDecoder {
   const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
@@ -721,6 +733,20 @@ export function createRawInputDecoder(
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutMs = options?.escTimeoutMs ?? 15;
   const unmarkedPasteDebounceMs = options?.unmarkedPasteDebounceMs ?? 40;
+  const mouseSplitGraceMs = options?.mouseSplitGraceMs ?? 120;
+  // Timestamp of the last complete mouse report seen. Used to widen the bare-ESC
+  // grace window only while the mouse is actively reporting (see decodeFn).
+  let lastMouseReportAt = -Infinity;
+
+  /**
+   * Single emit path: records when a complete mouse report goes out so the
+   * bare-ESC handling can tell "mouse is streaming reports right now" from
+   * "user pressed Esc".
+   */
+  const onToken = (token: string) => {
+    if (consumeSgrMouseSequence(token)) lastMouseReportAt = Date.now();
+    emitToken(token);
+  };
 
   const clearTimer = () => {
     if (timer !== null) {
@@ -810,21 +836,38 @@ export function createRawInputDecoder(
       for (const token of tokens) onToken(token);
       if (pendingBuffer.startsWith(PASTE_START)) return;
       if (pendingBuffer.length > 0) {
-        // Incomplete CSI only — short timeout, then force emit.
-        // SGR mouse reports (\x1b[<btn;col;rowM) and OSC replies (\x1b]…)
-        // are never a bare Esc key: slow SSH/network can split one across
-        // chunks with gaps longer than the esc timeout. Arming the timer
-        // here would force-emit the partial report as a lone \x1b
-        // (cooperative stop) plus `[<65;…` / `]11;rgb:…` typed into the
-        // composer. Wait for the remaining bytes instead — the next chunk
-        // completes the report, or flush() drops it.
+        // Incomplete SGR mouse report (`\x1b[<…`) or OSC reply (`\x1b]…`):
+        // wait indefinitely. These are real reports that complete in a later
+        // chunk, or flush()/destroy() drops them. Emitting them now would leak
+        // the report body into the composer.
         if (
           consumeSgrMouseSequence(pendingBuffer) === undefined ||
           isIncompleteOsc(pendingBuffer)
         ) {
           return;
         }
-        timer = setTimeout(() => flushEscPending(true), timeoutMs);
+        if (pendingBuffer === "\x1b") {
+          // Bare ESC: normally the Esc key, but a wheel/drag report can be
+          // split exactly at `\x1b` | `[<…M` when a streaming repaint stalls
+          // the event loop. While the mouse is actively reporting, give the
+          // next chunk a longer grace window before committing to "Esc
+          // pressed" — otherwise scrolling mid-stream stops the turn and leaks
+          // the report body as text. Esc still works, just a frame later.
+          const graceMs =
+            Date.now() - lastMouseReportAt < MOUSE_ACTIVE_WINDOW_MS
+              ? mouseSplitGraceMs
+              : timeoutMs;
+          timer = setTimeout(() => flushEscPending(true), graceMs);
+          return;
+        }
+        // Generic partial CSI/SS3 (`\x1b[`, `\x1bO`, malformed `\x1b[…]`) that
+        // isn't a recognized report: it's never a keypress on its own, and
+        // force-emitting it would type `[<65;…` into the composer. Wait a
+        // bounded timeout for the rest; if it never completes, DROP the bytes
+        // rather than leak them or stall input forever.
+        timer = setTimeout(() => {
+          pendingBuffer = "";
+        }, timeoutMs);
       }
       return;
     }

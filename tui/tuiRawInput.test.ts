@@ -402,6 +402,61 @@ describe("createRawInputDecoder SGR mouse wheel", () => {
     expect(tokens).toEqual(["\x1b"]);
   });
 
+  test("滚轮报告恰好被拆在 ESC 边界：不产生裸 ESC，补齐后是完整鼠标 token", async () => {
+    // 回归：流式渲染占住事件循环时，pty 可能把 \x1b[<65;21;33M 拆成
+    // "\x1b" | "[<65;21;33M"。第一块是裸 ESC，旧行为 15ms 后当成 Esc 键
+    // 发出（协作式停止打断 streaming），后半截无 ESC 前缀被当普通字符打进
+    // composer（用户看到 `[<65;21;33M`）。既然刚刚才收到过鼠标报告，裸 ESC
+    // 应先等待 mouseSplitGraceMs。
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 10,
+      mouseSplitGraceMs: 120,
+    });
+    // 一次正常滚动，标记"鼠标正在上报"。
+    decode("\x1b[<65;21;33M");
+    expect(tokens).toEqual(["\x1b[<65;21;33M"]);
+    // 下一个报告被拆在 ESC 边界，且第二块迟于 escTimeoutMs 到达。
+    decode("\x1b");
+    await Bun.sleep(40);
+    expect(tokens).toEqual(["\x1b[<65;21;33M"]); // 未泄漏裸 ESC
+    decode("[<65;21;34M");
+    expect(tokens).toEqual(["\x1b[<65;21;33M", "\x1b[<65;21;34M"]);
+  });
+
+  test("鼠标静默足够久后，裸 ESC 仍按 escTimeoutMs 快速判定为 Esc 键", async () => {
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 10,
+      mouseSplitGraceMs: 500,
+    });
+    decode("\x1b[<65;21;33M");
+    tokens.length = 0;
+    // 超过 MOUSE_ACTIVE_WINDOW_MS(250ms)：不再视为鼠标活跃期。
+    await Bun.sleep(300);
+    decode("\x1b");
+    await Bun.sleep(40);
+    expect(tokens).toEqual(["\x1b"]);
+  });
+
+  test("一般未完成 CSI（非鼠标/OSC）有界丢弃：不泄漏文本、不积压后续按键", async () => {
+    // 回归（review MEDIUM）：malformed/truncated CSI（如 \x1b[ 后无终止符）
+    // 之前被改成无限期等待，会把后续普通键全部积压进 pendingBuffer。现在应
+    // 有界超时后丢弃该半截序列，且后续按键照常送达。
+    const tokens: string[] = [];
+    const decode = createRawInputDecoder((token) => tokens.push(token), {
+      escTimeoutMs: 10,
+    });
+    decode("\x1b[");
+    expect(tokens).toEqual([]);
+    // 超过 esc timeout：半截 CSI 被丢弃，不泄漏文本、不产生裸 ESC。
+    await Bun.sleep(25);
+    expect(tokens).toEqual([]);
+    // 后续普通按键不被积压。
+    decode("q");
+    expect(tokens).toEqual(["q"]);
+  });
+
   test("裸 ESC 仍是 ESC 键：timeout 后正常 emit（防过度修复）", async () => {
     const tokens: string[] = [];
     const decode = createRawInputDecoder((token) => tokens.push(token), {

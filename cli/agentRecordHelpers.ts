@@ -573,7 +573,11 @@ export function parseAgentUpdateArgs(args: string[]) {
   const copyProviderFrom = readOption(args, "--copy-provider-from");
   const name = readOption(args, "--name");
   const customProviderUrl = readOption(args, "--custom-provider-url");
-  const apiKey = readOption(args, "--api-key");
+  // Accept both --api-key (works) and the help-text alias --provider-api-key so
+  // the key is never silently dropped when a user copies the documented flag.
+  const apiKey = readOption(args, "--api-key") ?? readOption(args, "--provider-api-key");
+  const verify = args.includes("--verify");
+  const verifyPrompt = readOption(args, "--verify-prompt");
   const maxConcurrent = parsePositiveIntegerOption(
     readOption(args, "--max-concurrent"),
     "--max-concurrent",
@@ -616,7 +620,7 @@ export function parseAgentUpdateArgs(args: string[]) {
     }
   }
 
-  return { agentInput, updates, promptDoc, copyProviderFrom };
+  return { agentInput, updates, promptDoc, copyProviderFrom, verify, verifyPrompt };
 }
 
 export async function buildCreatedAgentRecord(args: {

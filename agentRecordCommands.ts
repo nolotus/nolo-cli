@@ -95,7 +95,7 @@ export async function runAgentUpdateCommand(
   }
   if (!parsed) {
     output.write(
-      "Usage: nolo agent update <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--field key=value]\n"
+      "Usage: nolo agent update <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--name <name>] [--custom-provider-url <url>] [--api-key <key>|--provider-api-key <key>] [--field key=value]\n"
         .replace("[--field key=value]", "[--handle <name>] [--field key=value]  (e.g. --field disabledTools='[\"exa_search\"]' to disable default tools)")
     );
     return args[0] ? 0 : 1;
@@ -179,7 +179,7 @@ export async function runAgentCreateCommand(
   }
   if (!parsed) {
     output.write(
-      "Usage: nolo agent create <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--name <name>] [--custom-provider-url <url>] [--provider-api-key <key>] [--field key=value]\n"
+      "Usage: nolo agent create <agent> [--model <id>] [--cli-provider <provider>] [--api-source <source>] [--max-concurrent <n>] [--expires-at <iso>] [--prompt <text> | --prompt-file <path> | --prompt-doc <pageKey>] [--tools <json>] [--copy-provider-from <agent>] [--name <name>] [--custom-provider-url <url>] [--api-key <key>|--provider-api-key <key>] [--verify] [--field key=value]\n"
         .replace("[--field key=value]", "[--handle <name>] [--field key=value]")
     );
     return args[0] ? 0 : 1;
@@ -229,12 +229,30 @@ export async function runAgentCreateCommand(
     });
     clearCliLocalRuntimePreparedAgentCache();
 
+    let verifyResult;
+    if (parsed.verify) {
+      const { verifyCustomProvider } = await import("./agentProviderCommands");
+      const rec = built.nextRecord as {
+        customProviderUrl?: string;
+        apiKey?: string;
+        model?: string;
+      };
+      verifyResult = await verifyCustomProvider({
+        providerUrl: rec.customProviderUrl,
+        apiKey: rec.apiKey,
+        model: rec.model,
+        prompt: parsed.verifyPrompt,
+        fetchImpl,
+      });
+    }
+
     output.write(JSON.stringify({
       ok: true,
       agentKey: built.agentKey,
       baseUrl: built.serverUrl,
       updates: sanitizeAgentRecordForCliOutput(built.updates),
       record: sanitizeAgentRecordForCliOutput(built.nextRecord),
+      ...(verifyResult ? { verify: verifyResult } : {}),
     }, null, 2));
     output.write("\n");
     return 0;

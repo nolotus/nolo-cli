@@ -1,6 +1,6 @@
 // @ts-nocheck — mock-heavy local runtime adapter suite; stubs intentionally incomplete vs HybridRecordKvDb/fetch.
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getCredentialPath, writeOAuthCredential } from "../agent-runtime/oauthTokenStore";
@@ -38,6 +38,12 @@ function createAdapter(deps: any) {
 
 describe("CLI local runtime adapter source contract (credential broker)", () => {
   const source = readFileSync(join(import.meta.dir, "localRuntimeAdapter.ts"), "utf8");
+  // provider 解析已按 transport 拆到 providerResolution/；凭证接线的契约现在
+  // 由各分支模块承载，扫描它们的合并源码而不是 adapter 单文件。
+  const transportSource = readdirSync(join(import.meta.dir, "providerResolution"))
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => readFileSync(join(import.meta.dir, "providerResolution", f), "utf8"))
+    .join("\n");
 
   test("wires createFileCredentialBroker into resolveProvider paths", () => {
     // Broker is lazy-loaded for cold-start (require path), not top-level import.
@@ -52,6 +58,7 @@ describe("CLI local runtime adapter source contract (credential broker)", () => 
   // OAuth 分支不再传该选项，原「shorthand 越界」回归场景不复存在。
 
   test("passes credentialBroker to platform and direct OpenAI-compatible resolvers", () => {
+    const source = transportSource;
     expect(source).toContain("resolvePlatformChatProviderConfig({");
     expect(source).toContain("resolveCliOpenAiProviderConfig({");
     // Both call sites must include credentialBroker next to apiKeyRefResolver.

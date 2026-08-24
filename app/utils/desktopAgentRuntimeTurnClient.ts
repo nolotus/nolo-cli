@@ -1,10 +1,7 @@
 import { isAbortError } from "../../core/abortError";
 import { toErrorMessage } from "../../core/errorMessage";
 import { asTrimmedString } from "../../core/trimmedString";
-import type {
-  AgentRuntimeMessageContent,
-  LocalAgentTurnResult,
-} from "../../agent-runtime";
+import type { AgentRuntimeMessageContent } from "../../agent-runtime/types";
 import type {
   DesktopAgentRuntimeAgentConfigSnapshot,
   DesktopAgentRuntimeDialogHistorySnapshot,
@@ -14,7 +11,10 @@ import {
   buildDesktopAgentRuntimeAgentConfigSnapshot,
   buildDesktopAgentRuntimeDialogHistorySnapshot,
 } from "../../agent-runtime/desktopRequestSnapshot";
-import type { LocalAgentToolEvent } from "../../agent-runtime/localLoop";
+import type {
+  LocalAgentToolEvent,
+  LocalAgentTurnResult,
+} from "../../agent-runtime/localLoop";
 import { readStreamChunk } from "../../ai/chat/streamReader";
 
 export type DesktopAgentRuntimeTurnResult =

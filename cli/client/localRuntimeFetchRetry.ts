@@ -200,6 +200,18 @@ export type FetchWithTransientRetryOptions = {
    */
   retryableStatuses?: ReadonlySet<number>;
   /**
+   * Optional status-response gate. It lets a caller distinguish an ingress
+   * gateway response from a structured application response that happens to
+   * use the same status code, without consuming the original response body.
+   */
+  shouldRetryResponse?: (response: Response) => boolean | Promise<boolean>;
+  /**
+   * Whether thrown network/transport errors may replay the request. Disable
+   * this for non-idempotent POSTs unless the destination has durable request
+   * idempotency; a lost response does not prove the server skipped execution.
+   */
+  retryNetworkErrors?: boolean;
+  /**
    * 每次决定重试前回调，供 UI 层展示「自动重试 N/M · 剩余 Xs」。
    * 纯函数，不持有共享状态；TUI 通过它把进度画到 docked 活动行。
    * 参数：attempt=即将进行的第几次尝试（1-based），maxAttempts=本次预算上限，
@@ -255,7 +267,12 @@ export async function fetchWithTransientRetry(
       // 明示信号被完全无视，一次容量抖动就成了用户可见的终局失败。
       // 结构化 `503 core_draining` 使用专属长预算（默认 30 次）等待 drain 窗口；
       // 其余可重试状态码走通用预算（默认 3 次）。
-      if (retryableStatuses.has(response.status) && !init?.signal?.aborted) {
+      const retryableStatus =
+        retryableStatuses.has(response.status) && !init?.signal?.aborted;
+      const callerAllowsRetry = retryableStatus
+        ? ((await options.shouldRetryResponse?.(response)) ?? true)
+        : false;
+      if (retryableStatus && callerAllowsRetry) {
         const coreDraining = await isCoreDrainingResponse(response);
         const attemptBudget = coreDraining
           ? coreDrainingMaxAttempts
@@ -279,6 +296,7 @@ export async function fetchWithTransientRetry(
     } catch (error) {
       if (init?.signal?.aborted) throw error;
       if (!isTransientFetchError(error)) throw error;
+      if (options.retryNetworkErrors === false) throw error;
       lastError = error;
       if (attempt < maxAttempts) {
         const delayMs = transientFetchRetryDelayMs(attempt);

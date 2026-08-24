@@ -1718,7 +1718,56 @@ describe("CLI local runtime adapter", () => {
     expect(requests[0]?.body.stream).toBe(true);
   });
 
-  test("retries transient certificate failures from the platform chat proxy", async () => {
+  test("does not replay a structured platform stream interruption", async () => {
+    let attempts = 0;
+    const store = new Map<string, any>([
+      ["agent-user-1-deepseek-stream-error", {
+        dbKey: "agent-user-1-deepseek-stream-error",
+        id: "deepseek-stream-error",
+        prompt: "Reply exactly as requested.",
+        model: "deepseek-v4-flash",
+        provider: "nolo",
+        apiSource: "platform",
+        useServerProxy: true,
+      }],
+    ]);
+    const adapter = createAdapter({
+      env: {
+        NOLO_LOCAL_USER_ID: "user-1",
+        NOLO_SERVER: "https://nolo.chat",
+        AUTH_TOKEN: "token-1",
+      },
+      db: {
+        get: async (key) => {
+          if (!store.has(key)) throw new Error(`not found: ${key}`);
+          return store.get(key);
+        },
+        put: async (key, value) => { store.set(key, value); },
+        batch: async () => {},
+        iterator: () => (async function* () {})(),
+      },
+      fetchImpl: async () => {
+        attempts += 1;
+        return new Response(
+          'data: {"error":{"message":"upstream stream interrupted: gateway reset","code":"UPSTREAM_STREAM_INTERRUPTED"}}\n\n',
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+      sleep: async () => {},
+    });
+
+    const provider = await adapter.resolveProvider(
+      await adapter.loadAgentConfig("deepseek-stream-error"),
+    );
+    await expect(
+      provider.complete([{ role: "user", content: "Reply PONG" }], {
+        onTextDelta: () => {},
+      }),
+    ).rejects.toThrow("UPSTREAM_STREAM_INTERRUPTED");
+    expect(attempts).toBe(1);
+  });
+
+  test("does not replay transient network failures from the platform chat proxy", async () => {
     let attempts = 0;
     const store = new Map<string, any>([
       ["agent-user-1-frontend", {
@@ -1767,24 +1816,19 @@ describe("CLI local runtime adapter", () => {
           });
         }
         attempts += 1;
-        if (attempts <= 2) {
-          throw new Error("unknown certificate verification error");
-        }
-        return Response.json({
-          choices: [{ message: { content: "platform retry ok" } }],
-        });
+        throw new Error("unknown certificate verification error");
       },
       sleep: async () => {},
     });
 
-    const result = await runLocalAgentTurn({
-      adapter,
-      agentRef: "frontend",
-      input: "inspect",
-    });
-
-    expect(result.content).toBe("platform retry ok");
-    expect(attempts).toBe(3);
+    await expect(
+      runLocalAgentTurn({
+        adapter,
+        agentRef: "frontend",
+        input: "inspect",
+      }),
+    ).rejects.toThrow("unknown certificate verification error");
+    expect(attempts).toBe(1);
   });
 
   test("waits through repeated platform drain responses before starting the provider turn", async () => {
@@ -1868,7 +1912,7 @@ describe("CLI local runtime adapter", () => {
     expect(retryDelays).toEqual([0, 0, 0, 0]);
   });
 
-  test("keeps retrying repeated transient certificate failures with backoff hooks", async () => {
+  test("does not schedule backoff for ambiguous platform network failures", async () => {
     let attempts = 0;
     const retryDelays: number[] = [];
     const store = new Map<string, any>([
@@ -1913,28 +1957,22 @@ describe("CLI local runtime adapter", () => {
           return Response.json({ ok: true });
         }
         attempts += 1;
-        if (attempts <= 3) {
-          throw new Error("unknown certificate verification error");
-        }
-        return Response.json({
-          choices: [{ message: { content: "platform longer retry ok" } }],
-        });
+        throw new Error("unknown certificate verification error");
       },
       sleep: async (ms) => {
         retryDelays.push(ms);
       },
     });
 
-    const result = await runLocalAgentTurn({
-      adapter,
-      agentRef: "frontend",
-      input: "inspect",
-    });
-
-    expect(result.content).toBe("platform longer retry ok");
-    expect(attempts).toBe(4);
-    expect(retryDelays.length).toBeGreaterThanOrEqual(1);
-    expect(retryDelays[0]).toBeGreaterThan(0);
+    await expect(
+      runLocalAgentTurn({
+        adapter,
+        agentRef: "frontend",
+        input: "inspect",
+      }),
+    ).rejects.toThrow("unknown certificate verification error");
+    expect(attempts).toBe(1);
+    expect(retryDelays).toEqual([]);
   });
 
   test("saves local tool call trace and shell metadata into the local dialog", async () => {

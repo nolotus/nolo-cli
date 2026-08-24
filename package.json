@@ -1,6 +1,6 @@
 {
   "name": "nolo-cli",
-  "version": "0.33.0-alpha.29",
+  "version": "0.33.0-alpha.30",
   "type": "module",
   "description": "Agent-first terminal workspace for Nolo",
   "bin": {
@@ -131,6 +131,7 @@
     "client/providerResolution/resolveLocalProvider.ts",
     "client/providerResolution/antigravityTransport.ts",
     "client/providerResolution/cliProviderTransport.ts",
+    "client/providerResolution/platformProxyTransport.test.ts",
     "client/providerResolution/codexOAuthTransport.ts",
     "client/providerResolution/directOpenAiCompatibleTransport.ts",
     "client/providerResolution/providerResolutionContext.ts",

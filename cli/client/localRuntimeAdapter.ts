@@ -754,20 +754,20 @@ export function createCliLocalRuntimeAdapter(
     resolveProviderBase: AgentRuntimeHostAdapter["resolveProvider"];
   };
 
-  // Single wrap point for every transport branch above: provider.complete is
-  // retried as a whole when the upstream dies mid-stream (SSE body read /
-  // res.text()), which fetchWithTransientRetry cannot see because it only
-  // covers the fetch exchange up to the response headers. The cast mirrors the
-  // pre-existing structural looseness of the branch returns (one branch omits
-  // `model` on the result — already flagged by TS2322 on alpha at this spot).
+  // Direct providers keep the bounded whole-stream retry. Platform chat POSTs
+  // do not: a lost response does not prove nolo/its upstream skipped execution,
+  // so replaying here could duplicate provider cost and billing evidence.
+  // Deployment drains remain retryable inside platformProxyTransport because
+  // structured `503 core_draining` is emitted before provider admission.
   return {
     ...adapterBase,
-    resolveProvider: async (agentConfig: AgentRuntimeAgentConfig) =>
-      withProviderStreamRetry(
-        (await adapterBase.resolveProviderBase(
-          agentConfig,
-        )) as AgentRuntimeProvider,
-        deps,
-      ),
+    resolveProvider: async (agentConfig: AgentRuntimeAgentConfig) => {
+      const provider = (await adapterBase.resolveProviderBase(
+        agentConfig,
+      )) as AgentRuntimeProvider;
+      return shouldUsePlatformChatProvider(deps.env, agentConfig)
+        ? provider
+        : withProviderStreamRetry(provider, deps);
+    },
   };
 }

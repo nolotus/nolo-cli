@@ -12,6 +12,20 @@ import { summarizeEndpoint } from "../../../core/summarizeEndpoint";
 import { join } from "node:path";
 import type { ProviderResolver } from "./providerResolutionContext";
 
+export async function shouldRetryPlatformProxyResponse(
+  response: Response,
+): Promise<boolean> {
+  if (response.status !== 503) return false;
+  try {
+    const body = (await response.clone().json()) as {
+      reason?: unknown;
+    };
+    return body?.reason === "core_draining";
+  } catch {
+    return false;
+  }
+}
+
 export const resolvePlatformProxyTransport: ProviderResolver = async (ctx) => {
   const { agentConfig, deps, fetchImpl, loopbackRequest, additionalToolNames, buildProviderOpenAiTools, recordLocalAvailability, apiKeyRefResolver, credentialBroker, syncFetcher, serverUrl, authToken } = ctx;
   if (shouldUsePlatformChatProvider(deps.env, agentConfig)) {
@@ -81,10 +95,13 @@ export const resolvePlatformProxyTransport: ProviderResolver = async (ctx) => {
           {
             sleep: deps.sleep,
             loopbackRequest,
-            // auto 档位转发 nolo.chat 时，网关层 502（server: Caddy、空 body）
-            // 意味着请求根本没到 Bun 上游，provider 未受理，重试安全。
-            // 与 429/503 同口径：不会重复计费/重复生成。
-            retryableStatuses: new Set([429, 502, 503]),
+            // A chat POST is not safe to replay after an ambiguous network or
+            // gateway failure: the server/provider may already have accepted
+            // it. The client only waits through the server's explicit pre-
+            // admission deployment drain signal.
+            retryableStatuses: new Set([503]),
+            shouldRetryResponse: shouldRetryPlatformProxyResponse,
+            retryNetworkErrors: false,
             onRetry: deps.activityReporter
               ? ({ attempt, maxAttempts, delayMs }) => {
                   deps.activityReporter!(

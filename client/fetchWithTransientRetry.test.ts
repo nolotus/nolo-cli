@@ -206,6 +206,36 @@ describe("fetchWithTransientRetry", () => {
     expect(slept.length).toBe(2);
   });
 
+  it("lets a caller reject retries for a structured application 502", async () => {
+    const slept: number[] = [];
+    const { impl, calls } = scriptedFetch([
+      json(502, { error: { code: "UPSTREAM_TRANSPORT_ERROR" } }),
+      json(200, { ok: true }),
+    ]);
+    const res = await fetchWithTransientRetry(
+      impl,
+      "https://example.test/x",
+      undefined,
+      {
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+        retryableStatuses: new Set([502]),
+        shouldRetryResponse: async (response) => {
+          const body = (await response
+            .clone()
+            .json()
+            .catch(() => null)) as any;
+          return body?.error?.code !== "UPSTREAM_TRANSPORT_ERROR";
+        },
+      },
+    );
+
+    expect(res.status).toBe(502);
+    expect(calls.length).toBe(1);
+    expect(slept).toEqual([]);
+  });
+
   it("reports retry progress via onRetry with attempt/maxAttempts/delayMs", async () => {
     const slept: number[] = [];
     const reported: Array<{ attempt: number; maxAttempts: number; delayMs: number }> = [];
@@ -263,5 +293,24 @@ describe("fetchWithTransientRetry", () => {
     expect(reported[0]!.attempt).toBe(2);
     expect(reported[0]!.maxAttempts).toBe(3);
     expect(reported[0]!.delayMs).toBeGreaterThan(0);
+  });
+
+  it("does not replay a network failure when the caller disables unsafe POST retries", async () => {
+    let calls = 0;
+    const impl = (async () => {
+      calls += 1;
+      throw new Error("ECONNRESET socket hang up");
+    }) as any;
+
+    await expect(
+      fetchWithTransientRetry(impl, "https://example.test/chat", {
+        method: "POST",
+        body: "{}",
+      }, {
+        sleep: async () => {},
+        retryNetworkErrors: false,
+      }),
+    ).rejects.toThrow("ECONNRESET socket hang up");
+    expect(calls).toBe(1);
   });
 });
